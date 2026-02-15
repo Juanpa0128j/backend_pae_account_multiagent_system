@@ -1,0 +1,12 @@
+[project]
+name = "backend-pae-account-multiagent-system"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.129.0",
+    "pypdf>=6.7.0",
+    "python-multipart>=0.0.22",
+    "uvicorn>=0.40.0",
+]
