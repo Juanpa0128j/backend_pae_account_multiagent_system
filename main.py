@@ -41,6 +41,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/", tags=["Health"])
+async def root():
+    return {"message": "PAE Account Multiagent System API is running", "status": "healthy"}
+
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {"status": "healthy"}
