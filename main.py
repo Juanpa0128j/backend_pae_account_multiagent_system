@@ -2,7 +2,7 @@ import logging
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1 import ingest, process, reports, tax, evaluation, transactions
+from app.api.v1 import ingest, process, reports, tax, evaluation, transactions, dashboard, books
 
 # Configure logging
 logging.basicConfig(
@@ -56,6 +56,8 @@ app.include_router(reports.router, prefix="/api/v1/reports", tags=["Reportes"])
 app.include_router(tax.router, prefix="/api/v1/tax", tags=["Tributario"])
 app.include_router(evaluation.router, prefix="/api/v1/evaluation", tags=["Evaluación"])
 app.include_router(transactions.router, prefix="/api/v1/transactions", tags=["Transacciones"])
+app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
+app.include_router(books.router, prefix="/api/v1/books", tags=["Libros"])
 
 @app.on_event("startup")
 async def startup_event():
