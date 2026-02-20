@@ -1,4 +1,5 @@
 import logging
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import ingest, process, reports, tax, evaluation
@@ -16,17 +17,25 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Base development origins
+origins = [
+    "http://localhost:3000",      # Next.js dev server
+    "http://localhost:5173",      # Vite dev server
+    "http://localhost:5174",      # Alternative dev port
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+]
+
+# Add production origins from environment variable if present
+env_origins = os.getenv("ALLOWED_ORIGINS", "")
+if env_origins:
+    origins.extend([origin.strip() for origin in env_origins.split(",") if origin.strip()])
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",      # Next.js dev server
-        "http://localhost:5173",      # Vite dev server
-        "http://localhost:5174",      # Alternative dev port
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
