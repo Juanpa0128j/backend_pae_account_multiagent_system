@@ -36,12 +36,16 @@ class GeminiClient:
         genai.configure(api_key=self.api_key)
         self.model = genai.GenerativeModel(model)
     
-    def extract_receipt_data(self, text: str) -> dict:
+    def extract_receipt_data(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """
-        Extract structured data from receipt/invoice text using Gemini Vision.
+        Extract structured data from receipt/invoice text using Gemini.
         
         Args:
             text: Raw text extracted from PDF
+            correction_feedback: If provided, appended to the prompt so the
+                model can correct its previous invalid output.
             
         Returns:
             Dictionary with keys: fecha, monto, concepto, beneficiario, empresa, referencia, tipo_documento
@@ -61,8 +65,16 @@ Extrae la siguiente información en JSON válido (responde SOLO JSON, sin explic
   "beneficiario": "quien recibe",
   "empresa": "empresa/banco emisor",
   "referencia": "número de transacción o null",
-  "tipo_documento": "recibo|factura|extracto|otro"
+  "tipo_documento": "recibo|factura|extracto|nota_credito|nota_debito|comprobante_egreso|otro"
 }}"""
+
+        if correction_feedback:
+            prompt += f"""
+
+=== CORRECCIÓN REQUERIDA ===
+{correction_feedback}
+
+Genera nuevamente el JSON corrigiendo los errores indicados. Solo JSON, sin texto adicional.""""""
         
         try:
             response = self.model.generate_content(
