@@ -219,6 +219,24 @@ def create_transaction_posted(
 
 # ─── JournalEntryLine ───────────────────────────────────────────
 
+def _parse_fecha(value) -> datetime:
+    """Ensure fecha is a timezone-aware datetime, parsing strings if needed."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    if isinstance(value, str):
+        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+            try:
+                dt = datetime.strptime(value, fmt)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except ValueError:
+                continue
+    return datetime.now(timezone.utc)
+
+
 def create_journal_entry_lines(
     db: Session,
     transaction_posted_id: str,
@@ -229,7 +247,7 @@ def create_journal_entry_lines(
     for entry in entries:
         line = JournalEntryLine(
             transaction_posted_id=transaction_posted_id,
-            fecha=entry.get("fecha", datetime.now(timezone.utc)),
+            fecha=_parse_fecha(entry.get("fecha", datetime.now(timezone.utc))),
             comprobante=entry.get("comprobante"),
             cuenta_puc=entry["cuenta"],
             cuenta_nombre=entry.get("descripcion", ""),

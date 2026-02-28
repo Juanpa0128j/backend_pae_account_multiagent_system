@@ -55,11 +55,13 @@ def db_persist_node(state: AgentState) -> AgentState:
     Flow:
     1. Create/update IngestJob
     2. Create TransactionPending from extracted data
-    3. Run duplicate detection
+    3. Run duplicate detection and PUC validation
     4. Create TransactionPosted with PUC classification
     5. Generate JournalEntryLines (partida doble)
-    6. Update ProcessJob progress
-    7. Write AuditLog
+    6. Mark IngestJob as completed
+
+    Note: Audit logs are written implicitly by db_service CRUD helpers
+    (e.g. create_transaction_pending, create_transaction_posted).
 
     Args:
         state: Current agent state with interpreted_data populated
@@ -250,15 +252,20 @@ def _build_journal_entries(
     - CREDIT the vendor payable (220505) for base + IVA
     - CREDIT retefuente (240815) if retention > 0
     - CREDIT reteICA (236540) if reteica > 0
+
+    Returns a list of dicts with JSON-serialisable values (fecha as ISO string)
+    ready to be stored in the ``journal_entries_json`` JSONB column.
     """
     entries = []
-    fecha_str = fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
     base = total - iva  # Base gravable (before IVA)
+
+    # Serialize fecha to ISO string for JSONB storage
+    fecha_iso = fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
 
     # Debit: Expense/Cost account
     if base > 0:
         entries.append({
-            "fecha": fecha_str,
+            "fecha": fecha_iso,
             "cuenta": cuenta_puc,
             "descripcion": puc_descripcion or descripcion,
             "tercero_nit": nit,
@@ -270,7 +277,7 @@ def _build_journal_entries(
     # Debit: IVA descontable
     if iva > 0:
         entries.append({
-            "fecha": fecha_str,
+            "fecha": fecha_iso,
             "cuenta": "240802",
             "descripcion": "IVA Descontable",
             "tercero_nit": nit,
@@ -283,7 +290,7 @@ def _build_journal_entries(
     total_credito_proveedor = total - retefuente - reteica
     if total_credito_proveedor > 0:
         entries.append({
-            "fecha": fecha_str,
+            "fecha": fecha_iso,
             "cuenta": "220505",
             "descripcion": "Proveedores Nacionales",
             "tercero_nit": nit,
@@ -295,7 +302,7 @@ def _build_journal_entries(
     # Credit: Retención en la fuente
     if retefuente > 0:
         entries.append({
-            "fecha": fecha_str,
+            "fecha": fecha_iso,
             "cuenta": "240815",
             "descripcion": "Retención en la Fuente - Servicios",
             "tercero_nit": nit,
@@ -307,7 +314,7 @@ def _build_journal_entries(
     # Credit: ReteICA
     if reteica > 0:
         entries.append({
-            "fecha": fecha_str,
+            "fecha": fecha_iso,
             "cuenta": "236540",
             "descripcion": "ReteICA por pagar",
             "tercero_nit": nit,

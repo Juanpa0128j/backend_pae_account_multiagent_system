@@ -108,7 +108,13 @@ Neto a pagar: $1,335,000
 
 @pytest.fixture(scope="session")
 def engine():
+    """Create a test database engine; skip test session if DB is unreachable."""
     eng = create_engine(DATABASE_URL, echo=False)
+    try:
+        conn = eng.connect()
+        conn.close()
+    except Exception as exc:
+        pytest.skip(f"PostgreSQL not available at {DATABASE_URL!r}: {exc}")
     Base.metadata.create_all(bind=eng)
     yield eng
 

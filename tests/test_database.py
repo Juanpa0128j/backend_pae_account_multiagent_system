@@ -50,13 +50,15 @@ DATABASE_URL = os.getenv(
 
 @pytest.fixture(scope="session")
 def engine():
-    """Create a test database engine."""
+    """Create a test database engine; skip test session if DB is unreachable."""
     eng = create_engine(DATABASE_URL, echo=False)
-    # Create all tables
+    try:
+        conn = eng.connect()
+        conn.close()
+    except Exception as exc:
+        pytest.skip(f"PostgreSQL not available at {DATABASE_URL!r}: {exc}")
     Base.metadata.create_all(bind=eng)
     yield eng
-    # Drop test tables (optional — comment out to keep data for inspection)
-    # Base.metadata.drop_all(bind=eng)
 
 
 @pytest.fixture

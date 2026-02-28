@@ -26,7 +26,12 @@ class JSONFormatter(logging.Formatter):
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Get a configured logger instance with JSON formatting."""
+    """Get a configured logger instance with JSON formatting.
+
+    The logger's level is inherited from the root logger (configured in
+    main.py via ``logging.basicConfig``).  ``propagate`` is disabled to
+    avoid duplicate log lines from the root handler.
+    """
     logger = logging.getLogger(name)
 
     if not logger.handlers:
@@ -34,6 +39,8 @@ def get_logger(name: str) -> logging.Logger:
         formatter = JSONFormatter()
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
+        # Inherit level from root config; don't hardcode.
+        # Disable propagation to prevent duplicate lines with root handler.
+        logger.propagate = False
 
     return logger
