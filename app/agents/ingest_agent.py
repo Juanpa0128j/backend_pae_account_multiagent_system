@@ -1,6 +1,9 @@
 """
 Ingesta (Ingest) worker node for the agent graph.
 Extracts text from PDFs and uses Gemini to interpret structured data.
+
+On retry (when correction_feedback is present), the agent re-sends the
+raw text to Gemini along with the schema errors so the model can self-correct.
 """
 
 import logging
@@ -17,9 +20,10 @@ def ingest_node(state: AgentState) -> AgentState:
     Ingest node: Extracts text from PDF and interprets with Gemini.
     
     Process:
-    1. Extract raw text from PDF using PyPDF
+    1. Extract raw text from PDF using PyPDF  (skipped on retry)
     2. Send text to Gemini for structured interpretation
-    3. Validate and format the result
+       — includes correction_feedback on retries
+    3. Store the parsed dict in interpreted_data
     4. Mark as completed or error
     
     Args:
@@ -35,12 +39,20 @@ def ingest_node(state: AgentState) -> AgentState:
         return state
     
     file_path = state["file_path"]
+    is_retry = bool(state.get("correction_feedback"))
     
     try:
-        # Step 1: Extract raw text from PDF
-        logger.info(f"Ingest: Extracting text from {file_path}")
-        raw_text = extract_text_from_pdf(file_path)
-        state["raw_text"] = raw_text
+        # Step 1: Extract raw text (skip if we already have it from a prior attempt)
+        if not is_retry or not state.get("raw_text"):
+            logger.info(f"Ingest: Extracting text from {file_path}")
+            raw_text = extract_text_from_pdf(file_path)
+            state["raw_text"] = raw_text
+        else:
+            raw_text = state["raw_text"]
+            logger.info(
+                f"Ingest (retry {state.get('retry_count', 1)}): "
+                "Re-using previously extracted text"
+            )
         
         if not raw_text.strip():
             state["error"] = "No readable text found in PDF"
@@ -48,12 +60,26 @@ def ingest_node(state: AgentState) -> AgentState:
             return state
         
         # Step 2: Send to Gemini for interpretation
-        logger.info(f"Ingest: Sending to Gemini for interpretation")
         gemini_client = GeminiClient()
-        interpreted_data = gemini_client.extract_receipt_data(raw_text)
+
+        if is_retry:
+            logger.info(
+                f"Ingest: Re-sending to Gemini with correction feedback "
+                f"(attempt {state.get('retry_count', 1)})"
+            )
+            interpreted_data = gemini_client.extract_receipt_data(
+                raw_text,
+                correction_feedback=state["correction_feedback"],
+            )
+            # Clear correction feedback after using it
+            state["correction_feedback"] = None
+        else:
+            logger.info("Ingest: Sending to Gemini for interpretation")
+            interpreted_data = gemini_client.extract_receipt_data(raw_text)
+
         state["interpreted_data"] = interpreted_data
         
-        # Step 3: Format final result
+        # Step 3: Format result (will be enriched by validate_output_node)
         state["result"] = {
             "process_id": str(uuid.uuid4()),
             "status": "completed",
