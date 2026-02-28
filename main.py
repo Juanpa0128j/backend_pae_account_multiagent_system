@@ -1,20 +1,42 @@
 import logging
 import os
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.api.v1 import ingest, process, reports, tax, evaluation, transactions, dashboard, books
+from app.core.config import settings
+from app.core.database import check_db_connection
+from app.core.exceptions import PAEException, DatabaseException
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: startup and shutdown events."""
+    # Startup
+    logger.info(f"Starting PAE Backend (env={settings.app_env})")
+    db_ok = check_db_connection()
+    if db_ok:
+        logger.info("Database connection verified")
+    else:
+        logger.warning("Database connection failed — some features will be unavailable")
+    yield
+    # Shutdown
+    logger.info("Application shutdown")
+
+
 app = FastAPI(
     title="PAE Account Multiagent System API",
     description="Backend API for the PAE Account Multiagent System",
-    version="0.1.0",
+    version="0.2.0",
+    lifespan=lifespan,
 )
 
 # Base development origins
@@ -47,7 +69,30 @@ async def root():
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    return {"status": "healthy"}
+    db_ok = check_db_connection()
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "database": "connected" if db_ok else "disconnected",
+        "environment": settings.app_env,
+    }
+
+
+# Exception handlers
+@app.exception_handler(PAEException)
+async def pae_exception_handler(request: Request, exc: PAEException):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": str(exc), "error_type": type(exc).__name__},
+    )
+
+
+@app.exception_handler(DatabaseException)
+async def db_exception_handler(request: Request, exc: DatabaseException):
+    logger.error(f"Database error: {exc}")
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database service unavailable", "error_type": "DatabaseException"},
+    )
 
 # Include routers
 app.include_router(ingest.router, prefix="/api/v1/ingest", tags=["Ingesta"])
@@ -58,14 +103,6 @@ app.include_router(evaluation.router, prefix="/api/v1/evaluation", tags=["Evalua
 app.include_router(transactions.router, prefix="/api/v1/transactions", tags=["Transacciones"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 app.include_router(books.router, prefix="/api/v1/books", tags=["Libros"])
-
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Application startup")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Application shutdown")
 
 if __name__ == "__main__":
     import uvicorn

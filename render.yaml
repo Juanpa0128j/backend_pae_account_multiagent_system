@@ -1,18 +1,40 @@
+databases:
+  - name: pae-db
+    databaseName: pae_accounting
+    user: pae_user
+    plan: free
+    region: oregon
+
 services:
   - type: web
     name: pae-backend
     env: python
     plan: free
+    region: oregon
     buildCommand: "pip install uv && uv sync"
     startCommand: "uv run uvicorn main:app --host 0.0.0.0 --port $PORT"
+    preDeployCommand: "uv run alembic upgrade head"
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: "3.11.0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pae-db
+          property: connectionString
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: "gemini-2.5-flash"
+      - key: APP_ENV
+        value: "production"
+      - key: LOG_LEVEL
+        value: "INFO"
       - key: ALLOWED_ORIGINS
-        sync: false # Set to false to hide the domain in code, meaning you MUST set this value manually in the Render Dashboard after deploying.
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: ALGORITHM
         value: HS256
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
-        value: 30
+        value: "30"

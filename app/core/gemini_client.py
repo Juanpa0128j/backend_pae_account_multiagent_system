@@ -43,11 +43,18 @@ class GeminiClient:
             api_key: Google AI API key. If None, reads from GOOGLE_API_KEY env var.
             model: Model name to use (default: gemini-2.5-flash for free tier)
         """
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        # Try multiple env var names for broad compatibility
+        self.api_key = (
+            api_key
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+        )
         self.model_name = model
         
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY not set and not provided")
+            raise ValueError(
+                "Gemini API key not set. Provide GEMINI_API_KEY or GOOGLE_API_KEY env var."
+            )
         
         # Create base model with structured output capability
         self.model = ChatGoogleGenerativeAI(
