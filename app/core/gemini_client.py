@@ -74,7 +74,7 @@ Extrae la siguiente información en JSON válido (responde SOLO JSON, sin explic
 === CORRECCIÓN REQUERIDA ===
 {correction_feedback}
 
-Genera nuevamente el JSON corrigiendo los errores indicados. Solo JSON, sin texto adicional.""""""
+Genera nuevamente el JSON corrigiendo los errores indicados. Solo JSON, sin texto adicional."""
         
         try:
             response = self.model.generate_content(
