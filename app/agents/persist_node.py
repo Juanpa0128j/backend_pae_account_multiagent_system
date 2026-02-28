@@ -1,7 +1,11 @@
 """
-DB Persist agent node for the LangGraph pipeline.
+DB Persist node for the LangGraph pipeline (pilot phase).
 
-This node receives interpreted_data from the ingest agent and persists it
+This is a transitional node that will be replaced by the auditor agent
+once the full 5-node architecture (supervisor, ingest, contador,
+tributario, auditor) is implemented.
+
+It receives interpreted_data from the ingest agent and persists it
 to PostgreSQL:  IngestJob → TransactionPending → TransactionPosted → JournalEntryLines.
 
 It also runs duplicate detection and PUC validation before posting.

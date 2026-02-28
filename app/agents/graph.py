@@ -17,7 +17,7 @@ from app.agents.supervisor import (
     should_retry_agent,
 )
 from app.agents.ingest_agent import ingest_node
-from app.agents.db_query_agent import db_persist_node
+from app.agents.persist_node import db_persist_node
 
 logger = logging.getLogger(__name__)
 
