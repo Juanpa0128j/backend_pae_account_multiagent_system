@@ -27,7 +27,7 @@ dependencies = [
     "chromadb>=0.4.0",
     "langchain>=0.1.0",
     "langgraph>=0.1.0",
-    "google-generativeai>=0.3.0",
+    "langchain-google-genai>=0.1.0",
     "python-dotenv>=1.0.0",
     "python-multipart>=0.0.22",
     "pypdf>=6.7.0",
@@ -438,23 +438,25 @@ vectordb = VectorDB()
 Gemini API client wrapper for agent interactions.
 """
 
-import google.generativeai as genai
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage
 from app.core.config import settings
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Configure Gemini
-genai.configure(api_key=settings.gemini_api_key)
-
 def get_gemini_model():
-    """Get Gemini model instance."""
-    return genai.GenerativeModel(settings.gemini_model)
+    """Get Gemini model instance via LangChain."""
+    return ChatGoogleGenerativeAI(
+        model=settings.gemini_model,
+        google_api_key=settings.gemini_api_key,
+        temperature=0.0,
+    )
 
 async def call_gemini(prompt: str, system_prompt: str = None):
     """
     Call Gemini with optional system prompt.
-    Returns: response.text
+    Returns: response text
     """
     try:
         model = get_gemini_model()
@@ -464,9 +466,9 @@ async def call_gemini(prompt: str, system_prompt: str = None):
         else:
             message = prompt
         
-        response = model.generate_content(message)
-        logger.info(f"Gemini call successful, tokens used: {response.usage_metadata}")
-        return response.text
+        response = model.invoke([HumanMessage(content=message)])
+        logger.info(f"Gemini call successful")
+        return response.content
         
     except Exception as e:
         logger.error(f"Gemini error: {str(e)}")
