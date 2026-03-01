@@ -69,6 +69,8 @@ PUC_ACCOUNTS = [
      "descripcion": "IVA pagado en compras - descontable"},
     {"codigo": "240805", "nombre": "IVA Generado", "clase": 2, "grupo": "24", "cuenta": "2408", "naturaleza": "credito",
      "descripcion": "IVA facturado en ventas"},
+    {"codigo": "240815", "nombre": "Retención en la Fuente por Pagar (LEGACY)", "clase": 2, "grupo": "24", "cuenta": "2408", "naturaleza": "credito",
+     "descripcion": "Cuenta legacy 240815 conservada para compatibilidad con flujos existentes de retefuente"},
     {"codigo": "2505", "nombre": "Salarios por Pagar", "clase": 2, "grupo": "25", "naturaleza": "credito",
      "descripcion": "Obligaciones laborales por salarios"},
 
