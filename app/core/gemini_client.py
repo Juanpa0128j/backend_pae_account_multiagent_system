@@ -40,20 +40,16 @@ class GeminiClient:
         Initialize Gemini client via LangChain with structured output.
         
         Args:
-            api_key: Google AI API key. If None, reads from GOOGLE_API_KEY env var.
+            api_key: Google AI API key. If None, reads from GEMINI_API_KEY env var.
             model: Model name to use (default: gemini-2.5-flash for free tier)
         """
-        # Try multiple env var names for broad compatibility
-        self.api_key = (
-            api_key
-            or os.getenv("GEMINI_API_KEY")
-            or os.getenv("GOOGLE_API_KEY")
-        )
+        # Read API key from the single supported env var
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model_name = model
         
         if not self.api_key:
             raise ValueError(
-                "Gemini API key not set. Provide GEMINI_API_KEY or GOOGLE_API_KEY env var."
+                "Gemini API key not set. Provide GEMINI_API_KEY env var."
             )
         
         # Create base model with structured output capability
