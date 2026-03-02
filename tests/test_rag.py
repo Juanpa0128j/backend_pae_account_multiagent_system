@@ -21,7 +21,6 @@ import pytest
 from app.core.vectordb import ChromaVectorDB, empresa_collection_name
 from app.services.rag_service import RAGResult, RAGService
 
-
 # ─── Test embedding: deterministic, no API calls ──────────────────────────────
 
 
@@ -48,6 +47,7 @@ def _fake_embed_query(text: str) -> list[float]:
 
 
 # ─── Fixture: in-memory ChromaVectorDB ───────────────────────────────────────
+
 
 @pytest.fixture
 def in_memory_vectordb(tmp_path) -> ChromaVectorDB:
@@ -76,6 +76,7 @@ def rag(in_memory_vectordb: ChromaVectorDB) -> RAGService:
 
 
 # ─── ChromaVectorDB unit tests ────────────────────────────────────────────────
+
 
 class TestChromaVectorDB:
     def test_get_normativa_collection_creates_collection(self, in_memory_vectordb):
@@ -131,6 +132,7 @@ class TestChromaVectorDB:
 
 # ─── RAGService unit tests ────────────────────────────────────────────────────
 
+
 class TestRAGServiceNormativo:
     def _seed_normativa(self, rag: RAGService, docs: list[dict[str, Any]]) -> None:
         """Insert test documents into the normativa collection."""
@@ -147,24 +149,45 @@ class TestRAGServiceNormativo:
             )
 
     def test_search_returns_list(self, rag: RAGService):
-        self._seed_normativa(rag, [
-            {"id": "puc_2365", "text": "Retención en la fuente cuenta 2365", "meta": {"tipo": "puc"}},
-        ])
+        self._seed_normativa(
+            rag,
+            [
+                {
+                    "id": "puc_2365",
+                    "text": "Retención en la fuente cuenta 2365",
+                    "meta": {"tipo": "puc"},
+                },
+            ],
+        )
         results = rag.search_normativo("retención honorarios", n_results=1)
         assert isinstance(results, list)
 
     def test_search_returns_rag_result_instances(self, rag: RAGService):
-        self._seed_normativa(rag, [
-            {"id": "et_art_392", "text": "Honorarios 11% retención Art. 392", "meta": {"tipo": "normativa"}},
-        ])
+        self._seed_normativa(
+            rag,
+            [
+                {
+                    "id": "et_art_392",
+                    "text": "Honorarios 11% retención Art. 392",
+                    "meta": {"tipo": "normativa"},
+                },
+            ],
+        )
         results = rag.search_normativo("honorarios consultoría", n_results=1)
         assert len(results) == 1
         assert isinstance(results[0], RAGResult)
 
     def test_search_result_has_required_fields(self, rag: RAGService):
-        self._seed_normativa(rag, [
-            {"id": "iva_468", "text": "IVA tarifa general 19% Art. 468", "meta": {"articulo": "Art. 468"}},
-        ])
+        self._seed_normativa(
+            rag,
+            [
+                {
+                    "id": "iva_468",
+                    "text": "IVA tarifa general 19% Art. 468",
+                    "meta": {"articulo": "Art. 468"},
+                },
+            ],
+        )
         result = rag.search_normativo("IVA ventas", n_results=1)[0]
         assert result.doc_id
         assert result.content
@@ -177,18 +200,28 @@ class TestRAGServiceNormativo:
         assert results == []
 
     def test_n_results_clamped_to_collection_size(self, rag: RAGService):
-        self._seed_normativa(rag, [
-            {"id": "doc_1", "text": "Caja cuenta 1105", "meta": {}},
-            {"id": "doc_2", "text": "Bancos cuenta 1110", "meta": {}},
-        ])
+        self._seed_normativa(
+            rag,
+            [
+                {"id": "doc_1", "text": "Caja cuenta 1105", "meta": {}},
+                {"id": "doc_2", "text": "Bancos cuenta 1110", "meta": {}},
+            ],
+        )
         # Ask for 10 but only 2 exist
         results = rag.search_normativo("activos disponibles", n_results=10)
         assert len(results) <= 2
 
     def test_score_is_between_zero_and_one(self, rag: RAGService):
-        self._seed_normativa(rag, [
-            {"id": "score_test", "text": "impuesto de renta personas jurídicas 35%", "meta": {}},
-        ])
+        self._seed_normativa(
+            rag,
+            [
+                {
+                    "id": "score_test",
+                    "text": "impuesto de renta personas jurídicas 35%",
+                    "meta": {},
+                },
+            ],
+        )
         result = rag.search_normativo("tarifa renta sociedades", n_results=1)[0]
         assert 0.0 <= result.score <= 1.0
 
@@ -217,7 +250,9 @@ class TestRAGServiceHistorico:
         assert results_b == []
 
     def test_search_historico_no_query_returns_docs(self, rag: RAGService):
-        rag.add_empresa_doc(nit=self.NIT, text="Comprobante de egreso pago nómina enero")
+        rag.add_empresa_doc(
+            nit=self.NIT, text="Comprobante de egreso pago nómina enero"
+        )
         results = rag.search_historico(self.NIT, query="", n_results=5)
         assert len(results) >= 1
 
@@ -268,6 +303,7 @@ class TestRAGServiceAddDoc:
 
 
 # ─── RAGResult schema tests ───────────────────────────────────────────────────
+
 
 class TestRAGResultSchema:
     def test_valid_rag_result(self):

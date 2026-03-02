@@ -31,6 +31,7 @@ def empresa_collection_name(nit: str) -> str:
 
 # ─── ChromaVectorDB ───────────────────────────────────────────────────────────
 
+
 class ChromaVectorDB:
     """
     Wrapper around a persistent ChromaDB client.
@@ -97,6 +98,7 @@ class ChromaVectorDB:
 
 
 # ─── Singleton factory ────────────────────────────────────────────────────────
+
 
 @lru_cache(maxsize=1)
 def get_vectordb() -> ChromaVectorDB:

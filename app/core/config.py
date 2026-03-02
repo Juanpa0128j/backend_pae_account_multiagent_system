@@ -4,6 +4,7 @@ All modules should import `get_settings()` instead of reading env vars directly.
 """
 
 from functools import lru_cache
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

@@ -27,10 +27,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import load_dotenv  # noqa: E402 – must come after sys.path patch
+
 load_dotenv(PROJECT_ROOT / ".env")
 
 from app.core.config import get_settings  # noqa: E402
-from app.core.vectordb import get_vectordb, NORMATIVA_COLLECTION  # noqa: E402
+from app.core.vectordb import NORMATIVA_COLLECTION, get_vectordb  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +43,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def load_json(path: Path) -> list[dict]:
     with path.open(encoding="utf-8") as fh:
@@ -134,6 +136,7 @@ def upsert_batch(
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Populate the normativa ChromaDB collection."
@@ -147,9 +150,7 @@ def main() -> None:
 
     settings = get_settings()
     if not settings.gemini_api_key:
-        logger.error(
-            "GEMINI_API_KEY is not set. Add it to your .env file and retry."
-        )
+        logger.error("GEMINI_API_KEY is not set. Add it to your .env file and retry.")
         sys.exit(1)
 
     logger.info("Connecting to ChromaDB at '%s' …", settings.chroma_persist_path)
@@ -159,8 +160,7 @@ def main() -> None:
     existing = collection.count()
     if existing > 0 and not args.force:
         logger.info(
-            "Collection '%s' already has %d documents. "
-            "Use --force to re-index.",
+            "Collection '%s' already has %d documents. Use --force to re-index.",
             NORMATIVA_COLLECTION,
             existing,
         )

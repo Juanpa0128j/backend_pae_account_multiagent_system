@@ -4,10 +4,10 @@ and RAG collection status.
 """
 
 import logging
+from typing import Any, Dict
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from typing import Any, Dict
 
 from app.services.validation_engine import get_validator
 
@@ -21,6 +21,7 @@ router = APIRouter()
 # Response schemas
 # ---------------------------------------------------------------------------
 
+
 class AgentDetail(BaseModel):
     passed: int = 0
     failed: int = 0
@@ -30,20 +31,18 @@ class AgentDetail(BaseModel):
 
 class SchemaComplianceMetrics(BaseModel):
     """Full metrics report for schema validation."""
+
     overall_compliance_rate: float = Field(
-        ..., ge=0, le=1,
-        description="Overall Schema Compliance Rate (0.0 – 1.0)"
+        ..., ge=0, le=1, description="Overall Schema Compliance Rate (0.0 – 1.0)"
     )
     per_agent_compliance_rate: Dict[str, float] = Field(
-        default_factory=dict,
-        description="Compliance rate per agent"
+        default_factory=dict, description="Compliance rate per agent"
     )
     total_validations: int = 0
     total_passed: int = 0
     total_failed: int = 0
     per_agent_detail: Dict[str, AgentDetail] = Field(
-        default_factory=dict,
-        description="Detailed pass/fail per agent"
+        default_factory=dict, description="Detailed pass/fail per agent"
     )
 
 
@@ -55,6 +54,7 @@ class EvaluationResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/run", response_model=EvaluationResponse)
 async def run_evaluation():
@@ -76,8 +76,7 @@ async def schema_compliance():
         total_passed=raw["total_passed"],
         total_failed=raw["total_failed"],
         per_agent_detail={
-            k: AgentDetail(**v)
-            for k, v in raw["per_agent_detail"].items()
+            k: AgentDetail(**v) for k, v in raw["per_agent_detail"].items()
         },
     )
 
@@ -94,13 +93,16 @@ async def reset_metrics():
 # RAG status
 # ---------------------------------------------------------------------------
 
+
 class CollectionStatus(BaseModel):
     name: str
     document_count: int
 
 
 class RAGStatusResponse(BaseModel):
-    status: str = Field(description="'ready' if normativa is populated, 'empty' otherwise")
+    status: str = Field(
+        description="'ready' if normativa is populated, 'empty' otherwise"
+    )
     normativa_collection: CollectionStatus
     empresa_collections: list[CollectionStatus] = Field(default_factory=list)
     total_collections: int
@@ -119,7 +121,8 @@ async def rag_status():
     _normativa_name = "normativa_colombia_v1"
     try:
         # Lazy import: avoid startup failure if ChromaDB is not installed
-        from app.core.vectordb import get_vectordb, NORMATIVA_COLLECTION
+        from app.core.vectordb import NORMATIVA_COLLECTION, get_vectordb
+
         _normativa_name = NORMATIVA_COLLECTION
         db = get_vectordb()
 

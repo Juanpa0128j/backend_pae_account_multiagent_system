@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Result schema ────────────────────────────────────────────────────────────
 
+
 class RAGResult(BaseModel):
     """A single retrieval result returned by the RAG service."""
 
@@ -33,15 +34,17 @@ class RAGResult(BaseModel):
     content: str = Field(description="Text content of the retrieved chunk")
     metadata: dict[str, Any] = Field(
         default_factory=dict,
-        description="Metadata associated with the chunk (source, articulo, tags, …)"
+        description="Metadata associated with the chunk (source, articulo, tags, …)",
     )
     score: float = Field(
-        ge=0.0, le=1.0,
-        description="Cosine similarity score (0 = unrelated, 1 = identical)"
+        ge=0.0,
+        le=1.0,
+        description="Cosine similarity score (0 = unrelated, 1 = identical)",
     )
 
 
 # ─── RAGService ───────────────────────────────────────────────────────────────
+
 
 class RAGService:
     """
@@ -222,6 +225,7 @@ class RAGService:
 
 
 # ─── Singleton factory ────────────────────────────────────────────────────────
+
 
 @lru_cache(maxsize=1)
 def get_rag_service() -> RAGService:
