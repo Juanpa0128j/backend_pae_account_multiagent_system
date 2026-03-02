@@ -21,7 +21,8 @@ from app.core.database import SessionLocal
 from app.services import db_service
 from app.models.database import (
     IngestStatus,
-
+    TransactionStatus,
+    ProcessStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,9 +43,6 @@ def _safe_datetime(value) -> Optional[datetime]:
     if value is None:
         return None
     if isinstance(value, datetime):
-        # Normalize naive datetimes to UTC to match timezone-aware DB columns.
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
         return value
     for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y", "%d-%m-%Y"):
         try:
@@ -95,13 +93,11 @@ def db_persist_node(state: AgentState) -> AgentState:
                 db_service.update_ingest_job(
                     db, ingest_id, IngestStatus.PROCESSING,
                     raw_preview=_build_preview(interpreted),
-                    commit=False,
                 )
         else:
             file_name = state.get("file_path", "unknown.pdf").split("/")[-1]
             ingest_job = db_service.create_ingest_job(
-                db, file_name, state.get("file_path"),
-                commit=True,  # Commit immediately so the job record persists even if the pipeline rolls back
+                db, file_name, state.get("file_path")
             )
             ingest_id = ingest_job.id
             state["ingest_id"] = ingest_id
@@ -124,7 +120,6 @@ def db_persist_node(state: AgentState) -> AgentState:
             descripcion=descripcion,
             items=items if isinstance(items, list) else [],
             raw_data=interpreted,
-            commit=False,
         )
         logger.info(f"db_persist: Created TransactionPending {txn_pending.id}")
 
@@ -182,24 +177,19 @@ def db_persist_node(state: AgentState) -> AgentState:
             journal_entries_json=journal_json,
             tax_references=interpreted.get("referencias_legales", []),
             agent_reasoning=interpreted.get("agent_reasoning"),
-            commit=False,
         )
         logger.info(f"db_persist: Created TransactionPosted {txn_posted.id}")
 
         # ── 5. Create normalized JournalEntryLines ──
         lines = db_service.create_journal_entry_lines(
-            db, txn_posted.id, journal_json,
-            commit=False,
+            db, txn_posted.id, journal_json
         )
         logger.info(f"db_persist: Created {len(lines)} journal entry lines")
 
         # ── 6. Mark IngestJob as completed ──
-        db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED, commit=False)
+        db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
 
-        # ── 7. Commit the entire pipeline atomically ──
-        db.commit()
-
-        # ── 8. Enrich state result ──
+        # ── 7. Enrich state result ──
         state["db_result"] = {
             "ingest_id": ingest_id,
             "transaction_pending_id": txn_pending.id,
@@ -219,10 +209,9 @@ def db_persist_node(state: AgentState) -> AgentState:
         logger.info(f"db_persist: Successfully persisted all data for ingest {ingest_id}")
 
     except Exception as e:
-        db.rollback()
         logger.error(f"db_persist: Error persisting data: {e}", exc_info=True)
         state["error"] = f"DB persist error: {str(e)}"
-        # Try to mark ingest as failed (uses its own commit so it persists independently)
+        # Try to mark ingest as failed
         if ingest_id:
             try:
                 db_service.update_ingest_job(
