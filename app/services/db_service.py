@@ -63,10 +63,10 @@ def create_ingest_job(
         status=IngestStatus.PENDING_PROCESSING,
     )
     db.add(job)
+    # Stage audit log before the single commit/flush so job + log are atomic
+    create_audit_log(db, "ingest_created", job.id, "ingest", {"file_name": file_name}, commit=False)
     _commit_or_flush(db, commit)
     db.refresh(job)
-
-    create_audit_log(db, "ingest_created", job.id, "ingest", {"file_name": file_name}, commit=commit)
     logger.info(f"Created IngestJob: {job.id}")
     return job
 
@@ -130,13 +130,13 @@ def create_transaction_pending(
         status=TransactionStatus.PENDING,
     )
     db.add(txn)
-    _commit_or_flush(db, commit)
-    db.refresh(txn)
-
+    # Stage audit log before the single commit/flush so txn + log are atomic
     create_audit_log(db, "transaction_pending_created", txn.id, "transaction", {
         "ingest_id": ingest_id,
         "total": str(total) if total else None,
-    }, commit=commit)
+    }, commit=False)
+    _commit_or_flush(db, commit)
+    db.refresh(txn)
     return txn
 
 
@@ -224,13 +224,13 @@ def create_transaction_posted(
     if pending:
         pending.status = TransactionStatus.POSTED
 
-    _commit_or_flush(db, commit)
-    db.refresh(posted)
-
+    # Stage audit log before the single commit/flush so posted + log are atomic
     create_audit_log(db, "transaction_posted", posted.id, "transaction", {
         "cuenta_puc": cuenta_puc,
         "pending_id": transaction_pending_id,
-    }, commit=commit)
+    }, commit=False)
+    _commit_or_flush(db, commit)
+    db.refresh(posted)
     return posted
 
 

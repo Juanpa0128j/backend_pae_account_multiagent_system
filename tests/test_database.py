@@ -416,6 +416,46 @@ class TestAccountingBooks:
         assert "pasivos" in balance
         assert "patrimonio" in balance
         assert "cuadre" in balance
+        # The fixture entries balance perfectly (Activos = Pasivos + Patrimonio + Utilidad)
+        assert balance["cuadre"] is True
+
+    def test_balance_general_unbalanced(self, db, sample_puc):
+        """cuadre is False when journal entries do not balance across account classes."""
+        job = db_service.create_ingest_job(db, "unbalanced_test.pdf")
+        txn = db_service.create_transaction_pending(
+            db, ingest_id=job.id,
+            fecha=datetime(2025, 5, 1, tzinfo=timezone.utc),
+            total=Decimal("1000000"),
+        )
+        posted = db_service.create_transaction_posted(
+            db, transaction_pending_id=txn.id, cuenta_puc="110505",
+        )
+
+        # Intentionally unbalanced: debit clase 1 (activos) with no matching credit in clase 2/3
+        entries = [
+            {
+                "fecha": datetime(2025, 5, 1, tzinfo=timezone.utc),
+                "cuenta": "110505",  # clase 1 — activos (debit-nature)
+                "descripcion": "Caja General",
+                "debito": "1000000",
+                "credito": "0",
+            },
+            {
+                "fecha": datetime(2025, 5, 1, tzinfo=timezone.utc),
+                "cuenta": "519595",  # clase 5 — gastos (debit-nature)
+                "descripcion": "Gastos Diversos",
+                "debito": "500000",
+                "credito": "0",
+            },
+        ]
+        db_service.create_journal_entry_lines(db, posted.id, entries)
+
+        balance = db_service.get_balance_general(
+            db, fecha_corte=datetime(2025, 12, 31, tzinfo=timezone.utc),
+        )
+        # activos=1_000_000, pasivos=0, patrimonio=0, utilidad_neta=-500_000
+        # 1_000_000 != 0 + 0 + (-500_000) → cuadre must be False
+        assert balance["cuadre"] is False
 
 
 # ─── Test Duplicate Detection ────────────────────────────────────
@@ -497,3 +537,66 @@ class TestTercero:
         t2 = db_service.get_or_create_tercero(db, "555666777", "Otro Nombre")
         assert t2.id == t1.id  # Same record
         assert t2.razon_social == "Empresa Nueva"  # Original name kept
+
+
+# ─── Test Atomic Persistence ──────────────────────────────────────
+
+class TestAtomicPersistence:
+    """Test that commit=False helpers participate in the caller's transaction."""
+
+    def test_rollback_undoes_all_partial_writes(self, db):
+        """
+        When service helpers are called with commit=False and the transaction
+        is rolled back, no partial rows (IngestJob, TransactionPending, or
+        AuditLog) should remain in the database.
+        """
+        job = db_service.create_ingest_job(db, "atomic_rollback.pdf", commit=False)
+        job_id = job.id
+        txn = db_service.create_transaction_pending(
+            db,
+            ingest_id=job_id,
+            total=Decimal("750000"),
+            commit=False,
+        )
+        txn_id = txn.id
+
+        # Simulate a failure before committing
+        db.rollback()
+
+        # All staged writes must be gone
+        assert db_service.get_ingest_job(db, job_id) is None
+        assert db.query(TransactionPending).filter(
+            TransactionPending.id == txn_id
+        ).first() is None
+        # Audit logs for these entities must also be rolled back
+        assert db.query(AuditLog).filter(
+            AuditLog.entity_id == job_id
+        ).count() == 0
+
+    def test_commit_false_followed_by_explicit_commit_persists_all(self, db):
+        """
+        When service helpers are called with commit=False and the caller
+        issues a single db.commit(), all writes persist atomically.
+        """
+        job = db_service.create_ingest_job(db, "atomic_commit.pdf", commit=False)
+        job_id = job.id
+        txn = db_service.create_transaction_pending(
+            db,
+            ingest_id=job_id,
+            total=Decimal("250000"),
+            commit=False,
+        )
+        txn_id = txn.id
+
+        # Caller commits everything in one shot
+        db.commit()
+
+        assert db_service.get_ingest_job(db, job_id) is not None
+        assert db.query(TransactionPending).filter(
+            TransactionPending.id == txn_id
+        ).first() is not None
+        # Audit logs must also be present
+        assert db.query(AuditLog).filter(
+            AuditLog.entity_id == job_id,
+            AuditLog.action == "ingest_created",
+        ).count() >= 1

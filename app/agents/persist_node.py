@@ -101,7 +101,7 @@ def db_persist_node(state: AgentState) -> AgentState:
             file_name = state.get("file_path", "unknown.pdf").split("/")[-1]
             ingest_job = db_service.create_ingest_job(
                 db, file_name, state.get("file_path"),
-                commit=False,
+                commit=True,  # Commit immediately so the job record persists even if the pipeline rolls back
             )
             ingest_id = ingest_job.id
             state["ingest_id"] = ingest_id
