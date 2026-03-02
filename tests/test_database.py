@@ -210,6 +210,14 @@ class TestOrmModels:
 class TestDbService:
     """Test the db_service repository functions."""
 
+    def test_create_process_job(self, db):
+        """create_process_job returns a ProcessJob with correct id prefix and status."""
+        job = db_service.create_ingest_job(db, "proc_test.pdf")
+        proc = db_service.create_process_job(db, job.id)
+        assert proc.id.startswith("proc_")
+        assert proc.status == ProcessStatus.QUEUED
+        assert proc.ingest_id == job.id
+
     def test_create_and_get_ingest_job(self, db):
         job = db_service.create_ingest_job(db, "test_service.pdf", "/tmp/test_service.pdf")
         assert job.id.startswith("ing_")
@@ -521,6 +529,30 @@ class TestAuditLog:
         ).all()
         assert len(logs) >= 1
         assert logs[0].entity_type == "ingest"
+
+    def test_audit_log_created_on_process_job(self, db):
+        """Creating a process job should atomically create an audit log entry."""
+        ingest = db_service.create_ingest_job(db, "proc_audit_test.pdf")
+        proc = db_service.create_process_job(db, ingest.id)
+
+        logs = db.query(AuditLog).filter(
+            AuditLog.entity_id == proc.id,
+            AuditLog.action == "process_created",
+        ).all()
+        assert len(logs) == 1
+        assert logs[0].entity_type == "process"
+        assert logs[0].details["ingest_id"] == ingest.id
+
+    def test_process_job_commit_false_rollback(self, db):
+        """When commit=False, rolling back removes both the ProcessJob and its audit log."""
+        ingest = db_service.create_ingest_job(db, "proc_rollback_test.pdf")
+        proc = db_service.create_process_job(db, ingest.id, commit=False)
+        proc_id = proc.id
+
+        db.rollback()
+
+        assert db.query(ProcessJob).filter(ProcessJob.id == proc_id).first() is None
+        assert db.query(AuditLog).filter(AuditLog.entity_id == proc_id).count() == 0
 
 
 # ─── Test Tercero ────────────────────────────────────────────────

@@ -173,13 +173,13 @@ def get_transactions_by_nit(db: Session, nit: str, limit: int = 10) -> List[Tran
 
 
 def update_transaction_status(
-    db: Session, txn_id: str, status: TransactionStatus
+    db: Session, txn_id: str, status: TransactionStatus, commit: bool = True
 ) -> Optional[TransactionPending]:
     """Update a pending transaction's status."""
     txn = db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
     if txn:
         txn.status = status
-        db.commit()
+        _commit_or_flush(db, commit)
         db.refresh(txn)
     return txn
 
@@ -477,7 +477,7 @@ def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC
 
 # ─── ProcessJob ──────────────────────────────────────────────────
 
-def create_process_job(db: Session, ingest_id: str) -> ProcessJob:
+def create_process_job(db: Session, ingest_id: str, commit: bool = True) -> ProcessJob:
     """Create a new processing job."""
     job = ProcessJob(
         id=_generate_id("proc_"),
@@ -486,10 +486,17 @@ def create_process_job(db: Session, ingest_id: str) -> ProcessJob:
         agent_log=[],
     )
     db.add(job)
-    db.commit()
+    # Stage audit log before the single commit/flush so job + log are atomic
+    create_audit_log(
+        db,
+        "process_created",
+        job.id,
+        "process",
+        {"ingest_id": ingest_id},
+        commit=False,
+    )
+    _commit_or_flush(db, commit)
     db.refresh(job)
-
-    create_audit_log(db, "process_created", job.id, "process", {"ingest_id": ingest_id})
     return job
 
 
@@ -567,6 +574,7 @@ def get_or_create_tercero(
     nit: str,
     razon_social: str = "Desconocido",
     tipo: str = "proveedor",
+    commit: bool = True,
 ) -> Tercero:
     """Get existing tercero by NIT or create a new one."""
     tercero = db.query(Tercero).filter(Tercero.nit == nit).first()
@@ -578,6 +586,6 @@ def get_or_create_tercero(
             tipo=TerceroTipo(tipo),
         )
         db.add(tercero)
-        db.commit()
+        _commit_or_flush(db, commit)
         db.refresh(tercero)
     return tercero
