@@ -38,9 +38,23 @@ def _generate_id(prefix: str = "") -> str:
     return f"{prefix}{ts}_{short_uuid}" if prefix else f"{ts}_{short_uuid}"
 
 
+def _commit_or_flush(db: Session, commit: bool) -> None:
+    """Commit the transaction or flush pending changes without committing.
+
+    Pass ``commit=False`` when the caller manages the transaction boundary
+    itself (e.g. db_persist_node wraps the whole pipeline in one transaction).
+    """
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+
+
 # ─── IngestJob ───────────────────────────────────────────────────
 
-def create_ingest_job(db: Session, file_name: str, file_path: str = None) -> IngestJob:
+def create_ingest_job(
+    db: Session, file_name: str, file_path: str = None, commit: bool = True
+) -> IngestJob:
     """Create a new ingest job for a document upload."""
     job = IngestJob(
         id=_generate_id("ing_"),
@@ -49,10 +63,10 @@ def create_ingest_job(db: Session, file_name: str, file_path: str = None) -> Ing
         status=IngestStatus.PENDING_PROCESSING,
     )
     db.add(job)
-    db.commit()
+    # Stage audit log before the single commit/flush so job + log are atomic
+    create_audit_log(db, "ingest_created", job.id, "ingest", {"file_name": file_name}, commit=False)
+    _commit_or_flush(db, commit)
     db.refresh(job)
-
-    create_audit_log(db, "ingest_created", job.id, "ingest", {"file_name": file_name})
     logger.info(f"Created IngestJob: {job.id}")
     return job
 
@@ -63,6 +77,7 @@ def update_ingest_job(
     status: IngestStatus,
     raw_preview: Dict = None,
     extraction_errors: List[str] = None,
+    commit: bool = True,
 ) -> Optional[IngestJob]:
     """Update an ingest job's status and preview data."""
     job = db.query(IngestJob).filter(IngestJob.id == ingest_id).first()
@@ -77,7 +92,7 @@ def update_ingest_job(
     if status in (IngestStatus.COMPLETED, IngestStatus.FAILED):
         job.completed_at = datetime.now(timezone.utc)
 
-    db.commit()
+    _commit_or_flush(db, commit)
     db.refresh(job)
     return job
 
@@ -99,6 +114,7 @@ def create_transaction_pending(
     descripcion: str = None,
     items: List[Dict] = None,
     raw_data: Dict = None,
+    commit: bool = True,
 ) -> TransactionPending:
     """Create a pending transaction from extracted data."""
     txn = TransactionPending(
@@ -114,13 +130,13 @@ def create_transaction_pending(
         status=TransactionStatus.PENDING,
     )
     db.add(txn)
-    db.commit()
-    db.refresh(txn)
-
+    # Stage audit log before the single commit/flush so txn + log are atomic
     create_audit_log(db, "transaction_pending_created", txn.id, "transaction", {
         "ingest_id": ingest_id,
         "total": str(total) if total else None,
-    })
+    }, commit=False)
+    _commit_or_flush(db, commit)
+    db.refresh(txn)
     return txn
 
 
@@ -182,6 +198,7 @@ def create_transaction_posted(
     journal_entries_json: List[Dict] = None,
     tax_references: List[str] = None,
     agent_reasoning: Dict = None,
+    commit: bool = True,
 ) -> TransactionPosted:
     """Create a fully processed posted transaction."""
     posted = TransactionPosted(
@@ -207,13 +224,13 @@ def create_transaction_posted(
     if pending:
         pending.status = TransactionStatus.POSTED
 
-    db.commit()
-    db.refresh(posted)
-
+    # Stage audit log before the single commit/flush so posted + log are atomic
     create_audit_log(db, "transaction_posted", posted.id, "transaction", {
         "cuenta_puc": cuenta_puc,
         "pending_id": transaction_pending_id,
-    })
+    }, commit=False)
+    _commit_or_flush(db, commit)
+    db.refresh(posted)
     return posted
 
 
@@ -241,6 +258,7 @@ def create_journal_entry_lines(
     db: Session,
     transaction_posted_id: str,
     entries: List[Dict[str, Any]],
+    commit: bool = True,
 ) -> List[JournalEntryLine]:
     """Create normalized journal entry lines for a posted transaction."""
     lines = []
@@ -259,7 +277,7 @@ def create_journal_entry_lines(
         lines.append(line)
 
     db.add_all(lines)
-    db.commit()
+    _commit_or_flush(db, commit)
 
     for line in lines:
         db.refresh(line)
@@ -375,7 +393,7 @@ def get_balance_general(db: Session, fecha_corte: datetime = None) -> Dict:
         "costos": float(totals[6]),
         "utilidad_neta": float(utilidad_neta),
         "patrimonio_total": float(totals[3] + utilidad_neta),
-        "cuadre": float(totals[1]) == float(totals[2] + totals[3] + utilidad_neta),
+        "cuadre": totals[1] == totals[2] + totals[3] + utilidad_neta,
     }
 
 
@@ -528,6 +546,7 @@ def create_audit_log(
     entity_id: str = None,
     entity_type: str = None,
     details: Dict = None,
+    commit: bool = True,
 ) -> AuditLog:
     """Create an immutable audit log entry."""
     log = AuditLog(
@@ -537,7 +556,7 @@ def create_audit_log(
         details=details,
     )
     db.add(log)
-    db.commit()
+    _commit_or_flush(db, commit)
     return log
 
 
