@@ -4,16 +4,15 @@ Handles communication with Google's Gemini 2.5 Flash model via LangChain.
 Uses structured output to ensure JSON schema compliance.
 """
 
-import os
 import logging
+from functools import lru_cache
 from typing import Optional, Literal
+
 from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +34,20 @@ class ReceiptData(BaseModel):
 class GeminiClient:
     """Wrapper for Google Generative AI (Gemini) API using LangChain with structured output."""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """
         Initialize Gemini client via LangChain with structured output.
         
         Args:
-            api_key: Google AI API key. If None, reads from GOOGLE_API_KEY env var.
-            model: Model name to use (default: gemini-2.5-flash for free tier)
+            api_key: Google AI API key. If None, reads from settings.
+            model: Model name to use. If None, reads from settings.
         """
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        self.model_name = model
+        settings = get_settings()
+        self.api_key = api_key or settings.gemini_api_key
+        self.model_name = model or settings.gemini_model
         
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY not set and not provided")
+            raise ValueError("GEMINI_API_KEY not set and not provided")
         
         # Create base model with structured output capability
         self.model = ChatGoogleGenerativeAI(
@@ -99,7 +99,7 @@ Corrige los errores indicados y vuelve a extraer la información."""
             
             # Response is already a ReceiptData object, convert to dict
             data = response.model_dump()
-            logger.info(f"Extracted receipt data: {data}")
+            logger.debug("Extracted receipt data: %s", data)
             return data
             
         except ValueError as e:
@@ -110,6 +110,7 @@ Corrige los errores indicados y vuelve a extraer la información."""
             raise
 
 
+@lru_cache(maxsize=1)
 def get_gemini_client() -> GeminiClient:
-    """Factory function to get/create Gemini client."""
+    """Return the singleton GeminiClient instance (cached after first call)."""
     return GeminiClient()

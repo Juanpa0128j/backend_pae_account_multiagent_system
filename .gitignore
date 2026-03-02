@@ -33,3 +33,4 @@ MANIFEST
 extracted_text.txt
 read_pdfs.py
 temp/
+storage/

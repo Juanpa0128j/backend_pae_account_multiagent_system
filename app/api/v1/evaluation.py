@@ -1,12 +1,17 @@
 """
-Evaluation API – exposes Schema Compliance Rate and other validation metrics.
+Evaluation API – exposes Schema Compliance Rate, validation metrics,
+and RAG collection status.
 """
+
+import logging
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from typing import Any, Dict
 
 from app.services.validation_engine import get_validator
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
@@ -83,3 +88,68 @@ async def reset_metrics():
     validator = get_validator()
     validator.reset_metrics()
     return {"status": "metrics_reset"}
+
+
+# ---------------------------------------------------------------------------
+# RAG status
+# ---------------------------------------------------------------------------
+
+class CollectionStatus(BaseModel):
+    name: str
+    document_count: int
+
+
+class RAGStatusResponse(BaseModel):
+    status: str = Field(description="'ready' if normativa is populated, 'empty' otherwise")
+    normativa_collection: CollectionStatus
+    empresa_collections: list[CollectionStatus] = Field(default_factory=list)
+    total_collections: int
+
+
+@router.get("/rag-status", response_model=RAGStatusResponse)
+async def rag_status():
+    """
+    Return the status of all ChromaDB vector collections.
+
+    Use this endpoint to verify that the normativa collection has been
+    seeded before processing transactions. An empty normativa collection
+    means `python scripts/populate_rag.py` has not been run yet.
+    """
+    try:
+        # Lazy import: avoid startup failure if ChromaDB is not installed
+        from app.core.vectordb import get_vectordb, NORMATIVA_COLLECTION
+        db = get_vectordb()
+
+        normativa_count = db.collection_count(NORMATIVA_COLLECTION)
+        normativa_col = CollectionStatus(
+            name=NORMATIVA_COLLECTION,
+            document_count=normativa_count,
+        )
+
+        all_collections = db.list_collections()
+        empresa_cols = [
+            CollectionStatus(
+                name=name,
+                document_count=db.collection_count(name),
+            )
+            for name in all_collections
+            if name != NORMATIVA_COLLECTION
+        ]
+
+        status = "ready" if normativa_count > 0 else "empty"
+        return RAGStatusResponse(
+            status=status,
+            normativa_collection=normativa_col,
+            empresa_collections=empresa_cols,
+            total_collections=len(all_collections),
+        )
+    except Exception as exc:
+        logger.warning("Could not connect to ChromaDB: %s", exc)
+        return RAGStatusResponse(
+            status="unavailable",
+            normativa_collection=CollectionStatus(
+                name=NORMATIVA_COLLECTION, document_count=0
+            ),
+            empresa_collections=[],
+            total_collections=0,
+        )

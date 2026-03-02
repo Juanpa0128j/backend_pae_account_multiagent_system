@@ -1,0 +1,122 @@
+[
+  {
+    "id": "ET_ART_383",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 383",
+    "titulo": "Tarifa de Retención en la Fuente sobre Salarios",
+    "contenido": "La retención en la fuente aplicable a los pagos gravables efectuados por las personas naturales o jurídicas, las sociedades de hecho, las comunidades organizadas y las sucesiones ilíquidas, originados en la relación laboral, o legal y reglamentaria, y los pagos recibidos por concepto de pensiones de jubilación, invalidez, vejez, de sobrevivientes y sobre riesgos laborales se efectuará de conformidad con la tabla de retención en la fuente establecida en el presente artículo. La base del cálculo se determina así: al salario mensual se resta el UVT mensual equivalente (87 UVT mensuales para 2025). Sobre la base depurada se aplica la tabla marginal de tasas: hasta 95 UVT: 0%, de 95 a 150 UVT: 19%, de 150 a 360 UVT: 28%, de 360 a 640 UVT: 33%, de 640 a 945 UVT: 35%, de 945 a 2300 UVT: 37%, más de 2300 UVT: 39%.",
+    "tags": ["retefuente", "salarios", "empleados", "nomina", "retención", "impuesto_renta"]
+  },
+  {
+    "id": "ET_ART_392",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 392",
+    "titulo": "Retención en la Fuente sobre Honorarios, Comisiones y Servicios",
+    "contenido": "Los pagos o abonos en cuenta por concepto de honorarios, comisiones y servicios están sujetos a las siguientes tarifas de retención en la fuente: Honorarios y comisiones: cuando el beneficiario es una persona natural declarante de renta: 11%. Cuando el beneficiario es persona natural no declarante: 10%. Cuando el beneficiario es una persona jurídica: 11%. Servicios en general: 4% sobre el pago. Servicios de transporte nacional: 3.5%. Servicios de transporte internacional: 3.5%. Servicios de restaurante, hotel y hospedaje: 3.5%. Arrendamiento de bienes distintos de inmuebles: 4%.",
+    "tags": ["retefuente", "honorarios", "comisiones", "servicios", "personas_naturales", "personas_juridicas"]
+  },
+  {
+    "id": "ET_ART_401",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 401",
+    "titulo": "Retención en la Fuente sobre Arrendamientos",
+    "contenido": "Los pagos o abonos en cuenta por concepto de arrendamiento de bienes raíces están sometidos a retención en la fuente a la tarifa del 3.5% cuando el beneficiario es una persona jurídica o persona natural declarante de renta. Para personas naturales no declarantes la tarifa es del 3.5%. El arrendamiento de bienes muebles distintos de inmuebles tiene tarifa del 4%. La base de retención es el valor del canon mensual de arriendo sin incluir IVA.",
+    "tags": ["retefuente", "arrendamiento", "bienes_raices", "alquiler", "canon"]
+  },
+  {
+    "id": "ET_ART_468",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 468",
+    "titulo": "Tarifa General del IVA",
+    "contenido": "La tarifa general del Impuesto sobre las Ventas es del 19%. Esta tarifa aplica a todos los bienes y servicios gravados que no tengan una tarifa diferencial expresamente señalada en la ley. IVA generado: se registra en la cuenta 2408 cuando la empresa vende bienes o presta servicios gravados. IVA descontable: se registra en la cuenta 1370 cuando la empresa compra bienes o servicios gravados para su operación. La declaración de IVA es bimestral para grandes contribuyentes y cuatrimestral para el régimen ordinario.",
+    "tags": ["IVA", "impuesto_ventas", "tarifa_general", "19%", "ventas", "compras"]
+  },
+  {
+    "id": "ET_ART_468_1",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 468-1",
+    "titulo": "Bienes Gravados con Tarifa Diferencial del 5%",
+    "contenido": "Están gravados con la tarifa diferencial del 5% del IVA los siguientes bienes: los planes de medicina prepagada y complementarios, las pólizas de seguros de vida y las primas de reaseguros, los vehículos automotores de transporte público de pasajeros, los computadores personales de escritorio o portátiles cuyo valor no exceda de 50 UVT, los teléfonos celulares cuyo valor no exceda de 22 UVT, entre otros bienes señalados expresamente en el artículo.",
+    "tags": ["IVA", "tarifa_diferencial", "5%", "bienes_especiales"]
+  },
+  {
+    "id": "ET_ART_437",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 437",
+    "titulo": "Responsables del IVA - Régimen Ordinario",
+    "contenido": "Son responsables del IVA y deben declarar y pagar este impuesto: (a) En las ventas de bienes corporales muebles, quien los vende; (b) En los servicios, quien preste el servicio; (c) Los importadores de bienes gravados. Las personas naturales comerciantes y artesanos que sean minoristas o detallistas, los agricultores y ganaderos, que realicen operaciones gravadas, así como quienes presten servicios gravados, deberán inscribirse en el Registro Único Tributario como responsables del régimen simple de tributación cuando sus ingresos brutos en el año anterior sean inferiores a 3.500 UVT.",
+    "tags": ["IVA", "responsables", "regimen_ordinario", "declaracion", "registro"]
+  },
+  {
+    "id": "ET_ART_240",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 240",
+    "titulo": "Tarifa del Impuesto de Renta para Personas Jurídicas",
+    "contenido": "La tarifa general del impuesto sobre la renta aplicable a las sociedades nacionales y sus asimiladas, los establecimientos permanentes de entidades del exterior y las personas jurídicas extranjeras o sin residencia obligadas a presentar declaración anual del impuesto sobre la renta y complementario, es del 35%. Para el año 2026, aplica igualmente la tasa de 35% para la generalidad de personas jurídicas colombianas. Las empresas de economía naranja y las nuevas empresas de tecnología pueden acceder a exenciones específicas durante sus primeros años de operación.",
+    "tags": ["impuesto_renta", "personas_juridicas", "sociedades", "tarifa", "35%", "declaracion"]
+  },
+  {
+    "id": "ET_ART_115",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 115",
+    "titulo": "Deducción de Impuestos Pagados",
+    "contenido": "Es deducible el 100% de los impuestos, tasas y contribuciones, que efectivamente se hayan pagado durante el año o período gravable por parte del contribuyente, que tengan relación de causalidad con la actividad económica del contribuyente, con excepción del impuesto sobre la renta y complementarios. Son deducibles: el impuesto de industria y comercio, el impuesto predial, los impuestos de vehículos vinculados a la actividad, el GMF (4x1000) hasta el 50% de lo pagado.",
+    "tags": ["deduccion", "impuesto_renta", "ICA", "predial", "GMF", "4x1000"]
+  },
+  {
+    "id": "ET_ART_107",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 107",
+    "titulo": "Expensas Necesarias - Requisitos para Deducibilidad",
+    "contenido": "Son deducibles las expensas realizadas durante el año o período gravable en el desarrollo de cualquier actividad productora de renta, siempre que tengan relación de causalidad con las actividades productoras de renta y que sean necesarias y proporcionadas de acuerdo con cada actividad. Los tres requisitos para que un gasto sea deducible son: (1) Relación de causalidad con la actividad generadora de renta, (2) Necesidad del gasto para la actividad, (3) Proporcionalidad del monto respecto a la actividad.",
+    "tags": ["deduccion", "gastos", "expensas_necesarias", "causalidad", "renta"]
+  },
+  {
+    "id": "ET_ART_481",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 481",
+    "titulo": "Bienes Exentos del IVA con Derecho a Devolución",
+    "contenido": "Únicamente conservarán el carácter de bienes y servicios exentos del IVA con derecho a devolución bimestral: (a) Los bienes exportados; (b) Los vendedores de bienes de la canasta familiar básica señalados en el artículo 477; (c) Las materias primas, partes, insumos y bienes terminados utilizados en la producción de los bienes exentos de los literales anteriores.",
+    "tags": ["IVA", "exento", "exportaciones", "devolución", "canasta_familiar"]
+  },
+  {
+    "id": "DECRETO_2420_2015",
+    "fuente": "Decreto 2420 de 2015 - NIIF",
+    "articulo": "Marco NIIF para PYMES - Sección 3",
+    "titulo": "Presentación de Estados Financieros",
+    "contenido": "Los estados financieros completos de una entidad comprenden: (a) un estado de situación financiera (balance general) al final del período; (b) un estado de resultados (P&G) del período; (c) un estado de cambios en el patrimonio del período; (d) un estado de flujos de efectivo del período; y (e) notas, que incluyen un resumen de las políticas contables importantes y otra información explicativa. Los estados financieros deben presentarse por lo menos anualmente. La presentación y clasificación de las partidas en los estados financieros se conservará de un período a otro (principio de consistencia).",
+    "tags": ["NIIF", "estados_financieros", "balance", "PYG", "flujo_caja", "notas"]
+  },
+  {
+    "id": "ET_ART_634",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 634",
+    "titulo": "Intereses de Mora por Deudas Tributarias",
+    "contenido": "Los contribuyentes o responsables de los impuestos administrados por la DIAN, incluidos los agentes de retención, que no cancelen oportunamente los impuestos, anticipos y retenciones a su cargo, deberán liquidar y pagar intereses moratorios. La tasa de interés moratorio es la tasa de usura certificada por la Superintendencia Financiera de Colombia para las modalidades de crédito de consumo, reducida en un 20%. Los intereses se causan desde el vencimiento del término para declarar y pagar hasta la fecha del pago efectivo.",
+    "tags": ["mora", "intereses", "sanciones", "DIAN", "retención", "pago_tardio"]
+  },
+  {
+    "id": "ET_RETEICA",
+    "fuente": "Estatuto Tributario y Acuerdos Municipales",
+    "articulo": "Artículo 33 Ley 14 de 1983 / Varios Acuerdos Municipales",
+    "titulo": "Retención del Impuesto de Industria y Comercio (ReteICA)",
+    "contenido": "El Impuesto de Industria y Comercio (ICA) grava toda actividad comercial, industrial o de servicios ejercida en el territorio municipal. La retención ICA (ReteICA) la practican los grandes contribuyentes del municipio al momento del pago. Las tarifas varían por actividad y municipio. En Medellín: actividades industriales 2‰ a 7‰, comerciales 2‰ a 10‰, servicios 2‰ a 10‰ según CIIU. En Bogotá D.C.: actividades industriales 4‰, comerciales 4‰ a 13.8‰, servicios 4.14‰ a 9.66‰. La base es el valor del pago antes de IVA.",
+    "tags": ["ReteICA", "ICA", "impuesto_municipal", "industria_comercio", "Bogota", "Medellin", "servicios"]
+  },
+  {
+    "id": "PGC_PARTIDA_DOBLE",
+    "fuente": "Principios de Contabilidad Generalmente Aceptados - Colombia",
+    "articulo": "Principio de Partida Doble",
+    "titulo": "Principio de Partida Doble en Contabilidad",
+    "contenido": "El principio de partida doble establece que todo hecho económico afecta como mínimo dos cuentas contables: una en el Débito y otra en el Crédito, por valores iguales. La ecuación fundamental es: Activo = Pasivo + Patrimonio. Reglas de la partida doble: Las cuentas de Activo y Gastos/Costos tienen naturaleza Débito (aumentan al debitar, disminuyen al acreditar). Las cuentas de Pasivo, Patrimonio e Ingresos tienen naturaleza Crédito (aumentan al acreditar, disminuyen al debitar). La suma de todos los débitos siempre debe ser igual a la suma de todos los créditos en un asiento contable.",
+    "tags": ["partida_doble", "debito", "credito", "asiento_contable", "balance", "principio_contable"]
+  },
+  {
+    "id": "PGC_NIF_COLOMBIA",
+    "fuente": "Ley 1314 de 2009 - Convergencia NIIF Colombia",
+    "articulo": "Ley 1314 de 2009",
+    "titulo": "Marco Normativo Contable Colombiano - Grupos NIIF",
+    "contenido": "Colombia adoptó las NIIF mediante la Ley 1314 de 2009 y el Decreto 2420 de 2015 (DUR 2420). Las empresas se clasifican en tres grupos para efectos de la norma contable aplicable: Grupo 1 (NIIF Plenas): entidades de interés público, emisores de valores, entidades con activos superiores a 30.000 SMLV o más de 200 empleados. Grupo 2 (NIIF para PYMES): empresas con activos entre 500 y 30.000 SMLV o más de 10 empleados; no clasificadas en Grupo 1 ni 3. Grupo 3 (Microempresas - SIPLICO): activos inferiores a 500 SMLV y no más de 10 empleados. El Plan Único de Cuentas (PUC) del Decreto 2650 de 1993 sigue vigente como referencia para clasificación de cuentas.",
+    "tags": ["NIIF", "PUC", "grupos_contables", "empresas", "Colombia", "normativa"]
+  }
+]
