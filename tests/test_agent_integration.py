@@ -582,6 +582,38 @@ class TestInvokeAgent:
         assert result.get("ingest_id") is not None
         assert result.get("transaction_id") is not None
 
+    @patch("app.agents.graph.db_persist_node")
+    @patch("app.agents.ingest_agent.extract_text_from_pdf", side_effect=_mock_extract_text)
+    @patch("app.agents.ingest_agent.GeminiClient")
+    def test_invoke_agent_propagates_initial_state(
+        self, MockGeminiCls, mock_pdf, mock_persist, tmp_path
+    ):
+        """initial_state={"ingest_id": ...} must be visible in the db_persist node."""
+        mock_instance = MagicMock()
+        mock_instance.extract_receipt_data.side_effect = _mock_gemini_valid
+        MockGeminiCls.return_value = mock_instance
+
+        dummy_pdf = tmp_path / "invoice_preset.pdf"
+        dummy_pdf.write_bytes(b"%PDF-1.4 dummy")
+
+        # db_persist_node must return a valid state dict for graph.invoke() to finish.
+        mock_persist.side_effect = lambda state: {**state, "result": {**state.get("result", {}), "status": "completed"}}
+
+        invoke_agent(str(dummy_pdf), initial_state={"ingest_id": "preset-id-123"})
+
+        # The state received by db_persist_node should carry the pre-set ingest_id.
+        assert mock_persist.called
+        state_received = mock_persist.call_args[0][0]
+        assert state_received.get("ingest_id") == "preset-id-123"
+
+    def test_invoke_agent_rejects_disallowed_keys(self, tmp_path):
+        """initial_state with core-state keys must raise ValueError immediately."""
+        dummy_pdf = tmp_path / "invoice_bad.pdf"
+        dummy_pdf.write_bytes(b"%PDF-1.4 dummy")
+
+        with pytest.raises(ValueError, match="disallowed keys"):
+            invoke_agent(str(dummy_pdf), initial_state={"retry_count": 5})
+
 
 # ─── TEST: API Endpoint Integration ─────────────────────────────
 
