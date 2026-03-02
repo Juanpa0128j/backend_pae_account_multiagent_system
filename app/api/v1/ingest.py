@@ -56,7 +56,10 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         
         # Invoke the agent (will persist to DB via db_persist node)
         logger.info(f"Invoking agent for: {file.filename}")
-        result = invoke_agent(temp_file_path)
+        result = invoke_agent(
+            temp_file_path,
+            initial_state={"ingest_id": str(ingest_job.id)},
+        )
         
         # Cleanup temp file
         Path(temp_file_path).unlink(missing_ok=True)

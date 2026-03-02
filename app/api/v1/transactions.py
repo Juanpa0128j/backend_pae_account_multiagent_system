@@ -81,7 +81,10 @@ async def search_transactions(
         try:
             txn_status = TransactionStatus(status.lower())
         except ValueError:
-            pass
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status value: {status}",
+            )
 
     txns = db_service.search_transactions(db, nit, fi, ff, txn_status, limit)
     return [

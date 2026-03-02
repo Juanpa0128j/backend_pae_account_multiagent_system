@@ -21,8 +21,7 @@ from app.core.database import SessionLocal
 from app.services import db_service
 from app.models.database import (
     IngestStatus,
-    TransactionStatus,
-    ProcessStatus,
+
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +42,9 @@ def _safe_datetime(value) -> Optional[datetime]:
     if value is None:
         return None
     if isinstance(value, datetime):
+        # Normalize naive datetimes to UTC to match timezone-aware DB columns.
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
         return value
     for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y", "%d-%m-%Y"):
         try:
