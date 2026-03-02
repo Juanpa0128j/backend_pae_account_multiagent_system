@@ -232,7 +232,7 @@ def _build_preview(interpreted: dict) -> dict:
         "nit_emisor": interpreted.get("nit_emisor"),
         "total": str(interpreted.get("total", "")),
         "fecha": str(interpreted.get("fecha", "")),
-        "concepto": interpreted.get("concepto", "")[:100],
+        "concepto": str(interpreted.get("concepto") or "")[:100],
     }
 
 
