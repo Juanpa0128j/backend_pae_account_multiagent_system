@@ -477,7 +477,7 @@ def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC
 
 # ─── ProcessJob ──────────────────────────────────────────────────
 
-def create_process_job(db: Session, ingest_id: str) -> ProcessJob:
+def create_process_job(db: Session, ingest_id: str, commit: bool = True) -> ProcessJob:
     """Create a new processing job."""
     job = ProcessJob(
         id=_generate_id("proc_"),
@@ -486,9 +486,7 @@ def create_process_job(db: Session, ingest_id: str) -> ProcessJob:
         agent_log=[],
     )
     db.add(job)
-    db.flush()
-    db.refresh(job)
-
+    # Stage audit log before the single commit/flush so job + log are atomic
     create_audit_log(
         db,
         "process_created",
@@ -497,7 +495,8 @@ def create_process_job(db: Session, ingest_id: str) -> ProcessJob:
         {"ingest_id": ingest_id},
         commit=False,
     )
-    db.commit()
+    _commit_or_flush(db, commit)
+    db.refresh(job)
     return job
 
 
