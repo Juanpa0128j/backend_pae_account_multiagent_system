@@ -64,6 +64,11 @@ class RAGService:
         """
         Search the normativa collection (PUC + Estatuto Tributario).
 
+        The default ``n_results=5`` is higher than ``search_historico`` (3)
+        because the normativa corpus is larger (~56 documents spanning PUC
+        accounts and Estatuto Tributario articles) and agents typically need
+        broader regulatory context to classify a transaction correctly.
+
         Args:
             query:     Natural-language query, e.g. "retención en la fuente honorarios".
             n_results: Maximum number of results to return.
@@ -103,6 +108,11 @@ class RAGService:
     ) -> list[RAGResult]:
         """
         Search the company-specific document collection for *nit_proveedor*.
+
+        The default ``n_results=3`` is lower than ``search_normativo`` (5)
+        because company-specific collections are typically small (recent
+        invoices/receipts) and the agent only needs a few prior documents
+        for duplicate detection or historical context.
 
         Args:
             nit_proveedor: NIT of the company whose documents to search.

@@ -115,9 +115,12 @@ async def rag_status():
     seeded before processing transactions. An empty normativa collection
     means `python scripts/populate_rag.py` has not been run yet.
     """
+    # Fallback name defined outside try so the except block can always reference it
+    _normativa_name = "normativa_colombia_v1"
     try:
         # Lazy import: avoid startup failure if ChromaDB is not installed
         from app.core.vectordb import get_vectordb, NORMATIVA_COLLECTION
+        _normativa_name = NORMATIVA_COLLECTION
         db = get_vectordb()
 
         normativa_count = db.collection_count(NORMATIVA_COLLECTION)
@@ -148,7 +151,7 @@ async def rag_status():
         return RAGStatusResponse(
             status="unavailable",
             normativa_collection=CollectionStatus(
-                name=NORMATIVA_COLLECTION, document_count=0
+                name=_normativa_name, document_count=0
             ),
             empresa_collections=[],
             total_collections=0,

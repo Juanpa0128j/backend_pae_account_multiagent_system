@@ -24,14 +24,27 @@ from app.services.rag_service import RAGResult, RAGService
 
 # ─── Test embedding: deterministic, no API calls ──────────────────────────────
 
-_RNG = np.random.default_rng(seed=42)
 
 def _fake_embed_texts(texts: list[str]) -> list[list[float]]:
-    """Return reproducible pseudo-random 128-dim embeddings (no API call)."""
-    return [_RNG.random(128).tolist() for _ in texts]
+    """Return reproducible pseudo-random 128-dim embeddings (no API call).
+
+    The embeddings are deterministic per input text, without any shared RNG state
+    across tests.  This avoids test order-dependence while keeping outputs stable.
+    """
+    embeddings: list[list[float]] = []
+    for text in texts:
+        # Derive a per-text seed from its hash; mask to 32 bits for RNG seed.
+        seed = abs(hash(text)) & 0xFFFFFFFF
+        rng = np.random.default_rng(seed=seed)
+        embeddings.append(rng.random(128).tolist())
+    return embeddings
+
 
 def _fake_embed_query(text: str) -> list[float]:
-    return _RNG.random(128).tolist()
+    """Return a deterministic 128-dim embedding for the given query text."""
+    seed = abs(hash(text)) & 0xFFFFFFFF
+    rng = np.random.default_rng(seed=seed)
+    return rng.random(128).tolist()
 
 
 # ─── Fixture: in-memory ChromaVectorDB ───────────────────────────────────────
