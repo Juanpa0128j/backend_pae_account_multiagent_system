@@ -44,7 +44,7 @@ pip install -e ".[dev]"
 O instalar manualmente:
 
 ```bash
-pip install langraph google-generativeai pypdf pydantic python-dotenv
+pip install langraph langchain-google-genai pypdf pydantic python-dotenv
 ```
 
 ### 2. Obtener API Key de Gemini

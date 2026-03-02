@@ -1,0 +1,303 @@
+"""
+SQLAlchemy ORM models for the PAE accounting system.
+
+Tables:
+- Tercero: Business partners (proveedores/clientes)
+- CuentaPUC: Chart of accounts (Plan Único de Cuentas colombiano)
+- IngestJob: Document upload tracking
+- TransactionPending: Raw extracted transactions (PENDING state)
+- TransactionPosted: Fully processed transactions (POSTED state)
+- JournalEntryLine: Normalized journal entries (Libro Diario source)
+- ProcessJob: Async processing job tracking
+- AuditLog: Immutable compliance audit trail
+"""
+
+import enum
+from datetime import datetime, timezone
+
+from sqlalchemy import (
+    Column,
+    String,
+    Numeric,
+    DateTime,
+    Enum,
+    Text,
+    Integer,
+    Boolean,
+    ForeignKey,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
+from app.core.database import Base
+
+
+# ─── Enums ───────────────────────────────────────────────────────
+
+class TransactionStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    POSTED = "posted"
+    REJECTED = "rejected"
+    ERROR = "error"
+
+
+class ProcessStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class IngestStatus(str, enum.Enum):
+    PENDING_PROCESSING = "pending_processing"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class TerceroTipo(str, enum.Enum):
+    PROVEEDOR = "proveedor"
+    CLIENTE = "cliente"
+    AMBOS = "ambos"
+
+
+class NaturalezaCuenta(str, enum.Enum):
+    DEBITO = "debito"
+    CREDITO = "credito"
+
+
+# ─── Models ──────────────────────────────────────────────────────
+
+class Tercero(Base):
+    """Business partner: proveedor, cliente, or both."""
+    __tablename__ = "terceros"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nit = Column(String(20), unique=True, nullable=False, index=True)
+    razon_social = Column(String(255), nullable=False)
+    tipo = Column(Enum(TerceroTipo), default=TerceroTipo.PROVEEDOR)
+    actividad_economica = Column(String(10), nullable=True)
+    direccion = Column(String(255), nullable=True)
+    telefono = Column(String(20), nullable=True)
+    email = Column(String(255), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<Tercero(nit={self.nit}, razon_social={self.razon_social})>"
+
+
+class CuentaPUC(Base):
+    """Plan Único de Cuentas colombiano — chart of accounts."""
+    __tablename__ = "cuentas_puc"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    codigo = Column(String(10), unique=True, nullable=False, index=True)
+    nombre = Column(String(255), nullable=False)
+    clase = Column(Integer, nullable=False, comment="1=Activo,2=Pasivo,3=Patrimonio,4=Ingreso,5=Gasto,6=Costo")
+    grupo = Column(String(4), nullable=True)
+    cuenta = Column(String(6), nullable=True)
+    subcuenta = Column(String(8), nullable=True)
+    naturaleza = Column(Enum(NaturalezaCuenta), nullable=False)
+    descripcion = Column(Text, nullable=True)
+    activa = Column(Boolean, default=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self):
+        return f"<CuentaPUC(codigo={self.codigo}, nombre={self.nombre})>"
+
+
+class IngestJob(Base):
+    """Tracks each document upload and its extraction status."""
+    __tablename__ = "ingest_jobs"
+
+    id = Column(String(50), primary_key=True, index=True)
+    file_name = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=True)
+    status = Column(
+        Enum(IngestStatus),
+        default=IngestStatus.PENDING_PROCESSING,
+        nullable=False,
+    )
+
+    raw_preview = Column(JSONB, nullable=True, comment="Quick preview of extracted data")
+    extraction_errors = Column(JSONB, nullable=True, comment="List of error messages")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    transactions_pending = relationship("TransactionPending", back_populates="ingest_job")
+    process_jobs = relationship("ProcessJob", back_populates="ingest_job")
+
+    def __repr__(self):
+        return f"<IngestJob(id={self.id}, status={self.status})>"
+
+
+class TransactionPending(Base):
+    """Raw transactions extracted from ingested documents."""
+    __tablename__ = "transactions_pending"
+
+    id = Column(String(50), primary_key=True, index=True)
+    ingest_id = Column(String(50), ForeignKey("ingest_jobs.id"), nullable=False, index=True)
+
+    # Core transaction data
+    fecha = Column(DateTime(timezone=True), nullable=True)
+    nit_emisor = Column(String(20), nullable=True, index=True)
+    nit_receptor = Column(String(20), nullable=True, index=True)
+    total = Column(Numeric(15, 2), nullable=True)
+    descripcion = Column(Text, nullable=True)
+
+    # Raw extracted data
+    items = Column(JSONB, nullable=True, comment="Line items from document")
+    raw_data = Column(JSONB, nullable=True, comment="Full Gemini extraction result")
+
+    status = Column(
+        Enum(TransactionStatus),
+        default=TransactionStatus.PENDING,
+        nullable=False,
+    )
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    ingest_job = relationship("IngestJob", back_populates="transactions_pending")
+    transaction_posted = relationship("TransactionPosted", back_populates="transaction_pending", uselist=False)
+
+    def __repr__(self):
+        return f"<TransactionPending(id={self.id}, total={self.total}, status={self.status})>"
+
+
+class TransactionPosted(Base):
+    """Fully processed transactions with PUC classification and taxes."""
+    __tablename__ = "transactions_posted"
+
+    id = Column(String(50), primary_key=True, index=True)
+    transaction_pending_id = Column(
+        String(50),
+        ForeignKey("transactions_pending.id"),
+        nullable=False,
+        index=True,
+    )
+
+    # PUC classification
+    cuenta_puc = Column(String(10), nullable=False, index=True)
+    puc_descripcion = Column(String(255), nullable=True)
+
+    # Tax calculations (Numeric for exact accounting)
+    retefuente = Column(Numeric(15, 2), default=0)
+    reteica = Column(Numeric(15, 2), default=0)
+    iva = Column(Numeric(15, 2), default=0)
+    neto_a_pagar = Column(Numeric(15, 2), default=0)
+
+    # Journal entries as JSONB (denormalized for quick reads)
+    journal_entries_json = Column(JSONB, nullable=True)
+
+    # Agent outputs
+    tax_references = Column(JSONB, nullable=True, comment="Legal references: Art. 383 ET, etc.")
+    agent_reasoning = Column(JSONB, nullable=True, comment="Agent decision log per step")
+
+    status = Column(
+        Enum(TransactionStatus),
+        default=TransactionStatus.POSTED,
+        nullable=False,
+    )
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    transaction_pending = relationship("TransactionPending", back_populates="transaction_posted")
+    journal_lines = relationship("JournalEntryLine", back_populates="transaction_posted")
+
+    def __repr__(self):
+        return f"<TransactionPosted(id={self.id}, puc={self.cuenta_puc})>"
+
+
+class JournalEntryLine(Base):
+    """
+    Normalized journal entry line — source of truth for accounting books.
+
+    Libro Diario = SELECT * FROM journal_entry_lines ORDER BY fecha, comprobante
+    Libro Mayor  = GROUP BY cuenta_puc, SUM(debito), SUM(credito)
+    Auxiliar     = WHERE cuenta_puc = X ORDER BY fecha
+    """
+    __tablename__ = "journal_entry_lines"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    transaction_posted_id = Column(
+        String(50),
+        ForeignKey("transactions_posted.id"),
+        nullable=False,
+        index=True,
+    )
+
+    fecha = Column(DateTime(timezone=True), nullable=False)
+    comprobante = Column(String(20), nullable=True, comment="Voucher/receipt number")
+    cuenta_puc = Column(String(10), nullable=False, index=True)
+    cuenta_nombre = Column(String(255), nullable=True)
+    tercero_nit = Column(String(20), nullable=True, index=True)
+    descripcion = Column(Text, nullable=True)
+
+    debito = Column(Numeric(15, 2), default=0, nullable=False)
+    credito = Column(Numeric(15, 2), default=0, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    transaction_posted = relationship("TransactionPosted", back_populates="journal_lines")
+
+    def __repr__(self):
+        return f"<JournalEntryLine(cuenta={self.cuenta_puc}, D={self.debito}, C={self.credito})>"
+
+
+class ProcessJob(Base):
+    """Tracks async processing jobs through the agent pipeline."""
+    __tablename__ = "process_jobs"
+
+    id = Column(String(50), primary_key=True, index=True)
+    ingest_id = Column(String(50), ForeignKey("ingest_jobs.id"), nullable=False, index=True)
+
+    status = Column(
+        Enum(ProcessStatus),
+        default=ProcessStatus.QUEUED,
+        nullable=False,
+    )
+    current_stage = Column(String(50), nullable=True)
+    current_agent = Column(String(50), nullable=True)
+    progress = Column(Integer, default=0, comment="0-100 percent")
+
+    error_message = Column(Text, nullable=True)
+    agent_log = Column(JSONB, nullable=True, comment="Timeline of agent steps")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    ingest_job = relationship("IngestJob", back_populates="process_jobs")
+
+    def __repr__(self):
+        return f"<ProcessJob(id={self.id}, status={self.status})>"
+
+
+class AuditLog(Base):
+    """Immutable append-only audit trail for compliance."""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    action = Column(String(100), nullable=False, comment="e.g. transaction_created, agent_ran")
+    entity_id = Column(String(50), nullable=True, index=True)
+    entity_type = Column(String(50), nullable=True, comment="e.g. transaction, job, ingest")
+    details = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self):
+        return f"<AuditLog(action={self.action}, entity={self.entity_type}:{self.entity_id})>"

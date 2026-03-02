@@ -29,6 +29,8 @@ class AgentState(TypedDict):
     - current_agent: Name of the agent currently being executed
     - correction_feedback: Feedback from validator to re-route to agent
     - retry_count: Current retry attempt for the active agent
+    - ingest_id: Database ingest job ID (set by db_persist node)
+    - db_result: Database persistence result summary
     """
     file_path: str
     raw_text: str
@@ -39,3 +41,5 @@ class AgentState(TypedDict):
     current_agent: str
     correction_feedback: Optional[str]
     retry_count: int
+    ingest_id: Optional[str]
+    db_result: Optional[dict]

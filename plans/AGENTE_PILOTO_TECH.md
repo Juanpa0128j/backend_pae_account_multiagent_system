@@ -253,7 +253,7 @@ curl -X POST http://localhost:8000/api/v1/ingest/upload \
 
 ```
 langraph>=0.0.27          # StateGraph
-google-generativeai>=0.3.0 # Gemini API
+langchain-google-genai>=0.1.0 # Gemini API (via LangChain)
 pypdf>=6.7.0              # PDF reading
 pydantic>=2.0             # Validation
 python-dotenv>=1.0        # .env loading
