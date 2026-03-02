@@ -57,7 +57,7 @@ class GeminiClient:
 
         # Create base model with structured output capability
         self.model = ChatGoogleGenerativeAI(
-            model=model,
+            model=self.model_name,
             google_api_key=self.api_key,
             temperature=0.0,
             max_output_tokens=512,

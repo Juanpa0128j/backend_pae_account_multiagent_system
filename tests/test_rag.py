@@ -4,7 +4,7 @@ Tests for the Vector DB and RAG Service layer.
 Design principles:
   - NEVER calls the real Gemini Embeddings API.
   - Uses a ChromaDB PersistentClient isolated in pytest's tmp_path (fresh dir per test).
-  - Patches get_vectordb() and get_rag_service() to inject test fakes.
+  - Injects fake vectordb and RAGService instances via pytest fixtures (no singleton factories).
   - Each test method is independent (no shared mutable state between tests).
 
 Run:

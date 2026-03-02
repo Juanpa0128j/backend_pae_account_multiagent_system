@@ -92,9 +92,10 @@ class ChromaVectorDB:
     def collection_count(self, collection_name: str) -> int:
         """Return the number of documents in a collection, or 0 if it doesn't exist.
 
-        Only silences the "collection not found" case (ChromaDB raises ValueError).
-        Any other exception (corrupt DB, permission error, etc.) is re-raised so
-        callers can distinguish an empty collection from a real failure.
+        Only silences the "collection not found" case (ChromaDB raises
+        ``chromadb.errors.NotFoundError``).  Any other exception (corrupt DB,
+        permission error, etc.) is logged and re-raised so callers can
+        distinguish an empty collection from a real failure.
         """
         try:
             col = self._client.get_collection(collection_name)
