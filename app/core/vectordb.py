@@ -12,6 +12,7 @@ from functools import lru_cache
 
 import chromadb
 from chromadb import Collection
+from chromadb.errors import NotFoundError as ChromaNotFoundError
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from app.core.config import get_settings
@@ -89,12 +90,23 @@ class ChromaVectorDB:
         return [col.name for col in self._client.list_collections()]
 
     def collection_count(self, collection_name: str) -> int:
-        """Return the number of documents in a collection (0 if it doesn't exist)."""
+        """Return the number of documents in a collection, or 0 if it doesn't exist.
+
+        Only silences the "collection not found" case (ChromaDB raises ValueError).
+        Any other exception (corrupt DB, permission error, etc.) is re-raised so
+        callers can distinguish an empty collection from a real failure.
+        """
         try:
             col = self._client.get_collection(collection_name)
             return col.count()
-        except Exception:
+        except ChromaNotFoundError:
+            # Collection does not exist — return 0 rather than raising.
             return 0
+        except Exception:
+            logger.exception(
+                "Unexpected error reading collection '%s'", collection_name
+            )
+            raise
 
 
 # ─── Singleton factory ────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ Tests for the Vector DB and RAG Service layer.
 
 Design principles:
   - NEVER calls the real Gemini Embeddings API.
-  - Uses a ChromaDB ephemeral (in-memory) client.
+  - Uses a ChromaDB PersistentClient isolated in pytest's tmp_path (fresh dir per test).
   - Patches get_vectordb() and get_rag_service() to inject test fakes.
   - Each test method is independent (no shared mutable state between tests).
 
@@ -11,6 +11,7 @@ Run:
     pytest tests/test_rag.py -v
 """
 
+import hashlib
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -24,26 +25,30 @@ from app.services.rag_service import RAGResult, RAGService
 # ─── Test embedding: deterministic, no API calls ──────────────────────────────
 
 
+def _text_seed(text: str) -> int:
+    """Derive a stable 32-bit RNG seed from text using SHA-256.
+
+    Unlike Python's built-in hash(), SHA-256 is not affected by PYTHONHASHSEED,
+    so embeddings are reproducible across processes and CI runs.
+    """
+    digest = hashlib.sha256(text.encode()).digest()
+    return int.from_bytes(digest[:4], byteorder="little")
+
+
 def _fake_embed_texts(texts: list[str]) -> list[list[float]]:
     """Return reproducible pseudo-random 128-dim embeddings (no API call).
 
     The embeddings are deterministic per input text, without any shared RNG state
     across tests.  This avoids test order-dependence while keeping outputs stable.
     """
-    embeddings: list[list[float]] = []
-    for text in texts:
-        # Derive a per-text seed from its hash; mask to 32 bits for RNG seed.
-        seed = abs(hash(text)) & 0xFFFFFFFF
-        rng = np.random.default_rng(seed=seed)
-        embeddings.append(rng.random(128).tolist())
-    return embeddings
+    return [
+        np.random.default_rng(seed=_text_seed(t)).random(128).tolist() for t in texts
+    ]
 
 
 def _fake_embed_query(text: str) -> list[float]:
     """Return a deterministic 128-dim embedding for the given query text."""
-    seed = abs(hash(text)) & 0xFFFFFFFF
-    rng = np.random.default_rng(seed=seed)
-    return rng.random(128).tolist()
+    return np.random.default_rng(seed=_text_seed(text)).random(128).tolist()
 
 
 # ─── Fixture: in-memory ChromaVectorDB ───────────────────────────────────────

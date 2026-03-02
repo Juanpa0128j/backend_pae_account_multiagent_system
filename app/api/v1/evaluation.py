@@ -101,7 +101,11 @@ class CollectionStatus(BaseModel):
 
 class RAGStatusResponse(BaseModel):
     status: str = Field(
-        description="'ready' if normativa is populated, 'empty' otherwise"
+        description=(
+            "'ready' if normativa is populated, "
+            "'empty' if normativa collection has no documents, "
+            "or 'unavailable' if the RAG backend cannot be reached"
+        )
     )
     normativa_collection: CollectionStatus
     empresa_collections: list[CollectionStatus] = Field(default_factory=list)
