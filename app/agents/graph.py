@@ -70,12 +70,17 @@ def create_agent_graph() -> StateGraph:
     return compiled_graph
 
 
-def invoke_agent(file_path: str) -> dict:
+def invoke_agent(file_path: str, initial_state: dict | None = None) -> dict:
     """
     Invoke the agent with a file path.
     
     Args:
         file_path: Path to the PDF file to process
+        initial_state: Optional dictionary with additional state fields to
+            pre-populate before invoking the graph (e.g.
+            ``{"ingest_id": "abc123"}``).  Safe to use with supplemental
+            fields such as ``ingest_id``; ``file_path`` is always taken from
+            the explicit first argument even if ``initial_state`` includes it.
         
     Returns:
         Result dictionary with status, data, or error.
@@ -84,8 +89,8 @@ def invoke_agent(file_path: str) -> dict:
     
     graph = create_agent_graph()
     
-    # Initialize state
-    initial_state: AgentState = {
+    # Initialize state with defaults
+    state: AgentState = {
         "file_path": file_path,
         "raw_text": "",
         "interpreted_data": {},
@@ -99,9 +104,15 @@ def invoke_agent(file_path: str) -> dict:
         "db_result": None,
     }
     
+    # Merge caller-supplied overrides (e.g. ingest_id).
+    # file_path is always taken from the explicit argument.
+    if initial_state:
+        state.update(initial_state)
+        state["file_path"] = file_path  # ensure explicit arg always wins
+    
     # Invoke the graph
     logger.info(f"Invoking agent for file: {file_path}")
-    final_state = graph.invoke(initial_state)
+    final_state = graph.invoke(state)
     
     # Enrich result with validation info and DB result
     result = final_state["result"]
