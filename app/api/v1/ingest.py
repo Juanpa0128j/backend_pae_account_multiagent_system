@@ -1,9 +1,9 @@
 import logging
 import tempfile
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks, status
 from sqlalchemy.orm import Session
-from app.models.schemas import IngestResponse
+from app.models.schemas import IngestResponse, IngestDetailResponse
 from app.agents.graph import invoke_agent
 from app.core.database import get_db
 from app.services import db_service
@@ -11,7 +11,6 @@ from app.models.database import IngestStatus
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
 
 def save_temp_file(file_content: bytes, filename: str) -> str:
     """Save file to temporary directory."""
@@ -24,74 +23,86 @@ def save_temp_file(file_content: bytes, filename: str) -> str:
     
     return str(temp_path)
 
+def process_ingest_background(temp_file_path: str, ingest_id: str):
+    logger.info(f"Invoking background agent for: {ingest_id}")
+    try:
+        invoke_agent(
+            temp_file_path,
+            initial_state={"ingest_id": ingest_id},
+        )
+    except Exception as e:
+        logger.error(f"Error in background ingest {ingest_id}: {e}", exc_info=True)
+    finally:
+        Path(temp_file_path).unlink(missing_ok=True)
 
-@router.post("/upload", response_model=IngestResponse)
-async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+@router.post("/upload", response_model=IngestResponse, status_code=status.HTTP_202_ACCEPTED)
+async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
-    Upload and process a PDF file (receipt/invoice).
-    
-    The file is:
-    1. Saved to a temporary location
-    2. Tracked in the database as an IngestJob
-    3. Processed through the agent graph (Supervisor → Ingesta → Validate → DB Persist)
-    4. Text extracted with PyPDF, Gemini interprets, results persisted to PostgreSQL
-    5. Result returned as JSON
+    Upload and process a PDF/Excel/XML file (receipt/invoice).
+    Returns 202 Accepted immediately.
     """
-    
     # Validate file type
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    if not file.filename.lower().endswith(('.pdf', '.xlsx', '.xml')):
+        raise HTTPException(
+            status_code=422, 
+            detail="Unsupported file type. Accepted: PDF, Excel, XML",
+            headers={"error_code": "INVALID_FILE_TYPE"}
+        )
     
     try:
-        # Read file content
         file_content = await file.read()
-        
-        # Save to temp location
         temp_file_path = save_temp_file(file_content, file.filename)
         logger.info(f"Saved uploaded file to: {temp_file_path}")
         
-        # Create IngestJob in DB
         ingest_job = db_service.create_ingest_job(db, file.filename, temp_file_path)
         logger.info(f"Created IngestJob: {ingest_job.id}")
         
-        # Invoke the agent (will persist to DB via db_persist node)
-        logger.info(f"Invoking agent for: {file.filename}")
-        result = invoke_agent(
-            temp_file_path,
-            initial_state={"ingest_id": str(ingest_job.id)},
-        )
+        background_tasks.add_task(process_ingest_background, temp_file_path, str(ingest_job.id))
         
-        # Cleanup temp file
-        Path(temp_file_path).unlink(missing_ok=True)
-        
-        # Map result to response
         return IngestResponse(
-            message=result.get("message", "Processing completed"),
-            ingest_id=result.get("ingest_id") or result.get("process_id", ingest_job.id),
-            status=result.get("status", "error"),
+            message="File uploaded successfully and queued for processing",
+            ingest_id=str(ingest_job.id),
+            status=ingest_job.status.value,
+            file_name=file.filename,
+            created_at=ingest_job.created_at,
+            extracted_transactions=0,
+            raw_preview=None
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error processing file {file.filename}: {str(e)}", exc_info=True)
+        logger.error(f"Error queueing file {file.filename}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500, 
-            detail=f"Error processing file: {str(e)}"
+            detail=f"Error queueing file: {str(e)}"
         )
 
-
-@router.get("/{ingest_id}")
+@router.get("/{ingest_id}", response_model=IngestDetailResponse)
 async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
     """Get the status of an ingest job."""
     job = db_service.get_ingest_job(db, ingest_id)
     if not job:
-        raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+        raise HTTPException(status_code=404, detail=f"Ingest ID {ingest_id} not found")
+    
+    raw_txs = []
+    # If using SQLAlchemy relationship properly
+    for tx in job.transactions_pending:
+        raw_txs.append({
+            "fecha": tx.fecha.isoformat() if tx.fecha else "",
+            "nit_emisor": tx.nit_emisor or "",
+            "nit_receptor": tx.nit_receptor or "",
+            "total": float(tx.total) if tx.total is not None else 0.0,
+            "descripcion": tx.descripcion,
+            "items": tx.items if isinstance(tx.items, list) else []
+        })
     
     return {
-        "id": job.id,
+        "ingest_id": job.id,
         "file_name": job.file_name,
         "status": job.status.value if job.status else "unknown",
-        "raw_preview": job.raw_preview,
-        "extraction_errors": job.extraction_errors,
-        "created_at": str(job.created_at) if job.created_at else None,
-        "completed_at": str(job.completed_at) if job.completed_at else None,
+        "created_at": job.created_at,
+        "completed_at": job.completed_at,
+        "extraction_errors": job.extraction_errors or [],
+        "raw_transactions": raw_txs
     }

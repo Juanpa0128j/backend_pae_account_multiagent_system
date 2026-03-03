@@ -24,6 +24,7 @@ from app.models.database import (
     TransactionStatus,
     ProcessStatus,
 )
+from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
 
@@ -58,20 +59,12 @@ def db_persist_node(state: AgentState) -> AgentState:
 
     Flow:
     1. Create/update IngestJob
-    2. Create TransactionPending from extracted data
-    3. Run duplicate detection and PUC validation
-    4. Create TransactionPosted with PUC classification
-    5. Generate JournalEntryLines (partida doble)
-    6. Mark IngestJob as completed
-
-    Note: Audit logs are written implicitly by db_service CRUD helpers
-    (e.g. create_transaction_pending, create_transaction_posted).
-
-    Args:
-        state: Current agent state with interpreted_data populated
-
-    Returns:
-        Updated state with db_result and any errors
+    2. Loop through each transaction in raw_transactions
+    3. Create TransactionPending from extracted data
+    4. Run duplicate detection and PUC validation
+    5. Create TransactionPosted with PUC classification
+    6. Generate JournalEntryLines (partida doble)
+    7. Mark IngestJob as completed
     """
     # Skip if upstream error
     if state.get("error"):
@@ -79,8 +72,9 @@ def db_persist_node(state: AgentState) -> AgentState:
         return state
 
     interpreted = state.get("interpreted_data", {})
-    if not interpreted:
-        logger.warning("db_persist: No interpreted_data to persist")
+    transactions = interpreted.get("transactions", [])
+    if not transactions:
+        logger.warning("db_persist: No transactions to persist")
         return state
 
     db = SessionLocal()
@@ -90,9 +84,10 @@ def db_persist_node(state: AgentState) -> AgentState:
         if ingest_id:
             ingest_job = db_service.get_ingest_job(db, ingest_id)
             if ingest_job:
+                # Update with preview of first transaction
                 db_service.update_ingest_job(
                     db, ingest_id, IngestStatus.PROCESSING,
-                    raw_preview=_build_preview(interpreted),
+                    raw_preview=_build_preview(transactions[0]) if transactions else {},
                 )
         else:
             file_name = state.get("file_path", "unknown.pdf").split("/")[-1]
@@ -102,89 +97,120 @@ def db_persist_node(state: AgentState) -> AgentState:
             ingest_id = ingest_job.id
             state["ingest_id"] = ingest_id
 
-        # ── 2. Create TransactionPending ──
-        fecha = _safe_datetime(interpreted.get("fecha"))
-        total = _safe_decimal(interpreted.get("total") or interpreted.get("valor_total"))
-        nit_emisor = str(interpreted.get("nit_emisor", "") or "").strip()
-        nit_receptor = str(interpreted.get("nit_receptor", "") or "").strip()
-        descripcion = interpreted.get("concepto") or interpreted.get("descripcion", "")
-        items = interpreted.get("items") or interpreted.get("detalle_items", [])
+        total_lines = 0
+        total_duplicates = 0
+        posted_ids = []
 
-        txn_pending = db_service.create_transaction_pending(
-            db,
-            ingest_id=ingest_id,
-            fecha=fecha,
-            nit_emisor=nit_emisor or None,
-            nit_receptor=nit_receptor or None,
-            total=total,
-            descripcion=descripcion,
-            items=items if isinstance(items, list) else [],
-            raw_data=interpreted,
-        )
-        logger.info(f"db_persist: Created TransactionPending {txn_pending.id}")
+        # ── Loop through each transaction ──
+        for idx, tx_data in enumerate(transactions):
+            # ── 2. Create TransactionPending ──
+            fecha = _safe_datetime(tx_data.get("fecha"))
+            total = _safe_decimal(tx_data.get("total") or tx_data.get("valor_total"))
+            nit_emisor = str(tx_data.get("nit_emisor", "") or "").strip()
+            nit_receptor = str(tx_data.get("nit_receptor", "") or "").strip()
+            descripcion = tx_data.get("concepto") or tx_data.get("descripcion", "")
+            items = tx_data.get("items") or tx_data.get("detalle_items", [])
 
-        # ── 3. Duplicate detection ──
-        duplicates = []
-        if nit_emisor and total and fecha:
-            duplicates = db_service.check_duplicates(db, nit_emisor, total, fecha)
-            # Exclude the one we just created
-            duplicates = [d for d in duplicates if d.id != txn_pending.id]
-            if duplicates:
-                logger.warning(
-                    f"db_persist: Found {len(duplicates)} potential duplicates for "
-                    f"NIT {nit_emisor}, total={total}"
-                )
+            txn_pending = db_service.create_transaction_pending(
+                db,
+                ingest_id=ingest_id,
+                fecha=fecha,
+                nit_emisor=nit_emisor or None,
+                nit_receptor=nit_receptor or None,
+                total=total,
+                descripcion=descripcion,
+                items=items if isinstance(items, list) else [],
+                raw_data=tx_data,
+            )
+            logger.info(f"db_persist: Created TransactionPending {txn_pending.id}")
 
-        # ── 4. Classify PUC and create TransactionPosted ──
-        cuenta_puc = interpreted.get("cuenta_puc", "519595")  # Fallback to Gastos Diversos
-        puc_descripcion = interpreted.get("cuenta_nombre", "")
+            # ── 3. Duplicate detection ──
+            duplicates = []
+            if nit_emisor and total and fecha:
+                duplicates = db_service.check_duplicates(db, nit_emisor, total, fecha)
+                # Exclude the one we just created
+                duplicates = [d for d in duplicates if d.id != txn_pending.id]
+                if duplicates:
+                    total_duplicates += len(duplicates)
+                    logger.warning(
+                        f"db_persist: Found {len(duplicates)} potential duplicates for "
+                        f"NIT {nit_emisor}, total={total}"
+                    )
 
-        # Validate PUC exists
-        puc_record = db_service.validate_puc_exists(db, cuenta_puc)
-        if puc_record:
-            puc_descripcion = puc_record.nombre
-        else:
-            logger.warning(f"db_persist: PUC code {cuenta_puc} not found, using as-is")
+            # ── 4. Classify PUC and create TransactionPosted ──
+            cuenta_puc = tx_data.get("cuenta_puc", "519595")  # Fallback to Gastos Diversos
+            puc_descripcion = tx_data.get("cuenta_nombre", "")
 
-        # Tax calculations from interpreted data
-        retefuente = _safe_decimal(interpreted.get("retefuente")) or Decimal("0")
-        reteica = _safe_decimal(interpreted.get("reteica")) or Decimal("0")
-        iva = _safe_decimal(interpreted.get("iva") or interpreted.get("iva_valor")) or Decimal("0")
-        neto = _safe_decimal(interpreted.get("neto_a_pagar")) or (total or Decimal("0"))
+            # Validate PUC exists
+            puc_record = db_service.validate_puc_exists(db, cuenta_puc)
+            if puc_record:
+                puc_descripcion = puc_record.nombre
+            else:
+                logger.warning(f"db_persist: PUC code {cuenta_puc} not found")
 
-        # Build journal entries JSON
-        journal_json = _build_journal_entries(
-            fecha=fecha or datetime.now(timezone.utc),
-            cuenta_puc=cuenta_puc,
-            puc_descripcion=puc_descripcion,
-            total=total or Decimal("0"),
-            iva=iva,
-            retefuente=retefuente,
-            reteica=reteica,
-            nit=nit_emisor,
-            descripcion=descripcion,
-        )
+            retefuente = _safe_decimal(tx_data.get("retefuente")) or Decimal("0")
+            reteica = _safe_decimal(tx_data.get("reteica")) or Decimal("0")
+            iva = _safe_decimal(tx_data.get("iva") or tx_data.get("iva_valor")) or Decimal("0")
+            neto = _safe_decimal(tx_data.get("neto_a_pagar")) or (total or Decimal("0"))
 
-        txn_posted = db_service.create_transaction_posted(
-            db,
-            transaction_pending_id=txn_pending.id,
-            cuenta_puc=cuenta_puc,
-            puc_descripcion=puc_descripcion,
-            retefuente=retefuente,
-            reteica=reteica,
-            iva=iva,
-            neto_a_pagar=neto,
-            journal_entries_json=journal_json,
-            tax_references=interpreted.get("referencias_legales", []),
-            agent_reasoning=interpreted.get("agent_reasoning"),
-        )
-        logger.info(f"db_persist: Created TransactionPosted {txn_posted.id}")
+            # Build journal entries JSON
+            journal_json = _build_journal_entries(
+                fecha=fecha or datetime.now(timezone.utc),
+                cuenta_puc=cuenta_puc,
+                puc_descripcion=puc_descripcion,
+                total=total or Decimal("0"),
+                iva=iva,
+                retefuente=retefuente,
+                reteica=reteica,
+                nit=nit_emisor,
+                descripcion=descripcion,
+            )
 
-        # ── 5. Create normalized JournalEntryLines ──
-        lines = db_service.create_journal_entry_lines(
-            db, txn_posted.id, journal_json
-        )
-        logger.info(f"db_persist: Created {len(lines)} journal entry lines")
+            txn_posted = db_service.create_transaction_posted(
+                db,
+                transaction_pending_id=txn_pending.id,
+                cuenta_puc=cuenta_puc,
+                puc_descripcion=puc_descripcion,
+                retefuente=retefuente,
+                reteica=reteica,
+                iva=iva,
+                neto_a_pagar=neto,
+                journal_entries_json=journal_json,
+                tax_references=tx_data.get("referencias_legales", []),
+                agent_reasoning=tx_data.get("agent_reasoning"),
+            )
+            logger.info(f"db_persist: Created TransactionPosted {txn_posted.id}")
+            posted_ids.append(txn_posted.id)
+
+            # ── 5. Create normalized JournalEntryLines ──
+            lines = db_service.create_journal_entry_lines(
+                db, txn_posted.id, journal_json
+            )
+            total_lines += len(lines)
+            logger.info(f"db_persist: Created {len(lines)} journal entry lines")
+
+            # ── 5.5. Auto-Vectorize into ChromaDB ──
+            try:
+                rag = get_rag_service()
+                doc_text = state.get("raw_text", "")
+                nit_para_rag = nit_emisor or "unknown_nit"
+                
+                if doc_text:
+                    rag.add_empresa_doc(
+                        nit=nit_para_rag,
+                        text=doc_text,
+                        metadata={
+                            "fecha": str(fecha),
+                            "total": str(total),
+                            "descripcion": descripcion,
+                            "ingest_id": ingest_id,
+                            "transaction_id": txn_posted.id
+                        }
+                    )
+                    logger.info(f"db_persist: Vectorized transaction to ChromaDB for NIT {nit_para_rag}")
+            except Exception as e:
+                # Do not hard fail the entire API if vectorization fails
+                logger.error(f"db_persist: Failed to vectorize to ChromaDB: {e}", exc_info=True)
 
         # ── 6. Mark IngestJob as completed ──
         db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
@@ -192,26 +218,22 @@ def db_persist_node(state: AgentState) -> AgentState:
         # ── 7. Enrich state result ──
         state["db_result"] = {
             "ingest_id": ingest_id,
-            "transaction_pending_id": txn_pending.id,
-            "transaction_posted_id": txn_posted.id,
-            "journal_lines_count": len(lines),
-            "duplicates_found": len(duplicates),
-            "cuenta_puc": cuenta_puc,
-            "puc_descripcion": puc_descripcion,
+            "processed_transactions": len(transactions),
+            "journal_lines_count": total_lines,
+            "duplicates_found": total_duplicates,
         }
 
         # Update the main result
         if state.get("result"):
             state["result"]["db_persisted"] = True
             state["result"]["ingest_id"] = ingest_id
-            state["result"]["transaction_id"] = txn_posted.id
+            state["result"]["transaction_ids"] = posted_ids
 
-        logger.info(f"db_persist: Successfully persisted all data for ingest {ingest_id}")
+        logger.info(f"db_persist: Successfully persisted {len(transactions)} txs for ingest {ingest_id}")
 
     except Exception as e:
         logger.error(f"db_persist: Error persisting data: {e}", exc_info=True)
         state["error"] = f"DB persist error: {str(e)}"
-        # Try to mark ingest as failed
         if ingest_id:
             try:
                 db_service.update_ingest_job(
