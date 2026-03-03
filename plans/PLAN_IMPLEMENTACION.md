@@ -68,7 +68,7 @@ Crear la infraestructura base: DB, ORM, schemas completos, y configuración glob
 **1.1** Actualizar `pyproject.toml` con dependencias necesarias:
 ```
 fastapi, uvicorn, pydantic, sqlalchemy, alembic, chromadb,
-langchain, langgraph, google-generativeai, python-dotenv,
+langchain, langgraph, langchain-google-genai, python-dotenv,
 pydantic-settings, pytest, httpx
 ```
 

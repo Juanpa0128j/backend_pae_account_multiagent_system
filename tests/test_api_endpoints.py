@@ -14,8 +14,11 @@ import json
 import asyncio
 import subprocess
 from pathlib import Path
+import pytest
 from reportlab.pdfgen import canvas
 import httpx
+
+pytestmark = pytest.mark.skip(reason="Manual E2E script; requires running server")
 
 # Load env
 from dotenv import load_dotenv

@@ -10,7 +10,10 @@ Usage:
 import os
 import sys
 from pathlib import Path
+import pytest
 from reportlab.pdfgen import canvas
+
+pytestmark = pytest.mark.skip(reason="Manual smoke script; not an automated pytest module")
 
 # Load environment variables from .env
 from dotenv import load_dotenv
