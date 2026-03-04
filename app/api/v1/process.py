@@ -69,9 +69,19 @@ async def get_process_result(process_id: str, db: Session = Depends(get_db)):
             ),
         )
 
+    get_result_fn = getattr(db_service, "get_process_result_transactions", None)
+    if get_result_fn is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Process result retrieval is not available: "
+            "'get_process_result_transactions' is not implemented in db_service.",
+        )
+
+    transactions = get_result_fn(db, process_job.ingest_id)
+
     return {
         "process_id": process_job.id,
         "ingest_id": process_job.ingest_id,
         "status": process_job.status.value,
-        "transactions": db_service.get_process_result_transactions(db, process_job.ingest_id),
+        "transactions": transactions,
     }
