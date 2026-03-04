@@ -99,7 +99,7 @@ async def run_process_job(process_id: str) -> None:
         )
 
         status_value = str(result.get("status", "")).lower()
-        if status_value in {"failed", "error", "rejected"}:
+        if status_value in {"failed", "error", "rejected", "validation_error"}:
             db_service.update_process_job(
                 db,
                 process_id=process_id,
