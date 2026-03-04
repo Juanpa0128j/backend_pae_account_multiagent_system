@@ -545,6 +545,44 @@ def get_process_job(db: Session, process_id: str) -> Optional[ProcessJob]:
     return db.query(ProcessJob).filter(ProcessJob.id == process_id).first()
 
 
+def get_process_result_transactions(db: Session, ingest_id: str) -> List[Dict[str, Any]]:
+    """Get final posted transaction payload for a given ingest job."""
+    rows = (
+        db.query(TransactionPending, TransactionPosted)
+        .join(
+            TransactionPosted,
+            TransactionPosted.transaction_pending_id == TransactionPending.id,
+        )
+        .filter(TransactionPending.ingest_id == ingest_id)
+        .all()
+    )
+
+    result: List[Dict[str, Any]] = []
+    for pending, posted in rows:
+        result.append(
+            {
+                "transaction_pending_id": pending.id,
+                "transaction_posted_id": posted.id,
+                "fecha": pending.fecha.isoformat() if pending.fecha else None,
+                "nit_emisor": pending.nit_emisor,
+                "nit_receptor": pending.nit_receptor,
+                "descripcion": pending.descripcion,
+                "total": float(pending.total) if pending.total is not None else None,
+                "cuenta_puc": posted.cuenta_puc,
+                "puc_descripcion": posted.puc_descripcion,
+                "retefuente": float(posted.retefuente or 0),
+                "reteica": float(posted.reteica or 0),
+                "iva": float(posted.iva or 0),
+                "neto_a_pagar": float(posted.neto_a_pagar or 0),
+                "journal_entries": posted.journal_entries_json or [],
+                "tax_references": posted.tax_references or [],
+                "agent_reasoning": posted.agent_reasoning or {},
+            }
+        )
+
+    return result
+
+
 # ─── AuditLog ────────────────────────────────────────────────────
 
 def create_audit_log(
