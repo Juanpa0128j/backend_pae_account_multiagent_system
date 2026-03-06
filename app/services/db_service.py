@@ -287,21 +287,21 @@ def create_journal_entry_lines(
 
 # ─── Accounting Books ───────────────────────────────────────────
 
-def get_libro_diario(
+def get_daily_journal(
     db: Session,
-    fecha_inicio: datetime = None,
-    fecha_fin: datetime = None,
+    start_date: datetime = None,
+    end_date: datetime = None,
 ) -> List[JournalEntryLine]:
-    """Libro Diario — all journal entries in chronological order."""
+    """Daily Journal — all journal entries in chronological order."""
     query = db.query(JournalEntryLine)
-    if fecha_inicio:
-        query = query.filter(JournalEntryLine.fecha >= fecha_inicio)
-    if fecha_fin:
-        query = query.filter(JournalEntryLine.fecha <= fecha_fin)
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
     return query.order_by(JournalEntryLine.fecha, JournalEntryLine.comprobante).all()
 
 
-def get_libro_mayor(
+def get_general_ledger(
     db: Session,
     fecha_inicio: datetime = None,
     fecha_fin: datetime = None,
@@ -313,57 +313,57 @@ def get_libro_mayor(
     query = db.query(
         JournalEntryLine.cuenta_puc,
         JournalEntryLine.cuenta_nombre,
-        func.sum(JournalEntryLine.debito).label("total_debito"),
-        func.sum(JournalEntryLine.credito).label("total_credito"),
+        func.sum(JournalEntryLine.debito).label("total_debit"),
+        func.sum(JournalEntryLine.credito).label("total_credit"),
     ).group_by(
         JournalEntryLine.cuenta_puc,
         JournalEntryLine.cuenta_nombre,
     )
 
-    if fecha_inicio:
-        query = query.filter(JournalEntryLine.fecha >= fecha_inicio)
-    if fecha_fin:
-        query = query.filter(JournalEntryLine.fecha <= fecha_fin)
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
 
     results = query.order_by(JournalEntryLine.cuenta_puc).all()
 
     return [
         {
-            "cuenta": r.cuenta_puc,
-            "nombre": r.cuenta_nombre,
-            "total_debito": float(r.total_debito or 0),
-            "total_credito": float(r.total_credito or 0),
-            "saldo_neto": float((r.total_debito or 0) - (r.total_credito or 0)),
+            "account": r.cuenta_puc,
+            "name": r.cuenta_nombre,
+            "total_debit": float(r.total_debit or 0),
+            "total_credit": float(r.total_credit or 0),
+            "net_balance": float((r.total_debit or 0) - (r.total_credit or 0)),
         }
         for r in results
     ]
 
 
-def get_libro_auxiliar(
+def get_subsidiary_journal(
     db: Session,
     cuenta_puc: str,
     fecha_inicio: datetime = None,
     fecha_fin: datetime = None,
 ) -> List[JournalEntryLine]:
     """Libro Auxiliar — detail for a specific account."""
-    query = db.query(JournalEntryLine).filter(JournalEntryLine.cuenta_puc == cuenta_puc)
-    if fecha_inicio:
-        query = query.filter(JournalEntryLine.fecha >= fecha_inicio)
-    if fecha_fin:
-        query = query.filter(JournalEntryLine.fecha <= fecha_fin)
+    query = db.query(JournalEntryLine).filter(JournalEntryLine.cuenta_puc == puc_account)
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
     return query.order_by(JournalEntryLine.fecha).all()
 
 
-def get_balance_general(db: Session, fecha_corte: datetime = None) -> Dict:
+def get_balance_sheet(db: Session, cutoff_date: datetime = None) -> Dict:
     """
-    Balance General (Estado de Situación Financiera).
-    Activo (clase 1) = Pasivo (clase 2) + Patrimonio (clase 3)
+    Balance Sheet (Statement of Financial Position).
+    Assets (class 1) = Liabilities (class 2) + Equity (class 3)
 
     Revenue (4) and Expenses (5,6) flow into retained earnings.
     """
     query = db.query(JournalEntryLine)
-    if fecha_corte:
-        query = query.filter(JournalEntryLine.fecha <= fecha_corte)
+    if cutoff_date:
+        query = query.filter(JournalEntryLine.fecha <= cutoff_date)
 
     # Group by first digit of cuenta_puc (clase)
     lines = query.all()
@@ -382,18 +382,18 @@ def get_balance_general(db: Session, fecha_corte: datetime = None) -> Dict:
                 totals[clase] += (line.credito or Decimal("0")) - (line.debito or Decimal("0"))
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
-    utilidad_neta = totals[4] - totals[5] - totals[6]
+    net_profit = totals[4] - totals[5] - totals[6]
 
     return {
-        "activos": float(totals[1]),
-        "pasivos": float(totals[2]),
-        "patrimonio": float(totals[3]),
-        "ingresos": float(totals[4]),
-        "gastos": float(totals[5]),
-        "costos": float(totals[6]),
-        "utilidad_neta": float(utilidad_neta),
-        "patrimonio_total": float(totals[3] + utilidad_neta),
-        "cuadre": totals[1] == totals[2] + totals[3] + utilidad_neta,
+        "assets": float(totals[1]),
+        "liabilities": float(totals[2]),
+        "equity": float(totals[3]),
+        "revenue": float(totals[4]),
+        "expenses": float(totals[5]),
+        "cost_of_sales": float(totals[6]),
+        "net_profit": float(net_profit),
+        "total_equity": float(totals[3] + net_profit),
+        "is_balanced": totals[1] == totals[2] + totals[3] + net_profit,
     }
 
 
@@ -424,22 +424,22 @@ def search_transactions(
 
 def check_duplicates(
     db: Session,
-    nit_emisor: str,
+    issuer_nit: str,
     total: Decimal,
-    fecha: datetime,
+    date: datetime,
     days_window: int = 3,
 ) -> List[TransactionPending]:
     """Check for potential duplicate transactions (same NIT, amount, date ±N days)."""
-    fecha_inicio = fecha - timedelta(days=days_window)
-    fecha_fin = fecha + timedelta(days=days_window)
+    start_date = date - timedelta(days=days_window)
+    end_date = date + timedelta(days=days_window)
 
     return (
         db.query(TransactionPending)
         .filter(
-            TransactionPending.nit_emisor == nit_emisor,
+            TransactionPending.nit_emisor == issuer_nit,
             TransactionPending.total == total,
-            TransactionPending.fecha >= fecha_inicio,
-            TransactionPending.fecha <= fecha_fin,
+            TransactionPending.fecha >= start_date,
+            TransactionPending.fecha <= end_date,
         )
         .all()
     )
@@ -627,21 +627,21 @@ def create_audit_log(
 
 # ─── Terceros ────────────────────────────────────────────────────
 
-def get_or_create_tercero(
+def get_or_create_third_party(
     db: Session,
     nit: str,
-    razon_social: str = "Desconocido",
-    tipo: str = "proveedor",
+    business_name: str = "Unknown",
+    party_type: str = "supplier",
     commit: bool = True,
 ) -> Tercero:
-    """Get existing tercero by NIT or create a new one."""
+    """Get existing third party by NIT or create a new one."""
     tercero = db.query(Tercero).filter(Tercero.nit == nit).first()
     if not tercero:
         from app.models.database import TerceroTipo
         tercero = Tercero(
             nit=nit,
-            razon_social=razon_social,
-            tipo=TerceroTipo(tipo),
+            razon_social=business_name,
+            tipo=TerceroTipo(party_type),
         )
         db.add(tercero)
         _commit_or_flush(db, commit)
