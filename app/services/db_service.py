@@ -545,6 +545,26 @@ def get_process_job(db: Session, process_id: str) -> Optional[ProcessJob]:
     return db.query(ProcessJob).filter(ProcessJob.id == process_id).first()
 
 
+def get_active_process_job_for_ingest(
+    db: Session, ingest_id: str
+) -> Optional[ProcessJob]:
+    """
+    Get an active (non-failed) ProcessJob for the given ingest_id.
+    
+    Returns the latest ProcessJob that is not FAILED or CANCELLED.
+    This prevents duplicate processing of the same ingest job.
+    """
+    return (
+        db.query(ProcessJob)
+        .filter(
+            ProcessJob.ingest_id == ingest_id,
+            ProcessJob.status.in_([ProcessStatus.QUEUED, ProcessStatus.RUNNING, ProcessStatus.COMPLETED]),
+        )
+        .order_by(ProcessJob.created_at.desc())
+        .first()
+    )
+
+
 def get_process_result_transactions(db: Session, ingest_id: str) -> List[Dict[str, Any]]:
     """Get final posted transaction payload for a given ingest job."""
     rows = (

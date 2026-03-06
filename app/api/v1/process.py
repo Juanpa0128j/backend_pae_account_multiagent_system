@@ -13,6 +13,9 @@ router = APIRouter()
 async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
     """
     Create a process job and execute the graph asynchronously.
+    
+    Idempotent: Returns the existing ProcessJob if one is already running or queued
+    for the given ingest_id. Only creates a new one if the previous one failed or was cancelled.
 
     Returns a process_id for polling:
     - GET /api/v1/process/status/{process_id}
@@ -22,6 +25,16 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
     if not ingest_job:
         raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
 
+    # Check if an active ProcessJob already exists for this ingest_id
+    existing_job = db_service.get_active_process_job_for_ingest(db, ingest_id)
+    if existing_job:
+        return ProcessResponse(
+            message=f"Process job already exists for ingest_id: {ingest_id}",
+            process_id=existing_job.id,
+            status=existing_job.status.value,
+        )
+
+    # Create a new ProcessJob only if no active one exists
     process_job = db_service.create_process_job(db, ingest_id)
     jobs.start_process_job(process_job.id)
 
@@ -62,10 +75,11 @@ async def get_process_result(process_id: str, db: Session = Depends(get_db)):
 
     if process_job.status != ProcessStatus.COMPLETED:
         raise HTTPException(
-            status_code=409,
+            status_code=202,
             detail=(
-                f"Process job {process_id} is not completed yet "
-                f"(current status: {process_job.status.value})"
+                f"Process job {process_id} is still being processed "
+                f"(current status: {process_job.status.value}). "
+                f"Poll /api/v1/process/status/{process_id} for updates."
             ),
         )
 
