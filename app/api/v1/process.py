@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.database import ProcessStatus
-from app.models.schemas import ProcessResponse
+from app.models.schemas import ProcessResponse, ProcessStatusResponse, ProcessResultResponse
 from app.services import db_service, jobs
 
 router = APIRouter()
@@ -45,28 +45,28 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/status/{process_id}")
+@router.get("/status/{process_id}", response_model=ProcessStatusResponse)
 async def get_process_status(process_id: str, db: Session = Depends(get_db)):
     """Polling endpoint for async process job status and progress."""
     process_job = db_service.get_process_job(db, process_id)
     if not process_job:
         raise HTTPException(status_code=404, detail=f"Process job {process_id} not found")
 
-    return {
-        "process_id": process_job.id,
-        "status": process_job.status.value,
-        "current_stage": process_job.current_stage,
-        "current_agent": process_job.current_agent,
-        "progress": process_job.progress or 0,
-        "error_message": process_job.error_message,
-        "agent_log": process_job.agent_log or [],
-        "created_at": process_job.created_at.isoformat() if process_job.created_at else None,
-        "started_at": process_job.started_at.isoformat() if process_job.started_at else None,
-        "completed_at": process_job.completed_at.isoformat() if process_job.completed_at else None,
-    }
+    return ProcessStatusResponse(
+        process_id=process_job.id,
+        status=process_job.status.value,
+        current_stage=process_job.current_stage,
+        current_agent=process_job.current_agent,
+        progress=process_job.progress,
+        error_message=process_job.error_message,
+        agent_log=process_job.agent_log or [],
+        created_at=process_job.created_at.isoformat() if process_job.created_at else None,
+        started_at=process_job.started_at.isoformat() if process_job.started_at else None,
+        completed_at=process_job.completed_at.isoformat() if process_job.completed_at else None,
+    )
 
 
-@router.get("/result/{process_id}")
+@router.get("/result/{process_id}", response_model=ProcessResultResponse)
 async def get_process_result(process_id: str, db: Session = Depends(get_db)):
     """Return final processed transactions for a completed process job."""
     process_job = db_service.get_process_job(db, process_id)
@@ -93,9 +93,9 @@ async def get_process_result(process_id: str, db: Session = Depends(get_db)):
 
     transactions = get_result_fn(db, process_job.ingest_id)
 
-    return {
-        "process_id": process_job.id,
-        "ingest_id": process_job.ingest_id,
-        "status": process_job.status.value,
-        "transactions": transactions,
-    }
+    return ProcessResultResponse(
+        process_id=process_job.id,
+        ingest_id=process_job.ingest_id,
+        status=process_job.status.value,
+        transactions=transactions,
+    )
