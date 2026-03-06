@@ -84,7 +84,7 @@ def test_get_process_status_polling(monkeypatch):
     body = response.json()
     assert body["process_id"] == "proc_123"
     assert body["status"] == "running"
-    assert body["progress"] == 42
+    assert body["progress"] == 42  # Progress is present when set, null when not set
     assert body["current_stage"] == "ingesta"
 
     app.dependency_overrides.clear()
@@ -131,7 +131,7 @@ def test_get_process_result_completed_returns_transactions(monkeypatch):
             {
                 "transaction_pending_id": "txn_1",
                 "transaction_posted_id": "posted_1",
-                "cuenta_puc": "5195",
+                "puc_account": "5195",
                 "total": 1500000.0,
             }
         ],
@@ -143,7 +143,7 @@ def test_get_process_result_completed_returns_transactions(monkeypatch):
     assert body["process_id"] == "proc_123"
     assert body["status"] == "completed"
     assert len(body["transactions"]) == 1
-    assert body["transactions"][0]["cuenta_puc"] == "5195"
+    assert body["transactions"][0]["puc_account"] == "5195"
 
     app.dependency_overrides.clear()
 
