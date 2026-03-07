@@ -1,4 +1,3 @@
-import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
@@ -23,6 +22,18 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _build_connect_args(database_url: str) -> dict:
+    """Return safe connection args for migrations in managed Postgres providers."""
+    connect_args = {"connect_timeout": 60}
+
+    is_supabase = "supabase.co" in database_url or "pooler.supabase.com" in database_url
+    has_ssl_mode = "sslmode=" in database_url
+    if is_supabase and not has_ssl_mode:
+        connect_args["sslmode"] = "require"
+
+    return connect_args
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
@@ -39,10 +50,12 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    db_url = config.get_main_option("sqlalchemy.url")
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=_build_connect_args(db_url),
     )
 
     with connectable.connect() as connection:
