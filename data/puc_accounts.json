@@ -1,0 +1,330 @@
+[
+  {
+    "codigo": "1105",
+    "nombre": "Caja",
+    "clase": "1 - Activo",
+    "grupo": "11 - Disponible",
+    "naturaleza": "debito",
+    "descripcion": "Dinero en efectivo disponible en la empresa. Se debita al recibir efectivo y se acredita al pagarlo."
+  },
+  {
+    "codigo": "1110",
+    "nombre": "Bancos",
+    "clase": "1 - Activo",
+    "grupo": "11 - Disponible",
+    "naturaleza": "debito",
+    "descripcion": "Depósitos bancarios de la empresa en cuentas corrientes y de ahorros. Se debita con notas crédito bancarias y se acredita con notas débito."
+  },
+  {
+    "codigo": "1305",
+    "nombre": "Clientes",
+    "clase": "1 - Activo",
+    "grupo": "13 - Deudores",
+    "naturaleza": "debito",
+    "descripcion": "Créditos a favor de la empresa por ventas de bienes o servicios a crédito. Corresponde a cuentas por cobrar a clientes."
+  },
+  {
+    "codigo": "1355",
+    "nombre": "Anticipos y Avances",
+    "clase": "1 - Activo",
+    "grupo": "13 - Deudores",
+    "naturaleza": "debito",
+    "descripcion": "Valores entregados anticipadamente a proveedores, contratistas o empleados pendientes de legalizar."
+  },
+  {
+    "codigo": "1360",
+    "nombre": "Depósitos",
+    "clase": "1 - Activo",
+    "grupo": "13 - Deudores",
+    "naturaleza": "debito",
+    "descripcion": "Valores entregados en garantía o como depósitos por arrendamientos, servicios públicos, etc."
+  },
+  {
+    "codigo": "1380",
+    "nombre": "Deudores Varios",
+    "clase": "1 - Activo",
+    "grupo": "13 - Deudores",
+    "naturaleza": "debito",
+    "descripcion": "Acreencias a favor de la empresa no clasificadas en otras cuentas del grupo Deudores."
+  },
+  {
+    "codigo": "1405",
+    "nombre": "Materias Primas",
+    "clase": "1 - Activo",
+    "grupo": "14 - Inventarios",
+    "naturaleza": "debito",
+    "descripcion": "Costo de materias primas adquiridas para el proceso productivo, pendientes de transformar."
+  },
+  {
+    "codigo": "1435",
+    "nombre": "Mercancías no Fabricadas por la Empresa",
+    "clase": "1 - Activo",
+    "grupo": "14 - Inventarios",
+    "naturaleza": "debito",
+    "descripcion": "Inventario de bienes adquiridos para su reventa sin transformación. Típico en empresas comerciales."
+  },
+  {
+    "codigo": "1524",
+    "nombre": "Equipo de Oficina",
+    "clase": "1 - Activo",
+    "grupo": "15 - Propiedades Planta y Equipo",
+    "naturaleza": "debito",
+    "descripcion": "Muebles, enseres, sillas, escritorios y demás equipos de oficina con vida útil mayor a un año."
+  },
+  {
+    "codigo": "1528",
+    "nombre": "Equipo de Computación y Comunicación",
+    "clase": "1 - Activo",
+    "grupo": "15 - Propiedades Planta y Equipo",
+    "naturaleza": "debito",
+    "descripcion": "Computadores, servidores, impresoras, equipos de comunicación e infraestructura tecnológica."
+  },
+  {
+    "codigo": "1592",
+    "nombre": "Depreciación Acumulada",
+    "clase": "1 - Activo",
+    "grupo": "15 - Propiedades Planta y Equipo",
+    "naturaleza": "credito",
+    "descripcion": "Cuenta de valuación que acumula la depreciación de los activos fijos. Reduce el valor en libros del activo."
+  },
+  {
+    "codigo": "2105",
+    "nombre": "Bancos Nacionales",
+    "clase": "2 - Pasivo",
+    "grupo": "21 - Obligaciones Financieras",
+    "naturaleza": "credito",
+    "descripcion": "Obligaciones de la empresa con bancos nacionales por préstamos, sobregiros y créditos de tesorería."
+  },
+  {
+    "codigo": "2205",
+    "nombre": "Proveedores Nacionales",
+    "clase": "2 - Pasivo",
+    "grupo": "22 - Proveedores",
+    "naturaleza": "credito",
+    "descripcion": "Deudas con proveedores nacionales por compra de bienes y servicios a crédito. Principal cuenta de pasivo operativo."
+  },
+  {
+    "codigo": "2335",
+    "nombre": "Costas y Gastos por Pagar",
+    "clase": "2 - Pasivo",
+    "grupo": "23 - Cuentas por Pagar",
+    "naturaleza": "credito",
+    "descripcion": "Obligaciones causadas y pendientes de pago: nómina causada, servicios públicos, honorarios, etc."
+  },
+  {
+    "codigo": "2365",
+    "nombre": "Retención en la Fuente",
+    "clase": "2 - Pasivo",
+    "grupo": "23 - Cuentas por Pagar",
+    "naturaleza": "credito",
+    "descripcion": "Retenciones practicadas a terceros que la empresa debe declarar y pagar a la DIAN mensualmente. Aplica a compras, servicios, honorarios, arrendamientos según Art. 383-401 E.T."
+  },
+  {
+    "codigo": "2367",
+    "nombre": "Impuesto a las Ventas Retenido",
+    "clase": "2 - Pasivo",
+    "grupo": "23 - Cuentas por Pagar",
+    "naturaleza": "credito",
+    "descripcion": "ReteIVA: retención del IVA practicada por grandes contribuyentes o responsables del régimen común sobre compras. Tarifa general: 15% del IVA facturado."
+  },
+  {
+    "codigo": "2368",
+    "nombre": "Impuesto de Industria y Comercio Retenido",
+    "clase": "2 - Pasivo",
+    "grupo": "23 - Cuentas por Pagar",
+    "naturaleza": "credito",
+    "descripcion": "ReteICA: retención del Impuesto de Industria y Comercio practicada en la fuente. Tarifa varía por municipio y actividad económica (CIIU)."
+  },
+  {
+    "codigo": "2370",
+    "nombre": "Retenciones y Aportes de Nómina",
+    "clase": "2 - Pasivo",
+    "grupo": "23 - Cuentas por Pagar",
+    "naturaleza": "credito",
+    "descripcion": "Deducciones de nómina pendientes por pagar: aportes a salud, pensión, ARL, retención en la fuente sobre salarios."
+  },
+  {
+    "codigo": "2408",
+    "nombre": "Impuesto sobre las Ventas por Pagar",
+    "clase": "2 - Pasivo",
+    "grupo": "24 - Impuestos, Gravámenes y Tasas",
+    "naturaleza": "credito",
+    "descripcion": "IVA generado en ventas menos IVA descontable en compras. Saldo acreedor indica IVA a pagar a la DIAN bimestralmente. Art. 468 E.T. tarifa general 19%."
+  },
+  {
+    "codigo": "2412",
+    "nombre": "Impuesto de Renta y Complementarios",
+    "clase": "2 - Pasivo",
+    "grupo": "24 - Impuestos, Gravámenes y Tasas",
+    "naturaleza": "credito",
+    "descripcion": "Provisión de impuesto de renta anual. Tarifa general para personas jurídicas: 35% sobre renta líquida gravable según Art. 240 E.T."
+  },
+  {
+    "codigo": "3105",
+    "nombre": "Capital Suscrito y Pagado",
+    "clase": "3 - Patrimonio",
+    "grupo": "31 - Capital Social",
+    "naturaleza": "credito",
+    "descripcion": "Capital aportado por los socios y efectivamente pagado. Para SAS corresponde al capital suscrito pagado."
+  },
+  {
+    "codigo": "3305",
+    "nombre": "Reserva Legal",
+    "clase": "3 - Patrimonio",
+    "grupo": "33 - Reservas",
+    "naturaleza": "credito",
+    "descripcion": "Reserva obligatoria equivalente al 10% de las utilidades líquidas hasta alcanzar el 50% del capital, según Art. 452 Código de Comercio."
+  },
+  {
+    "codigo": "3605",
+    "nombre": "Utilidad del Ejercicio",
+    "clase": "3 - Patrimonio",
+    "grupo": "36 - Resultados del Ejercicio",
+    "naturaleza": "credito",
+    "descripcion": "Ganancia neta del período contable corriente antes de distribución a socios."
+  },
+  {
+    "codigo": "4105",
+    "nombre": "Industria Manufacturera",
+    "clase": "4 - Ingresos",
+    "grupo": "41 - Operacionales",
+    "naturaleza": "credito",
+    "descripcion": "Ingresos por venta de bienes fabricados por la empresa. Se acredita al facturar ventas y se debita al cierre del período."
+  },
+  {
+    "codigo": "4135",
+    "nombre": "Comercio al por Mayor y al por Menor",
+    "clase": "4 - Ingresos",
+    "grupo": "41 - Operacionales",
+    "naturaleza": "credito",
+    "descripcion": "Ingresos por ventas en empresas comerciales. Principal cuenta de ingresos para negocios de compraventa de mercancías."
+  },
+  {
+    "codigo": "4175",
+    "nombre": "Servicios",
+    "clase": "4 - Ingresos",
+    "grupo": "41 - Operacionales",
+    "naturaleza": "credito",
+    "descripcion": "Ingresos operacionales por prestación de servicios (consultoría, mantenimiento, tecnología, etc.)."
+  },
+  {
+    "codigo": "4210",
+    "nombre": "Financieros",
+    "clase": "4 - Ingresos",
+    "grupo": "42 - No Operacionales",
+    "naturaleza": "credito",
+    "descripcion": "Rendimientos financieros: intereses de cuentas de ahorro, CDTs, rendimientos de inversiones. No corresponden a la actividad principal."
+  },
+  {
+    "codigo": "5105",
+    "nombre": "Gastos de Personal",
+    "clase": "5 - Gastos",
+    "grupo": "51 - Operacionales de Administración",
+    "naturaleza": "debito",
+    "descripcion": "Salarios, prestaciones sociales, aportes parafiscales y seguridad social del personal administrativo. Mayor gasto fijo de la mayoría de empresas."
+  },
+  {
+    "codigo": "5110",
+    "nombre": "Honorarios",
+    "clase": "5 - Gastos",
+    "grupo": "51 - Operacionales de Administración",
+    "naturaleza": "debito",
+    "descripcion": "Pagos a personas naturales o jurídicas por servicios profesionales sin relación laboral. Sujetos a retención en la fuente: 10% si el beneficiario NO es declarante, 11% si es declarante (Art. 392 E.T.)."
+  },
+  {
+    "codigo": "5115",
+    "nombre": "Impuestos",
+    "clase": "5 - Gastos",
+    "grupo": "51 - Operacionales de Administración",
+    "naturaleza": "debito",
+    "descripcion": "Impuesto de industria y comercio, predial, vehículos y otros impuestos no recuperables como costo o deducción de renta."
+  },
+  {
+    "codigo": "5120",
+    "nombre": "Arrendamientos",
+    "clase": "5 - Gastos",
+    "grupo": "51 - Operacionales de Administración",
+    "naturaleza": "debito",
+    "descripcion": "Canon de arrendamiento de oficinas, bodegas, vehículos y demás bienes. Sujeto a retención en la fuente del 3.5% si el arrendatario es persona jurídica (Art. 401 E.T.)."
+  },
+  {
+    "codigo": "5125",
+    "nombre": "Contribuciones y Afiliaciones",
+    "clase": "5 - Gastos",
+    "grupo": "51 - Operacionales de Administración",
+    "naturaleza": "debito",
+    "descripcion": "Cuotas de afiliación a gremios, cámaras de comercio, colegios profesionales y similares."
+  },
+  {
+    "codigo": "5130",
+    "nombre": "Seguros",
+    "clase": "5 - Gastos",
+    "grupo": "51 - Operacionales de Administración",
+    "naturaleza": "debito",
+    "descripcion": "Primas de pólizas de seguros: vida, responsabilidad civil, todo riesgo, cumplimiento, etc."
+  },
+  {
+    "codigo": "5135",
+    "nombre": "Servicios",
+    "clase": "5 - Gastos",
+    "grupo": "51 - Operacionales de Administración",
+    "naturaleza": "debito",
+    "descripcion": "Servicios públicos (agua, luz, gas, internet), vigilancia, aseo, mensajería y demás servicios contratados."
+  },
+  {
+    "codigo": "5145",
+    "nombre": "Mantenimiento y Reparaciones",
+    "clase": "5 - Gastos",
+    "grupo": "51 - Operacionales de Administración",
+    "naturaleza": "debito",
+    "descripcion": "Gastos en mantenimiento preventivo/correctivo de equipos, instalaciones y vehículos. Si prolonga vida útil del activo, se capitaliza como mayor valor del activo."
+  },
+  {
+    "codigo": "5195",
+    "nombre": "Diversos",
+    "clase": "5 - Gastos",
+    "grupo": "51 - Operacionales de Administración",
+    "naturaleza": "debito",
+    "descripcion": "Gastos administrativos varios no clasificables en otras subcuentas: papelería, cafetería, taxi, parqueadero, etc."
+  },
+  {
+    "codigo": "5205",
+    "nombre": "Gastos de Personal de Ventas",
+    "clase": "5 - Gastos",
+    "grupo": "52 - Operacionales de Ventas",
+    "naturaleza": "debito",
+    "descripcion": "Salarios y prestaciones del equipo comercial y de ventas. Se diferencia de 5105 por su naturaleza comercial vs. administrativa."
+  },
+  {
+    "codigo": "5245",
+    "nombre": "Publicidad, Propaganda y Promoción",
+    "clase": "5 - Gastos",
+    "grupo": "52 - Operacionales de Ventas",
+    "naturaleza": "debito",
+    "descripcion": "Inversión en pauta publicitaria, diseño, material POP, redes sociales y eventos de promoción comercial."
+  },
+  {
+    "codigo": "5305",
+    "nombre": "Financieros No Operacionales",
+    "clase": "5 - Gastos",
+    "grupo": "53 - No Operacionales",
+    "naturaleza": "debito",
+    "descripcion": "Intereses bancarios, comisiones financieras, GMF (4x1000), diferencial cambiario desfavorable."
+  },
+  {
+    "codigo": "6205",
+    "nombre": "Costo de Ventas de Comercio al por Mayor",
+    "clase": "6 - Costos",
+    "grupo": "62 - De Ventas",
+    "naturaleza": "debito",
+    "descripcion": "Costo de adquisición de las mercancías vendidas en empresas comerciales. Se registra al vender y se cuadra contra ingresos para determinar la utilidad bruta."
+  },
+  {
+    "codigo": "1370",
+    "nombre": "IVA Descontable",
+    "clase": "1 - Activo",
+    "grupo": "13 - Deudores",
+    "naturaleza": "debito",
+    "descripcion": "IVA pagado en compras de bienes y servicios gravados que puede restarse del IVA generado en ventas. Tarifa general 19% Art. 468 E.T. Solo aplica para responsables del régimen ordinario."
+  }
+]

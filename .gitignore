@@ -13,6 +13,11 @@ dist/
 build/
 *.egg
 
+# Project specific
+extracted_text.txt
+read_pdfs.py
+temp/
+storage/
 # Storage
 storage/
 *.db

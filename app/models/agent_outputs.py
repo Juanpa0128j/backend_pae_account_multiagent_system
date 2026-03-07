@@ -105,45 +105,33 @@ def _parse_date(v: str | date | None) -> date | None:
 # 1. INGESTA Agent Output
 # ---------------------------------------------------------------------------
 
+class RawTransactionItem(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    fecha: Optional[date] = Field(None, description="Document date in YYYY-MM-DD format")
+    nit_emisor: str = Field(..., description="NIT of the issuer")
+    nit_receptor: str = Field(..., description="NIT of the receiver (empresa)")
+    total: Decimal = Field(..., ge=0, description="Total amount of the transaction")
+    descripcion: Optional[str] = Field(None, description="Description/concept of the transaction")
+    items: Optional[List[dict]] = Field(None, description="Line items")
+
+    @field_validator("fecha", mode="before")
+    @classmethod
+    def parse_fecha(cls, v):  # noqa: N805
+        return _parse_date(v)
+
+
 class IngestOutput(BaseModel):
     """
     Schema for the Ingesta (Ingest) agent output.
     Represents structured data extracted from a receipt/invoice PDF.
     """
-
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    fecha: date = Field(
-        ..., description="Document date in YYYY-MM-DD format"
+    transactions: List[RawTransactionItem] = Field(
+        default_factory=list,
+        description="Extracted list of transactions from the document"
     )
-    monto: Decimal = Field(
-        ..., ge=0, description="Total amount (must be >= 0)"
-    )
-    concepto: str = Field(
-        ..., min_length=3, max_length=500,
-        description="Payment description / concept"
-    )
-    beneficiario: str = Field(
-        ..., min_length=2, max_length=300,
-        description="Payment recipient name"
-    )
-    empresa: str = Field(
-        ..., min_length=2, max_length=300,
-        description="Issuing company / bank"
-    )
-    referencia: Optional[str] = Field(
-        None, max_length=100,
-        description="Transaction reference number"
-    )
-    tipo_documento: TipoDocumento = Field(
-        ..., description="Document type classification"
-    )
-
-    # -- validators --
-    @field_validator("fecha", mode="before")
-    @classmethod
-    def parse_fecha(cls, v):  # noqa: N805
-        return _parse_date(v)
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,9 @@ from sqlalchemy import (
     Boolean,
     ForeignKey,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
+from sqlalchemy.types import JSON
+JSONB = JSON().with_variant(PG_JSONB(), "postgresql")
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 

@@ -7,16 +7,27 @@ class IngestResponse(BaseModel):
     message: str
     ingest_id: str
     status: str
+    file_name: str
+    extracted_transactions: int = 0
+    raw_preview: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
 
+class RawTransaction(BaseModel):
+    fecha: str
+    nit_emisor: str
+    nit_receptor: str
+    total: float
+    descripcion: Optional[str] = None
+    items: Optional[List[Dict[str, Any]]] = None
 
-class IngestStatusResponse(BaseModel):
-    id: str
+class IngestDetailResponse(BaseModel):
+    ingest_id: str
     file_name: str
     status: str
-    raw_preview: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
     extraction_errors: Optional[List[str]] = None
-    created_at: Optional[str] = None
-    completed_at: Optional[str] = None
+    raw_transactions: List[RawTransaction] = Field(default_factory=list)
 
 
 class ProcessResponse(BaseModel):
