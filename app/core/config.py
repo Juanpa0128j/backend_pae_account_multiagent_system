@@ -24,13 +24,19 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
 
     def model_post_init(self, __context) -> None:
-        """Fix Render's postgres:// scheme → postgresql:// for SQLAlchemy 2.0."""
-        if self.database_url.startswith("postgres://"):
-            object.__setattr__(
-                self,
-                "database_url",
-                self.database_url.replace("postgres://", "postgresql://", 1),
-            )
+        """Normalize DB URL and enforce SSL for Supabase-hosted Postgres."""
+        normalized_url = self.database_url
+
+        if normalized_url.startswith("postgres://"):
+            normalized_url = normalized_url.replace("postgres://", "postgresql://", 1)
+
+        is_supabase = "supabase.co" in normalized_url or "pooler.supabase.com" in normalized_url
+        if is_supabase and "sslmode=" not in normalized_url:
+            separator = "&" if "?" in normalized_url else "?"
+            normalized_url = f"{normalized_url}{separator}sslmode=require"
+
+        if normalized_url != self.database_url:
+            object.__setattr__(self, "database_url", normalized_url)
 
     # Storage
     upload_folder: str = "./storage/uploads"
