@@ -10,12 +10,18 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
+from sqlalchemy.exc import OperationalError as SAOperationalError
+
+from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.database import SessionLocal
+from app.core.logger import get_logger
 from app.models.database import IngestStatus, ProcessStatus, TransactionPending
 from app.services import db_service
 
-logger = logging.getLogger(__name__)
+logger = get_logger("app.agents.persist")
+
+MAX_NODE_RETRIES = 3
 
 
 def _as_str(value: Any, default: str = "") -> str:
@@ -52,6 +58,43 @@ def db_persist_node(state: AgentState) -> AgentState:
         logger.warning(f"db_persist: Skipping due to upstream error: {state['error']}")
         return state
 
+    append_log(state, "db_persist", "node_start", {"mode": state.get("mode", "ingest")})
+
+    for _attempt in range(1, MAX_NODE_RETRIES + 1):
+        try:
+            _db_persist_inner(state)
+            append_log(state, "db_persist", "node_complete", {
+                "ingest_id": state.get("ingest_id"),
+            })
+            return state
+        except SAOperationalError as e:
+            logger.warning(
+                f"db_persist: transient DB error attempt {_attempt}/{MAX_NODE_RETRIES}: {e}"
+            )
+            if _attempt == MAX_NODE_RETRIES:
+                state["error"] = f"DB persist failed after {MAX_NODE_RETRIES} attempts: {e}"
+                append_log(state, "db_persist", "node_error", {"error": str(e)})
+                return state
+        except Exception:
+            # Non-transient — fall through to original error handling below
+            break
+
+    return _db_persist_inner_with_cleanup(state)
+
+
+def _db_persist_inner(state: AgentState) -> None:
+    """Run the core DB persistence; raises on any error (called inside retry loop)."""
+    _run_persist(state)
+
+
+def _db_persist_inner_with_cleanup(state: AgentState) -> AgentState:
+    """Run persistence with full error cleanup; used when retry loop is exhausted/skipped."""
+    _run_persist(state)
+    return state
+
+
+def _run_persist(state: AgentState) -> None:
+    """Core persistence logic. Raises on failure; called by the retry wrappers."""
     mode = state.get("mode", "ingest")
     interpreted = state.get("interpreted_data", {}) or {}
 
@@ -283,9 +326,13 @@ def db_persist_node(state: AgentState) -> AgentState:
 
         logger.info(f"db_persist: Successfully persisted {len(transactions)} txs for ingest {ingest_id}")
 
+    except SAOperationalError:
+        # Re-raise so the retry loop in db_persist_node can catch and retry
+        raise
     except Exception as e:
         logger.error(f"db_persist: Error persisting data: {e}", exc_info=True)
         state["error"] = f"DB persist error: {str(e)}"
+        append_log(state, "db_persist", "node_error", {"error": str(e)})
 
         if mode == "ingest" and ingest_id:
             try:
