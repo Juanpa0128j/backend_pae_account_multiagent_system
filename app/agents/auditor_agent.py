@@ -1,6 +1,6 @@
 """
-Agente Auditor (Internal Control) — STUB for Sprint 9.
-Full implementation: Sprint 13.
+Agente Auditor (Internal Control)
+
 
 Role (docs/Diseño de arquitectura de agente):
   - Validates double-entry integrity: sum(debits) == sum(credits).

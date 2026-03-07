@@ -7,13 +7,19 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.core.config import settings
 
+# Supabase free/shared poolers can hit connection limits quickly with large app pools.
+is_supabase = "supabase.co" in settings.database_url or "pooler.supabase.com" in settings.database_url
+pool_size = 2 if is_supabase else 5
+max_overflow = 3 if is_supabase else 10
+
 # PostgreSQL engine with connection pooling
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=pool_size,
+    max_overflow=max_overflow,
     pool_recycle=300,
+    connect_args={"connect_timeout": 60},
     echo=(settings.app_env == "development"),
 )
 

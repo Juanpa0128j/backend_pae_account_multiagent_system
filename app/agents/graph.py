@@ -3,7 +3,7 @@ LangGraph StateGraph for the PAE multi-agent system.
 
 Two graphs are provided:
 
-1. create_agent_graph() — unified 9-node graph (Sprint 9).
+1. create_agent_graph() — unified 9-node graph.
    Handles all pipelines via supervisor FSM routing:
      Pipeline 1 (mode="ingest"):
        supervisor → ingesta → validate_output → [retry|error|end→db_persist] → END
@@ -49,7 +49,7 @@ _ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset({"ingest_id", "mode"})
 
 
 # ---------------------------------------------------------------------------
-# Unified 9-node graph (Sprint 9)
+# Unified 9-node graph
 # ---------------------------------------------------------------------------
 
 def create_agent_graph() -> Any:
@@ -113,7 +113,7 @@ def create_agent_graph() -> Any:
     graph.set_entry_point("supervisor")
 
     compiled = graph.compile()
-    logger.info("Unified agent graph compiled — 9 nodes (Sprint 9)")
+    logger.info("Unified agent graph compiled — 9 nodes")
     return compiled
 
 

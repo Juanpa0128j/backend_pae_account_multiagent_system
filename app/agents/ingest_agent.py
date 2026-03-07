@@ -52,7 +52,10 @@ def ingest_node(state: AgentState) -> AgentState:
     """
     Ingest node: Extracts multimodally from document and interprets with Gemini.
     """
-    
+    import nest_asyncio
+    # Allow asyncio inside LangGraph node context (must run after event loop is set up)
+    nest_asyncio.apply()
+
     # If supervisor already flagged an error, skip processing
     if state.get("error"):
         logger.warning(f"Skipping ingest due to upstream error: {state['error']}")

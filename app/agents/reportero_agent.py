@@ -1,6 +1,6 @@
 """
-Agente Reportero (Analyst) — STUB for Sprint 9.
-Full implementation: Sprint 15.
+Agente Reportero (Analyst)
+.
 
 Role (docs/Diseño de arquitectura de agente):
   - Triggered by GET /reports/* and /tax/* API endpoints.

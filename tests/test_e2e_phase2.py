@@ -1,5 +1,5 @@
 """
-E2E Phase 2 — Supervisor Funcional & Testing (Sprint 9).
+E2E Phase 2 — Supervisor Funcional & Testing.
 
 Tests the full routing FSM across all pipelines with all external
 dependencies mocked. Validates:

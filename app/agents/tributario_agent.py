@@ -1,6 +1,5 @@
 """
-Agente Tributario (Tax Specialist) — STUB for Sprint 9.
-Full implementation: Sprint 12.
+Agente Tributario (Tax Specialist)
 
 Role (docs/Diseño de arquitectura de agente):
   - Receives classified Transaction from Contador.

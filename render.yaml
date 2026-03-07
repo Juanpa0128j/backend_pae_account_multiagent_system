@@ -1,10 +1,3 @@
-databases:
-  - name: pae-db
-    databaseName: pae_accounting
-    user: pae_user
-    plan: free
-    region: oregon
-
 services:
   - type: web
     name: pae-backend
@@ -12,16 +5,14 @@ services:
     plan: free
     region: oregon
     buildCommand: "pip install uv && uv sync"
-    startCommand: "uv run uvicorn main:app --host 0.0.0.0 --port $PORT"
+    startCommand: "uv run uvicorn main:app --host 0.0.0.0 --port $PORT --loop asyncio"
     preDeployCommand: "uv run alembic upgrade head"
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.0"
       - key: DATABASE_URL
-        fromDatabase:
-          name: pae-db
-          property: connectionString
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
