@@ -118,6 +118,33 @@ curl http://localhost:8000/api/v1/evaluation/rag-status
 | `DATABASE_URL` | Database connection string | `sqlite:///./storage/pae.db` |
 | `PORT` | Server port | `8000` |
 
+## Supabase Demo (End-to-End)
+
+This repository includes a deterministic demo that runs **both current graphs** against a real Supabase PostgreSQL database:
+
+- Ingest graph: `supervisor -> ingesta -> validate_output -> db_persist`
+- Process graph: `process_supervisor -> contador -> validate_contador -> db_persist`
+
+1. Set your Supabase Postgres URL in `.env`:
+
+```bash
+DATABASE_URL=postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
+```
+
+2. Apply migrations:
+
+```bash
+uv run alembic upgrade head
+```
+
+3. Run the demo:
+
+```bash
+uv run python scripts/demo_supabase_process.py
+```
+
+The script generates a PDF document, ingests it through the full ingest graph, then executes the process graph and verifies final persistence (`transactions_posted`, `journal_entry_lines`) in Supabase.
+
 ## Running Tests
 
 ```bash

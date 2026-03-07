@@ -9,15 +9,20 @@ Graph structure:
 """
 
 import logging
+from typing import Any
 from langgraph.graph import StateGraph, END
 from app.agents.state import AgentState
 from app.agents.supervisor import (
     supervisor_node,
+    process_supervisor_node,
     validate_output_node,
+    validate_contador_output_node,
     should_retry_agent,
+    should_retry_contador,
 )
 from app.agents.ingest_agent import ingest_node
 from app.agents.persist_node import db_persist_node
+from app.agents.contador_agent import contador_node
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +32,38 @@ logger = logging.getLogger(__name__)
 _ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset({"ingest_id"})
 
 
-def create_agent_graph() -> StateGraph:
+def create_process_graph() -> Any:
+    """
+    Create and return process graph:
+    process_supervisor -> contador -> validate_contador -> (retry contador | persist) -> END
+    """
+
+    graph = StateGraph(AgentState)
+
+    graph.add_node("process_supervisor", process_supervisor_node)
+    graph.add_node("contador", contador_node)
+    graph.add_node("validate_contador", validate_contador_output_node)
+    graph.add_node("db_persist", db_persist_node)
+
+    graph.add_edge("process_supervisor", "contador")
+    graph.add_edge("contador", "validate_contador")
+    graph.add_conditional_edges(
+        "validate_contador",
+        should_retry_contador,
+        {
+            "retry": "contador",
+            "end": "db_persist",
+        },
+    )
+    graph.add_edge("db_persist", END)
+    graph.set_entry_point("process_supervisor")
+
+    compiled_graph = graph.compile()
+    logger.info("Process graph created and compiled (contador + validation + DB persist)")
+    return compiled_graph
+
+
+def create_agent_graph() -> Any:
     """
     Create and return the agent graph with validation & retry.
 
@@ -108,6 +144,13 @@ def invoke_agent(file_path: str, initial_state: dict | None = None) -> dict:
         "retry_count": 0,
         "ingest_id": None,
         "db_result": None,
+        "mode": "ingest",
+        "raw_transactions": [],
+        "contador_output": {},
+        "process_id": None,
+        "pending_transaction_id": None,
+        "current_stage": None,
+        "agent_log": [],
     }
     
     # Merge caller-supplied overrides restricted to the allow-list.
@@ -132,4 +175,46 @@ def invoke_agent(file_path: str, initial_state: dict | None = None) -> dict:
     result["validation_history"] = final_state.get("validation_history", [])
     result["db_result"] = final_state.get("db_result")
     
+    return result
+
+
+def invoke_process_pipeline(
+    *,
+    ingest_id: str,
+    raw_transactions: list[dict],
+    pending_transaction_id: str,
+    process_id: str | None = None,
+) -> dict:
+    """
+    Invoke process pipeline starting from staged transactions.
+    """
+
+    graph = create_process_graph()
+
+    state: AgentState = {
+        "file_path": "",
+        "raw_text": "",
+        "interpreted_data": {},
+        "result": {},
+        "error": None,
+        "validation_history": [],
+        "current_agent": "",
+        "correction_feedback": None,
+        "retry_count": 0,
+        "ingest_id": ingest_id,
+        "db_result": None,
+        "mode": "process",
+        "raw_transactions": raw_transactions,
+        "contador_output": {},
+        "process_id": process_id,
+        "pending_transaction_id": pending_transaction_id,
+        "current_stage": "queued",
+        "agent_log": [],
+    }
+
+    final_state = graph.invoke(state)
+    result = final_state["result"]
+    result["validation_history"] = final_state.get("validation_history", [])
+    result["db_result"] = final_state.get("db_result")
+    result["error"] = final_state.get("error")
     return result
