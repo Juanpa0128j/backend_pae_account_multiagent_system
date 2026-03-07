@@ -1,45 +1,170 @@
 """
 Supervisor and validation nodes for ingest and process graphs.
+
+The Supervisor is a finite state machine (FSM) that routes between all
+architecture agents based on state['mode'] and state['current_agent']:
+
+  mode == "ingest"   → validate file → ingesta
+  mode == "process"  → contador → tributario → auditor → db_persist
+  mode == "reporting"→ reportero
+
+All routing decisions and validation outcomes are recorded in agent_log.
 """
 
 import logging
 from pathlib import Path
 
+from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.database import SessionLocal
+from app.core.logger import get_logger
 from app.services import db_service
 from app.services.validation_engine import ValidationResult, get_validator
 
-logger = logging.getLogger(__name__)
+logger = get_logger("app.agents.supervisor")
 
+
+# ---------------------------------------------------------------------------
+# Pipeline 1 supervisor — ingest graph entry point
+# ---------------------------------------------------------------------------
 
 def supervisor_node(state: AgentState) -> AgentState:
-    """Ingest supervisor: validates file input and routes to ingest worker."""
-    file_path = state["file_path"]
+    """
+    Ingest supervisor: validates file input and routes to ingest worker.
+    Also handles re-entry from the unified graph after agent completions.
+    """
+    # Initialise fields that may be missing
+    for field, default in [
+        ("validation_history", []),
+        ("current_agent", ""),
+        ("retry_count", 0),
+        ("correction_feedback", None),
+        ("agent_log", []),
+        ("audit_decision", None),
+        ("audit_feedback", None),
+    ]:
+        if state.get(field) is None:
+            state[field] = default
 
-    if not state.get("validation_history"):
-        state["validation_history"] = []
-    if not state.get("current_agent"):
-        state["current_agent"] = ""
-    if state.get("retry_count") is None:
-        state["retry_count"] = 0
-    if not state.get("correction_feedback"):
-        state["correction_feedback"] = None
+    mode = state.get("mode", "ingest")
+    current = state.get("current_agent", "")
 
-    if not Path(file_path).exists():
-        state["error"] = f"File not found: {file_path}"
-        logger.error(state["error"])
+    append_log(state, "supervisor", "routing_start", {
+        "mode": mode,
+        "current_agent": current,
+    })
+
+    # ------------------------------------------------------------------
+    # Ingest pipeline: file upload → ingesta → validate → db_persist
+    # ------------------------------------------------------------------
+    if mode in ("ingest", "") and not current:
+        file_path = state.get("file_path", "")
+
+        if not Path(file_path).exists():
+            state["error"] = f"File not found: {file_path}"
+            logger.error(state["error"])
+            append_log(state, "supervisor", "routing_error", {
+                "reason": "file_not_found", "file_path": file_path,
+            })
+            return state
+
+        if not file_path.lower().endswith(".pdf"):
+            state["error"] = f"Only PDF files are supported. Got: {file_path}"
+            logger.error(state["error"])
+            append_log(state, "supervisor", "routing_error", {
+                "reason": "not_pdf", "file_path": file_path,
+            })
+            return state
+
+        state["mode"] = "ingest"
+        state["current_agent"] = "ingesta"
+        logger.info(f"Supervisor: routing to ingesta for {file_path}")
+        append_log(state, "supervisor", "routing_complete", {
+            "next_agent": "ingesta", "mode": "ingest",
+        })
         return state
 
-    if not file_path.lower().endswith(".pdf"):
-        state["error"] = f"Only PDF files are supported. Got: {file_path}"
-        logger.error(state["error"])
+    # ------------------------------------------------------------------
+    # Process pipeline: staged transactions → contador → tributario
+    #                   → auditor → db_persist
+    # Re-entry after each agent sets current_agent and returns here.
+    # ------------------------------------------------------------------
+    if mode == "process":
+        if not current:
+            # Pipeline start — validate input exists
+            raw_txs = state.get("raw_transactions", [])
+            if not raw_txs:
+                state["error"] = "Process supervisor: no staged transactions to process"
+                logger.error(state["error"])
+                append_log(state, "supervisor", "routing_error", {
+                    "reason": "no_transactions",
+                })
+                return state
+            state["current_agent"] = "contador"
+            state["current_stage"] = "routing"
+            append_log(state, "supervisor", "routing_complete", {
+                "next_agent": "contador", "mode": "process",
+            })
+            return state
+
+        if current == "contador":
+            state["current_agent"] = "tributario"
+            append_log(state, "supervisor", "routing_complete", {
+                "next_agent": "tributario",
+            })
+            return state
+
+        if current == "tributario":
+            state["current_agent"] = "auditor"
+            append_log(state, "supervisor", "routing_complete", {
+                "next_agent": "auditor",
+            })
+            return state
+
+        if current == "auditor":
+            decision = state.get("audit_decision", "approved")
+            if decision == "rejected":
+                state["current_agent"] = "contador"
+                state["correction_feedback"] = (
+                    state.get("audit_feedback") or "Audit rejected — please reclassify"
+                )
+                logger.warning("Supervisor: Auditor rejected — re-routing to Contador")
+                append_log(state, "supervisor", "routing_complete", {
+                    "next_agent": "contador", "reason": "audit_rejected",
+                })
+            else:
+                state["current_agent"] = "db_persist"
+                append_log(state, "supervisor", "routing_complete", {
+                    "next_agent": "db_persist", "decision": "approved",
+                })
+            return state
+
+    # ------------------------------------------------------------------
+    # Reporting pipeline
+    # ------------------------------------------------------------------
+    if mode == "reporting":
+        state["current_agent"] = "reportero"
+        append_log(state, "supervisor", "routing_complete", {
+            "next_agent": "reportero", "mode": "reporting",
+        })
         return state
 
-    state["mode"] = "ingest"
-    state["current_agent"] = "ingesta"
+    # ------------------------------------------------------------------
+    # Unknown state — fail gracefully
+    # ------------------------------------------------------------------
+    state["error"] = (
+        f"Supervisor: unknown mode '{mode}' / current_agent '{current}'"
+    )
+    logger.error(state["error"])
+    append_log(state, "supervisor", "routing_error", {
+        "reason": "unknown_state", "mode": mode, "current_agent": current,
+    })
     return state
 
+
+# ---------------------------------------------------------------------------
+# Process pipeline supervisor — kept for backward-compat with create_process_graph
+# ---------------------------------------------------------------------------
 
 def process_supervisor_node(state: AgentState) -> AgentState:
     """Process supervisor: validates staged input and routes to contador worker."""
@@ -49,17 +174,25 @@ def process_supervisor_node(state: AgentState) -> AgentState:
         state["retry_count"] = 0
     if state.get("correction_feedback") is None:
         state["correction_feedback"] = None
+    if state.get("agent_log") is None:
+        state["agent_log"] = []
 
     raw_txs = state.get("raw_transactions", [])
     if not raw_txs:
         state["error"] = "Process supervisor: no staged transactions to process"
+        append_log(state, "supervisor", "routing_error", {"reason": "no_transactions"})
         return state
 
     state["mode"] = "process"
     state["current_agent"] = "contador"
     state["current_stage"] = "routing"
+    append_log(state, "supervisor", "routing_complete", {"next_agent": "contador"})
     return state
 
+
+# ---------------------------------------------------------------------------
+# Validation nodes
+# ---------------------------------------------------------------------------
 
 def validate_output_node(state: AgentState) -> AgentState:
     """Generic schema validation node (used by ingest graph)."""
@@ -69,6 +202,8 @@ def validate_output_node(state: AgentState) -> AgentState:
     agent_name = state.get("current_agent", "ingesta")
     raw_output = state.get("interpreted_data", {})
     attempt = state.get("retry_count", 0) + 1
+
+    append_log(state, agent_name, "validation_start", {"attempt": attempt})
 
     validator = get_validator()
     result: ValidationResult = validator.validate(
@@ -86,17 +221,33 @@ def validate_output_node(state: AgentState) -> AgentState:
     )
 
     if result.is_valid:
+        logger.info(f"Supervisor: output from '{agent_name}' VALID (attempt {attempt})")
         state["correction_feedback"] = None
         state["retry_count"] = 0
         if result.validated_output:
-            state["result"]["validated_data"] = result.validated_output.model_dump(mode="json")
+            state["result"]["validated_data"] = result.validated_output.model_dump(
+                mode="json"
+            )
+        append_log(state, agent_name, "validation_success", {"attempt": attempt})
         return state
 
     if validator.should_retry(result):
+        logger.warning(
+            f"Supervisor: output from '{agent_name}' INVALID — "
+            f"scheduling retry {attempt}/{validator.MAX_RETRIES}"
+        )
         state["correction_feedback"] = validator.build_correction_prompt(result)
         state["retry_count"] = attempt
+        append_log(state, agent_name, "validation_failure", {
+            "attempt": attempt,
+            "error_count": len(result.errors),
+            "will_retry": True,
+        })
         return state
 
+    logger.error(
+        f"Supervisor: output from '{agent_name}' failed after {attempt} attempts"
+    )
     state["error"] = (
         f"Schema validation failed for '{agent_name}' after {attempt} attempts. "
         f"Last errors:\n{result.error_summary()}"
@@ -104,6 +255,10 @@ def validate_output_node(state: AgentState) -> AgentState:
     state["correction_feedback"] = None
     state["result"]["status"] = "validation_error"
     state["result"]["validation_errors"] = result.errors
+    append_log(state, agent_name, "validation_exhausted", {
+        "attempt": attempt,
+        "errors": result.errors[:3],
+    })
     return state
 
 
@@ -136,6 +291,8 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
     raw_output = state.get("contador_output") or state.get("interpreted_data", {})
     attempt = state.get("retry_count", 0) + 1
 
+    append_log(state, agent_name, "validation_start", {"attempt": attempt})
+
     validator = get_validator()
     result: ValidationResult = validator.validate(
         agent_name, raw_output, attempt=attempt
@@ -155,6 +312,11 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         if validator.should_retry(result):
             state["correction_feedback"] = validator.build_correction_prompt(result)
             state["retry_count"] = attempt
+            append_log(state, agent_name, "validation_failure", {
+                "attempt": attempt,
+                "error_count": len(result.errors),
+                "will_retry": True,
+            })
             return state
 
         state["error"] = (
@@ -164,9 +326,16 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         state["result"]["status"] = "validation_error"
         state["result"]["validation_errors"] = result.errors
         state["correction_feedback"] = None
+        append_log(state, agent_name, "validation_exhausted", {
+            "attempt": attempt, "errors": result.errors[:3],
+        })
         return state
 
-    validated = result.validated_output.model_dump(mode="json") if result.validated_output else raw_output
+    validated = (
+        result.validated_output.model_dump(mode="json")
+        if result.validated_output
+        else raw_output
+    )
     missing = _missing_puc_codes(validated)
 
     if missing:
@@ -178,6 +347,11 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         if attempt < validator.MAX_RETRIES:
             state["correction_feedback"] = missing_msg
             state["retry_count"] = attempt
+            append_log(state, agent_name, "validation_failure", {
+                "attempt": attempt,
+                "reason": "missing_puc",
+                "missing": missing,
+            })
             return state
 
         state["error"] = (
@@ -186,13 +360,12 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         )
         state["result"]["status"] = "validation_error"
         state["result"]["validation_errors"] = [
-            {
-                "loc": ["asientos"],
-                "msg": missing_msg,
-                "type": "puc_not_found",
-            }
+            {"loc": ["asientos"], "msg": missing_msg, "type": "puc_not_found"}
         ]
         state["correction_feedback"] = None
+        append_log(state, agent_name, "validation_exhausted", {
+            "attempt": attempt, "reason": "puc_not_found", "missing": missing,
+        })
         return state
 
     state["correction_feedback"] = None
@@ -201,11 +374,18 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
     state["interpreted_data"] = validated
     state["current_stage"] = "validated"
     state["result"]["validated_data"] = validated
+    append_log(state, agent_name, "validation_success", {"attempt": attempt})
     return state
 
 
+# ---------------------------------------------------------------------------
+# Conditional edge functions
+# ---------------------------------------------------------------------------
+
 def should_retry_agent(state: AgentState) -> str:
-    """Conditional edge for ingest graph retries."""
+    """Conditional edge for ingest graph: retry, error bypass, or proceed."""
+    if state.get("error"):
+        return "error"
     if state.get("correction_feedback"):
         return "retry"
     return "end"
@@ -216,3 +396,46 @@ def should_retry_contador(state: AgentState) -> str:
     if state.get("correction_feedback"):
         return "retry"
     return "end"
+
+
+# ---------------------------------------------------------------------------
+# Error terminal — unified graph
+# ---------------------------------------------------------------------------
+
+def error_terminal_node(state: AgentState) -> AgentState:
+    """
+    Terminal node for unrecoverable errors detected before pipeline starts.
+    Ensures result always has a consistent {status: error} shape.
+    """
+    if not state.get("result"):
+        state["result"] = {}
+    state["result"]["status"] = "error"
+    state["result"]["error"] = state.get("error", "Unknown error")
+    append_log(state, "supervisor", "pipeline_aborted", {
+        "reason": state.get("error"),
+    })
+    logger.error(f"Pipeline aborted: {state.get('error')}")
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Routing function for unified graph
+# ---------------------------------------------------------------------------
+
+def route_after_supervisor(state: AgentState) -> str:
+    """
+    Conditional edge: dispatch to the correct agent node after supervisor routing.
+    Returns the node name that matches the routing_map in create_agent_graph().
+    """
+    if state.get("error"):
+        return "error_terminal"
+    agent = state.get("current_agent", "ingesta")
+    routing_map = {
+        "ingesta": "ingesta",
+        "contador": "contador",
+        "tributario": "tributario",
+        "auditor": "auditor",
+        "db_persist": "db_persist",
+        "reportero": "reportero",
+    }
+    return routing_map.get(agent, "error_terminal")
