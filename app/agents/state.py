@@ -15,6 +15,14 @@ class ValidationRecord(TypedDict):
     timestamp: str
 
 
+class LogEntry(TypedDict):
+    """Structured execution log entry written by each agent node."""
+    timestamp: str   # ISO UTC string
+    agent: str       # node/agent name
+    event: str       # event type: routing_start | routing_complete | validation_success | etc.
+    details: dict    # free-form event-specific payload
+
+
 class AgentState(TypedDict):
     """
     State object passed through the agent graph.
@@ -37,7 +45,9 @@ class AgentState(TypedDict):
     - process_id: Process job id when running accounting pipeline
     - pending_transaction_id: Staged transaction id currently being posted
     - current_stage: Human-readable pipeline stage for status updates
-    - agent_log: Timeline entries for process status/debugging
+    - agent_log: Timeline entries for process status/debugging (List[LogEntry])
+    - audit_decision: Decision from Auditor agent: "approved" | "rejected" | None
+    - audit_feedback: Rejection reason from Auditor, fed back to Contador for retry
     """
     file_path: str
     raw_text: str
@@ -57,3 +67,5 @@ class AgentState(TypedDict):
     pending_transaction_id: Optional[str]
     current_stage: Optional[str]
     agent_log: List[dict]
+    audit_decision: Optional[str]
+    audit_feedback: Optional[str]
