@@ -1,43 +1,131 @@
 """
-LangGraph StateGraph for the pilot agent.
-Orchestrates the flow between Supervisor, Worker, and Validation nodes.
+LangGraph StateGraph for the PAE multi-agent system.
 
-Graph structure:
-  Supervisor → Ingesta → Validate Output ─┬─(valid)──→ END
-                  ↑                        │
-                  └───── (retry) ──────────┘
+Two graphs are provided:
+
+1. create_agent_graph() — unified 9-node graph (Sprint 9).
+   Handles all pipelines via supervisor FSM routing:
+     Pipeline 1 (mode="ingest"):
+       supervisor → ingesta → validate_output → [retry|error|end→db_persist] → END
+     Pipeline 2 (mode="process"):
+       supervisor → contador → supervisor → tributario → supervisor → auditor
+         → supervisor → [approved→db_persist | rejected→contador] → END
+     Reporting (mode="reporting"):
+       supervisor → reportero → END
+     Error path:
+       supervisor → error_terminal → END
+
+2. create_process_graph() — lean accounting graph (legacy / direct invocation).
+   process_supervisor → contador → validate_contador → [retry|end→db_persist] → END
 """
 
 import logging
 from typing import Any
-from langgraph.graph import StateGraph, END
-from app.agents.state import AgentState
-from app.agents.supervisor import (
-    supervisor_node,
-    process_supervisor_node,
-    validate_output_node,
-    validate_contador_output_node,
-    should_retry_agent,
-    should_retry_contador,
-)
+
+from langgraph.graph import END, StateGraph
+
+from app.agents.auditor_agent import auditor_node
+from app.agents.contador_agent import contador_node
 from app.agents.ingest_agent import ingest_node
 from app.agents.persist_node import db_persist_node
-from app.agents.contador_agent import contador_node
+from app.agents.reportero_agent import reportero_node
+from app.agents.state import AgentState
+from app.agents.supervisor import (
+    error_terminal_node,
+    process_supervisor_node,
+    route_after_supervisor,
+    should_retry_agent,
+    should_retry_contador,
+    supervisor_node,
+    validate_contador_output_node,
+    validate_output_node,
+)
+from app.agents.tributario_agent import tributario_node
 
 logger = logging.getLogger(__name__)
 
 # Keys that callers are permitted to pre-set via the initial_state parameter.
-# Core execution fields (raw_text, result, error, retry_count, etc.) are
-# intentionally excluded to prevent accidental runtime corruption.
-_ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset({"ingest_id"})
+_ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset({"ingest_id", "mode"})
 
+
+# ---------------------------------------------------------------------------
+# Unified 9-node graph (Sprint 9)
+# ---------------------------------------------------------------------------
+
+def create_agent_graph() -> Any:
+    """
+    Create and compile the unified 9-node agent graph.
+
+    All pipelines are routed by the supervisor FSM via the 'mode' state field:
+      "ingest"   → Pipeline 1 (default, backward-compatible)
+      "process"  → Pipeline 2 (accounting loop with Contador/Tributario/Auditor)
+      "reporting"→ Reporting pipeline
+
+    Returns:
+        Compiled StateGraph ready for invocation.
+    """
+    graph = StateGraph(AgentState)
+
+    # --- register all nodes ---
+    graph.add_node("supervisor", supervisor_node)
+    graph.add_node("ingesta", ingest_node)
+    graph.add_node("validate_output", validate_output_node)
+    graph.add_node("db_persist", db_persist_node)
+    graph.add_node("error_terminal", error_terminal_node)
+    graph.add_node("contador", contador_node)
+    graph.add_node("tributario", tributario_node)
+    graph.add_node("auditor", auditor_node)
+    graph.add_node("reportero", reportero_node)
+
+    # --- supervisor dispatches to the correct worker ---
+    graph.add_conditional_edges(
+        "supervisor",
+        route_after_supervisor,
+        {
+            "ingesta": "ingesta",
+            "contador": "contador",
+            "tributario": "tributario",
+            "auditor": "auditor",
+            "db_persist": "db_persist",
+            "reportero": "reportero",
+            "error_terminal": "error_terminal",
+        },
+    )
+
+    # --- Pipeline 1: ingesta → validate → retry or persist ---
+    graph.add_edge("ingesta", "validate_output")
+    graph.add_conditional_edges(
+        "validate_output",
+        should_retry_agent,
+        {"retry": "ingesta", "end": "db_persist", "error": END},
+    )
+
+    # --- Pipeline 2: each accounting agent returns to supervisor ---
+    graph.add_edge("contador", "supervisor")
+    graph.add_edge("tributario", "supervisor")
+    graph.add_edge("auditor", "supervisor")
+
+    # --- terminals ---
+    graph.add_edge("reportero", END)
+    graph.add_edge("db_persist", END)
+    graph.add_edge("error_terminal", END)
+
+    graph.set_entry_point("supervisor")
+
+    compiled = graph.compile()
+    logger.info("Unified agent graph compiled — 9 nodes (Sprint 9)")
+    return compiled
+
+
+# ---------------------------------------------------------------------------
+# Legacy process graph (backward-compat, used by invoke_process_pipeline)
+# ---------------------------------------------------------------------------
 
 def create_process_graph() -> Any:
     """
-    Create and return process graph:
-    process_supervisor -> contador -> validate_contador -> (retry contador | persist) -> END
+    Create and return process graph (legacy):
+    process_supervisor → contador → validate_contador → (retry | db_persist) → END
     """
-
     graph = StateGraph(AgentState)
 
     graph.add_node("process_supervisor", process_supervisor_node)
@@ -50,88 +138,34 @@ def create_process_graph() -> Any:
     graph.add_conditional_edges(
         "validate_contador",
         should_retry_contador,
-        {
-            "retry": "contador",
-            "end": "db_persist",
-        },
+        {"retry": "contador", "end": "db_persist"},
     )
     graph.add_edge("db_persist", END)
     graph.set_entry_point("process_supervisor")
 
     compiled_graph = graph.compile()
-    logger.info("Process graph created and compiled (contador + validation + DB persist)")
+    logger.info("Process graph compiled (contador + validation + DB persist)")
     return compiled_graph
 
 
-def create_agent_graph() -> Any:
-    """
-    Create and return the agent graph with validation & retry.
-
-    Graph structure:
-    Supervisor → Ingesta → ValidateOutput ─┬─ "end"   → db_persist → END
-                    ↑                       └─ "retry" → Ingesta
-    
-    Returns:
-        Compiled StateGraph ready for invocation
-    """
-    
-    # Create the graph
-    graph = StateGraph(AgentState)
-    
-    # Add nodes
-    graph.add_node("supervisor", supervisor_node)
-    graph.add_node("ingesta", ingest_node)
-    graph.add_node("validate_output", validate_output_node)
-    graph.add_node("db_persist", db_persist_node)
-    
-    # Define edges
-    graph.add_edge("supervisor", "ingesta")
-    graph.add_edge("ingesta", "validate_output")
-    
-    # Conditional edge: retry agent or persist to DB
-    graph.add_conditional_edges(
-        "validate_output",
-        should_retry_agent,
-        {
-            "retry": "ingesta",
-            "end": "db_persist",
-        },
-    )
-    
-    # db_persist always goes to END
-    graph.add_edge("db_persist", END)
-    
-    # Set entry point
-    graph.set_entry_point("supervisor")
-    
-    # Compile the graph
-    compiled_graph = graph.compile()
-    
-    logger.info("Agent graph created and compiled (with validation loop + DB persist)")
-    return compiled_graph
-
+# ---------------------------------------------------------------------------
+# invoke_agent — Pipeline 1 (ingest) entry point
+# ---------------------------------------------------------------------------
 
 def invoke_agent(file_path: str, initial_state: dict | None = None) -> dict:
     """
-    Invoke the agent with a file path.
-    
+    Invoke the unified agent graph for a file upload (Pipeline 1).
+
     Args:
-        file_path: Path to the PDF file to process
-        initial_state: Optional dictionary with supplemental state fields to
-            pre-populate before invoking the graph (e.g.
-            ``{"ingest_id": "abc123"}``).  Only keys listed in
-            ``_ALLOWED_INITIAL_STATE_KEYS`` (currently ``ingest_id``) are
-            accepted; supplying any other key raises ``ValueError`` to prevent
-            accidental corruption of core execution fields.
-        
+        file_path: Path to the PDF file to process.
+        initial_state: Optional dict with supplemental state fields.
+            Only keys in _ALLOWED_INITIAL_STATE_KEYS are accepted.
+
     Returns:
-        Result dictionary with status, data, or error.
-        Includes validated_data and validation_history when available.
+        Result dict with status, data, validation_history, agent_log, db_result.
     """
-    
     graph = create_agent_graph()
-    
-    # Initialize state with defaults
+
     state: AgentState = {
         "file_path": file_path,
         "raw_text": "",
@@ -151,11 +185,10 @@ def invoke_agent(file_path: str, initial_state: dict | None = None) -> dict:
         "pending_transaction_id": None,
         "current_stage": None,
         "agent_log": [],
+        "audit_decision": None,
+        "audit_feedback": None,
     }
-    
-    # Merge caller-supplied overrides restricted to the allow-list.
-    # Raise immediately if unknown keys are supplied so callers discover
-    # misuse early rather than silently corrupting core state fields.
+
     if initial_state:
         disallowed = set(initial_state.keys()) - _ALLOWED_INITIAL_STATE_KEYS
         if disallowed:
@@ -165,18 +198,21 @@ def invoke_agent(file_path: str, initial_state: dict | None = None) -> dict:
             )
         for key, value in initial_state.items():
             state[key] = value
-    
-    # Invoke the graph
+
     logger.info(f"Invoking agent for file: {file_path}")
     final_state = graph.invoke(state)
-    
-    # Enrich result with validation info and DB result
+
     result = final_state["result"]
     result["validation_history"] = final_state.get("validation_history", [])
     result["db_result"] = final_state.get("db_result")
-    
+    result["agent_log"] = final_state.get("agent_log", [])
+
     return result
 
+
+# ---------------------------------------------------------------------------
+# invoke_process_pipeline — Pipeline 2 (accounting) entry point
+# ---------------------------------------------------------------------------
 
 def invoke_process_pipeline(
     *,
@@ -186,9 +222,9 @@ def invoke_process_pipeline(
     process_id: str | None = None,
 ) -> dict:
     """
-    Invoke process pipeline starting from staged transactions.
+    Invoke the process pipeline starting from staged transactions.
+    Uses the lean create_process_graph() for direct accounting processing.
     """
-
     graph = create_process_graph()
 
     state: AgentState = {
@@ -210,6 +246,8 @@ def invoke_process_pipeline(
         "pending_transaction_id": pending_transaction_id,
         "current_stage": "queued",
         "agent_log": [],
+        "audit_decision": None,
+        "audit_feedback": None,
     }
 
     final_state = graph.invoke(state)
@@ -217,4 +255,5 @@ def invoke_process_pipeline(
     result["validation_history"] = final_state.get("validation_history", [])
     result["db_result"] = final_state.get("db_result")
     result["error"] = final_state.get("error")
+    result["agent_log"] = final_state.get("agent_log", [])
     return result
