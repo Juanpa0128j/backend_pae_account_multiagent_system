@@ -6,6 +6,7 @@ Consumes staged transactions and produces ContadorOutput-compatible JSON.
 
 import logging
 
+from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.gemini_client import get_gemini_client
 
@@ -26,6 +27,12 @@ def contador_node(state: AgentState) -> AgentState:
         return state
 
     correction_feedback = state.get("correction_feedback")
+    is_retry = bool(correction_feedback)
+
+    append_log(state, "contador", "node_start", {
+        "tx_count": len(raw_txs),
+        "is_retry": is_retry,
+    })
 
     try:
         state["current_agent"] = "contador"
@@ -40,17 +47,12 @@ def contador_node(state: AgentState) -> AgentState:
         state["contador_output"] = output
         state["interpreted_data"] = output
         state["correction_feedback"] = None
-        state["agent_log"] = state.get("agent_log", []) + [
-            {
-                "agent": "contador",
-                "stage": "classifying",
-                "status": "completed",
-            }
-        ]
 
         logger.info("Contador: output generated")
+        append_log(state, "contador", "node_complete", {"stage": "classifying"})
         return state
     except Exception as e:
         state["error"] = f"Contador error: {str(e)}"
         logger.error(state["error"], exc_info=True)
+        append_log(state, "contador", "node_error", {"error": str(e)})
         return state
