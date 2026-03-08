@@ -25,7 +25,7 @@ def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def start_process_job(process_id: str) -> None:
+async def start_process_job(process_id: str) -> None:
     """Schedule a process job in the current event loop."""
     asyncio.create_task(run_process_job(process_id))
 
