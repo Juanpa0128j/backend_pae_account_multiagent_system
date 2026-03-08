@@ -111,7 +111,7 @@ INVALID_CONTADOR_OUTPUT_BAD_PUC = {
     "descripcion_general": "Transacción con PUC inválido test",
     "asientos": [
         {
-            "cuenta_puc": "INVALID_CODE",  # ❌ PUC no existe
+            "cuenta_puc": "999999",  # ❌ PUC no existe en DB
             "nombre_cuenta": "Cuenta Falsa",
             "tipo_movimiento": "debito",
             "valor": 1000000,
@@ -126,7 +126,7 @@ INVALID_CONTADOR_OUTPUT_BAD_PUC = {
         },
     ],
     "total_debitos": 1000000,
-    "total_creditos": 100000000000,
+    "total_creditos": 1000000,
     "total_credito": 1000000,
     "balanceado": True,
 }
@@ -283,8 +283,11 @@ class TestValidateContadorOutput:
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
     def test_validation_fails_with_invalid_puc(self, mock_puc_check, process_state):
         """Validation should fail if PUC code doesn't exist in DB."""
-        # First call returns None (invalid PUC), rest return valid
-        mock_puc_check.side_effect = [None, Mock(), Mock(), Mock()]
+        # Configure mock so that PUC code "999999" does NOT exist in DB, others do.
+        def puc_side_effect(db, codigo):
+            return None if codigo == "999999" else Mock()
+
+        mock_puc_check.side_effect = puc_side_effect
 
         process_state["contador_output"] = INVALID_CONTADOR_OUTPUT_BAD_PUC
         process_state["current_agent"] = "contador"
@@ -293,7 +296,7 @@ class TestValidateContadorOutput:
 
         # Should have correction feedback set on PUC validation failure
         assert result_state.get("correction_feedback") is not None
-        assert "INVALID_CODE" in result_state["correction_feedback"] or \
+        assert "999999" in result_state["correction_feedback"] or \
                "no existe" in result_state["correction_feedback"].lower() or \
                "inválido" in result_state["correction_feedback"].lower()
 
