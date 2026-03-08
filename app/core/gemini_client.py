@@ -51,6 +51,34 @@ class TaxJustification(BaseModel):
     confirma_tasas: bool = Field(description="True if the normative context confirms the calculated rates")
 
 
+class TaxRateLookup(BaseModel):
+    """
+    Structured output for Gemini tax profile setup.
+    Gemini determines the correct Colombian tax rates based on city, CIIU, and régimen.
+    """
+    tasa_retefuente_servicios: float = Field(
+        description="Retefuente rate for services as a decimal fraction, e.g. 0.11 for 11%"
+    )
+    tasa_retefuente_bienes: float = Field(
+        description="Retefuente rate for goods purchases as a decimal fraction, e.g. 0.03 for 3%"
+    )
+    tasa_retefuente_arrendamiento: float = Field(
+        description="Retefuente rate for lease/rent as a decimal fraction, e.g. 0.10 for 10%"
+    )
+    tasa_reteica: float = Field(
+        description=(
+            "ReteICA rate for the given municipality and CIIU as a decimal fraction, "
+            "e.g. 0.0069 for 0.69%. This is a municipal tax — use the rate for the specified city."
+        )
+    )
+    tasa_iva_general: float = Field(
+        description="IVA general tariff as a decimal fraction. 0.19 for régimen común, 0.0 for simplificado"
+    )
+    fuentes: List[str] = Field(
+        description="Legal articles and municipal agreements that support these rates"
+    )
+
+
 class GeminiClient:
     """Wrapper for Google Generative AI (Gemini) API using LangChain with structured output."""
 
@@ -77,6 +105,7 @@ class GeminiClient:
         self.structured_model = self.model.with_structured_output(RawTransactionsList)
         self.contador_model = self.model.with_structured_output(ContadorOutputGemini)
         self.tax_model = self.model.with_structured_output(TaxJustification)
+        self.tax_lookup_model = self.model.with_structured_output(TaxRateLookup)
 
     def extract_transactions(self, text: str, *, correction_feedback: str | None = None) -> dict:
         """
@@ -211,6 +240,52 @@ Devuelve tu análisis con las referencias legales, la justificación y si confir
         message = HumanMessage(content=prompt)
         response = self.tax_model.invoke([message])
         logger.debug("Tax justification generated: %s", response)
+        return response
+
+    def compute_tax_rates_from_profile(
+        self,
+        ciudad: str,
+        codigo_ciiu: str,
+        iva_responsable: bool,
+        rag_context: str,
+    ) -> TaxRateLookup:
+        """
+        Ask Gemini to determine the correct Colombian tax rates for a company
+        based on its city, CIIU economic activity code, and IVA regime.
+
+        Uses RAG normativo context if available; falls back to national defaults.
+        Returns a validated TaxRateLookup object ready to persist to company_settings.
+        """
+        regimen_desc = "régimen común (responsable de IVA)" if iva_responsable else "régimen simplificado (no responsable de IVA)"
+        normativa_section = rag_context.strip() if rag_context else "No se encontró información específica en la base normativa."
+
+        prompt = f"""Eres un experto en tributación colombiana con conocimiento del Estatuto Tributario y las tarifas municipales del Impuesto de Industria y Comercio (ICA).
+
+Una empresa necesita configurar sus tasas tributarias con los siguientes datos:
+- Ciudad: {ciudad}
+- Código CIIU: {codigo_ciiu}
+- Régimen: {regimen_desc}
+
+Información normativa disponible:
+---
+{normativa_section}
+---
+
+Con base en la normativa colombiana vigente:
+1. Determina la tasa de Retención en la Fuente aplicable a servicios (Art. 383 ET), bienes (Art. 401 ET) y arrendamientos.
+2. Determina la tasa de ReteICA para el municipio de {ciudad} y la actividad CIIU {codigo_ciiu}. Si no tienes datos exactos del municipio, usa la tarifa general de Bogotá (0.0069 = 0.69‰ equivalente, o la más común).
+3. Determina la tarifa de IVA: 0.19 si es régimen común, 0.0 si es régimen simplificado.
+4. Cita las fuentes legales que respaldan estas tasas.
+
+Devuelve las tasas como fracciones decimales (e.g., 0.11 para 11%, 0.0069 para 0.69%).
+Si no tienes información específica para el municipio o CIIU, usa las tarifas nacionales estándar."""
+
+        message = HumanMessage(content=prompt)
+        response = self.tax_lookup_model.invoke([message])
+        logger.info(
+            f"Tax rate lookup: ciudad={ciudad}, ciiu={codigo_ciiu}, "
+            f"reteica={response.tasa_reteica}"
+        )
         return response
 
 

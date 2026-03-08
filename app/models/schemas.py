@@ -58,6 +58,19 @@ class ProcessResultResponse(BaseModel):
     transactions: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class CompanyProfileSetupRequest(BaseModel):
+    """
+    User-friendly input for automatic tax rate configuration.
+
+    The user provides what they know (city, CIIU, régimen) and the agent
+    determines the correct tax rates from the normative RAG.
+    """
+    nombre: Optional[str] = None
+    ciudad: str = Field(..., min_length=2, description="City where the company operates, e.g. 'Bogotá', 'Medellín', 'Cali'")
+    codigo_ciiu: str = Field(..., min_length=1, description="CIIU economic activity code from the company's RUT")
+    iva_responsable: bool = Field(..., description="True if régimen común (IVA applies), False if régimen simplificado")
+
+
 class CompanySettingsRequest(BaseModel):
     """Request body for creating or updating company tax settings."""
     nombre: Optional[str] = None
