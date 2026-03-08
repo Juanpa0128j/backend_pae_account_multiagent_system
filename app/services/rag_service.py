@@ -39,6 +39,7 @@ _RETRIEVAL_CANDIDATES = 10  # Fetch this many from pgvector before reranking
 
 # Result schema
 
+
 class RAGResult(BaseModel):
     """A single retrieval result returned by the RAG service."""
 
@@ -56,6 +57,7 @@ class RAGResult(BaseModel):
 
 
 # RAGService
+
 
 class RAGService:
     """
@@ -75,12 +77,21 @@ class RAGService:
         self,
         query: str,
         n_results: int = 5,
+        hybrid: bool = True,
     ) -> list[RAGResult]:
         """
         Search the normativa collection (PUC + Estatuto Tributario).
 
         Pipeline:
-          query -> embed -> pgvector top-10 -> bge-reranker-v2-m3 -> top-n
+          query -> embed -> retrieval (vector or hybrid) -> bge-reranker-v2-m3 -> top-n
+
+        Args:
+            query:    Natural language query string.
+            n_results: Number of final results to return after reranking.
+            hybrid:   When True (default), use hybrid BM25+vector search with RRF.
+                      Requires migration d4e5f6a7b8c9_add_fts_column to be applied.
+                      Falls back to pure vector search if search_hybrid() is unavailable
+                      or if no FTS matches exist for the query.
 
         The reranker step is bypassed gracefully if the HF API is unavailable.
         """
@@ -94,7 +105,17 @@ class RAGService:
 
         candidates = min(_RETRIEVAL_CANDIDATES, total)
         query_embedding = self._db.embed_query(query)
-        raw = self._db.search(NORMATIVA_COLLECTION, query_embedding, candidates)
+
+        if hybrid and hasattr(self._db, "search_hybrid"):
+            raw = self._db.search_hybrid(
+                NORMATIVA_COLLECTION, query, query_embedding, candidates
+            )
+            # Fall back to pure vector if hybrid returned nothing (e.g., FTS had zero hits)
+            if not raw["ids"][0]:
+                raw = self._db.search(NORMATIVA_COLLECTION, query_embedding, candidates)
+        else:
+            raw = self._db.search(NORMATIVA_COLLECTION, query_embedding, candidates)
+
         results = _parse_search_results(raw)
         return self.rerank(query, results, top_n=n_results)
 
@@ -205,9 +226,14 @@ class RAGService:
             if isinstance(scores_raw, dict) and "scores" in scores_raw:
                 scores: list[float] = [float(s) for s in scores_raw["scores"]]
             elif isinstance(scores_raw, list):
-                scores = [float(s) if not isinstance(s, dict) else float(s.get("score", 0.0)) for s in scores_raw]
+                scores = [
+                    float(s) if not isinstance(s, dict) else float(s.get("score", 0.0))
+                    for s in scores_raw
+                ]
             else:
-                raise ValueError(f"Unexpected reranker response format: {type(scores_raw)}")
+                raise ValueError(
+                    f"Unexpected reranker response format: {type(scores_raw)}"
+                )
 
             ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
             return [doc for _, doc in ranked[:top_n]]
@@ -223,6 +249,7 @@ class RAGService:
 
 
 # Private helpers
+
 
 def _parse_search_results(results: dict) -> list[RAGResult]:
     """Convert an internal search result dict into a list of RAGResult.
@@ -253,6 +280,7 @@ def _parse_search_results(results: dict) -> list[RAGResult]:
 
 
 # Singleton factory
+
 
 @lru_cache(maxsize=1)
 def get_rag_service() -> RAGService:

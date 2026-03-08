@@ -7,10 +7,11 @@ Run once before starting the API server (or whenever the source data changes):
     python scripts/populate_rag.py --force  # re-index even if already populated
 
 What this script does:
-  1. Reads data/puc_accounts.json (~40 PUC entries)
-  2. Reads data/normativa_tributaria.json (~15 ET articles)
-  3. Embeds every entry via BAAI/bge-m3 (HuggingFace Inference API)
-  4. Upserts into the `normativa_colombia_v1` collection in Supabase pgvector
+  1. Reads data/puc_accounts.json (~41 PUC entries)
+  2. Reads data/normativa_tributaria.json (~50 ET articles)
+  3. Reads data/ley_43_1990.json (16 Ley 43/1990 PCGA principles)
+  4. Embeds every entry via BAAI/bge-m3 (HuggingFace Inference API)
+  5. Upserts into the `normativa_colombia_v1` collection in Supabase pgvector
 
 The script is idempotent: without --force it skips collections that already
 have content. With --force it deletes all documents and rebuilds from scratch.
@@ -43,6 +44,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 
 # Helpers
+
 
 def load_json(path: Path) -> list[dict]:
     with path.open(encoding="utf-8") as fh:
@@ -104,6 +106,33 @@ def build_normativa_documents() -> tuple[list[str], list[str], list[dict]]:
     return ids, texts, metas
 
 
+def build_ley43_documents() -> tuple[list[str], list[str], list[dict]]:
+    """Return (ids, texts, metadatas) for all Ley 43/1990 PCGA principles."""
+    entries = load_json(DATA_DIR / "ley_43_1990.json")
+    ids, texts, metas = [], [], []
+
+    for entry in entries:
+        doc_id = entry["id"]
+        text = (
+            f"{entry['articulo']} -- {entry['titulo']}. "
+            f"Fuente: {entry['fuente']}. "
+            f"{entry['contenido']}"
+        )
+        meta = {
+            "tipo": "normativa",
+            "id": entry["id"],
+            "articulo": entry["articulo"],
+            "titulo": entry["titulo"],
+            "fuente": entry["fuente"],
+            "tags": ", ".join(entry.get("tags", [])),
+        }
+        ids.append(doc_id)
+        texts.append(text)
+        metas.append(meta)
+
+    return ids, texts, metas
+
+
 def upsert_batch(
     collection_name: str,
     ids: list[str],
@@ -122,15 +151,20 @@ def upsert_batch(
         batch_texts = texts[i : i + batch_size]
         batch_metas = metas[i : i + batch_size]
 
-        logger.info("  Embedding and upserting batch %d-%d ...", i + 1, i + len(batch_ids))
+        logger.info(
+            "  Embedding and upserting batch %d-%d ...", i + 1, i + len(batch_ids)
+        )
         embeddings = vectordb.embed_texts(batch_texts)
-        vectordb.upsert(collection_name, batch_ids, batch_texts, embeddings, batch_metas)
+        vectordb.upsert(
+            collection_name, batch_ids, batch_texts, embeddings, batch_metas
+        )
         total += len(batch_ids)
 
     return total
 
 
 # Main
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -145,7 +179,9 @@ def main() -> None:
 
     settings = get_settings()
     if not settings.huggingface_api_key:
-        logger.error("HUGGINGFACE_API_KEY is not set. Add it to your .env file and retry.")
+        logger.error(
+            "HUGGINGFACE_API_KEY is not set. Add it to your .env file and retry."
+        )
         sys.exit(1)
 
     vectordb = get_vectordb()
@@ -173,8 +209,18 @@ def main() -> None:
     # Normativa articles
     logger.info("Indexing normativa tributaria ...")
     norm_ids, norm_texts, norm_metas = build_normativa_documents()
-    n_norm = upsert_batch(NORMATIVA_COLLECTION, norm_ids, norm_texts, norm_metas, vectordb)
+    n_norm = upsert_batch(
+        NORMATIVA_COLLECTION, norm_ids, norm_texts, norm_metas, vectordb
+    )
     logger.info("  %d normativa articles indexed.", n_norm)
+
+    # Ley 43/1990 PCGA principles
+    logger.info("Indexing Ley 43/1990 (PCGA) ...")
+    ley43_ids, ley43_texts, ley43_metas = build_ley43_documents()
+    n_ley43 = upsert_batch(
+        NORMATIVA_COLLECTION, ley43_ids, ley43_texts, ley43_metas, vectordb
+    )
+    logger.info("  %d Ley 43/1990 principles indexed.", n_ley43)
 
     total = vectordb.count(NORMATIVA_COLLECTION)
     logger.info("-" * 50)

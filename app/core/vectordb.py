@@ -9,6 +9,11 @@ differentiated by the `collection_name` column:
 Embeddings are generated via the HuggingFace Inference API (BAAI/bge-m3):
   - 1024 dimensions, up to 8192 tokens, 100+ languages
   - Zero RAM / zero disk -- fully API-based
+
+Search modes:
+  - search()        : Pure vector (cosine similarity via pgvector HNSW index)
+  - search_hybrid() : Hybrid BM25+vector fused with Reciprocal Rank Fusion (RRF)
+                      Requires migration d4e5f6a7b8c9_add_fts_column to be applied.
 """
 
 import json
@@ -121,6 +126,113 @@ class SupabaseVectorDB:
             "distances": [dists],
         }
 
+    def search_hybrid(
+        self,
+        collection_name: str,
+        query_text: str,
+        query_embedding: list[float],
+        n_results: int,
+        rrf_k: int = 60,
+    ) -> dict:
+        """
+        Hybrid retrieval: full-text search (tsvector) + vector cosine similarity
+        fused with Reciprocal Rank Fusion (RRF).
+
+        RRF score = 1/(rrf_k + fts_rank) + 1/(rrf_k + vec_rank)
+
+        Both lists independently retrieve up to n_results * 2 candidates before
+        fusion, so the final n_results are drawn from a wider pool.
+
+        The returned ``distances`` are normalised into [0, 2] using the formula:
+            dist = 2 * (1 - rrf_score / MAX_RRF)
+        where MAX_RRF = 2 / (rrf_k + 1).  This ensures _parse_search_results()
+        produces scores in [0, 1] (score = 1 - dist/2 = rrf_score / MAX_RRF).
+
+        Requires migration d4e5f6a7b8c9_add_fts_column to be applied (adds the
+        GENERATED tsvector column and its GIN index).
+
+        Falls back automatically to pure vector search when no FTS matches exist.
+        """
+        pool = n_results * 2  # wider candidate pool for fusion
+        vec_str = _vec_to_str(query_embedding)
+
+        sql = text("""
+            WITH
+            fts_cte AS (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           ORDER BY ts_rank_cd(content_tsv,
+                                               plainto_tsquery('spanish', :query_text)) DESC
+                       ) AS rank
+                FROM vector_documents
+                WHERE collection_name = :collection
+                  AND content_tsv @@ plainto_tsquery('spanish', :query_text)
+                LIMIT :pool
+            ),
+            vec_cte AS (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           ORDER BY embedding <=> CAST(:vec AS vector)
+                       ) AS rank
+                FROM vector_documents
+                WHERE collection_name = :collection
+                ORDER BY embedding <=> CAST(:vec AS vector)
+                LIMIT :pool
+            ),
+            rrf_cte AS (
+                SELECT
+                    COALESCE(f.id, v.id) AS id,
+                    COALESCE(1.0 / (:rrf_k + f.rank), 0.0)
+                    + COALESCE(1.0 / (:rrf_k + v.rank), 0.0) AS rrf_score
+                FROM fts_cte f
+                FULL OUTER JOIN vec_cte v ON f.id = v.id
+            )
+            SELECT d.id, d.content, d.metadata, r.rrf_score
+            FROM rrf_cte r
+            JOIN vector_documents d ON d.id = r.id
+            ORDER BY r.rrf_score DESC
+            LIMIT :n_results
+        """)
+
+        with Session(self._engine) as session:
+            rows = session.execute(
+                sql,
+                {
+                    "query_text": query_text,
+                    "vec": vec_str,
+                    "collection": collection_name,
+                    "pool": pool,
+                    "rrf_k": rrf_k,
+                    "n_results": n_results,
+                },
+            ).fetchall()
+
+        if not rows:
+            return {
+                "ids": [[]],
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]],
+            }
+
+        max_rrf = 2.0 / (rrf_k + 1)
+        ids, docs, metas, dists = [], [], [], []
+        for row in rows:
+            ids.append(str(row[0]))
+            docs.append(row[1] or "")
+            metas.append(row[2] or {})
+            rrf_score = float(row[3])
+            # Map rrf_score → distance in [0, 2] for _parse_search_results compatibility
+            dist = 2.0 * (1.0 - rrf_score / max_rrf)
+            dists.append(max(0.0, min(2.0, dist)))
+
+        return {
+            "ids": [ids],
+            "documents": [docs],
+            "metadatas": [metas],
+            "distances": [dists],
+        }
+
     def get_recent(self, collection_name: str, limit: int) -> dict:
         """Return the most recently added documents (no semantic search)."""
         sql = text("""
@@ -181,13 +293,16 @@ class SupabaseVectorDB:
         """)
         with Session(self._engine) as session:
             for doc_id, content, emb, meta in zip(ids, texts, embeddings, metadatas):
-                session.execute(sql, {
-                    "id": doc_id,
-                    "collection": collection_name,
-                    "content": content,
-                    "vec": _vec_to_str(emb),
-                    "meta": json.dumps(meta),
-                })
+                session.execute(
+                    sql,
+                    {
+                        "id": doc_id,
+                        "collection": collection_name,
+                        "content": content,
+                        "vec": _vec_to_str(emb),
+                        "meta": json.dumps(meta),
+                    },
+                )
             session.commit()
 
     def add(
@@ -207,20 +322,21 @@ class SupabaseVectorDB:
         """)
         with Session(self._engine) as session:
             for doc_id, content, emb, meta in zip(ids, texts, embeddings, metadatas):
-                session.execute(sql, {
-                    "id": doc_id,
-                    "collection": collection_name,
-                    "content": content,
-                    "vec": _vec_to_str(emb),
-                    "meta": json.dumps(meta),
-                })
+                session.execute(
+                    sql,
+                    {
+                        "id": doc_id,
+                        "collection": collection_name,
+                        "content": content,
+                        "vec": _vec_to_str(emb),
+                        "meta": json.dumps(meta),
+                    },
+                )
             session.commit()
 
     def delete_all(self, collection_name: str) -> int:
         """Delete all documents in a collection. Returns count of deleted rows."""
-        sql = text(
-            "DELETE FROM vector_documents WHERE collection_name = :collection"
-        )
+        sql = text("DELETE FROM vector_documents WHERE collection_name = :collection")
         with Session(self._engine) as session:
             result = session.execute(sql, {"collection": collection_name})
             session.commit()

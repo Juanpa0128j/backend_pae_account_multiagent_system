@@ -1,0 +1,130 @@
+[
+  {
+    "id": "LEY43_ART_1",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 1",
+    "titulo": "Definición de Contaduría Pública",
+    "contenido": "La contaduría pública es una profesión que tiene como fin satisfacer necesidades de la sociedad, mediante la medición, evaluación, ordenamiento, análisis e interpretación de la información financiera de las empresas o los individuos y la preparación de informes sobre la correspondiente situación financiera, sobre los cuales se basan las decisiones de los empresarios, directivos y terceros interesados en la gestión empresarial. El contador público, como depositario de la confianza pública, da fe pública cuando con su firma y número de tarjeta profesional suscribe documentos en relación con actos que afecten o puedan afectar los intereses de terceros.",
+    "tags": ["contaduria", "definicion", "profesion", "contador_publico", "informacion_financiera", "fe_publica"]
+  },
+  {
+    "id": "LEY43_ART_9",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 9",
+    "titulo": "Obligaciones Especiales del Contador Público",
+    "contenido": "Son obligaciones del contador público: (a) suministrar a sus clientes los servicios de asesoría en los asuntos de su incumbencia con diligencia y competencia; (b) no divulgar la información confidencial obtenida en el cumplimiento de sus funciones; (c) actuar con objetividad e independencia de criterio en todos los trabajos; (d) mantener actualización permanente en sus conocimientos profesionales; (e) no aceptar trabajos cuando existan impedimentos o conflictos de interés; (f) cumplir con las normas de auditoría y contabilidad generalmente aceptadas. El contador debe actuar con probidad e independencia en todos sus compromisos profesionales.",
+    "tags": ["contador_publico", "obligaciones", "independencia", "confidencialidad", "etica", "diligencia"]
+  },
+  {
+    "id": "LEY43_ART_13",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 13",
+    "titulo": "Fe Pública del Contador",
+    "contenido": "La atestación o firma de un contador público en los actos propios de su profesión hará presumir, salvo prueba en contrario, que el acto respectivo se ajusta a los requisitos legales, lo mismo que a los estatutarios en caso de personas jurídicas. Tratándose de balances, se presumirá además que los saldos se han tomado fielmente de los libros, que éstos se ajustan a las normas legales y que las cifras registradas en ellos reflejan en forma fidedigna la correspondiente situación financiera en la fecha del balance. La fe pública del contador es uno de los principios fundamentales de la profesión contable colombiana.",
+    "tags": ["fe_publica", "contador", "atestacion", "balance", "presuncion_legal", "firma"]
+  },
+  {
+    "id": "LEY43_ART_16",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 16",
+    "titulo": "Dictamen del Revisor Fiscal",
+    "contenido": "El revisor fiscal dará fe pública en los casos previstos en la ley. Deberá expresar su opinión sobre: (a) si los estados financieros reflejan la situación financiera de conformidad con principios de contabilidad generalmente aceptados; (b) si los actos de los administradores se ajustan a los estatutos y a las órdenes de la asamblea; (c) si existe correspondencia entre los comprobantes y los libros de contabilidad. El dictamen con salvedades, negativo o con abstención de opinión debe motivarse en detalle. El revisor fiscal es un órgano de fiscalización independiente obligatorio para sociedades y entidades que cumplan ciertos umbrales de activos o trabajadores.",
+    "tags": ["revisor_fiscal", "dictamen", "opinion", "estados_financieros", "auditoria", "fe_publica"]
+  },
+  {
+    "id": "LEY43_ART_35",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 35 - PCGA",
+    "titulo": "Principio de Ente Económico",
+    "contenido": "La actividad económica y jurídica de la empresa se entiende que es distinta de la de sus socios y de la de cualquier otra empresa o persona, aun cuando se reconoce que los balances se pueden consolidar. Este principio fundamental establece que la empresa debe ser considerada como una entidad separada de sus dueños para efectos contables y financieros. Los activos personales de los socios no se incluyen en el balance de la empresa, y las deudas personales de los socios no son pasivos de la empresa. Es la base del concepto de persona jurídica en contabilidad colombiana.",
+    "tags": ["ente_economico", "PCGA", "separacion", "empresa", "socios", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_36",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 36 - PCGA",
+    "titulo": "Principio de Continuidad (Empresa en Marcha)",
+    "contenido": "Los recursos y obligaciones del ente económico se registran y revelan a valores históricos dentro del supuesto de que la empresa va a continuar operando normalmente en el futuro previsible. Este principio —también llamado empresa en marcha o going concern— implica que no se liquida la empresa en el corto plazo. Cuando existan dudas razonables sobre la continuidad operativa, el contador y el revisor fiscal deben revelarlas en los estados financieros y en su dictamen. El principio de continuidad justifica la clasificación de activos y pasivos en corriente y no corriente según su realización o liquidación dentro de los 12 meses siguientes.",
+    "tags": ["continuidad", "empresa_en_marcha", "PCGA", "going_concern", "vigencia", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_37",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 37 - PCGA",
+    "titulo": "Principio de Prudencia (Conservatismo)",
+    "contenido": "Cuando quiera que existan dificultades para medir de manera confiable y verificable un hecho económico realizado, se debe optar por registrar la alternativa que tenga menos probabilidades de sobrestimar los activos y los ingresos, o de subestimar los pasivos y los gastos. Este principio —también llamado conservatismo o prudencia— busca proteger a los terceros que confían en los estados financieros. En la práctica contable colombiana implica: reconocer las pérdidas cuando son probables aunque no estén realizadas (provisiones), pero reconocer los ingresos solo cuando estén efectivamente realizados. Bajo NIIF se aplica mediante deterioro de activos (impairment).",
+    "tags": ["prudencia", "conservatismo", "PCGA", "provisiones", "perdidas", "activos", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_38",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 38 - PCGA",
+    "titulo": "Principio de Realización",
+    "contenido": "Solo pueden reconocerse hechos económicos realizados. Se entienden realizados los hechos económicos cuando quiera que puedan comprobarse razonablemente: que han ocurrido, que son el resultado de transacciones pasadas, y que sus valores pueden determinarse razonablemente. En la práctica, los ingresos se reconocen cuando se han devengado (servicio prestado o bien entregado), los gastos cuando se han causado (beneficio recibido), y las pérdidas cuando son probables y cuantificables. Este principio es distinto al de caja que registra solo cuando hay movimiento de efectivo, y es coherente con el sistema de causación contable.",
+    "tags": ["realizacion", "PCGA", "devengo", "causacion", "ingresos", "gastos", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_39",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 39 - PCGA",
+    "titulo": "Principio de Asociación (Matching)",
+    "contenido": "Se deben asociar con los ingresos devengados en cada período los costos y gastos incurridos para producirlos. Estos costos y gastos deben reconocerse simultáneamente con los ingresos con los cuales están directamente relacionados (matching principle). Cuando no existe una relación directa entre costos y un ingreso específico, los costos se reconocen en el período en que se consumen (gastos de administración) o se distribuyen sistemáticamente (depreciación y amortización). Este principio da origen al costeo de inventarios, la capitalización de activos fijos, y la distinción entre costos del período y costos del producto.",
+    "tags": ["asociacion", "matching", "PCGA", "costos_ingresos", "periodo_contable", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_40",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 40 - PCGA",
+    "titulo": "Principio de Revelación Plena",
+    "contenido": "El ente económico debe informar en forma completa, aunque resumida, todo aquello que sea necesario para comprender y evaluar correctamente su situación financiera, los cambios que esta haya sufrido, el resultado de sus operaciones y su capacidad para generar flujos futuros de efectivo. Las notas a los estados financieros son parte integral de los mismos y son el principal medio por el cual se cumple con este principio. La revelación plena exige informar: hechos posteriores al cierre, contingencias, cambios en políticas contables, información de partes relacionadas, y cualquier hecho que afecte significativamente la comprensión de la situación financiera.",
+    "tags": ["revelacion_plena", "PCGA", "notas", "estados_financieros", "transparencia", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_41",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 41 - PCGA",
+    "titulo": "Principio de Importancia Relativa (Materialidad)",
+    "contenido": "La información tiene importancia relativa (materialidad) si su omisión o presentación errónea puede influir en las decisiones económicas de los usuarios tomadas con base en los estados financieros. Para determinar si una partida, un error u omisión es material, se evalúan tanto su naturaleza como su magnitud. En la práctica contable colombiana, se considera material cualquier elemento que represente más del 5% del activo total, de los ingresos, o del patrimonio según el contexto. Los auditores y revisores fiscales utilizan la materialidad para determinar el alcance de sus procedimientos y para decidir si incluyen salvedades en su dictamen.",
+    "tags": ["importancia_relativa", "materialidad", "PCGA", "5%", "auditoria", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_42",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 42 - PCGA",
+    "titulo": "Principio de Consistencia",
+    "contenido": "Los principios de contabilidad y las normas de preparación y presentación de información financiera deben aplicarse uniformemente de un período a otro. Cuando exista un cambio que afecte la comparabilidad de la información, debe revelarse la naturaleza del cambio, la razón para efectuarlo y su efecto cuantitativo sobre los estados financieros. La consistencia permite comparar los estados financieros de diferentes períodos y evaluar tendencias. Los cambios en políticas contables se aplican retrospectivamente (ajustando períodos anteriores presentados), mientras los cambios en estimaciones contables se aplican prospectivamente (afectando el período actual y futuros).",
+    "tags": ["consistencia", "uniformidad", "PCGA", "politicas_contables", "comparabilidad", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_43",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 43 - PCGA",
+    "titulo": "Principio de Valuación al Costo",
+    "contenido": "Los activos de las empresas deben registrarse al precio de adquisición o fabricación, incluyendo todos los costos directamente atribuibles para colocar el activo en condiciones de uso o de producción. El costo histórico es la base de valuación primaria en contabilidad colombiana, aunque las NIIF permiten la revaluación al valor razonable en ciertos casos. El costo de activos fijos incluye el precio de compra, aranceles, impuestos no recuperables, instalación y pruebas. El costo de inventarios incluye el costo de adquisición, de transformación y otros costos incurridos para dar a los inventarios su condición y ubicación actuales.",
+    "tags": ["valuacion_costo", "PCGA", "costo_historico", "activos_fijos", "inventarios", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_44",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 44 - PCGA",
+    "titulo": "Principio de Período Contable",
+    "contenido": "El ente económico debe preparar y difundir periódicamente estados financieros durante su existencia, con el propósito de satisfacer las necesidades de información de sus usuarios. El período contable básico es de un año calendario (enero 1 a diciembre 31). No obstante, se pueden preparar estados financieros intermedios (mensuales, trimestrales o semestrales) para necesidades de gestión, control o cumplimiento regulatorio. Los cortes de período implican la realización de ajustes de causación, devengamientos de ingresos y gastos pendientes de reconocer, y provisiones para garantizar que los estados financieros reflejen fielmente la situación al cierre.",
+    "tags": ["periodo_contable", "PCGA", "año_fiscal", "estados_financieros", "corte_periodo", "principio_contable"]
+  },
+  {
+    "id": "LEY43_ART_45",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 45 - PCGA",
+    "titulo": "Principio de Unidad de Medida",
+    "contenido": "Los recursos y hechos económicos deben reconocerse en los estados financieros en términos de la unidad monetaria de curso legal en Colombia, que es el peso colombiano (COP). Las transacciones en moneda extranjera se convierten a pesos colombianos utilizando la tasa de cambio representativa del mercado (TRM) vigente en la fecha de la transacción. Las diferencias en cambio derivadas de la conversión de partidas monetarias en moneda extranjera se reconocen en el resultado del período en que se originan. Las cuentas en moneda extranjera se ajustan al cierre del período utilizando la TRM certificada por la Superintendencia Financiera de Colombia.",
+    "tags": ["unidad_medida", "PCGA", "peso_colombiano", "moneda_extranjera", "TRM", "diferencia_cambio"]
+  },
+  {
+    "id": "LEY43_ART_46",
+    "fuente": "Ley 43 de 1990",
+    "articulo": "Artículo 46 - PCGA",
+    "titulo": "Principio de No Compensación",
+    "contenido": "Los saldos deudores y acreedores no pueden compensarse entre sí para su presentación en el balance general, a menos que la ley lo autorice expresamente o que la compensación sea el resultado de una operación previamente acordada entre las partes. Las cuentas del activo y del pasivo no se netean. Los ingresos y gastos tampoco se compensan en el estado de resultados. Por ejemplo, una cuenta por cobrar a un proveedor del que también se tienen cuentas por pagar no puede presentarse neteada, a menos que exista un acuerdo legal de compensación. Este principio garantiza que los estados financieros muestren la magnitud real de las obligaciones y derechos de la empresa.",
+    "tags": ["no_compensacion", "PCGA", "neteo", "activos", "pasivos", "balance", "principio_contable"]
+  }
+]
