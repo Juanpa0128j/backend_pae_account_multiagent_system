@@ -379,11 +379,11 @@ class TestAccountingBooks:
         assert total_debito == Decimal("1190000")
 
     def test_libro_diario(self, db, posted_with_entries):
-        """Libro Diario returns entries in chronological order."""
-        lines = db_service.get_libro_diario(
+        """Daily journal returns entries in chronological order."""
+        lines = db_service.get_daily_journal(
             db,
-            fecha_inicio=datetime(2025, 3, 1, tzinfo=timezone.utc),
-            fecha_fin=datetime(2025, 3, 31, tzinfo=timezone.utc),
+            start_date=datetime(2025, 3, 1, tzinfo=timezone.utc),
+            end_date=datetime(2025, 3, 31, tzinfo=timezone.utc),
         )
         assert len(lines) >= 4
         # Verify order
@@ -391,44 +391,44 @@ class TestAccountingBooks:
             assert lines[i].fecha <= lines[i + 1].fecha
 
     def test_libro_mayor(self, db, posted_with_entries):
-        """Libro Mayor aggregates by account."""
-        mayor = db_service.get_libro_mayor(
+        """General ledger aggregates by account."""
+        mayor = db_service.get_general_ledger(
             db,
-            fecha_inicio=datetime(2025, 3, 1, tzinfo=timezone.utc),
-            fecha_fin=datetime(2025, 3, 31, tzinfo=timezone.utc),
+            start_date=datetime(2025, 3, 1, tzinfo=timezone.utc),
+            end_date=datetime(2025, 3, 31, tzinfo=timezone.utc),
         )
         assert len(mayor) >= 1
 
         # Find the expense account
-        gasto = next((m for m in mayor if m["cuenta"] == "519595"), None)
+        gasto = next((m for m in mayor if m["account"] == "519595"), None)
         assert gasto is not None
-        assert gasto["total_debito"] == 1000000.0
+        assert gasto["total_debit"] == 1000000.0
 
     def test_libro_auxiliar(self, db, posted_with_entries):
-        """Libro Auxiliar returns detail for a specific account."""
-        lines = db_service.get_libro_auxiliar(
+        """Subsidiary journal returns detail for a specific account."""
+        lines = db_service.get_subsidiary_journal(
             db, "519595",
-            fecha_inicio=datetime(2025, 3, 1, tzinfo=timezone.utc),
-            fecha_fin=datetime(2025, 3, 31, tzinfo=timezone.utc),
+            start_date=datetime(2025, 3, 1, tzinfo=timezone.utc),
+            end_date=datetime(2025, 3, 31, tzinfo=timezone.utc),
         )
         assert len(lines) >= 1
         assert all(l.cuenta_puc == "519595" for l in lines)
 
     def test_balance_general(self, db, posted_with_entries):
-        """Balance General calculates correctly from journal entries."""
-        balance = db_service.get_balance_general(
+        """Balance sheet calculates correctly from journal entries."""
+        balance = db_service.get_balance_sheet(
             db,
-            fecha_corte=datetime(2025, 12, 31, tzinfo=timezone.utc),
+            cutoff_date=datetime(2025, 12, 31, tzinfo=timezone.utc),
         )
-        assert "activos" in balance
-        assert "pasivos" in balance
-        assert "patrimonio" in balance
-        assert "cuadre" in balance
-        # The fixture entries balance perfectly (Activos = Pasivos + Patrimonio + Utilidad)
-        assert balance["cuadre"] is True
+        assert "assets" in balance
+        assert "liabilities" in balance
+        assert "equity" in balance
+        assert "is_balanced" in balance
+        # The fixture entries balance perfectly (Assets = Liabilities + Equity + Net Profit)
+        assert balance["is_balanced"] is True
 
     def test_balance_general_unbalanced(self, db, sample_puc):
-        """cuadre is False when journal entries do not balance across account classes."""
+        """is_balanced is False when journal entries do not balance across account classes."""
         job = db_service.create_ingest_job(db, "unbalanced_test.pdf")
         txn = db_service.create_transaction_pending(
             db, ingest_id=job.id,
@@ -439,18 +439,18 @@ class TestAccountingBooks:
             db, transaction_pending_id=txn.id, cuenta_puc="110505",
         )
 
-        # Intentionally unbalanced: debit clase 1 (activos) with no matching credit in clase 2/3
+        # Intentionally unbalanced: debit class 1 (assets) with no matching credit in class 2/3
         entries = [
             {
                 "fecha": datetime(2025, 5, 1, tzinfo=timezone.utc),
-                "cuenta": "110505",  # clase 1 — activos (debit-nature)
+                "cuenta": "110505",  # class 1 — assets (debit-nature)
                 "descripcion": "Caja General",
                 "debito": "1000000",
                 "credito": "0",
             },
             {
                 "fecha": datetime(2025, 5, 1, tzinfo=timezone.utc),
-                "cuenta": "519595",  # clase 5 — gastos (debit-nature)
+                "cuenta": "519595",  # class 5 — expenses (debit-nature)
                 "descripcion": "Gastos Diversos",
                 "debito": "500000",
                 "credito": "0",
@@ -458,12 +458,12 @@ class TestAccountingBooks:
         ]
         db_service.create_journal_entry_lines(db, posted.id, entries)
 
-        balance = db_service.get_balance_general(
-            db, fecha_corte=datetime(2025, 12, 31, tzinfo=timezone.utc),
+        balance = db_service.get_balance_sheet(
+            db, cutoff_date=datetime(2025, 12, 31, tzinfo=timezone.utc),
         )
-        # activos=1_000_000, pasivos=0, patrimonio=0, utilidad_neta=-500_000
-        # 1_000_000 != 0 + 0 + (-500_000) → cuadre must be False
-        assert balance["cuadre"] is False
+        # assets=1_000_000, liabilities=0, equity=0, net_profit=-500_000
+        # 1_000_000 != 0 + 0 + (-500_000) → is_balanced must be False
+        assert balance["is_balanced"] is False
 
 
 # ─── Test Duplicate Detection ────────────────────────────────────
@@ -486,9 +486,9 @@ class TestDuplicateDetection:
         # Check for duplicates with same NIT/amount/date
         dups = db_service.check_duplicates(
             db,
-            nit_emisor="900111222",
+            issuer_nit="900111222",
             total=Decimal("500000"),
-            fecha=fecha,
+            date=fecha,
             days_window=3,
         )
         assert len(dups) >= 1
@@ -507,9 +507,9 @@ class TestDuplicateDetection:
 
         dups = db_service.check_duplicates(
             db,
-            nit_emisor="800999888",  # Different NIT
+            issuer_nit="800999888",  # Different NIT
             total=Decimal("500000"),
-            fecha=fecha,
+            date=fecha,
         )
         assert len(dups) == 0
 
@@ -562,11 +562,11 @@ class TestTercero:
 
     def test_get_or_create_tercero(self, db):
         # Create new
-        t1 = db_service.get_or_create_tercero(db, "555666777", "Empresa Nueva")
+        t1 = db_service.get_or_create_third_party(db, "555666777", "Empresa Nueva")
         assert t1.nit == "555666777"
 
         # Get existing (same NIT)
-        t2 = db_service.get_or_create_tercero(db, "555666777", "Otro Nombre")
+        t2 = db_service.get_or_create_third_party(db, "555666777", "Otro Nombre")
         assert t2.id == t1.id  # Same record
         assert t2.razon_social == "Empresa Nueva"  # Original name kept
 

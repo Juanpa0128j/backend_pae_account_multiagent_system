@@ -124,14 +124,44 @@ class RawTransactionItem(BaseModel):
 class IngestOutput(BaseModel):
     """
     Schema for the Ingesta (Ingest) agent output.
-    Represents structured data extracted from a receipt/invoice PDF.
+    Represents structured data extracted from a single receipt/invoice PDF.
     """
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    fecha: date = Field(
+        ..., description="Document date in YYYY-MM-DD format"
+    )
+    monto: Decimal = Field(
+        ..., ge=0, description="Total amount on the document"
+    )
+    concepto: str = Field(
+        ..., min_length=3, max_length=500,
+        description="Concept or description of the transaction"
+    )
+    beneficiario: str = Field(
+        ..., min_length=1, max_length=200,
+        description="Name of the beneficiary / recipient"
+    )
+    empresa: str = Field(
+        ..., min_length=1, max_length=200,
+        description="Name of the issuing company"
+    )
+    referencia: Optional[str] = Field(
+        None, max_length=100,
+        description="Optional document reference number"
+    )
+    tipo_documento: TipoDocumento = Field(
+        ..., description="Type of source document"
+    )
     transactions: List[RawTransactionItem] = Field(
         default_factory=list,
-        description="Extracted list of transactions from the document"
+        description="Extracted list of individual transaction items"
     )
+
+    @field_validator("fecha", mode="before")
+    @classmethod
+    def parse_fecha(cls, v):  # noqa: N805
+        return _parse_date(v)
 
 
 # ---------------------------------------------------------------------------
