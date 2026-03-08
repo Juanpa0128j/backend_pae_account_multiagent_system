@@ -279,17 +279,16 @@ class SupabaseVectorDB:
         embeddings: list[list[float]],
         metadatas: list[dict],
     ) -> None:
-        """Insert or update documents. ON CONFLICT (id) updates all fields."""
+        """Insert or update documents. ON CONFLICT (collection_name, id) updates document fields."""
         sql = text("""
             INSERT INTO vector_documents
                 (id, collection_name, content, embedding, metadata)
             VALUES
                 (:id, :collection, :content, CAST(:vec AS vector), CAST(:meta AS jsonb))
-            ON CONFLICT (id) DO UPDATE SET
-                collection_name = EXCLUDED.collection_name,
-                content         = EXCLUDED.content,
-                embedding       = EXCLUDED.embedding,
-                metadata        = EXCLUDED.metadata
+            ON CONFLICT (collection_name, id) DO UPDATE SET
+                content   = EXCLUDED.content,
+                embedding = EXCLUDED.embedding,
+                metadata  = EXCLUDED.metadata
         """)
         with Session(self._engine) as session:
             for doc_id, content, emb, meta in zip(ids, texts, embeddings, metadatas):

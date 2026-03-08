@@ -37,12 +37,13 @@ def upgrade() -> None:
     # Create the unified vector documents table
     op.execute("""
         CREATE TABLE IF NOT EXISTS vector_documents (
-            id              TEXT PRIMARY KEY,
+            id              TEXT NOT NULL,
             collection_name VARCHAR(255) NOT NULL,
             content         TEXT NOT NULL,
             embedding       vector(1024),
             metadata        JSONB DEFAULT '{}',
-            created_at      TIMESTAMPTZ DEFAULT NOW()
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (collection_name, id)
         )
     """)
 
