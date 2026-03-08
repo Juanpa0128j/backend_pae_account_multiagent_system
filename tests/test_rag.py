@@ -1,10 +1,9 @@
-"""
+﻿"""
 Tests for the Vector DB and RAG Service layer.
 
 Design principles:
-  - NEVER calls the real Gemini Embeddings API.
-  - Uses a ChromaDB PersistentClient isolated in pytest's tmp_path (fresh dir per test).
-  - Injects fake vectordb and RAGService instances via pytest fixtures (no singleton factories).
+  - NEVER calls the HuggingFace API or any external service.
+  - Uses an in-memory FakeSupabaseVectorDB injected via pytest fixtures.
   - Each test method is independent (no shared mutable state between tests).
 
 Run:
@@ -12,91 +11,195 @@ Run:
 """
 
 import hashlib
+from datetime import datetime
 from typing import Any
-from unittest.mock import MagicMock
 
-import chromadb
 import numpy as np
 import pytest
 
-from app.core.vectordb import ChromaVectorDB, empresa_collection_name
+from app.core.vectordb import NORMATIVA_COLLECTION, empresa_collection_name
 from app.services.rag_service import RAGResult, RAGService
 
-# ─── Test embedding: deterministic, no API calls ──────────────────────────────
 
+# Deterministic fake embeddings: no API calls
 
 def _text_seed(text: str) -> int:
-    """Derive a stable 32-bit RNG seed from text using SHA-256.
-
-    Unlike Python's built-in hash(), SHA-256 is not affected by PYTHONHASHSEED,
-    so embeddings are reproducible across processes and CI runs.
-    """
+    """Derive a stable 32-bit RNG seed from text using SHA-256."""
     digest = hashlib.sha256(text.encode()).digest()
     return int.from_bytes(digest[:4], byteorder="little")
 
 
-def _fake_embed_texts(texts: list[str]) -> list[list[float]]:
-    """Return reproducible pseudo-random 128-dim embeddings (no API call).
+def _fake_embed(text: str) -> list[float]:
+    """Return a deterministic 1024-dim embedding (no API call)."""
+    return np.random.default_rng(seed=_text_seed(text)).random(1024).tolist()
 
-    The embeddings are deterministic per input text, without any shared RNG state
-    across tests.  This avoids test order-dependence while keeping outputs stable.
+
+# FakeSupabaseVectorDB
+
+class FakeSupabaseVectorDB:
     """
-    return [
-        np.random.default_rng(seed=_text_seed(t)).random(128).tolist() for t in texts
-    ]
+    In-memory drop-in for SupabaseVectorDB. No database, no API calls.
+    Each instance has fully isolated state suitable for pytest fixtures.
+    """
+
+    def __init__(self):
+        # { collection_name: list of {"id", "content", "embedding", "metadata", "created_at"} }
+        self._store: dict[str, list[dict]] = {}
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [_fake_embed(t) for t in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return _fake_embed(text)
+
+    def search(
+        self,
+        collection_name: str,
+        query_embedding: list[float],
+        n_results: int,
+    ) -> dict:
+        docs = self._store.get(collection_name, [])
+        if not docs:
+            return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+        q = np.array(query_embedding)
+        scored = []
+        for doc in docs:
+            e = np.array(doc["embedding"])
+            norm = np.linalg.norm(q) * np.linalg.norm(e)
+            cos_sim = float(np.dot(q, e) / (norm + 1e-10))
+            cos_dist = 1.0 - cos_sim  # in [0, 2] for unit vectors
+            scored.append((cos_dist, doc))
+
+        scored.sort(key=lambda x: x[0])
+        top = scored[:n_results]
+
+        return {
+            "ids": [[d["id"] for _, d in top]],
+            "documents": [[d["content"] for _, d in top]],
+            "metadatas": [[d["metadata"] for _, d in top]],
+            "distances": [[dist for dist, _ in top]],
+        }
+
+    def get_recent(self, collection_name: str, limit: int) -> dict:
+        docs = sorted(
+            self._store.get(collection_name, []),
+            key=lambda d: d["created_at"],
+            reverse=True,
+        )[:limit]
+        return {
+            "ids": [[d["id"] for d in docs]],
+            "documents": [[d["content"] for d in docs]],
+            "metadatas": [[d["metadata"] for d in docs]],
+            "distances": [[0.0] * len(docs)],
+        }
+
+    def count(self, collection_name: str) -> int:
+        return len(self._store.get(collection_name, []))
+
+    def upsert(
+        self,
+        collection_name: str,
+        ids: list[str],
+        texts: list[str],
+        embeddings: list[list[float]],
+        metadatas: list[dict],
+    ) -> None:
+        store = self._store.setdefault(collection_name, [])
+        existing = {d["id"]: i for i, d in enumerate(store)}
+        for doc_id, content, emb, meta in zip(ids, texts, embeddings, metadatas):
+            entry = {
+                "id": doc_id,
+                "content": content,
+                "embedding": emb,
+                "metadata": meta,
+                "created_at": datetime.now(),
+            }
+            if doc_id in existing:
+                store[existing[doc_id]] = entry
+            else:
+                existing[doc_id] = len(store)
+                store.append(entry)
+
+    def add(
+        self,
+        collection_name: str,
+        ids: list[str],
+        texts: list[str],
+        embeddings: list[list[float]],
+        metadatas: list[dict],
+    ) -> None:
+        store = self._store.setdefault(collection_name, [])
+        for doc_id, content, emb, meta in zip(ids, texts, embeddings, metadatas):
+            store.append({
+                "id": doc_id,
+                "content": content,
+                "embedding": emb,
+                "metadata": meta,
+                "created_at": datetime.now(),
+            })
+
+    def delete_all(self, collection_name: str) -> int:
+        count = len(self._store.get(collection_name, []))
+        self._store[collection_name] = []
+        return count
 
 
-def _fake_embed_query(text: str) -> list[float]:
-    """Return a deterministic 128-dim embedding for the given query text."""
-    return np.random.default_rng(seed=_text_seed(text)).random(128).tolist()
+# Fixtures
 
-
-# ─── Fixture: in-memory ChromaVectorDB ───────────────────────────────────────
+@pytest.fixture
+def fake_db() -> FakeSupabaseVectorDB:
+    """Fresh in-memory vector store per test (no shared state)."""
+    return FakeSupabaseVectorDB()
 
 
 @pytest.fixture
-def in_memory_vectordb(tmp_path) -> ChromaVectorDB:
-    """
-    ChromaVectorDB backed by a per-test PersistentClient in a temp directory.
-    Using tmp_path (pytest built-in) guarantees full isolation between tests:
-    each test gets its own empty ChromaDB with no shared state.
-    No API calls — embeddings are mocked.
-    """
-    db = ChromaVectorDB.__new__(ChromaVectorDB)
-    # tmp_path is a fresh unique directory created by pytest per test function
-    db._client = chromadb.PersistentClient(path=str(tmp_path))
-
-    mock_embeddings = MagicMock()
-    mock_embeddings.embed_documents.side_effect = _fake_embed_texts
-    mock_embeddings.embed_query.side_effect = _fake_embed_query
-    db._embeddings = mock_embeddings
-
-    return db
+def rag(fake_db: FakeSupabaseVectorDB) -> RAGService:
+    """RAGService wired to fake_db. hf_api_key='' disables the reranker."""
+    return RAGService(vectordb=fake_db, hf_api_key="")
 
 
-@pytest.fixture
-def rag(in_memory_vectordb: ChromaVectorDB) -> RAGService:
-    """RAGService wired to the in-memory vectordb fixture."""
-    return RAGService(vectordb=in_memory_vectordb)
+# FakeSupabaseVectorDB unit tests
 
+class TestSupabaseVectorDB:
+    def test_embed_texts_returns_correct_count(self, fake_db: FakeSupabaseVectorDB):
+        texts = ["cuenta de caja", "retencion en la fuente", "IVA descontable"]
+        embeddings = fake_db.embed_texts(texts)
+        assert len(embeddings) == 3
 
-# ─── ChromaVectorDB unit tests ────────────────────────────────────────────────
+    def test_embed_texts_returns_correct_dimension(self, fake_db: FakeSupabaseVectorDB):
+        vecs = fake_db.embed_texts(["honorarios consultoria"])
+        assert len(vecs[0]) == 1024
 
+    def test_embed_query_returns_list_of_floats(self, fake_db: FakeSupabaseVectorDB):
+        vec = fake_db.embed_query("honorarios consultoria")
+        assert isinstance(vec, list)
+        assert all(isinstance(v, float) for v in vec)
 
-class TestChromaVectorDB:
-    def test_get_normativa_collection_creates_collection(self, in_memory_vectordb):
-        col = in_memory_vectordb.get_normativa_collection()
-        assert col is not None
-        assert col.name == "normativa_colombia_v1"
+    def test_embed_is_deterministic(self, fake_db: FakeSupabaseVectorDB):
+        v1 = fake_db.embed_query("texto de prueba")
+        v2 = fake_db.embed_query("texto de prueba")
+        assert v1 == v2
 
-    def test_get_normativa_collection_is_idempotent(self, in_memory_vectordb):
-        col1 = in_memory_vectordb.get_normativa_collection()
-        col2 = in_memory_vectordb.get_normativa_collection()
-        assert col1.name == col2.name
+    def test_count_returns_zero_for_unknown_collection(self, fake_db: FakeSupabaseVectorDB):
+        assert fake_db.count("does_not_exist") == 0
 
-    def test_get_empresa_collection_uses_nit(self, in_memory_vectordb):
-        col = in_memory_vectordb.get_empresa_collection("900123456")
-        assert "900123456" in col.name
+    def test_count_increments_after_upsert(self, fake_db: FakeSupabaseVectorDB):
+        emb = fake_db.embed_texts(["test doc"])[0]
+        fake_db.upsert(NORMATIVA_COLLECTION, ["test_1"], ["test doc"], [emb], [{"tipo": "test"}])
+        assert fake_db.count(NORMATIVA_COLLECTION) == 1
+
+    def test_upsert_is_idempotent(self, fake_db: FakeSupabaseVectorDB):
+        emb = fake_db.embed_texts(["same doc"])[0]
+        fake_db.upsert(NORMATIVA_COLLECTION, ["doc_1"], ["same doc"], [emb], [{}])
+        fake_db.upsert(NORMATIVA_COLLECTION, ["doc_1"], ["same doc"], [emb], [{}])
+        assert fake_db.count(NORMATIVA_COLLECTION) == 1
+
+    def test_delete_all_clears_collection(self, fake_db: FakeSupabaseVectorDB):
+        emb = fake_db.embed_texts(["doc"])[0]
+        fake_db.upsert(NORMATIVA_COLLECTION, ["id1"], ["doc"], [emb], [{}])
+        fake_db.delete_all(NORMATIVA_COLLECTION)
+        assert fake_db.count(NORMATIVA_COLLECTION) == 0
 
     def test_empresa_collection_name_sanitises_special_chars(self):
         name = empresa_collection_name("900-123.456/7")
@@ -104,95 +207,44 @@ class TestChromaVectorDB:
         assert "." not in name
         assert "-" not in name
 
-    def test_embed_texts_returns_correct_count(self, in_memory_vectordb):
-        texts = ["cuenta de caja", "retención en la fuente", "IVA descontable"]
-        embeddings = in_memory_vectordb.embed_texts(texts)
-        assert len(embeddings) == 3
-
-    def test_embed_query_returns_list_of_floats(self, in_memory_vectordb):
-        vec = in_memory_vectordb.embed_query("honorarios consultoría")
-        assert isinstance(vec, list)
-        assert all(isinstance(v, float) for v in vec)
-
-    def test_list_collections_after_creation(self, in_memory_vectordb):
-        in_memory_vectordb.get_normativa_collection()
-        collections = in_memory_vectordb.list_collections()
-        assert "normativa_colombia_v1" in collections
-
-    def test_collection_count_returns_zero_for_unknown(self, in_memory_vectordb):
-        count = in_memory_vectordb.collection_count("does_not_exist")
-        assert count == 0
-
-    def test_collection_count_increments_after_upsert(self, in_memory_vectordb):
-        col = in_memory_vectordb.get_normativa_collection()
-        embedding = in_memory_vectordb.embed_texts(["test doc"])[0]
-        col.upsert(
-            ids=["test_1"],
-            documents=["test doc"],
-            embeddings=[embedding],
-            metadatas=[{"tipo": "test"}],
-        )
-        assert in_memory_vectordb.collection_count("normativa_colombia_v1") == 1
+    def test_search_returns_compatible_dict(self, fake_db: FakeSupabaseVectorDB):
+        emb = fake_db.embed_texts(["retencion proveedor"])[0]
+        fake_db.upsert(NORMATIVA_COLLECTION, ["doc_1"], ["retencion proveedor"], [emb], [{}])
+        q_emb = fake_db.embed_query("retencion")
+        result = fake_db.search(NORMATIVA_COLLECTION, q_emb, 1)
+        assert "ids" in result and "documents" in result
+        assert "metadatas" in result and "distances" in result
+        assert len(result["ids"][0]) == 1
 
 
-# ─── RAGService unit tests ────────────────────────────────────────────────────
-
+# RAGService unit tests
 
 class TestRAGServiceNormativo:
-    def _seed_normativa(self, rag: RAGService, docs: list[dict[str, Any]]) -> None:
+    def _seed(self, db: FakeSupabaseVectorDB, docs: list[dict[str, Any]]) -> None:
         """Insert test documents into the normativa collection."""
-        col = rag._db.get_normativa_collection()
         for doc in docs:
-            embedding = rag._db.embed_texts([doc["text"]])[0]
-            # ChromaDB rejects empty dicts; use None for absent metadata
-            meta = doc.get("meta") or None
-            col.upsert(
-                ids=[doc["id"]],
-                documents=[doc["text"]],
-                embeddings=[embedding],
-                metadatas=[meta] if meta is not None else None,
+            emb = db.embed_texts([doc["text"]])[0]
+            db.upsert(
+                NORMATIVA_COLLECTION,
+                [doc["id"]],
+                [doc["text"]],
+                [emb],
+                [doc.get("meta") or {}],
             )
 
-    def test_search_returns_list(self, rag: RAGService):
-        self._seed_normativa(
-            rag,
-            [
-                {
-                    "id": "puc_2365",
-                    "text": "Retención en la fuente cuenta 2365",
-                    "meta": {"tipo": "puc"},
-                },
-            ],
-        )
-        results = rag.search_normativo("retención honorarios", n_results=1)
+    def test_search_returns_list(self, rag: RAGService, fake_db: FakeSupabaseVectorDB):
+        self._seed(fake_db, [{"id": "puc_2365", "text": "Retencion en la fuente cuenta 2365", "meta": {"tipo": "puc"}}])
+        results = rag.search_normativo("retencion honorarios", n_results=1)
         assert isinstance(results, list)
 
-    def test_search_returns_rag_result_instances(self, rag: RAGService):
-        self._seed_normativa(
-            rag,
-            [
-                {
-                    "id": "et_art_392",
-                    "text": "Honorarios 11% retención Art. 392",
-                    "meta": {"tipo": "normativa"},
-                },
-            ],
-        )
-        results = rag.search_normativo("honorarios consultoría", n_results=1)
+    def test_search_returns_rag_result_instances(self, rag: RAGService, fake_db: FakeSupabaseVectorDB):
+        self._seed(fake_db, [{"id": "et_art_392", "text": "Honorarios 11% retencion Art. 392", "meta": {"tipo": "normativa"}}])
+        results = rag.search_normativo("honorarios consultoria", n_results=1)
         assert len(results) == 1
         assert isinstance(results[0], RAGResult)
 
-    def test_search_result_has_required_fields(self, rag: RAGService):
-        self._seed_normativa(
-            rag,
-            [
-                {
-                    "id": "iva_468",
-                    "text": "IVA tarifa general 19% Art. 468",
-                    "meta": {"articulo": "Art. 468"},
-                },
-            ],
-        )
+    def test_search_result_has_required_fields(self, rag: RAGService, fake_db: FakeSupabaseVectorDB):
+        self._seed(fake_db, [{"id": "iva_468", "text": "IVA tarifa general 19% Art. 468", "meta": {"articulo": "Art. 468"}}])
         result = rag.search_normativo("IVA ventas", n_results=1)[0]
         assert result.doc_id
         assert result.content
@@ -200,33 +252,19 @@ class TestRAGServiceNormativo:
         assert 0.0 <= result.score <= 1.0
 
     def test_search_empty_collection_returns_empty_list(self, rag: RAGService):
-        # Don't seed anything
         results = rag.search_normativo("IVA", n_results=5)
         assert results == []
 
-    def test_n_results_clamped_to_collection_size(self, rag: RAGService):
-        self._seed_normativa(
-            rag,
-            [
-                {"id": "doc_1", "text": "Caja cuenta 1105", "meta": {}},
-                {"id": "doc_2", "text": "Bancos cuenta 1110", "meta": {}},
-            ],
-        )
-        # Ask for 10 but only 2 exist
+    def test_n_results_clamped_to_collection_size(self, rag: RAGService, fake_db: FakeSupabaseVectorDB):
+        self._seed(fake_db, [
+            {"id": "doc_1", "text": "Caja cuenta 1105", "meta": {}},
+            {"id": "doc_2", "text": "Bancos cuenta 1110", "meta": {}},
+        ])
         results = rag.search_normativo("activos disponibles", n_results=10)
         assert len(results) <= 2
 
-    def test_score_is_between_zero_and_one(self, rag: RAGService):
-        self._seed_normativa(
-            rag,
-            [
-                {
-                    "id": "score_test",
-                    "text": "impuesto de renta personas jurídicas 35%",
-                    "meta": {},
-                },
-            ],
-        )
+    def test_score_is_between_zero_and_one(self, rag: RAGService, fake_db: FakeSupabaseVectorDB):
+        self._seed(fake_db, [{"id": "renta", "text": "impuesto de renta personas juridicas 35%", "meta": {}}])
         result = rag.search_normativo("tarifa renta sociedades", n_results=1)[0]
         assert 0.0 <= result.score <= 1.0
 
@@ -255,9 +293,7 @@ class TestRAGServiceHistorico:
         assert results_b == []
 
     def test_search_historico_no_query_returns_docs(self, rag: RAGService):
-        rag.add_empresa_doc(
-            nit=self.NIT, text="Comprobante de egreso pago nómina enero"
-        )
+        rag.add_empresa_doc(nit=self.NIT, text="Comprobante de egreso pago nomina enero")
         results = rag.search_historico(self.NIT, query="", n_results=5)
         assert len(results) >= 1
 
@@ -268,16 +304,16 @@ class TestRAGServiceAddDoc:
     def test_add_empresa_doc_returns_string_id(self, rag: RAGService):
         doc_id = rag.add_empresa_doc(
             nit=self.NIT,
-            text="Nota crédito proveedor Movistar por devolución servicios",
+            text="Nota credito proveedor Movistar por devolucion servicios",
         )
         assert isinstance(doc_id, str)
         assert len(doc_id) > 0
 
-    def test_add_empresa_doc_increments_count(self, rag: RAGService):
-        col = rag._db.get_empresa_collection(self.NIT)
-        before = col.count()
+    def test_add_empresa_doc_increments_count(self, rag: RAGService, fake_db: FakeSupabaseVectorDB):
+        coll = empresa_collection_name(self.NIT)
+        before = fake_db.count(coll)
         rag.add_empresa_doc(nit=self.NIT, text="RUT proveedor 800654321-4")
-        after = col.count()
+        after = fake_db.count(coll)
         assert after == before + 1
 
     def test_add_empresa_doc_with_explicit_id(self, rag: RAGService):
@@ -289,26 +325,24 @@ class TestRAGServiceAddDoc:
         )
         assert returned_id == explicit_id
 
-    def test_add_empresa_doc_stores_metadata(self, rag: RAGService):
+    def test_add_empresa_doc_stores_metadata(self, rag: RAGService, fake_db: FakeSupabaseVectorDB):
         doc_id = rag.add_empresa_doc(
             nit=self.NIT,
-            text="Factura electrónica emitida enero 2026",
+            text="Factura electronica emitida enero 2026",
             metadata={"tipo": "factura", "mes": "enero"},
         )
-        col = rag._db.get_empresa_collection(self.NIT)
-        stored = col.get(ids=[doc_id], include=["metadatas"])
-        meta = stored["metadatas"][0]
-        assert meta["tipo"] == "factura"
-        assert meta["mes"] == "enero"
-        assert meta["nit"] == self.NIT
+        coll = empresa_collection_name(self.NIT)
+        stored = next(d for d in fake_db._store[coll] if d["id"] == doc_id)
+        assert stored["metadata"]["tipo"] == "factura"
+        assert stored["metadata"]["mes"] == "enero"
+        assert stored["metadata"]["nit"] == self.NIT
 
     def test_add_empty_text_raises_value_error(self, rag: RAGService):
         with pytest.raises(ValueError, match="empty"):
             rag.add_empresa_doc(nit=self.NIT, text="   ")
 
 
-# ─── RAGResult schema tests ───────────────────────────────────────────────────
-
+# RAGResult schema tests
 
 class TestRAGResultSchema:
     def test_valid_rag_result(self):
@@ -338,3 +372,25 @@ class TestRAGResultSchema:
         as_dict = r.model_dump()
         assert as_dict["doc_id"] == "y"
         assert as_dict["score"] == 0.3
+
+
+# Reranker tests (no HF API -- uses fallback path)
+
+class TestReranker:
+    def test_rerank_without_client_returns_top_n(self, rag: RAGService):
+        """Without HF key, rerank() returns the first top_n preserving order."""
+        docs = [
+            RAGResult(doc_id=f"id_{i}", content=f"doc {i}", score=float(i) / 10)
+            for i in range(5)
+        ]
+        result = rag.rerank("query", docs, top_n=3)
+        assert len(result) == 3
+        assert result == docs[:3]
+
+    def test_rerank_empty_list_returns_empty(self, rag: RAGService):
+        assert rag.rerank("query", [], top_n=3) == []
+
+    def test_rerank_top_n_clamped_to_doc_count(self, rag: RAGService):
+        docs = [RAGResult(doc_id="a", content="x", score=0.5)]
+        result = rag.rerank("query", docs, top_n=10)
+        assert len(result) == 1

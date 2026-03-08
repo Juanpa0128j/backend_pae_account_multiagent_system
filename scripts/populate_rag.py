@@ -1,5 +1,5 @@
-"""
-Seed / populate the normativa ChromaDB collection.
+﻿"""
+Seed / populate the normativa pgvector collection in Supabase.
 
 Run once before starting the API server (or whenever the source data changes):
 
@@ -7,13 +7,14 @@ Run once before starting the API server (or whenever the source data changes):
     python scripts/populate_rag.py --force  # re-index even if already populated
 
 What this script does:
-  1. Reads data/puc_accounts.json (~40 PUC entries)
-  2. Reads data/normativa_tributaria.json (~15 ET articles)
-  3. Embeds every entry via Gemini gemini-embedding-001
-  4. Upserts into the `normativa_colombia_v1` ChromaDB collection
+  1. Reads data/puc_accounts.json (~41 PUC entries)
+  2. Reads data/normativa_tributaria.json (~50 ET articles)
+  3. Reads data/ley_43_1990.json (16 Ley 43/1990 PCGA principles)
+  4. Embeds every entry via BAAI/bge-m3 (HuggingFace Inference API)
+  5. Upserts into the `normativa_colombia_v1` collection in Supabase pgvector
 
 The script is idempotent: without --force it skips collections that already
-have content. With --force it deletes the collection and rebuilds from scratch.
+have content. With --force it deletes all documents and rebuilds from scratch.
 """
 
 import argparse
@@ -22,11 +23,11 @@ import logging
 import sys
 from pathlib import Path
 
-# ── Add project root to sys.path so `app.*` imports work ──────────────────────
+# Add project root to sys.path so `app.*` imports work
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from dotenv import load_dotenv  # noqa: E402 – must come after sys.path patch
+from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 DATA_DIR = PROJECT_ROOT / "data"
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# Helpers
 
 
 def load_json(path: Path) -> list[dict]:
@@ -86,7 +87,34 @@ def build_normativa_documents() -> tuple[list[str], list[str], list[dict]]:
     for entry in entries:
         doc_id = entry["id"]
         text = (
-            f"{entry['articulo']} — {entry['titulo']}. "
+            f"{entry['articulo']} -- {entry['titulo']}. "
+            f"Fuente: {entry['fuente']}. "
+            f"{entry['contenido']}"
+        )
+        meta = {
+            "tipo": "normativa",
+            "id": entry["id"],
+            "articulo": entry["articulo"],
+            "titulo": entry["titulo"],
+            "fuente": entry["fuente"],
+            "tags": ", ".join(entry.get("tags", [])),
+        }
+        ids.append(doc_id)
+        texts.append(text)
+        metas.append(meta)
+
+    return ids, texts, metas
+
+
+def build_ley43_documents() -> tuple[list[str], list[str], list[dict]]:
+    """Return (ids, texts, metadatas) for all Ley 43/1990 PCGA principles."""
+    entries = load_json(DATA_DIR / "ley_43_1990.json")
+    ids, texts, metas = [], [], []
+
+    for entry in entries:
+        doc_id = entry["id"]
+        text = (
+            f"{entry['articulo']} -- {entry['titulo']}. "
             f"Fuente: {entry['fuente']}. "
             f"{entry['contenido']}"
         )
@@ -106,40 +134,41 @@ def build_normativa_documents() -> tuple[list[str], list[str], list[dict]]:
 
 
 def upsert_batch(
-    collection,
+    collection_name: str,
     ids: list[str],
     texts: list[str],
     metas: list[dict],
     vectordb,
-    batch_size: int = 20,
+    batch_size: int = 5,
 ) -> int:
-    """Embed and upsert documents in batches. Returns number of docs inserted."""
+    """Embed and upsert documents in small batches (respects HF API rate limits).
+
+    Returns the total number of documents inserted.
+    """
     total = 0
     for i in range(0, len(ids), batch_size):
         batch_ids = ids[i : i + batch_size]
         batch_texts = texts[i : i + batch_size]
         batch_metas = metas[i : i + batch_size]
 
-        logger.info("  Embedding batch %d–%d …", i + 1, i + len(batch_ids))
+        logger.info(
+            "  Embedding and upserting batch %d-%d ...", i + 1, i + len(batch_ids)
+        )
         embeddings = vectordb.embed_texts(batch_texts)
-
-        collection.upsert(
-            ids=batch_ids,
-            documents=batch_texts,
-            embeddings=embeddings,
-            metadatas=batch_metas,
+        vectordb.upsert(
+            collection_name, batch_ids, batch_texts, embeddings, batch_metas
         )
         total += len(batch_ids)
 
     return total
 
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
+# Main
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Populate the normativa ChromaDB collection."
+        description="Populate the normativa pgvector collection in Supabase."
     )
     parser.add_argument(
         "--force",
@@ -149,15 +178,15 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = get_settings()
-    if not settings.gemini_api_key:
-        logger.error("GEMINI_API_KEY is not set. Add it to your .env file and retry.")
+    if not settings.huggingface_api_key:
+        logger.error(
+            "HUGGINGFACE_API_KEY is not set. Add it to your .env file and retry."
+        )
         sys.exit(1)
 
-    logger.info("Connecting to ChromaDB at '%s' …", settings.chroma_persist_path)
     vectordb = get_vectordb()
-    collection = vectordb.get_normativa_collection()
+    existing = vectordb.count(NORMATIVA_COLLECTION)
 
-    existing = collection.count()
     if existing > 0 and not args.force:
         logger.info(
             "Collection '%s' already has %d documents. Use --force to re-index.",
@@ -167,27 +196,34 @@ def main() -> None:
         sys.exit(0)
 
     if args.force and existing > 0:
-        logger.warning("--force: deleting %d existing documents …", existing)
-        # ChromaDB doesn't have a clear(); delete all known IDs instead
-        all_ids = collection.get(include=[])["ids"]
-        if all_ids:
-            collection.delete(ids=all_ids)
+        logger.warning("--force: deleting %d existing documents ...", existing)
+        vectordb.delete_all(NORMATIVA_COLLECTION)
         logger.info("Collection cleared.")
 
-    # ── PUC accounts ──────────────────────────────────────────────────────────
-    logger.info("Indexing PUC accounts …")
+    # PUC accounts
+    logger.info("Indexing PUC accounts ...")
     puc_ids, puc_texts, puc_metas = build_puc_documents()
-    n_puc = upsert_batch(collection, puc_ids, puc_texts, puc_metas, vectordb)
-    logger.info("✓  %d PUC accounts indexed.", n_puc)
+    n_puc = upsert_batch(NORMATIVA_COLLECTION, puc_ids, puc_texts, puc_metas, vectordb)
+    logger.info("  %d PUC accounts indexed.", n_puc)
 
-    # ── Normativa articles ─────────────────────────────────────────────────────
-    logger.info("Indexing normativa tributaria …")
+    # Normativa articles
+    logger.info("Indexing normativa tributaria ...")
     norm_ids, norm_texts, norm_metas = build_normativa_documents()
-    n_norm = upsert_batch(collection, norm_ids, norm_texts, norm_metas, vectordb)
-    logger.info("✓  %d normativa articles indexed.", n_norm)
+    n_norm = upsert_batch(
+        NORMATIVA_COLLECTION, norm_ids, norm_texts, norm_metas, vectordb
+    )
+    logger.info("  %d normativa articles indexed.", n_norm)
 
-    total = collection.count()
-    logger.info("─" * 50)
+    # Ley 43/1990 PCGA principles
+    logger.info("Indexing Ley 43/1990 (PCGA) ...")
+    ley43_ids, ley43_texts, ley43_metas = build_ley43_documents()
+    n_ley43 = upsert_batch(
+        NORMATIVA_COLLECTION, ley43_ids, ley43_texts, ley43_metas, vectordb
+    )
+    logger.info("  %d Ley 43/1990 principles indexed.", n_ley43)
+
+    total = vectordb.count(NORMATIVA_COLLECTION)
+    logger.info("-" * 50)
     logger.info(
         "Population complete. Collection '%s' now has %d documents.",
         NORMATIVA_COLLECTION,
