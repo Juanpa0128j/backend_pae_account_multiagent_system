@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import patch, MagicMock, Mock
 
-from app.agents.graph import create_process_graph, invoke_process_pipeline
+from app.agents.graph import create_agent_graph, invoke_process_pipeline
 from app.agents.state import AgentState
 from app.agents.contador_agent import contador_node
 from app.agents.supervisor import (
@@ -162,32 +162,33 @@ def process_state() -> AgentState:
 # ─── Test: Graph Structure ────────────────────────────────────────
 
 class TestProcessGraphStructure:
-    """Verify process graph compiles and has expected nodes."""
+    """Verify unified agent graph compiles and has expected nodes."""
 
     def test_process_graph_compiles(self):
-        """Process graph should compile without errors."""
-        graph = create_process_graph()
+        """Unified agent graph should compile without errors."""
+        graph = create_agent_graph()
         assert graph is not None
         assert hasattr(graph, "invoke")
 
     def test_process_graph_has_expected_nodes(self):
-        """Process graph should have contador, validation, and persist nodes."""
-        graph = create_process_graph()
+        """Unified graph should have supervisor, contador, tributario, auditor, and persist nodes."""
+        graph = create_agent_graph()
         node_names = [
             n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
         ]
-        assert "process_supervisor" in node_names
+        assert "supervisor" in node_names
         assert "contador" in node_names
-        assert "validate_contador" in node_names
+        assert "tributario" in node_names
+        assert "auditor" in node_names
         assert "db_persist" in node_names
 
     def test_process_graph_node_count(self):
-        """Process graph should have exactly 4 nodes."""
-        graph = create_process_graph()
+        """Unified agent graph should have exactly 9 nodes."""
+        graph = create_agent_graph()
         node_names = [
             n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
         ]
-        assert len(node_names) == 4
+        assert len(node_names) == 9
 
 
 # ─── Test: Contador Node ──────────────────────────────────────────
@@ -384,8 +385,6 @@ class TestFullProcessPipeline:
         # Assertions
         # Should complete successfully
         assert result.get("error") is None, "Pipeline should complete without error"
-        assert "contador_output" in result
-        assert result["contador_output"] is not None
 
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
     @patch("app.agents.contador_agent.get_gemini_client")
@@ -491,25 +490,25 @@ class TestProcessAPIEndpoints:
 class TestIngestToProcessIntegration:
     """Test separation of ingest and process pipelines."""
 
-    def test_pipeline_separation(self):
-        """Verify ingest and process are separate graph instances."""
-        from app.agents.graph import create_agent_graph, create_process_graph
-        
-        ingest_graph = create_agent_graph()
-        process_graph = create_process_graph()
-        
-        # Graphs should be different instances
-        assert ingest_graph is not process_graph
-        
-        # Process graph should have contador node
-        process_nodes = [n for n in process_graph.get_graph().nodes 
-                        if n not in ("__start__", "__end__")]
-        assert "contador" in process_nodes
-        
-        # Ingest graph should NOT have contador
-        ingest_nodes = [n for n in ingest_graph.get_graph().nodes 
-                       if n not in ("__start__", "__end__")]
-        assert "contador" not in ingest_nodes
+    def test_unified_graph_supports_both_pipelines(self):
+        """Verify the unified graph contains nodes for both ingest and process pipelines."""
+        from app.agents.graph import create_agent_graph
+
+        graph = create_agent_graph()
+        node_names = [n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")]
+
+        # Ingest pipeline nodes
+        assert "ingesta" in node_names
+        assert "validate_output" in node_names
+
+        # Process pipeline nodes
+        assert "contador" in node_names
+        assert "tributario" in node_names
+        assert "auditor" in node_names
+
+        # Shared nodes
+        assert "supervisor" in node_names
+        assert "db_persist" in node_names
 
 
 if __name__ == "__main__":

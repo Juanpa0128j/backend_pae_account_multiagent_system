@@ -1,6 +1,5 @@
 """
 Agente Reportero (Analyst)
-.
 
 Role (docs/Diseño de arquitectura de agente):
   - Triggered by GET /reports/* and /tax/* API endpoints.

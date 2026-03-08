@@ -108,10 +108,25 @@ def supervisor_node(state: AgentState) -> AgentState:
             return state
 
         if current == "contador":
-            state["current_agent"] = "tributario"
-            append_log(state, "supervisor", "routing_complete", {
-                "next_agent": "tributario",
-            })
+            # Validate contador output before proceeding to tributario
+            state = validate_contador_output_node(state)
+            if state.get("correction_feedback"):
+                # Validation failed — retry contador
+                state["current_agent"] = "contador"
+                append_log(state, "supervisor", "routing_complete", {
+                    "next_agent": "contador", "reason": "validation_failed",
+                })
+            elif state.get("error"):
+                # Validation exhausted or non-retriable error — terminal
+                state["current_agent"] = ""
+                append_log(state, "supervisor", "routing_error", {
+                    "reason": "contador_validation_exhausted",
+                })
+            else:
+                state["current_agent"] = "tributario"
+                append_log(state, "supervisor", "routing_complete", {
+                    "next_agent": "tributario",
+                })
             return state
 
         if current == "tributario":
@@ -391,9 +406,12 @@ def should_retry_agent(state: AgentState) -> str:
     return "end"
 
 
+MAX_CONTADOR_RETRIES = 3
+
+
 def should_retry_contador(state: AgentState) -> str:
-    """Conditional edge for process graph retries."""
-    if state.get("correction_feedback"):
+    """Conditional edge for process graph retries. Enforces a retry limit."""
+    if state.get("correction_feedback") and state.get("retry_count", 0) < MAX_CONTADOR_RETRIES:
         return "retry"
     return "end"
 

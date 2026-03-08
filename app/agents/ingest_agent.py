@@ -18,9 +18,6 @@ from app.core.gemini_client import get_gemini_client
 from app.core.logger import get_logger
 from llama_parse import LlamaParse
 
-# Apply nest_asyncio to allow asyncio inside LangChain / LangGraph node context
-nest_asyncio.apply()
-
 logger = get_logger("app.agents.ingest")
 
 MAX_NODE_RETRIES = 3

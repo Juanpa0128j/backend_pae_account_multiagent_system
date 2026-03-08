@@ -66,6 +66,6 @@ class AgentState(TypedDict):
     process_id: Optional[str]
     pending_transaction_id: Optional[str]
     current_stage: Optional[str]
-    agent_log: List[dict]
+    agent_log: List[LogEntry]
     audit_decision: Optional[str]
     audit_feedback: Optional[str]

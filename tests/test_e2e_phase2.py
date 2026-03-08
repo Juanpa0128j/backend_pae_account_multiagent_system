@@ -28,6 +28,13 @@ MOCK_DB_SVC = "app.agents.persist_node.db_service"
 # Test data
 # ---------------------------------------------------------------------------
 VALID_DATA = {
+    "fecha": "2026-01-15",
+    "monto": 1500000.0,
+    "concepto": "Consultoría contable enero 2026",
+    "beneficiario": "Contadores SAS",
+    "empresa": "Mi Empresa SAS",
+    "referencia": "FAC-2026-001",
+    "tipo_documento": "factura",
     "transactions": [
         {
             "fecha": "2026-01-15",
@@ -37,7 +44,7 @@ VALID_DATA = {
             "descripcion": "Consultoría contable enero 2026",
             "items": [{"descripcion": "Consultoría", "cantidad": 1, "valor": 1500000}],
         }
-    ]
+    ],
 }
 
 INVALID_DATA = {
@@ -52,6 +59,19 @@ INVALID_DATA = {
 }
 
 SAMPLE_TEXT = "FACTURA No. FV-2026-001\nNIT: 900.123.456-7\nTotal: $1.500.000"
+
+VALID_CONTADOR_OUTPUT = {
+    "fecha_registro": "2026-01-15",
+    "tipo_documento": "factura",
+    "descripcion_general": "Servicios enero 2026",
+    "asientos": [
+        {"cuenta_puc": "5110", "nombre_cuenta": "Honorarios", "valor": 1500000.0, "debito": 1500000.0, "credito": 0.0, "tipo_movimiento": "debito"},
+        {"cuenta_puc": "2408", "nombre_cuenta": "Retefuente", "valor": 150000.0, "debito": 0.0, "credito": 150000.0, "tipo_movimiento": "credito"},
+        {"cuenta_puc": "2205", "nombre_cuenta": "Proveedores", "valor": 1350000.0, "debito": 0.0, "credito": 1350000.0, "tipo_movimiento": "credito"},
+    ],
+    "total_debitos": 1500000.0,
+    "total_creditos": 1500000.0,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +294,9 @@ class TestPipeline2Routing:
         → auditor → supervisor → db_persist."""
         from app.agents.graph import create_agent_graph
 
-        with patch(MOCK_SESSION), patch(MOCK_DB_SVC):
+        with patch(MOCK_SESSION), patch(MOCK_DB_SVC), \
+                patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc:
+            mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
             # Provide raw_transactions so process supervisor doesn't error
             s = _base_state(dummy_pdf, mode="process")
             s["raw_transactions"] = [
@@ -288,7 +310,7 @@ class TestPipeline2Routing:
             ]
             # Stub the Gemini client used by contador (not relevant for routing test)
             with patch("app.agents.contador_agent.get_gemini_client") as mock_gc:
-                mock_gc.return_value.extract_contador_output.return_value = {}
+                mock_gc.return_value.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
                 fs = create_agent_graph().invoke(s)
 
             agents_visited = {e["agent"] for e in fs.get("agent_log", [])}
@@ -307,10 +329,12 @@ class TestPipeline2Routing:
             {"fecha": "2026-01-15", "nit_emisor": "900123456",
              "nit_receptor": "800999888", "total": 500000}
         ]
-        with patch("app.agents.contador_agent.get_gemini_client") as mock_gc:
-            mock_gc.return_value.extract_contador_output.return_value = {}
-            with patch(MOCK_SESSION), patch(MOCK_DB_SVC):
-                fs = create_agent_graph().invoke(s)
+        with patch("app.agents.contador_agent.get_gemini_client") as mock_gc, \
+                patch(MOCK_SESSION), patch(MOCK_DB_SVC), \
+                patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc:
+            mock_gc.return_value.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
+            mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
+            fs = create_agent_graph().invoke(s)
 
         # Supervisor should have logged routing to db_persist after audit approved
         routing_completions = [

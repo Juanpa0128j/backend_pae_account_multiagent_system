@@ -63,6 +63,9 @@ def db_persist_node(state: AgentState) -> AgentState:
     for _attempt in range(1, MAX_NODE_RETRIES + 1):
         try:
             _db_persist_inner(state)
+            if state.get("error"):
+                append_log(state, "db_persist", "node_error", {"error": state["error"]})
+                return state
             append_log(state, "db_persist", "node_complete", {
                 "ingest_id": state.get("ingest_id"),
             })
@@ -102,8 +105,10 @@ def _run_persist(state: AgentState) -> None:
         contador_output = state.get("contador_output") or interpreted
         asientos = contador_output.get("asientos", []) if isinstance(contador_output, dict) else []
         if not asientos:
-            logger.warning("db_persist: No contador asientos to persist")
-            return state
+            msg = "db_persist: No contador asientos to persist"
+            logger.error(msg)
+            state["error"] = msg
+            raise RuntimeError(msg)
 
         raw_txs = state.get("raw_transactions") or []
         base_tx = raw_txs[0] if raw_txs and isinstance(raw_txs[0], dict) else {}

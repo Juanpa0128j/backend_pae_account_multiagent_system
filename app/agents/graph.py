@@ -1,22 +1,16 @@
 """
 LangGraph StateGraph for the PAE multi-agent system.
 
-Two graphs are provided:
-
-1. create_agent_graph() — unified 9-node graph.
-   Handles all pipelines via supervisor FSM routing:
-     Pipeline 1 (mode="ingest"):
-       supervisor → ingesta → validate_output → [retry|error|end→db_persist] → END
-     Pipeline 2 (mode="process"):
-       supervisor → contador → supervisor → tributario → supervisor → auditor
-         → supervisor → [approved→db_persist | rejected→contador] → END
-     Reporting (mode="reporting"):
-       supervisor → reportero → END
-     Error path:
-       supervisor → error_terminal → END
-
-2. create_process_graph() — lean accounting graph (legacy / direct invocation).
-   process_supervisor → contador → validate_contador → [retry|end→db_persist] → END
+Unified 9-node graph — all pipelines routed via supervisor FSM:
+  Pipeline 1 (mode="ingest"):
+    supervisor → ingesta → validate_output → [retry|error|end→db_persist] → END
+  Pipeline 2 (mode="process"):
+    supervisor → contador → supervisor → tributario → supervisor → auditor
+      → supervisor → [approved→db_persist | rejected→contador] → END
+  Reporting (mode="reporting"):
+    supervisor → reportero → END
+  Error path:
+    supervisor → error_terminal → END
 """
 
 import logging
@@ -32,12 +26,9 @@ from app.agents.reportero_agent import reportero_node
 from app.agents.state import AgentState
 from app.agents.supervisor import (
     error_terminal_node,
-    process_supervisor_node,
     route_after_supervisor,
     should_retry_agent,
-    should_retry_contador,
     supervisor_node,
-    validate_contador_output_node,
     validate_output_node,
 )
 from app.agents.tributario_agent import tributario_node
@@ -118,37 +109,6 @@ def create_agent_graph() -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Legacy process graph (backward-compat, used by invoke_process_pipeline)
-# ---------------------------------------------------------------------------
-
-def create_process_graph() -> Any:
-    """
-    Create and return process graph (legacy):
-    process_supervisor → contador → validate_contador → (retry | db_persist) → END
-    """
-    graph = StateGraph(AgentState)
-
-    graph.add_node("process_supervisor", process_supervisor_node)
-    graph.add_node("contador", contador_node)
-    graph.add_node("validate_contador", validate_contador_output_node)
-    graph.add_node("db_persist", db_persist_node)
-
-    graph.add_edge("process_supervisor", "contador")
-    graph.add_edge("contador", "validate_contador")
-    graph.add_conditional_edges(
-        "validate_contador",
-        should_retry_contador,
-        {"retry": "contador", "end": "db_persist"},
-    )
-    graph.add_edge("db_persist", END)
-    graph.set_entry_point("process_supervisor")
-
-    compiled_graph = graph.compile()
-    logger.info("Process graph compiled (contador + validation + DB persist)")
-    return compiled_graph
-
-
-# ---------------------------------------------------------------------------
 # invoke_agent — Pipeline 1 (ingest) entry point
 # ---------------------------------------------------------------------------
 
@@ -222,10 +182,9 @@ def invoke_process_pipeline(
     process_id: str | None = None,
 ) -> dict:
     """
-    Invoke the process pipeline starting from staged transactions.
-    Uses the lean create_process_graph() for direct accounting processing.
+    Invoke the unified agent graph for accounting (Pipeline 2, mode='process').
     """
-    graph = create_process_graph()
+    graph = create_agent_graph()
 
     state: AgentState = {
         "file_path": "",
