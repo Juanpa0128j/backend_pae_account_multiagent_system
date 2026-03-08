@@ -64,36 +64,6 @@ INVALID_DATA = {
 
 SAMPLE_TEXT = "FACTURA No. FV-2026-001\nNIT: 900.123.456-7\nTotal: $1.500.000"
 
-VALID_TRIBUTARIO_OUTPUT = {
-    "fecha_analisis": "2026-01-15",
-    "documento_referencia": "Servicios enero 2026",
-    "aplica_impuestos": True,
-    "impuestos": [
-        {
-            "tipo_impuesto": "retefuente",
-            "base_gravable": "1500000.00",
-            "tarifa_porcentaje": "11.00",
-            "valor_impuesto": "165000.00",
-            "cuenta_puc": "2365",
-        },
-        {
-            "tipo_impuesto": "reteica",
-            "base_gravable": "1500000.00",
-            "tarifa_porcentaje": "0.69",
-            "valor_impuesto": "10350.00",
-            "cuenta_puc": "2368",
-        },
-        {
-            "tipo_impuesto": "IVA",
-            "base_gravable": "1500000.00",
-            "tarifa_porcentaje": "19.00",
-            "valor_impuesto": "285000.00",
-            "cuenta_puc": "2408",
-        },
-    ],
-    "total_impuestos": "460350.00",
-    "observaciones": "Retenciones aplicadas según ET. | Referencias: Art. 383 ET",
-}
 
 VALID_CONTADOR_OUTPUT = {
     "fecha_registro": "2026-01-15",

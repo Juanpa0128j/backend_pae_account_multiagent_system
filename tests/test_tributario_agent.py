@@ -18,7 +18,6 @@ Tests cover:
 """
 
 import pytest
-from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -29,8 +28,6 @@ from app.agents.tributario_agent import (
     _calc_reteica,
     _calc_iva,
     _has_iva_in_asientos,
-    TASA_RETEFUENTE,
-    TASA_RETEICA_DEFAULT,
 )
 from app.agents.state import AgentState
 from app.core.gemini_client import TaxJustification
@@ -234,7 +231,7 @@ def test_retefuente_servicios_11_percent(mock_rag_cls, mock_gemini_fn):
     impuestos = result["tributario_output"]["impuestos"]
     retefuente = next(i for i in impuestos if i["tipo_impuesto"] == "retefuente")
     assert Decimal(retefuente["valor_impuesto"]) == Decimal("165000.00")
-    assert retefuente["cuenta_puc"] == "2365"
+    assert retefuente["cuenta_puc"] == "240815"
 
 
 @patch("app.agents.tributario_agent.get_gemini_client")
@@ -248,7 +245,7 @@ def test_reteica_applied(mock_rag_cls, mock_gemini_fn):
     impuestos = result["tributario_output"]["impuestos"]
     reteica = next(i for i in impuestos if i["tipo_impuesto"] == "reteica")
     assert Decimal(reteica["valor_impuesto"]) == Decimal("10350.00")
-    assert reteica["cuenta_puc"] == "2368"
+    assert reteica["cuenta_puc"] == "236540"
 
 
 @patch("app.agents.tributario_agent.get_gemini_client")
@@ -277,11 +274,11 @@ def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_gemini_fn):
     assert len(iva_entries) == 1
     assert Decimal(iva_entries[0]["valor_impuesto"]) == Decimal("285000.00")
 
-    # Should NOT add another IVA entry to asientos_enriquecidos
+    # Should NOT add a new IVA entry to asientos_enriquecidos — the original from
+    # contador already covers it. Check that the IVA sub-account (240802) is absent.
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
-    iva_enriched = [a for a in enriquecidos if a.get("cuenta_puc") == "2408"]
-    # Only the original IVA from contador should be present (not duplicated)
-    assert len(iva_enriched) == 1
+    new_iva_entries = [a for a in enriquecidos if a.get("cuenta_puc") == "240802"]
+    assert len(new_iva_entries) == 0, "Tributario must not add IVA when already in asientos"
 
 
 @patch("app.agents.tributario_agent.get_gemini_client")
@@ -392,9 +389,9 @@ def test_journal_entries_enriched_with_tax_accounts(mock_rag_cls, mock_gemini_fn
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
     cuentas = [a["cuenta_puc"] for a in enriquecidos]
 
-    assert "2365" in cuentas, "Retefuente account 2365 missing from enriched asientos"
-    assert "2368" in cuentas, "ReteICA account 2368 missing from enriched asientos"
-    assert "2408" in cuentas, "IVA account 2408 missing from enriched asientos"
+    assert "240815" in cuentas, "Retefuente account 240815 missing from enriched asientos"
+    assert "236540" in cuentas, "ReteICA account 236540 missing from enriched asientos"
+    assert "240802" in cuentas, "IVA account 240802 missing from enriched asientos"
 
 
 @patch("app.agents.tributario_agent.get_gemini_client")

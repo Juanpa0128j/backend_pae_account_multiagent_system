@@ -1,6 +1,6 @@
 import logging
 from functools import lru_cache
-from typing import Optional, List, Dict, Any
+from typing import Literal, Optional, List, Dict, Any
 
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -28,7 +28,9 @@ class AsientoContableGemini(BaseModel):
     """Simplified journal entry schema for Gemini structured output."""
     cuenta_puc: str = Field(description="PUC account code (1-6 digits)")
     descripcion: str = Field(description="Description of the entry")
-    tipo_movimiento: str = Field(description="DEBITO or CREDITO")
+    tipo_movimiento: Literal["debito", "credito"] = Field(
+        description="Movement type: 'debito' or 'credito' (lowercase)"
+    )
     valor: float = Field(description="Amount of the entry")
 
 
@@ -206,24 +208,10 @@ Con base en la normativa anterior:
 
 Devuelve tu análisis con las referencias legales, la justificación y si confirmas las tasas."""
 
-        try:
-            message = HumanMessage(content=prompt)
-            response = self.tax_model.invoke([message])
-            logger.debug("Tax justification generated: %s", response)
-            return response
-        except Exception as e:
-            logger.warning(
-                f"Gemini tax justification failed (using fallback): {str(e)}"
-            )
-            return TaxJustification(
-                referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],
-                justificacion=(
-                    "Retenciones aplicadas según tasas vigentes del Estatuto Tributario colombiano. "
-                    "Retefuente según Art. 383 ET para servicios; ReteICA según tarifas municipales; "
-                    "IVA según Art. 477 ET tarifa general."
-                ),
-                confirma_tasas=True,
-            )
+        message = HumanMessage(content=prompt)
+        response = self.tax_model.invoke([message])
+        logger.debug("Tax justification generated: %s", response)
+        return response
 
 
 @lru_cache(maxsize=1)

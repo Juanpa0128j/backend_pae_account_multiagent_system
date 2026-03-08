@@ -46,10 +46,10 @@ TASA_IVA: dict[str, Decimal] = {
 PUC_SERVICIOS_START = 5000
 PUC_SERVICIOS_END   = 5999
 
-# Tax liability PUC accounts
-CUENTA_RETEFUENTE = "2365"   # Retención en la Fuente por pagar
-CUENTA_RETEICA    = "2368"   # Retención ICA por pagar
-CUENTA_IVA        = "2408"   # IVA descontable / IVA generado
+# Tax liability PUC sub-accounts — aligned with persist_node._build_journal_entries
+CUENTA_RETEFUENTE = "240815"  # Retención en la Fuente - Servicios
+CUENTA_RETEICA    = "236540"  # ReteICA por pagar
+CUENTA_IVA        = "240802"  # IVA descontable
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ def _detect_transaction_type(asientos: list[dict]) -> str:
     Infer transaction type from debit PUC codes.
 
     Returns 'servicios', 'bienes', or 'arrendamiento'.
-    Defaults to 'servicios' if detection is ambiguous.
+    Defaults to 'bienes' if no 5xxx debit line is found.
     """
     for asiento in asientos:
         if (asiento.get("tipo_movimiento") or "").lower() == "debito":
@@ -77,10 +77,15 @@ def _detect_transaction_type(asientos: list[dict]) -> str:
 
 
 def _has_iva_in_asientos(asientos: list[dict]) -> tuple[bool, Decimal]:
-    """Check if IVA (cuenta 2408) already exists in contador asientos."""
+    """
+    Check if IVA already exists in contador asientos.
+
+    Matches any PUC code starting with '2408' (covers the header account 2408
+    and sub-accounts like 240802 IVA descontable, 240815 Retefuente, etc.).
+    """
     for asiento in asientos:
         puc_raw = str(asiento.get("cuenta_puc", "")).strip()
-        if puc_raw == CUENTA_IVA:
+        if puc_raw.startswith("2408"):
             valor = asiento.get("valor", 0)
             return True, Decimal(str(valor)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return False, Decimal("0")
@@ -130,7 +135,22 @@ def tributario_node(state: AgentState) -> AgentState:
         return state
 
     asientos: list[dict] = contador_output.get("asientos", [])
-    base_gravable = Decimal(str(contador_output.get("total_debitos", 0)))
+
+    # Compute base gravable from non-tax debit lines only.
+    # PUC 2xxx = liabilities (IVA descontable, retenciones) — exclude these debits
+    # to avoid inflating the taxable base when the contador already broke out IVA.
+    non_tax_debits = [
+        Decimal(str(a.get("valor", 0)))
+        for a in asientos
+        if (a.get("tipo_movimiento") or "").lower() == "debito"
+        and not str(a.get("cuenta_puc", "")).startswith("2")
+    ]
+    base_gravable = (
+        sum(non_tax_debits).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if non_tax_debits
+        else Decimal(str(contador_output.get("total_debitos", 0)))
+    )
+
     documento_ref = contador_output.get("descripcion_general", "sin referencia")[:100]
 
     append_log(state, "tributario", "node_start", {

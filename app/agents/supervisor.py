@@ -138,6 +138,10 @@ def supervisor_node(state: AgentState) -> AgentState:
             )
             if result.is_valid:
                 logger.info("Supervisor: tributario output VALID — routing to auditor")
+                if result.validated_output:
+                    state["tributario_output"] = result.validated_output.model_dump(
+                        mode="json"
+                    )
                 state["current_agent"] = "auditor"
                 append_log(state, "supervisor", "routing_complete", {
                     "next_agent": "auditor",
