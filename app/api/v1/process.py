@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -74,13 +75,17 @@ async def get_process_result(process_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"Process job {process_id} not found")
 
     if process_job.status != ProcessStatus.COMPLETED:
-        raise HTTPException(
+        return JSONResponse(
             status_code=202,
-            detail=(
-                f"Process job {process_id} is still being processed "
-                f"(current status: {process_job.status.value}). "
-                f"Poll /api/v1/process/status/{process_id} for updates."
-            ),
+            content={
+                "message": (
+                    f"Process job {process_id} is still being processed "
+                    f"(current status: {process_job.status.value}). "
+                    f"Poll /api/v1/process/status/{process_id} for updates."
+                ),
+                "process_id": process_id,
+                "status": process_job.status.value,
+            },
         )
 
     transactions = db_service.get_process_result_transactions(db, process_job.ingest_id)
