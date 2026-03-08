@@ -58,6 +58,28 @@ class ProcessResultResponse(BaseModel):
     transactions: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class CompanySettingsRequest(BaseModel):
+    """Request body for creating or updating company tax settings."""
+    nombre: Optional[str] = None
+    ciudad: Optional[str] = None
+    codigo_ciiu: Optional[str] = None
+    iva_responsable: bool = True
+    tasa_retefuente_servicios: float = 0.11
+    tasa_retefuente_bienes: float = 0.03
+    tasa_retefuente_arrendamiento: float = 0.10
+    tasa_reteica: float = 0.0069
+    tasa_iva_general: float = 0.19
+
+
+class CompanySettingsResponse(CompanySettingsRequest):
+    """Response body for company tax settings endpoints."""
+    nit: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
 class ReportResponse(BaseModel):
     report: str
     data: Dict[str, Any]

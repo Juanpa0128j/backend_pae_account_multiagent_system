@@ -2,6 +2,7 @@
 SQLAlchemy ORM models for the PAE accounting system.
 
 Tables:
+- CompanySettings: Per-tenant tax configuration (rates, régimen, city)
 - Tercero: Business partners (proveedores/clientes)
 - CuentaPUC: Chart of accounts (Plan Único de Cuentas colombiano)
 - IngestJob: Document upload tracking
@@ -72,6 +73,38 @@ class NaturalezaCuenta(str, enum.Enum):
 
 
 # ─── Models ──────────────────────────────────────────────────────
+
+class CompanySettings(Base):
+    """
+    Per-tenant tax configuration.
+
+    One row per company NIT. Rates are used by the tributario agent to
+    calculate Retefuente, ReteICA, and IVA. Falls back to national defaults
+    when no row exists for a given NIT.
+    """
+    __tablename__ = "company_settings"
+
+    nit             = Column(String(20), primary_key=True, comment="Empresa NIT (tenant identifier)")
+    nombre          = Column(String(255), nullable=True)
+    ciudad          = Column(String(100), nullable=True)
+    codigo_ciiu     = Column(String(10), nullable=True, comment="CIIU economic activity code")
+    iva_responsable = Column(Boolean, default=True, nullable=False,
+                             comment="True=régimen común (IVA applies), False=régimen simplificado")
+
+    # Tax rates stored as decimal fractions (e.g. 0.110000 = 11%)
+    tasa_retefuente_servicios     = Column(Numeric(8, 6), nullable=False, default=0.110000)
+    tasa_retefuente_bienes        = Column(Numeric(8, 6), nullable=False, default=0.030000)
+    tasa_retefuente_arrendamiento = Column(Numeric(8, 6), nullable=False, default=0.100000)
+    tasa_reteica                  = Column(Numeric(8, 6), nullable=False, default=0.006900,
+                                           comment="Municipal ICA retention rate")
+    tasa_iva_general              = Column(Numeric(8, 6), nullable=False, default=0.190000)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<CompanySettings(nit={self.nit}, ciudad={self.ciudad})>"
+
 
 class Tercero(Base):
     """Business partner: proveedor, cliente, or both."""

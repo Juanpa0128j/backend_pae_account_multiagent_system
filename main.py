@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.api.v1 import ingest, process, reports, tax, evaluation, transactions, dashboard, books
+from app.api.v1 import ingest, process, reports, tax, evaluation, transactions, dashboard, books, settings
 from app.core.config import settings
 from app.core.database import check_db_connection
 from app.core.exceptions import PAEException, DatabaseException
@@ -103,6 +103,7 @@ app.include_router(evaluation.router, prefix="/api/v1/evaluation", tags=["Evalua
 app.include_router(transactions.router, prefix="/api/v1/transactions", tags=["Transacciones"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 app.include_router(books.router, prefix="/api/v1/books", tags=["Libros"])
+app.include_router(settings.router, prefix="/api/v1/settings", tags=["Configuración"])
 
 if __name__ == "__main__":
     import uvicorn

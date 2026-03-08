@@ -14,6 +14,7 @@ from sqlalchemy import func, and_, cast, Integer
 from sqlalchemy.orm import Session
 
 from app.models.database import (
+    CompanySettings,
     IngestJob,
     IngestStatus,
     TransactionPending,
@@ -646,3 +647,24 @@ def get_or_create_third_party(
         _commit_or_flush(db, commit)
         db.refresh(tercero)
     return tercero
+
+
+# ─── Company Settings ─────────────────────────────────────────────────────────
+
+def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
+    """Return the CompanySettings row for the given NIT, or None if not found."""
+    return db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
+
+
+def upsert_company_settings(db: Session, nit: str, data: dict) -> CompanySettings:
+    """Create or fully replace the CompanySettings row for the given NIT."""
+    row = db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
+    if row:
+        for key, value in data.items():
+            setattr(row, key, value)
+    else:
+        row = CompanySettings(nit=nit, **data)
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row

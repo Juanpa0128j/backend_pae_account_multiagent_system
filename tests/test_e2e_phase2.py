@@ -16,13 +16,17 @@ dependencies mocked. Validates:
 import pytest
 from unittest.mock import MagicMock, patch
 
+from app.core.gemini_client import TaxJustification
+
 # ---------------------------------------------------------------------------
 # Mock targets — must match the import location in each module
 # ---------------------------------------------------------------------------
-MOCK_LLAMA = "app.agents.ingest_agent.LlamaParse"
+MOCK_LLAMA = "app.agents.ingest_agent.LlamaCloud"
 MOCK_GEMINI = "app.agents.ingest_agent.get_gemini_client"
 MOCK_SESSION = "app.agents.persist_node.SessionLocal"
 MOCK_DB_SVC = "app.agents.persist_node.db_service"
+MOCK_TRIBUTARIO_GEMINI = "app.agents.tributario_agent.get_gemini_client"
+MOCK_TRIBUTARIO_RAG = "app.agents.tributario_agent.get_rag_service"
 
 # ---------------------------------------------------------------------------
 # Test data
@@ -60,6 +64,37 @@ INVALID_DATA = {
 
 SAMPLE_TEXT = "FACTURA No. FV-2026-001\nNIT: 900.123.456-7\nTotal: $1.500.000"
 
+VALID_TRIBUTARIO_OUTPUT = {
+    "fecha_analisis": "2026-01-15",
+    "documento_referencia": "Servicios enero 2026",
+    "aplica_impuestos": True,
+    "impuestos": [
+        {
+            "tipo_impuesto": "retefuente",
+            "base_gravable": "1500000.00",
+            "tarifa_porcentaje": "11.00",
+            "valor_impuesto": "165000.00",
+            "cuenta_puc": "2365",
+        },
+        {
+            "tipo_impuesto": "reteica",
+            "base_gravable": "1500000.00",
+            "tarifa_porcentaje": "0.69",
+            "valor_impuesto": "10350.00",
+            "cuenta_puc": "2368",
+        },
+        {
+            "tipo_impuesto": "IVA",
+            "base_gravable": "1500000.00",
+            "tarifa_porcentaje": "19.00",
+            "valor_impuesto": "285000.00",
+            "cuenta_puc": "2408",
+        },
+    ],
+    "total_impuestos": "460350.00",
+    "observaciones": "Retenciones aplicadas según ET. | Referencias: Art. 383 ET",
+}
+
 VALID_CONTADOR_OUTPUT = {
     "fecha_registro": "2026-01-15",
     "tipo_documento": "factura",
@@ -77,6 +112,21 @@ VALID_CONTADOR_OUTPUT = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _setup_tributario_mocks(mock_trib_rag_cls, mock_trib_gemini_fn):
+    """Wire up mock RAG and Gemini for tributario node."""
+    mock_rag = MagicMock()
+    mock_rag.search_normativo.return_value = []
+    mock_trib_rag_cls.return_value = mock_rag
+
+    mock_gc = MagicMock()
+    mock_gc.justify_tax_analysis.return_value = TaxJustification(
+        referencias=["Art. 383 ET", "Art. 477 ET"],
+        justificacion="Retenciones aplicadas según ET vigente.",
+        confirma_tasas=True,
+    )
+    mock_trib_gemini_fn.return_value = mock_gc
+
 
 def _mock_llama(text: str = SAMPLE_TEXT):
     doc = MagicMock()
@@ -127,6 +177,8 @@ def _base_state(file_path: str = "", mode: str = "ingest") -> dict:
         "mode": mode,
         "raw_transactions": [],
         "contador_output": {},
+        "tributario_output": {},
+        "company_config": None,
         "process_id": None,
         "pending_transaction_id": None,
         "current_stage": None,
@@ -295,8 +347,11 @@ class TestPipeline2Routing:
         from app.agents.graph import create_agent_graph
 
         with patch(MOCK_SESSION), patch(MOCK_DB_SVC), \
-                patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc:
+                patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc, \
+                patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag, \
+                patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini:
             mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
+            _setup_tributario_mocks(mock_trib_rag, mock_trib_gemini)
             # Provide raw_transactions so process supervisor doesn't error
             s = _base_state(dummy_pdf, mode="process")
             s["raw_transactions"] = [
@@ -331,9 +386,12 @@ class TestPipeline2Routing:
         ]
         with patch("app.agents.contador_agent.get_gemini_client") as mock_gc, \
                 patch(MOCK_SESSION), patch(MOCK_DB_SVC), \
-                patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc:
+                patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc, \
+                patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag, \
+                patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini:
             mock_gc.return_value.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
             mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
+            _setup_tributario_mocks(mock_trib_rag, mock_trib_gemini)
             fs = create_agent_graph().invoke(s)
 
         # Supervisor should have logged routing to db_persist after audit approved

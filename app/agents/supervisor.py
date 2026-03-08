@@ -130,10 +130,32 @@ def supervisor_node(state: AgentState) -> AgentState:
             return state
 
         if current == "tributario":
-            state["current_agent"] = "auditor"
-            append_log(state, "supervisor", "routing_complete", {
-                "next_agent": "auditor",
-            })
+            # Validate TributarioOutput schema before advancing to auditor
+            tributario_out = state.get("tributario_output", {})
+            validator = get_validator()
+            result: ValidationResult = validator.validate(
+                "tributario", tributario_out, attempt=1
+            )
+            if result.is_valid:
+                logger.info("Supervisor: tributario output VALID — routing to auditor")
+                state["current_agent"] = "auditor"
+                append_log(state, "supervisor", "routing_complete", {
+                    "next_agent": "auditor",
+                })
+            else:
+                logger.error(
+                    f"Supervisor: tributario output INVALID — "
+                    f"{result.error_summary()}"
+                )
+                state["error"] = (
+                    f"Tributario output schema validation failed: "
+                    f"{result.error_summary()}"
+                )
+                state["current_agent"] = ""
+                append_log(state, "supervisor", "routing_error", {
+                    "reason": "tributario_validation_failed",
+                    "errors": result.errors[:3],
+                })
             return state
 
         if current == "auditor":

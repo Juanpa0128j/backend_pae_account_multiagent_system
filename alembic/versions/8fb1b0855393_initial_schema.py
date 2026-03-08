@@ -1,7 +1,9 @@
 """initial_schema
 
+Includes: all tables created at project start + company_settings (added 2026-03-08)
+
 Revision ID: 8fb1b0855393
-Revises: 
+Revises:
 Create Date: 2026-02-28 18:29:24.217871
 
 """
@@ -183,9 +185,30 @@ def upgrade() -> None:
     )
     op.create_index('ix_audit_logs_entity_id', 'audit_logs', ['entity_id'])
 
+    # ── company_settings ──
+    op.create_table(
+        'company_settings',
+        sa.Column('nit', sa.String(20), nullable=False, comment='Empresa NIT (tenant identifier)'),
+        sa.Column('nombre', sa.String(255), nullable=True),
+        sa.Column('ciudad', sa.String(100), nullable=True),
+        sa.Column('codigo_ciiu', sa.String(10), nullable=True, comment='CIIU economic activity code'),
+        sa.Column('iva_responsable', sa.Boolean(), nullable=False, server_default=sa.text('true'),
+                  comment='True=régimen común (IVA applies), False=régimen simplificado'),
+        sa.Column('tasa_retefuente_servicios', sa.Numeric(8, 6), nullable=False, server_default='0.110000'),
+        sa.Column('tasa_retefuente_bienes', sa.Numeric(8, 6), nullable=False, server_default='0.030000'),
+        sa.Column('tasa_retefuente_arrendamiento', sa.Numeric(8, 6), nullable=False, server_default='0.100000'),
+        sa.Column('tasa_reteica', sa.Numeric(8, 6), nullable=False, server_default='0.006900',
+                  comment='Municipal ICA retention rate'),
+        sa.Column('tasa_iva_general', sa.Numeric(8, 6), nullable=False, server_default='0.190000'),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
+        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
+        sa.PrimaryKeyConstraint('nit'),
+    )
+
 
 def downgrade() -> None:
     """Drop all tables."""
+    op.drop_table('company_settings')
     op.drop_table('audit_logs')
     op.drop_table('process_jobs')
     op.drop_table('journal_entry_lines')
