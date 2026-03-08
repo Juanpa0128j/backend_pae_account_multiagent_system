@@ -11,13 +11,15 @@ a **Supabase pgvector RAG layer** for regulatory document retrieval.
 1. [Overview](#overview)
 2. [Architecture](#architecture)
 3. [Project Structure](#project-structure)
-4. [RAG System](#rag-system)
-5. [Setup](#setup)
-6. [Environment Variables](#environment-variables)
-7. [Running Tests](#running-tests)
-8. [Database Migrations](#database-migrations)
-9. [Key Dependencies](#key-dependencies)
-10. [Design Principles](#design-principles)
+4. [Agent Pipelines](#agent-pipelines)
+5. [RAG System](#rag-system)
+6. [Setup](#setup)
+7. [Environment Variables](#environment-variables)
+8. [Supabase Demo](#supabase-demo-end-to-end)
+9. [Running Tests](#running-tests)
+10. [Database Migrations](#database-migrations)
+11. [Key Dependencies](#key-dependencies)
+12. [Design Principles](#design-principles)
 
 ---
 
@@ -37,6 +39,8 @@ Key features:
   collections (read/write).
 - **107-document normativa base**: 41 PUC accounts + 50 Estatuto Tributario articles +
   16 Ley 43/1990 PCGA principles, all indexed with 1024-dim BGE-M3 embeddings.
+- **Supervisor FSM**: Routes three pipelines (ingest / process / reporting) with structured
+  `agent_log` execution traces at every node.
 
 ---
 
@@ -127,12 +131,67 @@ backend_pae_account_multiagent_system/
 │   ├── puc_accounts.json       # 41 PUC account entries (classes 1–6)
 │   ├── normativa_tributaria.json  # 50 Estatuto Tributario articles
 │   └── ley_43_1990.json        # 16 Ley 43/1990 PCGA principles
+├── docs/                       # Architecture docs and implementation status
 ├── scripts/
-│   └── populate_rag.py         # Seeds Supabase with all normativa documents
-└── tests/
-    ├── test_rag.py             # Core vector DB + RAG service tests (33 tests)
-    └── test_rag_expanded.py    # Hybrid search + data integrity tests (35 tests)
+│   ├── populate_rag.py         # Seeds Supabase with all normativa documents
+│   └── demo_supabase_process.py  # End-to-end demo against Supabase
+├── tests/
+│   ├── test_rag.py             # Core vector DB + RAG service tests (33 tests)
+│   ├── test_rag_expanded.py    # Hybrid search + data integrity tests (35 tests)
+│   ├── test_e2e_phase2.py      # Supervisor FSM, all pipelines, retry (17 tests)
+│   ├── test_validation_system.py  # Schema validation engine (40 tests)
+│   ├── test_agent_integration.py  # Agent pipeline integration tests
+│   └── test_database.py        # ORM + db_service CRUD tests
+└── .env.example                # Template for environment variables
 ```
+
+### Folder Reference
+
+| Folder | Purpose | How to Contribute |
+| :--- | :--- | :--- |
+| `app/api/` | Defines the REST interface. | Add new versioned routers and link them in `main.py`. Keep logic minimal; delegate to agents or services. |
+| `app/agents/` | Orchestrates LLM-based agents via the Supervisor FSM. Each node emits structured `LogEntry` events to `agent_log`. | Implement new worker nodes or refine supervisor logic using LangGraph. Update the shared `AgentState` in `state.py`. |
+| `app/models/` | Houses the data contracts. | Define Pydantic models for request/response validation. Always update these before changing API implementations. |
+| `app/core/` | Cross-cutting concerns. | Configuration (`config.py`), Gemini client, vector store (`vectordb.py`). |
+| `app/services/` | Deterministic logic + RAG. | `rag_service.py` for semantic search, `pdf_processor.py` for extraction, `validation_engine.py` for schema compliance. |
+| `data/` | Static seed data. | PUC accounts and normativa articles used to populate the normativa vector collection. |
+| `scripts/` | CLI utilities. | `populate_rag.py` seeds the Supabase normativa collection. `demo_supabase_process.py` runs an end-to-end demo. |
+
+---
+
+## Agent Pipelines
+
+All pipelines are driven by the **unified 9-node graph** (`create_agent_graph()`), entered via the `supervisor` node. The `mode` field in `AgentState` controls routing.
+
+```text
+supervisor
+  ├─[error]──────────────────────────────→ error_terminal → END
+  ├─[mode=ingest]────────────────────────→ ingesta
+  │                                           ↓
+  │                                       validate_output
+  │                                           ├─[retry]──→ ingesta
+  │                                           ├─[error]──→ END
+  │                                           └─[end]────→ db_persist → END
+  ├─[mode=process]───────────────────────→ contador → supervisor
+  │                                           ↓
+  │                                       tributario → supervisor
+  │                                           ↓
+  │                                       auditor → supervisor
+  │                                           ├─[approved]─→ db_persist → END
+  │                                           └─[rejected]─→ contador (with feedback)
+  └─[mode=reporting]─────────────────────→ reportero → END
+```
+
+### Pipeline 1 — Ingest (`mode="ingest"`)
+PDF upload → LlamaParse extraction → Gemini interpretation → schema validation (max 3 retries) → database persistence.
+
+### Pipeline 2 — Process (`mode="process"`)
+Staged transactions → Contador (PUC classification) → Tributario (tax calc) → Auditor (double-entry review) → feedback loop or persistence.
+
+### Pipeline 3 — Reporting (`mode="reporting"`)
+Generates balance / P&L reports via the Reportero agent.
+
+> See `docs/IMPLEMENTATION_STATUS.md` for the full Phase 3 roadmap.
 
 ---
 
@@ -208,7 +267,7 @@ UV_LINK_MODE=copy uv sync
 
 # 3. Copy and fill in environment variables
 cp .env.example .env
-# Edit .env: set DATABASE_URL, HUGGINGFACE_API_KEY, GEMINI_API_KEY
+# Edit .env: set DATABASE_URL, HUGGINGFACE_API_KEY, GEMINI_API_KEY, LLAMA_CLOUD_API_KEY
 
 # 4. Apply database migrations
 source .venv/bin/activate
@@ -230,10 +289,37 @@ uvicorn main:app --reload
 | `DATABASE_URL` | ✅ | Supabase PostgreSQL connection string (with `+asyncpg` or `+psycopg2`) |
 | `HUGGINGFACE_API_KEY` | ✅ | HuggingFace Inference API key (for BGE-M3 embeddings + reranker) |
 | `GEMINI_API_KEY` | ✅ | Google AI API key (for the LLM agent backbone) |
+| `LLAMA_CLOUD_API_KEY` | ✅ | LlamaCloud API key for PDF parsing via LlamaParse |
 | `GEMINI_MODEL` | | Chat model name (default: `gemini-2.5-flash`) |
 | `PORT` | | Server port (default: `8000`) |
 
 Copy `.env.example` to `.env` and fill in the values. Never commit `.env` to version control.
+
+---
+
+## Supabase Demo (End-to-End)
+
+This repository includes a deterministic demo that runs the **unified agent graph** against a real Supabase PostgreSQL database, exercising both the ingest and process pipelines sequentially.
+
+1. Set your Supabase Postgres URL in `.env`:
+
+```bash
+DATABASE_URL=postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
+```
+
+2. Apply migrations:
+
+```bash
+uv run alembic upgrade head
+```
+
+3. Run the demo:
+
+```bash
+uv run python scripts/demo_supabase_process.py
+```
+
+The script generates a PDF document, ingests it through the ingest pipeline (Pipeline 1), then triggers the process pipeline (Pipeline 2) and verifies final persistence (`transactions_posted`, `journal_entry_lines`) in Supabase.
 
 ---
 
@@ -243,14 +329,16 @@ Copy `.env.example` to `.env` and fill in the values. Never commit `.env` to ver
 # Activate the virtual environment first
 source .venv/bin/activate
 
-# Core RAG tests (33 tests — no API calls, runs in ~9 s):
-pytest tests/test_rag.py -v
-
-# Expanded hybrid search + data integrity tests (35 tests):
-pytest tests/test_rag_expanded.py -v
-
 # Full test suite:
 pytest tests/ -v
+
+# Individual test files:
+pytest tests/test_rag.py -v                       # 33 tests — Core vector DB + RAG service
+pytest tests/test_rag_expanded.py -v              # 35 tests — Hybrid search + data integrity
+pytest tests/test_e2e_phase2.py -v                # 17 tests — Supervisor FSM, all pipelines, retry
+pytest tests/test_validation_system.py -v         # 40 tests — Schema validation engine
+pytest tests/test_agent_integration.py -v         # Agent pipeline integration tests
+pytest tests/test_database.py -v                  # ORM + db_service CRUD tests
 
 # Run a single test class:
 pytest tests/test_rag_expanded.py::TestDataFileIntegrity -v
@@ -296,6 +384,7 @@ alembic downgrade -1
 | `fastapi` | REST API framework |
 | `langgraph` | Multi-agent orchestration (StateGraph) |
 | `langchain-google-genai` | Google Gemini LLM integration |
+| `llama-parse` | PDF parsing via LlamaCloud |
 | `sqlalchemy` | ORM / raw SQL execution against Supabase |
 | `pgvector` / `alembic` | pgvector SQLAlchemy type + schema migrations |
 | `huggingface-hub` | HuggingFace Inference API client (BGE-M3 embeddings) |
@@ -315,4 +404,3 @@ alembic downgrade -1
 6. **Review AI output carefully**: All AI-generated code must be reviewed before merging.
 7. **Short, clear documentation**: Document the *what* and *why*, not the *how*.
 8. **Simplify and divide**: Prefer small, focused modules over monolithic files.
-

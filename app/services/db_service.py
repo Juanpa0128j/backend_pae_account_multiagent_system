@@ -303,8 +303,8 @@ def get_daily_journal(
 
 def get_general_ledger(
     db: Session,
-    fecha_inicio: datetime = None,
-    fecha_fin: datetime = None,
+    start_date: datetime = None,
+    end_date: datetime = None,
 ) -> List[Dict]:
     """
     Libro Mayor — aggregated by cuenta_puc.
@@ -341,12 +341,12 @@ def get_general_ledger(
 
 def get_subsidiary_journal(
     db: Session,
-    cuenta_puc: str,
-    fecha_inicio: datetime = None,
-    fecha_fin: datetime = None,
+    account: str,
+    start_date: datetime = None,
+    end_date: datetime = None,
 ) -> List[JournalEntryLine]:
-    """Libro Auxiliar — detail for a specific account."""
-    query = db.query(JournalEntryLine).filter(JournalEntryLine.cuenta_puc == puc_account)
+    """Subsidiary journal — detail for a specific account."""
+    query = db.query(JournalEntryLine).filter(JournalEntryLine.cuenta_puc == account)
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
@@ -531,9 +531,8 @@ def update_process_job(
     if error_message is not None:
         job.error_message = error_message
     if agent_log_entry:
-        if job.agent_log is None:
-            job.agent_log = []
-        job.agent_log = job.agent_log + [agent_log_entry]
+        existing = job.agent_log if isinstance(job.agent_log, list) else []
+        job.agent_log = existing + [agent_log_entry]
 
     db.commit()
     db.refresh(job)
@@ -631,7 +630,7 @@ def get_or_create_third_party(
     db: Session,
     nit: str,
     business_name: str = "Unknown",
-    party_type: str = "supplier",
+    party_type: str = "proveedor",
     commit: bool = True,
 ) -> Tercero:
     """Get existing third party by NIT or create a new one."""

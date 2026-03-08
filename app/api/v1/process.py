@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -13,7 +14,7 @@ router = APIRouter()
 async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
     """
     Create a process job and execute the graph asynchronously.
-    
+
     Idempotent: Returns the existing ProcessJob if one is already running or queued
     for the given ingest_id. Only creates a new one if the previous one failed or was cancelled.
 
@@ -36,7 +37,7 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
 
     # Create a new ProcessJob only if no active one exists
     process_job = db_service.create_process_job(db, ingest_id)
-    jobs.start_process_job(process_job.id)
+    await jobs.start_process_job(process_job.id)
 
     return ProcessResponse(
         message=f"Started accounting process for ingest_id: {ingest_id}",
@@ -74,24 +75,20 @@ async def get_process_result(process_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"Process job {process_id} not found")
 
     if process_job.status != ProcessStatus.COMPLETED:
-        raise HTTPException(
+        return JSONResponse(
             status_code=202,
-            detail=(
-                f"Process job {process_id} is still being processed "
-                f"(current status: {process_job.status.value}). "
-                f"Poll /api/v1/process/status/{process_id} for updates."
-            ),
+            content={
+                "message": (
+                    f"Process job {process_id} is still being processed "
+                    f"(current status: {process_job.status.value}). "
+                    f"Poll /api/v1/process/status/{process_id} for updates."
+                ),
+                "process_id": process_id,
+                "status": process_job.status.value,
+            },
         )
 
-    get_result_fn = getattr(db_service, "get_process_result_transactions", None)
-    if get_result_fn is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Process result retrieval is not available: "
-            "'get_process_result_transactions' is not implemented in db_service.",
-        )
-
-    transactions = get_result_fn(db, process_job.ingest_id)
+    transactions = db_service.get_process_result_transactions(db, process_job.ingest_id)
 
     return ProcessResultResponse(
         process_id=process_job.id,
