@@ -36,6 +36,28 @@ class ProcessResponse(BaseModel):
     status: str
 
 
+class ProcessStatusResponse(BaseModel):
+    """Response for GET /process/status/{process_id}"""
+    process_id: str
+    status: str
+    current_stage: Optional[str] = None
+    current_agent: Optional[str] = None
+    progress: Optional[int] = None
+    error_message: Optional[str] = None
+    agent_log: Optional[List[Dict[str, Any]]] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class ProcessResultResponse(BaseModel):
+    """Response for GET /process/result/{process_id}"""
+    process_id: str
+    ingest_id: str
+    status: str
+    transactions: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class ReportResponse(BaseModel):
     report: str
     data: Dict[str, Any]
