@@ -350,10 +350,35 @@ def tributario_node(state: AgentState) -> AgentState:
         aplica_impuestos = len(impuestos) > 0
 
         # ------------------------------------------------------------------
-        # Step 6 — Build enriched journal entries (add tax liability asientos)
+        # Step 6 — Build enriched journal entries (keep double-entry balanced)
         # ------------------------------------------------------------------
-        asientos_enriquecidos = list(asientos)  # copy from contador
+        asientos_enriquecidos = [dict(a) for a in asientos]  # copy from contador
 
+        # To maintain double-entry integrity (debits == credits), reduce the largest
+        # credit entry by total tax amounts, then add tax liability credits.
+        # This way: original_credit - total_taxes + retefuente + reteica + iva = original_credit
+        total_taxes = retefuente_val + reteica_val + iva_val
+
+        if total_taxes > 0:
+            # Find the largest credit entry to reduce
+            credit_entries = [
+                (i, e) for i, e in enumerate(asientos_enriquecidos)
+                if e.get("tipo_movimiento", "").lower() == "credito"
+            ]
+            if credit_entries:
+                # Reduce the largest credit entry by tax amounts
+                largest_idx, largest_entry = max(credit_entries, key=lambda x: Decimal(str(x[1].get("valor", 0))))
+                original_valor = Decimal(str(largest_entry.get("valor", 0)))
+                reduced_valor = (original_valor - total_taxes).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                asientos_enriquecidos[largest_idx]["valor"] = str(reduced_valor)
+                logger.info(
+                    f"Tributario: reduced credit {largest_entry.get('cuenta_puc')} "
+                    f"from {original_valor} to {reduced_valor} (total taxes: {total_taxes})"
+                )
+
+        # Now append the tax liability credits
         if retefuente_val > 0:
             asientos_enriquecidos.append({
                 "cuenta_puc":       CUENTA_RETEFUENTE,
@@ -397,6 +422,72 @@ def tributario_node(state: AgentState) -> AgentState:
         state["current_agent"]     = "tributario"
         state["current_stage"]     = "tributario_complete"
         state["correction_feedback"] = None
+
+        # ------------------------------------------------------------------
+        # Step 8 — Propagate enriched asientos to contador_output for persistence
+        # ------------------------------------------------------------------
+        # Update contador_output with enriched asientos so persist_node will
+        # store them in the database (not just the UI response).
+        try:
+            contador_output = state.get("contador_output") or {}
+            if isinstance(contador_output, dict):
+                # Make a copy to avoid mutating the original fixture/state
+                contador_output = dict(contador_output)
+                # Update asientos to the enriched version
+                contador_output["asientos"] = asientos_enriquecidos
+
+                # Recalculate totals based on enriched asientos
+                total_debitos_enriched = Decimal("0")
+                total_creditos_enriched = Decimal("0")
+                for a in asientos_enriquecidos:
+                    valor = Decimal(str(a.get("valor", 0)))
+                    if a.get("tipo_movimiento", "").lower() == "debito":
+                        total_debitos_enriched += valor
+                    else:
+                        total_creditos_enriched += valor
+
+                contador_output["total_debitos"] = str(total_debitos_enriched)
+                contador_output["total_creditos"] = str(total_creditos_enriched)
+                state["contador_output"] = contador_output
+
+                append_log(state, "tributario", "enrichment_propagated", {
+                    "asientos_enriched_count": len(asientos_enriquecidos),
+                    "total_debitos": str(total_debitos_enriched),
+                    "total_creditos": str(total_creditos_enriched),
+                })
+                logger.info(
+                    f"Tributario: propagated enriched asientos to contador_output "
+                    f"(debits={total_debitos_enriched}, credits={total_creditos_enriched})"
+                )
+        except Exception as enrich_exc:
+            logger.warning(
+                "Tributario: failed to propagate enriched asientos: %s",
+                enrich_exc,
+                exc_info=True,
+            )
+            # Don't fail the node if enrichment propagation fails
+
+        # Propagate legal references to raw_transactions for persistence
+        try:
+            raw_transactions = state.get("raw_transactions")
+            if isinstance(raw_transactions, list) and raw_transactions:
+                first_tx = raw_transactions[0]
+                if isinstance(first_tx, dict):
+                    first_tx["referencias_legales"] = referencias
+                    # Add agent reasoning at transaction level
+                    tx_agent_reasoning = first_tx.get("agent_reasoning") or {}
+                    if not isinstance(tx_agent_reasoning, dict):
+                        tx_agent_reasoning = {}
+                    tx_agent_reasoning["tributario"] = observaciones
+                    first_tx["agent_reasoning"] = tx_agent_reasoning
+                    logger.info("Tributario: propagated references to raw_transactions")
+        except Exception as ref_exc:
+            logger.warning(
+                "Tributario: failed to propagate references to raw_transactions: %s",
+                ref_exc,
+                exc_info=True,
+            )
+            # Don't fail the node if reference propagation fails
 
         # Persist reasoning for final API response
         result = state.get("result") or {}

@@ -1,10 +1,11 @@
 import logging
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal, Optional, List, Dict, Any
 
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import get_settings
 
@@ -16,9 +17,16 @@ class RawTransaction(BaseModel):
     fecha: Optional[str] = Field(None, description="Date in YYYY-MM-DD format")
     nit_emisor: str = Field(description="NIT of the issuer")
     nit_receptor: str = Field(description="NIT of the receiver (empresa)")
-    total: float = Field(description="Total amount of the transaction")
+    total: Decimal = Field(description="Total amount of the transaction")
     descripcion: Optional[str] = Field(None, description="Description/concept of the transaction")
     items: Optional[List[Dict[str, Any]]] = Field(None, description="Line items")
+
+    @field_validator("total", mode="before")
+    @classmethod
+    def parse_total(cls, v):  # noqa: N805
+        if isinstance(v, (int, float)):
+            return Decimal(str(v))
+        return v
 
 class RawTransactionsList(BaseModel):
     transactions: List[RawTransaction] = Field(default_factory=list, description="Extracted list of transactions from the document")
@@ -31,7 +39,14 @@ class AsientoContableGemini(BaseModel):
     tipo_movimiento: Literal["debito", "credito"] = Field(
         description="Movement type: 'debito' or 'credito' (lowercase)"
     )
-    valor: float = Field(description="Amount of the entry")
+    valor: Decimal = Field(description="Amount of the entry")
+
+    @field_validator("valor", mode="before")
+    @classmethod
+    def parse_valor(cls, v):  # noqa: N805
+        if isinstance(v, (int, float)):
+            return Decimal(str(v))
+        return v
 
 
 class ContadorOutputGemini(BaseModel):
@@ -40,8 +55,15 @@ class ContadorOutputGemini(BaseModel):
     tipo_documento: str = Field(description="Document type: recibo, factura, extracto, nota_credito, nota_debito, comprobante_egreso, otro")
     descripcion_general: str = Field(description="General description of the accounting event")
     asientos: List[AsientoContableGemini] = Field(description="Journal entries (at least one debit and one credit)")
-    total_debitos: float = Field(description="Sum of all debit entries")
-    total_creditos: float = Field(description="Sum of all credit entries")
+    total_debitos: Decimal = Field(description="Sum of all debit entries")
+    total_creditos: Decimal = Field(description="Sum of all credit entries")
+
+    @field_validator("total_debitos", "total_creditos", mode="before")
+    @classmethod
+    def parse_totals(cls, v):  # noqa: N805
+        if isinstance(v, (int, float)):
+            return Decimal(str(v))
+        return v
 
 
 class TaxJustification(BaseModel):
@@ -56,27 +78,38 @@ class TaxRateLookup(BaseModel):
     Structured output for Gemini tax profile setup.
     Gemini determines the correct Colombian tax rates based on city, CIIU, and régimen.
     """
-    tasa_retefuente_servicios: float = Field(
+    tasa_retefuente_servicios: Decimal = Field(
         description="Retefuente rate for services as a decimal fraction, e.g. 0.11 for 11%"
     )
-    tasa_retefuente_bienes: float = Field(
+    tasa_retefuente_bienes: Decimal = Field(
         description="Retefuente rate for goods purchases as a decimal fraction, e.g. 0.03 for 3%"
     )
-    tasa_retefuente_arrendamiento: float = Field(
+    tasa_retefuente_arrendamiento: Decimal = Field(
         description="Retefuente rate for lease/rent as a decimal fraction, e.g. 0.10 for 10%"
     )
-    tasa_reteica: float = Field(
+    tasa_reteica: Decimal = Field(
         description=(
             "ReteICA rate for the given municipality and CIIU as a decimal fraction, "
             "e.g. 0.0069 for 0.69%. This is a municipal tax — use the rate for the specified city."
         )
     )
-    tasa_iva_general: float = Field(
+    tasa_iva_general: Decimal = Field(
         description="IVA general tariff as a decimal fraction. 0.19 for régimen común, 0.0 for simplificado"
     )
     fuentes: List[str] = Field(
         description="Legal articles and municipal agreements that support these rates"
     )
+
+    @field_validator(
+        "tasa_retefuente_servicios", "tasa_retefuente_bienes",
+        "tasa_retefuente_arrendamiento", "tasa_reteica", "tasa_iva_general",
+        mode="before"
+    )
+    @classmethod
+    def parse_rates(cls, v):  # noqa: N805
+        if isinstance(v, (int, float)):
+            return Decimal(str(v))
+        return v
 
 
 class GeminiClient:
