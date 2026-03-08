@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     # --- Gemini / Google AI ------------------------------------------------
     gemini_api_key: str = Field("", alias="GEMINI_API_KEY")
     gemini_model: str = Field("gemini-2.5-flash", alias="GEMINI_MODEL")
-    gemini_embedding_model: str = Field("models/gemini-embedding-001", alias="GEMINI_EMBEDDING_MODEL")
+
+    # --- HuggingFace API (embeddings + reranker) ---------------------------
+    huggingface_api_key: str = Field("", alias="HUGGINGFACE_API_KEY")
 
     # --- LlamaCloud API ----------------------------------------------------
     llama_cloud_api_key: str = Field("", alias="LLAMA_CLOUD_API_KEY")
@@ -33,7 +35,6 @@ class Settings(BaseSettings):
 
     # --- Storage -----------------------------------------------------------
     upload_folder: str = Field("./storage/uploads", alias="UPLOAD_FOLDER")
-    chroma_persist_path: str = Field("./storage/chromadb", alias="CHROMA_PERSIST_PATH")
 
     # --- Paths -------------------------------------------------------------
     base_path: Path = Path(__file__).parent.parent.parent
