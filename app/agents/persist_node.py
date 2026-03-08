@@ -82,7 +82,21 @@ def db_persist_node(state: AgentState) -> AgentState:
             # Non-transient — fall through to original error handling below
             break
 
-    return _db_persist_inner_with_cleanup(state)
+    # Non-retry path: wrap in try/except to handle non-transient exceptions
+    try:
+        _db_persist_inner_with_cleanup(state)
+        if state.get("error"):
+            append_log(state, "db_persist", "node_error", {"error": state["error"]})
+        else:
+            append_log(state, "db_persist", "node_complete", {
+                "ingest_id": state.get("ingest_id"),
+            })
+    except Exception as e:
+        logger.error(f"db_persist: Non-transient exception in cleanup path: {e}", exc_info=True)
+        state["error"] = f"DB persist error: {str(e)}"
+        append_log(state, "db_persist", "node_error", {"error": str(e)})
+
+    return state
 
 
 def _db_persist_inner(state: AgentState) -> None:
@@ -96,7 +110,7 @@ def _db_persist_inner_with_cleanup(state: AgentState) -> AgentState:
     return state
 
 
-def _run_persist(state: AgentState) -> None:
+def _run_persist(state: AgentState) -> AgentState:
     """Core persistence logic. Raises on failure; called by the retry wrappers."""
     mode = state.get("mode", "ingest")
     interpreted = state.get("interpreted_data", {}) or {}
@@ -144,8 +158,10 @@ def _run_persist(state: AgentState) -> None:
     else:
         transactions = interpreted.get("transactions", []) if isinstance(interpreted, dict) else []
         if not transactions:
-            logger.warning("db_persist: No transactions to persist")
-            return state
+            msg = "db_persist: No transactions to persist"
+            logger.warning(msg)
+            state["error"] = msg
+            raise RuntimeError(msg)
 
     db = SessionLocal()
     ingest_id = _as_str(state.get("ingest_id"), "")
@@ -196,8 +212,10 @@ def _run_persist(state: AgentState) -> None:
                 pending_id = _as_str(state.get("pending_transaction_id"), "")
                 txn_pending = db.query(TransactionPending).filter(TransactionPending.id == pending_id).first()
                 if not txn_pending:
-                    state["error"] = "DB persist error: pending transaction not found for process mode"
-                    return state
+                    msg = "DB persist error: pending transaction not found for process mode"
+                    logger.error(msg)
+                    state["error"] = msg
+                    raise RuntimeError(msg)
             else:
                 txn_pending = db_service.create_transaction_pending(
                     db,
@@ -235,8 +253,10 @@ def _run_persist(state: AgentState) -> None:
                 cuenta_puc = _as_str((debit_line or {}).get("cuenta_puc"), "")
                 puc_descripcion = _as_str((debit_line or {}).get("nombre_cuenta"), "")
                 if not cuenta_puc:
-                    state["error"] = "DB persist error: contador output missing debit cuenta_puc"
-                    return state
+                    msg = "DB persist error: contador output missing debit cuenta_puc"
+                    logger.error(msg)
+                    state["error"] = msg
+                    raise RuntimeError(msg)
             else:
                 cuenta_puc = _as_str(tx_data.get("cuenta_puc"), "") or "519595"
                 puc_descripcion = _as_str(tx_data.get("cuenta_nombre"), "")
@@ -245,8 +265,10 @@ def _run_persist(state: AgentState) -> None:
             if puc_record:
                 puc_descripcion = _as_str(getattr(puc_record, "nombre", ""), "")
             elif mode == "process":
-                state["error"] = f"DB persist error: PUC code {cuenta_puc} not found"
-                return state
+                msg = f"DB persist error: PUC code {cuenta_puc} not found"
+                logger.error(msg)
+                state["error"] = msg
+                raise RuntimeError(msg)
             else:
                 logger.warning(f"db_persist: PUC code {cuenta_puc} not found")
 
