@@ -293,6 +293,10 @@ def _missing_puc_codes(contador_output: dict) -> list[str]:
     db = SessionLocal()
     try:
         return [code for code in codes if not db_service.validate_puc_exists(db, code)]
+    except Exception as e:
+        msg = f"DB error during PUC validation: {e}"
+        logger.error(msg)
+        raise RuntimeError(msg) from e
     finally:
         db.close()
 
@@ -351,7 +355,15 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         if result.validated_output
         else raw_output
     )
-    missing = _missing_puc_codes(validated)
+
+    try:
+        missing = _missing_puc_codes(validated)
+    except Exception as e:
+        msg = f"DB error during PUC validation: {e}"
+        logger.error(msg)
+        state["error"] = msg
+        append_log(state, agent_name, "node_error", {"error": msg})
+        return state
 
     if missing:
         missing_msg = (
