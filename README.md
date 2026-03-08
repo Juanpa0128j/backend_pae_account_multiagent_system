@@ -286,7 +286,7 @@ uvicorn main:app --reload
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | ✅ | Supabase PostgreSQL connection string (with `+asyncpg` or `+psycopg2`) |
+| `DATABASE_URL` | ✅ | Supabase PostgreSQL connection string (synchronous; e.g. `postgresql://...` or `postgresql+psycopg2://...`) |
 | `HUGGINGFACE_API_KEY` | ✅ | HuggingFace Inference API key (for BGE-M3 embeddings + reranker) |
 | `GEMINI_API_KEY` | ✅ | Google AI API key (for the LLM agent backbone) |
 | `LLAMA_CLOUD_API_KEY` | ✅ | LlamaCloud API key for PDF parsing via LlamaParse |

@@ -103,7 +103,7 @@ class RAGService:
             )
             return []
 
-        candidates = min(_RETRIEVAL_CANDIDATES, total)
+        candidates = min(max(n_results, _RETRIEVAL_CANDIDATES), total)
         query_embedding = self._db.embed_query(query)
 
         if hybrid and hasattr(self._db, "search_hybrid"):

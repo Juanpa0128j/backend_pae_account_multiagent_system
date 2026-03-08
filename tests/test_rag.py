@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from app.core.vectordb import NORMATIVA_COLLECTION, SupabaseVectorDB, empresa_collection_name
+from app.core.vectordb import NORMATIVA_COLLECTION, empresa_collection_name
 from app.services.rag_service import RAGResult, RAGService
 
 
