@@ -6,10 +6,12 @@ On retry (when correction_feedback is present), the agent re-sends the
 raw text to Gemini along with the schema errors so the model can self-correct.
 """
 
-import logging
 import uuid
 
 import nest_asyncio
+
+# Allow asyncio inside LangGraph node context
+nest_asyncio.apply()
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
@@ -49,10 +51,6 @@ def ingest_node(state: AgentState) -> AgentState:
     """
     Ingest node: Extracts multimodally from document and interprets with Gemini.
     """
-    import nest_asyncio
-    # Allow asyncio inside LangGraph node context (must run after event loop is set up)
-    nest_asyncio.apply()
-
     # If supervisor already flagged an error, skip processing
     if state.get("error"):
         logger.warning(f"Skipping ingest due to upstream error: {state['error']}")
