@@ -18,7 +18,7 @@ from app.agents.state import AgentState
 from app.core.config import get_settings
 from app.core.gemini_client import get_gemini_client
 from app.core.logger import get_logger
-from llama_parse import LlamaParse
+from llama_cloud import LlamaCloud
 
 logger = get_logger("app.agents.ingest")
 
@@ -68,11 +68,10 @@ def ingest_node(state: AgentState) -> AgentState:
     try:
         # Step 1: Extract raw text
         if not is_retry or not state.get("raw_text"):
-            logger.info(f"Ingest: Extracting text from {file_path} using LlamaParse")
-            parser = LlamaParse(
+            logger.info(f"Ingest: Extracting text from {file_path} using LlamaCloud")
+            parser = LlamaCloud(
                 api_key=settings.llama_cloud_api_key,
                 result_type="markdown",
-                verbose=True,
             )
             documents = parser.load_data(file_path)
             raw_text = "\n\n".join([doc.text for doc in documents])
