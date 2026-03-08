@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models.database import (
     CompanySettings,
+    ReteicaTarifa,
     IngestJob,
     IngestStatus,
     TransactionPending,
@@ -668,3 +669,107 @@ def upsert_company_settings(db: Session, nit: str, data: dict) -> CompanySetting
     db.commit()
     db.refresh(row)
     return row
+
+
+# ─── ReteICA Tarifa Lookup ────────────────────────────────────────────────────
+
+# Maps CIIU code prefixes to ISIC/CIIU section letters.
+# This covers the most common sections used in Colombia.
+_CIIU_SECTION_MAP: dict[str, str] = {
+    "01": "A", "02": "A", "03": "A",               # Agricultura, ganadería
+    "05": "B", "06": "B", "07": "B", "08": "B",    # Minería
+    "10": "C", "11": "C", "12": "C", "13": "C",    # Industria manufacturera
+    "14": "C", "15": "C", "16": "C", "17": "C",
+    "18": "C", "19": "C", "20": "C", "21": "C",
+    "22": "C", "23": "C", "24": "C", "25": "C",
+    "26": "C", "27": "C", "28": "C", "29": "C",
+    "30": "C", "31": "C", "32": "C", "33": "C",
+    "35": "D",                                       # Electricidad, gas
+    "36": "E", "37": "E", "38": "E", "39": "E",    # Agua y saneamiento
+    "41": "F", "42": "F", "43": "F",               # Construcción
+    "45": "G", "46": "G", "47": "G",               # Comercio
+    "49": "H", "50": "H", "51": "H", "52": "H",   # Transporte
+    "53": "H",
+    "55": "I", "56": "I",                           # Alojamiento, restaurantes
+    "58": "J", "59": "J", "60": "J", "61": "J",   # Información, tecnología
+    "62": "J", "63": "J",
+    "64": "K", "65": "K", "66": "K",               # Financiero, seguros
+    "68": "L",                                       # Inmobiliario
+    "69": "M", "70": "M", "71": "M", "72": "M",   # Profesional, científico
+    "73": "M", "74": "M", "75": "M",
+    "77": "N", "78": "N", "79": "N", "80": "N",   # Servicios administrativos
+    "81": "N", "82": "N",
+    "84": "O",                                       # Administración pública
+    "85": "P",                                       # Educación
+    "86": "Q", "87": "Q", "88": "Q",               # Salud
+    "90": "R", "91": "R", "92": "R", "93": "R",   # Entretenimiento
+    "94": "S", "95": "S", "96": "S",               # Otras actividades de servicios
+    "97": "T",                                       # Hogares
+}
+
+
+def _normalize_municipio(ciudad: str) -> str:
+    """Normalize a city name for DB lookup (lowercase, remove accents)."""
+    import unicodedata
+    normalized = unicodedata.normalize("NFD", ciudad.lower().strip())
+    return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+
+
+def _ciiu_to_section(ciiu: str) -> str:
+    """Map a CIIU code to its ISIC section letter."""
+    prefix = ciiu.strip()[:2]
+    return _CIIU_SECTION_MAP.get(prefix, "general")
+
+
+def get_reteica_tarifa(db: Session, ciudad: str, ciiu: str) -> Optional[float]:
+    """
+    Look up the ReteICA rate for a given city and CIIU code.
+
+    Lookup priority:
+      1. municipio + ciiu_seccion (exact city + sector)
+      2. municipio + 'general'    (city-wide default)
+      3. 'general' + 'general'    (national fallback)
+
+    Returns the rate as a float (decimal fraction), or None if no entry found.
+    """
+    municipio = _normalize_municipio(ciudad)
+    seccion = _ciiu_to_section(ciiu)
+
+    # 1. Exact city + sector
+    if seccion != "general":
+        row = (
+            db.query(ReteicaTarifa)
+            .filter(
+                ReteicaTarifa.municipio == municipio,
+                ReteicaTarifa.ciiu_seccion == seccion,
+            )
+            .first()
+        )
+        if row:
+            return float(row.tasa)
+
+    # 2. City general
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == municipio,
+            ReteicaTarifa.ciiu_seccion == "general",
+        )
+        .first()
+    )
+    if row:
+        return float(row.tasa)
+
+    # 3. National fallback
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == "general",
+            ReteicaTarifa.ciiu_seccion == "general",
+        )
+        .first()
+    )
+    if row:
+        return float(row.tasa)
+
+    return None

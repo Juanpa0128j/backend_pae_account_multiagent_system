@@ -205,9 +205,71 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('nit'),
     )
 
+    # ── reteica_tarifas ──
+    op.create_table(
+        'reteica_tarifas',
+        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column('municipio', sa.String(100), nullable=False, comment='Lowercase normalized city name'),
+        sa.Column('ciiu_seccion', sa.String(10), nullable=False,
+                  comment="CIIU section letter (A-U) or 'general'"),
+        sa.Column('tasa', sa.Numeric(10, 8), nullable=False,
+                  comment='Rate as decimal fraction, e.g. 0.00966 for 0.966%'),
+        sa.Column('fuente', sa.String(255), nullable=True),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index('ix_reteica_tarifas_municipio', 'reteica_tarifas', ['municipio'])
+
+    # Seed initial ReteICA rates for major Colombian cities.
+    # Rates are expressed as decimal fractions (0.00966 = 0.966%).
+    # Sources: Acuerdos municipales vigentes.
+    # 'general' ciiu_seccion = city-wide default; use section letter for specific sectors.
+    reteica_data = op.get_bind()
+    reteica_data.execute(sa.text("""
+        INSERT INTO reteica_tarifas (municipio, ciiu_seccion, tasa, fuente) VALUES
+        -- Nacional (fallback for any unlisted city)
+        ('general',        'general', 0.00690000, 'Tarifa nacional de referencia'),
+        -- Bogotá (Acuerdo 065 de 2002 y actualizaciones)
+        ('bogota',         'general', 0.00966000, 'Acuerdo 065 Bogotá 2016'),
+        ('bogota',         'G',       0.00690000, 'Acuerdo 065 Bogotá 2016 - Comercio'),
+        ('bogota',         'C',       0.00414000, 'Acuerdo 065 Bogotá 2016 - Industria'),
+        ('bogota',         'F',       0.00690000, 'Acuerdo 065 Bogotá 2016 - Construcción'),
+        ('bogota',         'J',       0.00966000, 'Acuerdo 065 Bogotá 2016 - Tecnología'),
+        ('bogota',         'K',       0.00966000, 'Acuerdo 065 Bogotá 2016 - Financiero'),
+        -- Medellín (Acuerdo 67 de 2012)
+        ('medellin',       'general', 0.00690000, 'Acuerdo 67 Medellín 2012'),
+        ('medellin',       'G',       0.00500000, 'Acuerdo 67 Medellín 2012 - Comercio'),
+        ('medellin',       'C',       0.00350000, 'Acuerdo 67 Medellín 2012 - Industria'),
+        ('medellin',       'J',       0.00690000, 'Acuerdo 67 Medellín 2012 - Tecnología'),
+        -- Cali (Acuerdo 0294 de 2014)
+        ('cali',           'general', 0.00690000, 'Acuerdo 0294 Cali 2014'),
+        ('cali',           'G',       0.00414000, 'Acuerdo 0294 Cali 2014 - Comercio'),
+        ('cali',           'C',       0.00276000, 'Acuerdo 0294 Cali 2014 - Industria'),
+        ('cali',           'J',       0.00690000, 'Acuerdo 0294 Cali 2014 - Tecnología'),
+        -- Barranquilla (Decreto 1122 de 2016)
+        ('barranquilla',   'general', 0.00828000, 'Decreto 1122 Barranquilla 2016'),
+        ('barranquilla',   'G',       0.00552000, 'Decreto 1122 Barranquilla 2016 - Comercio'),
+        ('barranquilla',   'C',       0.00414000, 'Decreto 1122 Barranquilla 2016 - Industria'),
+        -- Bucaramanga (Acuerdo 010 de 2015)
+        ('bucaramanga',    'general', 0.00966000, 'Acuerdo 010 Bucaramanga 2015'),
+        ('bucaramanga',    'G',       0.00690000, 'Acuerdo 010 Bucaramanga 2015 - Comercio'),
+        -- Cartagena (Decreto 1272 de 2016)
+        ('cartagena',      'general', 0.00828000, 'Decreto 1272 Cartagena 2016'),
+        ('cartagena',      'G',       0.00552000, 'Decreto 1272 Cartagena 2016 - Comercio'),
+        -- Manizales
+        ('manizales',      'general', 0.00690000, 'Estatuto Tributario Manizales'),
+        -- Pereira
+        ('pereira',        'general', 0.00690000, 'Estatuto Tributario Pereira'),
+        -- Cúcuta
+        ('cucuta',         'general', 0.00828000, 'Estatuto Tributario Cúcuta'),
+        -- Ibagué
+        ('ibague',         'general', 0.00690000, 'Estatuto Tributario Ibagué')
+    """))
+
 
 def downgrade() -> None:
     """Drop all tables."""
+    op.drop_table('reteica_tarifas')
     op.drop_table('company_settings')
     op.drop_table('audit_logs')
     op.drop_table('process_jobs')

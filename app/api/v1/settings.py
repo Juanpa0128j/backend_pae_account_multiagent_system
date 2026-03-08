@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.gemini_client import get_gemini_client
+from app.core.gemini_client import TaxRateLookup, get_gemini_client
 from app.models.schemas import (
     CompanyProfileSetupRequest,
     CompanySettingsRequest,
@@ -24,6 +24,12 @@ from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Retefuente national rates (Art. 383 / Art. 401 ET) — these are fixed by law
+# and do not vary by municipality, so they are always taken from the code.
+_TASA_RETEFUENTE_SERVICIOS     = 0.11
+_TASA_RETEFUENTE_BIENES        = 0.03
+_TASA_RETEFUENTE_ARRENDAMIENTO = 0.10
 
 
 @router.get("/company/{nit}", response_model=CompanySettingsResponse)
@@ -59,74 +65,77 @@ def setup_company_tax_profile(
     Auto-compute and save the correct Colombian tax rates for a company.
 
     The user provides their city, CIIU code, and IVA régimen.
-    The agent queries the normative RAG and asks Gemini to determine the
-    applicable Retefuente, ReteICA, and IVA rates, then saves them.
 
-    This replaces the need to know the raw decimal rates — the user just
-    answers three simple questions about their company.
+    ReteICA lookup order:
+      1. reteica_tarifas table (relational, authoritative, seeded from municipal acuerdos)
+      2. RAG normativo + Gemini (fallback when city/CIIU not in table)
+      3. National default (0.69%) if all else fails
+
+    Retefuente rates are always taken from national law (Art. 383/401 ET) — they
+    do not vary by municipality.
     """
-    # Step 1: Query RAG normativo for city/CIIU-specific rate information
-    rag_context = ""
-    try:
-        rag = get_rag_service()
-        queries = [
-            f"tasa ReteICA municipio {body.ciudad} impuesto industria comercio",
-            f"retención en la fuente actividad CIIU {body.codigo_ciiu}",
-            f"tarifas retención IVA régimen {'común' if body.iva_responsable else 'simplificado'}",
-        ]
-        results = []
-        for q in queries:
-            results.extend(rag.search_normativo(q, n_results=3))
-        rag_context = "\n\n".join(
-            f"[{r.metadata.get('source', 'normativa')}]: {r.content}"
-            for r in results
-        )
+    # ── Step 1: ReteICA — relational DB lookup (primary source) ──────────────
+    tasa_reteica = db_service.get_reteica_tarifa(db, body.ciudad, body.codigo_ciiu)
+    reteica_source = "db"
+
+    if tasa_reteica is None:
         logger.info(
-            f"Tax profile setup: RAG returned {len(results)} chunks "
-            f"for ciudad={body.ciudad}, ciiu={body.codigo_ciiu}"
+            f"Tax profile setup: No DB entry for ciudad={body.ciudad}, "
+            f"ciiu={body.codigo_ciiu} — falling back to RAG+Gemini"
         )
-    except Exception as rag_err:
-        logger.warning(f"Tax profile setup: RAG lookup failed ({rag_err}), proceeding with defaults")
+        reteica_source = "gemini"
 
-    # Step 2: Ask Gemini to determine the correct rates
-    try:
-        gemini = get_gemini_client()
-        rate_lookup = gemini.compute_tax_rates_from_profile(
-            ciudad=body.ciudad,
-            codigo_ciiu=body.codigo_ciiu,
-            iva_responsable=body.iva_responsable,
-            rag_context=rag_context,
-        )
-    except Exception as gemini_err:
-        logger.warning(f"Tax profile setup: Gemini failed ({gemini_err}), using national defaults")
-        # Fall back to national defaults
-        from app.core.gemini_client import TaxRateLookup
-        rate_lookup = TaxRateLookup(
-            tasa_retefuente_servicios=0.11,
-            tasa_retefuente_bienes=0.03,
-            tasa_retefuente_arrendamiento=0.10,
-            tasa_reteica=0.0069,
-            tasa_iva_general=0.19 if body.iva_responsable else 0.0,
-            fuentes=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET"],
-        )
+        # ── Step 2: RAG + Gemini fallback ────────────────────────────────────
+        rag_context = ""
+        try:
+            rag = get_rag_service()
+            queries = [
+                f"tasa ReteICA municipio {body.ciudad} impuesto industria comercio ICA",
+                f"retención ICA actividad CIIU {body.codigo_ciiu}",
+            ]
+            results = []
+            for q in queries:
+                results.extend(rag.search_normativo(q, n_results=3))
+            rag_context = "\n\n".join(
+                f"[{r.metadata.get('source', 'normativa')}]: {r.content}"
+                for r in results
+            )
+        except Exception as rag_err:
+            logger.warning(f"Tax profile setup: RAG lookup failed ({rag_err})")
 
-    # Step 3: Persist to company_settings
+        try:
+            gemini = get_gemini_client()
+            rate_lookup = gemini.compute_tax_rates_from_profile(
+                ciudad=body.ciudad,
+                codigo_ciiu=body.codigo_ciiu,
+                iva_responsable=body.iva_responsable,
+                rag_context=rag_context,
+            )
+            tasa_reteica = rate_lookup.tasa_reteica
+        except Exception as gemini_err:
+            logger.warning(f"Tax profile setup: Gemini failed ({gemini_err}), using national default")
+            tasa_reteica = 0.0069  # national reference rate
+            reteica_source = "default"
+
+    tasa_iva = 0.19 if body.iva_responsable else 0.0
+
+    logger.info(
+        f"Tax profile setup for NIT {nit}: "
+        f"ciudad={body.ciudad}, ciiu={body.codigo_ciiu}, "
+        f"reteica={tasa_reteica} (source={reteica_source}), "
+        f"iva_responsable={body.iva_responsable}"
+    )
+
+    # ── Step 3: Persist ───────────────────────────────────────────────────────
     settings_data = {
         "nombre": body.nombre,
         "ciudad": body.ciudad,
         "codigo_ciiu": body.codigo_ciiu,
         "iva_responsable": body.iva_responsable,
-        "tasa_retefuente_servicios": rate_lookup.tasa_retefuente_servicios,
-        "tasa_retefuente_bienes": rate_lookup.tasa_retefuente_bienes,
-        "tasa_retefuente_arrendamiento": rate_lookup.tasa_retefuente_arrendamiento,
-        "tasa_reteica": rate_lookup.tasa_reteica,
-        "tasa_iva_general": rate_lookup.tasa_iva_general,
+        "tasa_retefuente_servicios":     _TASA_RETEFUENTE_SERVICIOS,
+        "tasa_retefuente_bienes":        _TASA_RETEFUENTE_BIENES,
+        "tasa_retefuente_arrendamiento": _TASA_RETEFUENTE_ARRENDAMIENTO,
+        "tasa_reteica":     tasa_reteica,
+        "tasa_iva_general": tasa_iva,
     }
-
-    row = db_service.upsert_company_settings(db, nit, settings_data)
-    logger.info(
-        f"Tax profile setup complete for NIT {nit}: "
-        f"reteica={rate_lookup.tasa_reteica}, "
-        f"retefuente_servicios={rate_lookup.tasa_retefuente_servicios}"
-    )
-    return row
+    return db_service.upsert_company_settings(db, nit, settings_data)

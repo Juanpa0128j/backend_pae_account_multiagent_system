@@ -106,6 +106,37 @@ class CompanySettings(Base):
         return f"<CompanySettings(nit={self.nit}, ciudad={self.ciudad})>"
 
 
+class ReteicaTarifa(Base):
+    """
+    Municipal ReteICA (Retención ICA) rate lookup table.
+
+    Stores the authoritative rate for each (municipio, ciiu_seccion) combination.
+    Used by the /setup endpoint to determine the correct ReteICA rate without
+    relying on LLM inference.
+
+    Lookup priority:
+      1. municipio + ciiu_seccion (e.g. 'bogota' + 'J')
+      2. municipio + 'general'    (city-wide default)
+      3. 'general' + 'general'    (national fallback)
+    """
+    __tablename__ = "reteica_tarifas"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    municipio    = Column(String(100), nullable=False, index=True,
+                          comment="Lowercase normalized city name, e.g. 'bogota', 'cali'")
+    ciiu_seccion = Column(String(10), nullable=False,
+                          comment="CIIU section letter (A-U) or 'general' for city default")
+    tasa         = Column(Numeric(10, 8), nullable=False,
+                          comment="Rate as decimal fraction, e.g. 0.00966 for 0.966%")
+    fuente       = Column(String(255), nullable=True,
+                          comment="Legal source, e.g. 'Acuerdo 065 Bogotá 2016'")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self):
+        return f"<ReteicaTarifa(municipio={self.municipio}, ciiu={self.ciiu_seccion}, tasa={self.tasa})>"
+
+
 class Tercero(Base):
     """Business partner: proveedor, cliente, or both."""
     __tablename__ = "terceros"
