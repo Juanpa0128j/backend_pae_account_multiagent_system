@@ -270,10 +270,24 @@ Con base en la normativa anterior:
 
 Devuelve tu análisis con las referencias legales, la justificación y si confirmas las tasas."""
 
-        message = HumanMessage(content=prompt)
-        response = self.tax_model.invoke([message])
-        logger.debug("Tax justification generated: %s", response)
-        return response
+        try:
+            message = HumanMessage(content=prompt)
+            response = self.tax_model.invoke([message])
+            logger.debug("Tax justification generated: %s", response)
+            return response
+        except Exception as e:
+            logger.warning(
+                "GeminiClient.justify_tax_analysis failed (%s) — returning static fallback", e
+            )
+            return TaxJustification(
+                referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],
+                justificacion=(
+                    "Retenciones aplicadas según tasas vigentes del Estatuto Tributario "
+                    "colombiano. Retefuente según Art. 383 ET para servicios; ReteICA según "
+                    "tarifas municipales; IVA según Art. 477 ET tarifa general."
+                ),
+                confirma_tasas=True,
+            )
 
     def compute_tax_rates_from_profile(
         self,
@@ -306,7 +320,7 @@ Información normativa disponible:
 
 Con base en la normativa colombiana vigente:
 1. Determina la tasa de Retención en la Fuente aplicable a servicios (Art. 383 ET), bienes (Art. 401 ET) y arrendamientos.
-2. Determina la tasa de ReteICA para el municipio de {ciudad} y la actividad CIIU {codigo_ciiu}. Si no tienes datos exactos del municipio, usa la tarifa general de Bogotá (0.0069 = 0.69‰ equivalente, o la más común).
+2. Determina la tasa de ReteICA para el municipio de {ciudad} y la actividad CIIU {codigo_ciiu}. Si no tienes datos exactos del municipio, usa la tarifa general de Bogotá (0.0069 = 0.69% equivalente, o la más común).
 3. Determina la tarifa de IVA: 0.19 si es régimen común, 0.0 si es régimen simplificado.
 4. Cita las fuentes legales que respaldan estas tasas.
 

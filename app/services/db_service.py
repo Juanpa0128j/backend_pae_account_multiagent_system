@@ -657,7 +657,7 @@ def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
     return db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
 
 
-def upsert_company_settings(db: Session, nit: str, data: dict) -> CompanySettings:
+def upsert_company_settings(db: Session, nit: str, data: dict, commit: bool = True) -> CompanySettings:
     """Create or fully replace the CompanySettings row for the given NIT."""
     row = db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
     if row:
@@ -666,7 +666,7 @@ def upsert_company_settings(db: Session, nit: str, data: dict) -> CompanySetting
     else:
         row = CompanySettings(nit=nit, **data)
         db.add(row)
-    db.commit()
+    _commit_or_flush(db, commit)
     db.refresh(row)
     return row
 

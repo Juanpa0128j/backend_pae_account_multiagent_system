@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.gemini_client import TaxRateLookup, get_gemini_client
+from app.core.gemini_client import get_gemini_client
 from app.models.schemas import (
     CompanyProfileSetupRequest,
     CompanySettingsRequest,

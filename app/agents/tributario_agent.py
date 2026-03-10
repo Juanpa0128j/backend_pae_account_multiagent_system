@@ -6,7 +6,7 @@ Role (docs/Diseño de arquitectura de agente):
   - Calculates Retefuente, ReteICA, IVA using deterministic Python functions.
   - Queries RAG normativo for relevant legal articles.
   - Calls Gemini to validate rates and produce legal justification (TaxJustification).
-  - Returns TributarioOutput enriched with tax liability accounts (2365, 2368, 2408).
+  - Returns TributarioOutput enriched with tax liability accounts (240815 Retefuente, 236540 ReteICA, 240802 IVA descontable).
 
 Tax rates (Colombian legislation):
   - Retefuente: 11% servicios (Art. 383 ET), 3% bienes (Art. 401 ET), 10% arrendamiento
@@ -80,12 +80,13 @@ def _has_iva_in_asientos(asientos: list[dict]) -> tuple[bool, Decimal]:
     """
     Check if IVA already exists in contador asientos.
 
-    Matches any PUC code starting with '2408' (covers the header account 2408
-    and sub-accounts like 240802 IVA descontable, 240815 Retefuente, etc.).
+    Matches PUC code '2408' (header account) or codes starting with '240802'
+    (IVA descontable sub-accounts).  Deliberately excludes '240815' (Retefuente)
+    which shares the '2408' prefix but is NOT an IVA account.
     """
     for asiento in asientos:
         puc_raw = str(asiento.get("cuenta_puc", "")).strip()
-        if puc_raw.startswith("2408"):
+        if puc_raw == "2408" or puc_raw.startswith("240802"):
             valor = asiento.get("valor", 0)
             return True, Decimal(str(valor)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return False, Decimal("0")
@@ -352,33 +353,57 @@ def tributario_node(state: AgentState) -> AgentState:
         # ------------------------------------------------------------------
         # Step 6 — Build enriched journal entries (keep double-entry balanced)
         # ------------------------------------------------------------------
+        # Colombian accounting model for a purchase transaction:
+        #   - IVA descontable (240802) is a DEBIT asset (recoverable from DIAN)
+        #   - Retenciones (retefuente + reteica) become new CREDIT liabilities
+        #   - Net effect on the largest existing CREDIT (e.g. bank / proveedor):
+        #       +iva_to_add  (buyer pays IVA to vendor on top of base; 0 if already present)
+        #       -total_retenciones  (amounts withheld from vendor payment)
         asientos_enriquecidos = [dict(a) for a in asientos]  # copy from contador
 
-        # To maintain double-entry integrity (debits == credits), reduce the largest
-        # credit entry by total tax amounts, then add tax liability credits.
-        # This way: original_credit - total_taxes + retefuente + reteica + iva = original_credit
-        total_taxes = retefuente_val + reteica_val + iva_val
+        total_retenciones = retefuente_val + reteica_val
+        iva_to_add = iva_val if not iva_presente else Decimal("0")
+        net_credit_adjustment = iva_to_add - total_retenciones
 
-        if total_taxes > 0:
-            # Find the largest credit entry to reduce
+        if total_retenciones > 0 or iva_to_add > 0:
             credit_entries = [
                 (i, e) for i, e in enumerate(asientos_enriquecidos)
                 if e.get("tipo_movimiento", "").lower() == "credito"
             ]
             if credit_entries:
-                # Reduce the largest credit entry by tax amounts
-                largest_idx, largest_entry = max(credit_entries, key=lambda x: Decimal(str(x[1].get("valor", 0))))
+                largest_idx, largest_entry = max(
+                    credit_entries, key=lambda x: Decimal(str(x[1].get("valor", 0)))
+                )
                 original_valor = Decimal(str(largest_entry.get("valor", 0)))
-                reduced_valor = (original_valor - total_taxes).quantize(
+                adjusted_valor = (original_valor + net_credit_adjustment).quantize(
                     Decimal("0.01"), rounding=ROUND_HALF_UP
                 )
-                asientos_enriquecidos[largest_idx]["valor"] = str(reduced_valor)
+                # Guard: retenciones must not exceed the amount payable to vendor
+                if adjusted_valor < Decimal("0"):
+                    state["error"] = (
+                        f"Tributario error: retenciones ({total_retenciones}) exceed the largest "
+                        f"credit account {largest_entry.get('cuenta_puc')} "
+                        f"valor ({original_valor}). Cannot produce a balanced journal entry."
+                    )
+                    append_log(state, "tributario", "node_error", {"error": state["error"]})
+                    return state
+                asientos_enriquecidos[largest_idx]["valor"] = str(adjusted_valor)
                 logger.info(
-                    f"Tributario: reduced credit {largest_entry.get('cuenta_puc')} "
-                    f"from {original_valor} to {reduced_valor} (total taxes: {total_taxes})"
+                    f"Tributario: adjusted credit {largest_entry.get('cuenta_puc')} "
+                    f"from {original_valor} to {adjusted_valor} "
+                    f"(iva_new={iva_to_add}, retenciones={total_retenciones})"
                 )
 
-        # Now append the tax liability credits
+        # IVA descontable — posted as DEBIT (asset, recoverable from DIAN)
+        if iva_to_add > 0:
+            asientos_enriquecidos.append({
+                "cuenta_puc":       CUENTA_IVA,
+                "descripcion":      "IVA descontable — Art. 477 ET",
+                "tipo_movimiento":  "debito",
+                "valor":            str(iva_to_add),
+            })
+
+        # Retenciones — posted as CREDITS (liabilities to DIAN / municipality)
         if retefuente_val > 0:
             asientos_enriquecidos.append({
                 "cuenta_puc":       CUENTA_RETEFUENTE,
@@ -393,14 +418,6 @@ def tributario_node(state: AgentState) -> AgentState:
                 "descripcion":      "Retención ICA por pagar — Decreto 2048/1992",
                 "tipo_movimiento":  "credito",
                 "valor":            str(reteica_val),
-            })
-
-        if iva_val > 0 and not iva_presente:
-            asientos_enriquecidos.append({
-                "cuenta_puc":       CUENTA_IVA,
-                "descripcion":      "IVA descontable — Art. 477 ET",
-                "tipo_movimiento":  "credito",
-                "valor":            str(iva_val),
             })
 
         # ------------------------------------------------------------------
