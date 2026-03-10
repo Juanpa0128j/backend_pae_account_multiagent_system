@@ -14,7 +14,7 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from pydantic import (
     BaseModel,
@@ -323,6 +323,14 @@ class TributarioOutput(BaseModel):
     observaciones: Optional[str] = Field(
         None, max_length=1000,
         description="Additional tax observations or notes"
+    )
+    referencias_legales: List[str] = Field(
+        default_factory=list,
+        description="Legal references cited (e.g. 'Art. 383 ET', 'Decreto 2048/1992')"
+    )
+    asientos_enriquecidos: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Tax-enriched journal entries including retention/IVA lines"
     )
 
     @field_validator("fecha_analisis", mode="before")

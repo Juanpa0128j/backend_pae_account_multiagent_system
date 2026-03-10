@@ -1,7 +1,9 @@
 """initial_schema
 
+Includes: all tables created at project start + company_settings (added 2026-03-08)
+
 Revision ID: 8fb1b0855393
-Revises: 
+Revises:
 Create Date: 2026-02-28 18:29:24.217871
 
 """
@@ -183,9 +185,177 @@ def upgrade() -> None:
     )
     op.create_index('ix_audit_logs_entity_id', 'audit_logs', ['entity_id'])
 
+    # ── company_settings ──
+    op.create_table(
+        'company_settings',
+        sa.Column('nit', sa.String(20), nullable=False, comment='Empresa NIT (tenant identifier)'),
+        sa.Column('nombre', sa.String(255), nullable=True),
+        sa.Column('ciudad', sa.String(100), nullable=True),
+        sa.Column('codigo_ciiu', sa.String(10), nullable=True, comment='CIIU economic activity code'),
+        sa.Column('iva_responsable', sa.Boolean(), nullable=False, server_default=sa.text('true'),
+                  comment='True=régimen común (IVA applies), False=régimen simplificado'),
+        sa.Column('tasa_retefuente_servicios', sa.Numeric(8, 6), nullable=False, server_default='0.110000'),
+        sa.Column('tasa_retefuente_bienes', sa.Numeric(8, 6), nullable=False, server_default='0.030000'),
+        sa.Column('tasa_retefuente_arrendamiento', sa.Numeric(8, 6), nullable=False, server_default='0.100000'),
+        sa.Column('tasa_reteica', sa.Numeric(8, 6), nullable=False, server_default='0.006900',
+                  comment='Municipal ICA retention rate'),
+        sa.Column('tasa_iva_general', sa.Numeric(8, 6), nullable=False, server_default='0.190000'),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
+        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
+        sa.PrimaryKeyConstraint('nit'),
+    )
+
+    # ── reteica_tarifas ──
+    op.create_table(
+        'reteica_tarifas',
+        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column('municipio', sa.String(100), nullable=False, comment='Lowercase normalized city name'),
+        sa.Column('ciiu_seccion', sa.String(10), nullable=False,
+                  comment="CIIU section letter (A-U) or 'general'"),
+        sa.Column('tasa', sa.Numeric(10, 8), nullable=False,
+                  comment='Rate as decimal fraction, e.g. 0.00966 for 0.966%'),
+        sa.Column('fuente', sa.String(255), nullable=True),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index('ix_reteica_tarifas_municipio', 'reteica_tarifas', ['municipio'])
+
+    # Seed initial ReteICA rates for major Colombian cities.
+    # Rates are expressed as decimal fractions (e.g. 0.00966 = 9.66‰ = 0.966%).
+    #
+    # IMPORTANT: ReteICA is a 100% territorial tax — each of Colombia's ~1,100
+    # municipalities sets its own rates via acuerdos municipales. There is no
+    # single national table. These rows are seeded from publicly available
+    # official sources; entries marked [REFERENCIA] are estimated from national
+    # ranges (4.14‰–13.8‰) and must be verified against each city's current
+    # estatuto tributario before use in production.
+    #
+    # How retention works per city:
+    #   Bogotá   → Specific rate per activity sector (Acuerdo 050/2024)
+    #   Medellín → SINGLE flat rate: 2‰ for ALL activities (Acuerdo 093/2023)
+    #   Cali     → 100% of ICA rate per activity (varies 4.14‰–9.66‰)
+    #   Barranquilla → 100% of ICA rate per activity (Acuerdo 006/2023)
+    #   Bucaramanga  → SINGLE flat rate: 5‰ for ALL activities
+    #   Pereira  → 100% of ICA rate per activity
+    #
+    # CIIU sections (ISO 3166): A=Agriculture, C=Manufacturing, F=Construction,
+    #   G=Commerce, H=Transport, I=Hotels/Restaurants, J=Tech/Info, K=Finance,
+    #   L=Real estate, M=Professional services, N=Admin services, P=Education,
+    #   Q=Health, R=Entertainment, S=Other services
+    reteica_data = op.get_bind()
+    reteica_data.execute(sa.text("""
+        INSERT INTO reteica_tarifas (municipio, ciiu_seccion, tasa, fuente) VALUES
+
+        -- ─── Nacional fallback (used when city not in table) ────────────────
+        ('general', 'general', 0.00690000, 'Tarifa de referencia nacional - verificar estatuto municipal'),
+
+        -- ─── Bogotá (Acuerdo 050 de 2024, fuente: haciendabogota.gov.co) ───
+        -- Actividades industriales
+        ('bogota', 'C',       0.00414000, 'Acuerdo 050 Bogotá 2024 - Industria alimentos/fármacos 4.14‰'),
+        ('bogota', 'general', 0.00966000, 'Acuerdo 050 Bogotá 2024 - Servicios generales 9.66‰'),
+        -- Actividades comerciales
+        ('bogota', 'G',       0.01104000, 'Acuerdo 050 Bogotá 2024 - Comercio general 11.04‰'),
+        -- Servicios por sector
+        ('bogota', 'F',       0.00690000, 'Acuerdo 050 Bogotá 2024 - Construcción 6.9‰'),
+        ('bogota', 'H',       0.00414000, 'Acuerdo 050 Bogotá 2024 - Transporte 4.14‰'),
+        ('bogota', 'I',       0.01380000, 'Acuerdo 050 Bogotá 2024 - Hoteles/Restaurantes 13.8‰'),
+        ('bogota', 'J',       0.00966000, 'Acuerdo 050 Bogotá 2024 - Tecnología/Info 9.66‰'),
+        ('bogota', 'K',       0.01104000, 'Acuerdo 050 Bogotá 2024 - Financiero 11.04‰'),
+        ('bogota', 'L',       0.00966000, 'Acuerdo 050 Bogotá 2024 - Inmobiliario 9.66‰'),
+        ('bogota', 'M',       0.00690000, 'Acuerdo 050 Bogotá 2024 - Profesional/Consultoría 6.9‰'),
+        ('bogota', 'N',       0.00966000, 'Acuerdo 050 Bogotá 2024 - Servicios administrativos 9.66‰'),
+        ('bogota', 'P',       0.00700000, 'Acuerdo 050 Bogotá 2024 - Educación privada 7.0‰'),
+        ('bogota', 'Q',       0.00966000, 'Acuerdo 050 Bogotá 2024 - Salud 9.66‰'),
+
+        -- ─── Medellín (Acuerdo 093 de 2023, fuente: medellin.gov.co) ────────
+        -- Tarifa única 2‰ para TODAS las actividades (no depende del sector)
+        ('medellin', 'general', 0.00200000, 'Acuerdo 093 Medellín 2023 - Tarifa única 2‰'),
+
+        -- ─── Cali (Acuerdo 0294 de 2014, retención = 100% del ICA) ──────────
+        ('cali', 'general', 0.00966000, 'Acuerdo 0294 Cali 2014 - Servicios generales 9.66‰'),
+        ('cali', 'C',       0.00414000, 'Acuerdo 0294 Cali 2014 - Industria 4.14‰'),
+        ('cali', 'G',       0.00690000, 'Acuerdo 0294 Cali 2014 - Comercio 6.9‰'),
+        ('cali', 'F',       0.00690000, 'Acuerdo 0294 Cali 2014 - Construcción 6.9‰'),
+        ('cali', 'H',       0.00414000, 'Acuerdo 0294 Cali 2014 - Transporte 4.14‰'),
+        ('cali', 'I',       0.00966000, 'Acuerdo 0294 Cali 2014 - Hoteles/Restaurantes 9.66‰'),
+        ('cali', 'J',       0.00966000, 'Acuerdo 0294 Cali 2014 - Tecnología 9.66‰'),
+        ('cali', 'K',       0.01104000, 'Acuerdo 0294 Cali 2014 - Financiero 11.04‰'),
+        ('cali', 'M',       0.00966000, 'Acuerdo 0294 Cali 2014 - Profesional 9.66‰'),
+        ('cali', 'P',       0.00414000, 'Acuerdo 0294 Cali 2014 - Educación 4.14‰'),
+
+        -- ─── Barranquilla (Acuerdo 006 de 2023, fuente: barranquilla.gov.co) ─
+        -- Retención = 100% del ICA; tarifas vigentes desde 2024-01-01
+        ('barranquilla', 'general', 0.00800000, 'Acuerdo 006 Barranquilla 2023 - Servicios generales 8.0‰'),
+        ('barranquilla', 'C',       0.00740000, 'Acuerdo 006 Barranquilla 2023 - Industria alimentos/fármacos 7.4‰'),
+        ('barranquilla', 'G',       0.00540000, 'Acuerdo 006 Barranquilla 2023 - Comercio alimentos 5.4‰'),
+        ('barranquilla', 'F',       0.00800000, 'Acuerdo 006 Barranquilla 2023 - Construcción 8.0‰'),
+        ('barranquilla', 'H',       0.00800000, 'Acuerdo 006 Barranquilla 2023 - Transporte/Salud 8.0‰'),
+        ('barranquilla', 'I',       0.01000000, 'Acuerdo 006 Barranquilla 2023 - Hoteles/Restaurantes 10.0‰'),
+        ('barranquilla', 'J',       0.02000000, 'Acuerdo 006 Barranquilla 2023 - Telecomunicaciones 20.0‰'),
+        ('barranquilla', 'K',       0.01160000, 'Acuerdo 006 Barranquilla 2023 - Otros servicios 11.6‰'),
+        ('barranquilla', 'P',       0.00450000, 'Acuerdo 006 Barranquilla 2023 - Educación 4.5‰'),
+
+        -- ─── Bucaramanga (tarifa única 5‰ para TODAS las actividades) ────────
+        ('bucaramanga', 'general', 0.00500000, 'Estatuto Tributario Bucaramanga - Tarifa única 5‰'),
+
+        -- ─── Cartagena [REFERENCIA - verificar Estatuto Tributario Distrital] ─
+        ('cartagena', 'general', 0.00828000, 'Referencia - Cartagena ~8.28‰ servicios - verificar'),
+        ('cartagena', 'G',       0.00552000, 'Referencia - Cartagena ~5.52‰ comercio - verificar'),
+        ('cartagena', 'C',       0.00414000, 'Referencia - Cartagena ~4.14‰ industria - verificar'),
+
+        -- ─── Pereira (retención = 100% del ICA) [REFERENCIA] ─────────────────
+        ('pereira', 'general', 0.00966000, 'Referencia - Pereira ~9.66‰ servicios - verificar'),
+        ('pereira', 'G',       0.00690000, 'Referencia - Pereira ~6.9‰ comercio - verificar'),
+        ('pereira', 'C',       0.00414000, 'Referencia - Pereira ~4.14‰ industria - verificar'),
+
+        -- ─── Manizales [REFERENCIA] ───────────────────────────────────────────
+        ('manizales', 'general', 0.00690000, 'Referencia - Manizales ~6.9‰ - verificar estatuto'),
+
+        -- ─── Cúcuta [REFERENCIA] ─────────────────────────────────────────────
+        ('cucuta', 'general', 0.00828000, 'Referencia - Cúcuta ~8.28‰ - verificar estatuto'),
+
+        -- ─── Ibagué [REFERENCIA] ─────────────────────────────────────────────
+        ('ibague', 'general', 0.00690000, 'Referencia - Ibagué ~6.9‰ - verificar estatuto'),
+
+        -- ─── Santa Marta [REFERENCIA] ─────────────────────────────────────────
+        ('santa marta', 'general', 0.00828000, 'Referencia - Santa Marta ~8.28‰ - verificar estatuto'),
+
+        -- ─── Villavicencio [REFERENCIA] ───────────────────────────────────────
+        ('villavicencio', 'general', 0.00690000, 'Referencia - Villavicencio ~6.9‰ - verificar estatuto'),
+
+        -- ─── Pasto [REFERENCIA] ───────────────────────────────────────────────
+        ('pasto', 'general', 0.00690000, 'Referencia - Pasto ~6.9‰ - verificar estatuto'),
+
+        -- ─── Montería [REFERENCIA] ────────────────────────────────────────────
+        ('monteria', 'general', 0.00690000, 'Referencia - Montería ~6.9‰ - verificar estatuto'),
+
+        -- ─── Armenia [REFERENCIA] ─────────────────────────────────────────────
+        ('armenia', 'general', 0.00690000, 'Referencia - Armenia ~6.9‰ - verificar estatuto'),
+
+        -- ─── Neiva [REFERENCIA] ───────────────────────────────────────────────
+        ('neiva', 'general', 0.00690000, 'Referencia - Neiva ~6.9‰ - verificar estatuto'),
+
+        -- ─── Valledupar [REFERENCIA] ──────────────────────────────────────────
+        ('valledupar', 'general', 0.00828000, 'Referencia - Valledupar ~8.28‰ - verificar estatuto'),
+
+        -- ─── Sincelejo [REFERENCIA] ───────────────────────────────────────────
+        ('sincelejo', 'general', 0.00690000, 'Referencia - Sincelejo ~6.9‰ - verificar estatuto'),
+
+        -- ─── Popayán [REFERENCIA] ─────────────────────────────────────────────
+        ('popayan', 'general', 0.00690000, 'Referencia - Popayán ~6.9‰ - verificar estatuto'),
+
+        -- ─── Tunja [REFERENCIA] ───────────────────────────────────────────────
+        ('tunja', 'general', 0.00690000, 'Referencia - Tunja ~6.9‰ - verificar estatuto'),
+
+        -- ─── Florencia [REFERENCIA] ───────────────────────────────────────────
+        ('florencia', 'general', 0.00690000, 'Referencia - Florencia ~6.9‰ - verificar estatuto')
+    """))
+
 
 def downgrade() -> None:
     """Drop all tables."""
+    op.drop_table('reteica_tarifas')
+    op.drop_table('company_settings')
     op.drop_table('audit_logs')
     op.drop_table('process_jobs')
     op.drop_table('journal_entry_lines')

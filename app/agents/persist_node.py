@@ -142,6 +142,17 @@ def _run_persist(state: AgentState) -> AgentState:
             None,
         )
 
+        # Pull tax values from tributario_output so they are persisted correctly.
+        tributario_output = state.get("tributario_output") or {}
+        trib_impuestos = tributario_output.get("impuestos", [])
+
+        def _get_trib_tax(tipo: str) -> Optional[str]:
+            val = next(
+                (i.get("valor_impuesto") for i in trib_impuestos if i.get("tipo_impuesto") == tipo),
+                None,
+            )
+            return str(val) if val is not None else None
+
         tx_data = {
             "fecha": fecha,
             "nit_emisor": nit_emisor,
@@ -152,6 +163,11 @@ def _run_persist(state: AgentState) -> AgentState:
             "items": items,
             "cuenta_puc": (debit_line or {}).get("cuenta_puc", ""),
             "cuenta_nombre": (debit_line or {}).get("nombre_cuenta", ""),
+            "retefuente": _get_trib_tax("retefuente"),
+            "reteica": _get_trib_tax("reteica"),
+            "iva": _get_trib_tax("IVA"),
+            "referencias_legales": tributario_output.get("referencias_legales", []),
+            "agent_reasoning": (state.get("result") or {}).get("agent_reasoning"),
             "_contador_asientos": asientos,
         }
         transactions = [tx_data]

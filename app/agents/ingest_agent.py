@@ -8,11 +8,6 @@ raw text to Gemini along with the schema errors so the model can self-correct.
 
 import uuid
 
-import nest_asyncio
-
-# Allow asyncio inside LangGraph node context
-nest_asyncio.apply()
-
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.config import get_settings

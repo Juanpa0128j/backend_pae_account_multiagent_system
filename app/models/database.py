@@ -2,6 +2,7 @@
 SQLAlchemy ORM models for the PAE accounting system.
 
 Tables:
+- CompanySettings: Per-tenant tax configuration (rates, régimen, city)
 - Tercero: Business partners (proveedores/clientes)
 - CuentaPUC: Chart of accounts (Plan Único de Cuentas colombiano)
 - IngestJob: Document upload tracking
@@ -72,6 +73,69 @@ class NaturalezaCuenta(str, enum.Enum):
 
 
 # ─── Models ──────────────────────────────────────────────────────
+
+class CompanySettings(Base):
+    """
+    Per-tenant tax configuration.
+
+    One row per company NIT. Rates are used by the tributario agent to
+    calculate Retefuente, ReteICA, and IVA. Falls back to national defaults
+    when no row exists for a given NIT.
+    """
+    __tablename__ = "company_settings"
+
+    nit             = Column(String(20), primary_key=True, comment="Empresa NIT (tenant identifier)")
+    nombre          = Column(String(255), nullable=True)
+    ciudad          = Column(String(100), nullable=True)
+    codigo_ciiu     = Column(String(10), nullable=True, comment="CIIU economic activity code")
+    iva_responsable = Column(Boolean, default=True, nullable=False,
+                             comment="True=régimen común (IVA applies), False=régimen simplificado")
+
+    # Tax rates stored as decimal fractions (e.g. 0.110000 = 11%)
+    tasa_retefuente_servicios     = Column(Numeric(8, 6), nullable=False, default=0.110000)
+    tasa_retefuente_bienes        = Column(Numeric(8, 6), nullable=False, default=0.030000)
+    tasa_retefuente_arrendamiento = Column(Numeric(8, 6), nullable=False, default=0.100000)
+    tasa_reteica                  = Column(Numeric(8, 6), nullable=False, default=0.006900,
+                                           comment="Municipal ICA retention rate")
+    tasa_iva_general              = Column(Numeric(8, 6), nullable=False, default=0.190000)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<CompanySettings(nit={self.nit}, ciudad={self.ciudad})>"
+
+
+class ReteicaTarifa(Base):
+    """
+    Municipal ReteICA (Retención ICA) rate lookup table.
+
+    Stores the authoritative rate for each (municipio, ciiu_seccion) combination.
+    Used by the /setup endpoint to determine the correct ReteICA rate without
+    relying on LLM inference.
+
+    Lookup priority:
+      1. municipio + ciiu_seccion (e.g. 'bogota' + 'J')
+      2. municipio + 'general'    (city-wide default)
+      3. 'general' + 'general'    (national fallback)
+    """
+    __tablename__ = "reteica_tarifas"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    municipio    = Column(String(100), nullable=False, index=True,
+                          comment="Lowercase normalized city name, e.g. 'bogota', 'cali'")
+    ciiu_seccion = Column(String(10), nullable=False,
+                          comment="CIIU section letter (A-U) or 'general' for city default")
+    tasa         = Column(Numeric(10, 8), nullable=False,
+                          comment="Rate as decimal fraction, e.g. 0.00966 for 0.966%")
+    fuente       = Column(String(255), nullable=True,
+                          comment="Legal source, e.g. 'Acuerdo 065 Bogotá 2016'")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self):
+        return f"<ReteicaTarifa(municipio={self.municipio}, ciiu={self.ciiu_seccion}, tasa={self.tasa})>"
+
 
 class Tercero(Base):
     """Business partner: proveedor, cliente, or both."""

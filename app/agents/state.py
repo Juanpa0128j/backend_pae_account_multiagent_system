@@ -42,6 +42,8 @@ class AgentState(TypedDict):
     - mode: Pipeline mode: ingest or process
     - raw_transactions: Staged transactions used by contador (process pipeline)
     - contador_output: Structured contador output (ContadorOutput-compatible dict)
+    - tributario_output: Structured tributario output (TributarioOutput-compatible dict)
+    - company_config: Tax rates loaded from company_settings DB for the nit_receptor; None = use defaults
     - process_id: Process job id when running accounting pipeline
     - pending_transaction_id: Staged transaction id currently being posted
     - current_stage: Human-readable pipeline stage for status updates
@@ -63,6 +65,8 @@ class AgentState(TypedDict):
     mode: str
     raw_transactions: List[dict]
     contador_output: dict
+    tributario_output: dict
+    company_config: Optional[dict]
     process_id: Optional[str]
     pending_transaction_id: Optional[str]
     current_stage: Optional[str]
