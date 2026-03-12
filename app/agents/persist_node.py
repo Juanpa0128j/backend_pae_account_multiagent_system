@@ -1,32 +1,44 @@
 """
-DB Persist node for the LangGraph pipeline (pilot phase).
+DB Persist node for the LangGraph pipeline.
 
-This is a transitional node that will be replaced by the auditor agent
-once the full 5-node architecture (supervisor, ingest, contador,
-tributario, auditor) is implemented.
+Supports both pipeline modes:
+  - "ingest": single-shot PDF ingestion pipeline
+    (supervisor → ingest → validate_output → db_persist)
+  - "process": full accounting pipeline
+    (process_supervisor → contador → validate_contador
+     → auditor → validate_auditor → db_persist)
 
-It receives interpreted_data from the ingest agent and persists it
-to PostgreSQL:  IngestJob → TransactionPending → TransactionPosted → JournalEntryLines.
-
-It also runs duplicate detection and PUC validation before posting.
+In process mode the node reads the validated contador_output and
+auditor_output from state and stores them alongside the posted
+transaction so the full audit trail is persisted.
 """
+# type: ignore[assignment]
+# SQLAlchemy model attributes are runtime values on instances; static typing
+# can mis-infer them as Column[...] in service/pipeline code.
 
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Optional
+from typing import Any, Optional
 
 from app.agents.state import AgentState
 from app.core.database import SessionLocal
 from app.services import db_service
 from app.models.database import (
     IngestStatus,
+    TransactionPending,
     TransactionStatus,
     ProcessStatus,
 )
-from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
+
+
+def _as_str(value: Any, default: str = "") -> str:
+    """Normalize possibly-ORM values to plain strings."""
+    if value is None:
+        return default
+    return str(value)
 
 
 def _safe_decimal(value) -> Optional[Decimal]:
@@ -57,103 +69,166 @@ def db_persist_node(state: AgentState) -> AgentState:
     """
     Persist interpreted data to PostgreSQL.
 
-    Flow:
+    Ingest mode flow:
     1. Create/update IngestJob
-    2. Loop through each transaction in raw_transactions
-    3. Create TransactionPending from extracted data
-    4. Run duplicate detection and PUC validation
-    5. Create TransactionPosted with PUC classification
-    6. Generate JournalEntryLines (partida doble)
-    7. Mark IngestJob as completed
+    2. Create TransactionPending from extracted data
+    3. Duplicate detection
+    4. Classify PUC and create TransactionPosted
+    5. Generate JournalEntryLines
+    6. Mark IngestJob as completed
+
+    Process mode flow (adds auditor awareness):
+    Steps 1-6 as above, but reads pending_transaction_id from state,
+    uses contador_output for PUC classification, and embeds
+    auditor_output in agent_reasoning on TransactionPosted.
     """
-    # Skip if upstream error
     if state.get("error"):
-        logger.warning(f"db_persist: Skipping due to upstream error: {state['error']}")
+        logger.warning("db_persist: Skipping due to upstream error: %s", state["error"])
         return state
 
+    mode = state.get("mode", "ingest")
     interpreted = state.get("interpreted_data", {})
-    transactions = interpreted.get("transactions", [])
-    if not transactions:
-        logger.warning("db_persist: No transactions to persist")
+
+    if mode != "process" and not interpreted:
+        logger.warning("db_persist: No interpreted_data to persist")
         return state
 
+    ingest_id = _as_str(state.get("ingest_id"), "")
     db = SessionLocal()
     try:
         # ── 1. Create or update IngestJob ──
-        ingest_id = state.get("ingest_id")
         if ingest_id:
             ingest_job = db_service.get_ingest_job(db, ingest_id)
             if ingest_job:
-                # Update with preview of first transaction
                 db_service.update_ingest_job(
                     db, ingest_id, IngestStatus.PROCESSING,
-                    raw_preview=_build_preview(transactions[0]) if transactions else {},
+                    raw_preview=_build_preview(interpreted),
                 )
         else:
             file_name = state.get("file_path", "unknown.pdf").split("/")[-1]
             ingest_job = db_service.create_ingest_job(
                 db, file_name, state.get("file_path")
             )
-            ingest_id = ingest_job.id
+            ingest_id = _as_str(ingest_job.id)
             state["ingest_id"] = ingest_id
 
-        total_lines = 0
-        total_duplicates = 0
-        posted_ids = []
+        # ── 2. Resolve TransactionPending ──
+        txn_pending = None
+        fecha = None
+        total = None
+        nit_emisor = ""
+        nit_receptor = ""
+        descripcion = ""
 
-        # ── Loop through each transaction ──
-        for idx, tx_data in enumerate(transactions):
-            # ── 2. Create TransactionPending ──
-            fecha = _safe_datetime(tx_data.get("fecha"))
-            total = _safe_decimal(tx_data.get("total") or tx_data.get("valor_total"))
-            nit_emisor = str(tx_data.get("nit_emisor", "") or "").strip()
-            nit_receptor = str(tx_data.get("nit_receptor", "") or "").strip()
-            descripcion = tx_data.get("concepto") or tx_data.get("descripcion", "")
-            items = tx_data.get("items") or tx_data.get("detalle_items", [])
+        if mode == "process":
+            pending_id = state.get("pending_transaction_id")
+            if pending_id:
+                txn_pending = (
+                    db.query(TransactionPending)
+                    .filter(TransactionPending.id == pending_id)
+                    .first()
+                )
+
+            if not txn_pending:
+                state["error"] = "db_persist: pending transaction not found for process mode"
+                return state
+
+            fecha = _safe_datetime(getattr(txn_pending, "fecha", None))
+            total = _safe_decimal(getattr(txn_pending, "total", None))
+            nit_emisor = _as_str(getattr(txn_pending, "nit_emisor", ""))
+            nit_receptor = _as_str(getattr(txn_pending, "nit_receptor", ""))
+            descripcion = _as_str(getattr(txn_pending, "descripcion", ""))
+        else:
+            # Ingest pipeline: build TransactionPending from interpreted_data
+            fecha = _safe_datetime(interpreted.get("fecha"))
+            total = _safe_decimal(
+                interpreted.get("total") or interpreted.get("valor_total")
+            )
+            nit_emisor = str(interpreted.get("nit_emisor") or "").strip()
+            nit_receptor = str(interpreted.get("nit_receptor") or "").strip()
+            descripcion = (
+                interpreted.get("concepto") or interpreted.get("descripcion", "")
+            )
+            items = interpreted.get("items") or interpreted.get("detalle_items", [])
+
+            fecha = fecha or datetime.now(timezone.utc)
+            total = total or Decimal("0")
 
             txn_pending = db_service.create_transaction_pending(
                 db,
                 ingest_id=ingest_id,
                 fecha=fecha,
-                nit_emisor=nit_emisor or None,
-                nit_receptor=nit_receptor or None,
+                nit_emisor=nit_emisor,
+                nit_receptor=nit_receptor,
                 total=total,
                 descripcion=descripcion,
                 items=items if isinstance(items, list) else [],
-                raw_data=tx_data,
+                raw_data=interpreted,
             )
-            logger.info(f"db_persist: Created TransactionPending {txn_pending.id}")
+            logger.info("db_persist: Created TransactionPending %s", txn_pending.id)
 
-            # ── 3. Duplicate detection ──
-            duplicates = []
-            if nit_emisor and total and fecha:
-                duplicates = db_service.check_duplicates(db, nit_emisor, total, fecha)
-                # Exclude the one we just created
-                duplicates = [d for d in duplicates if d.id != txn_pending.id]
-                if duplicates:
-                    total_duplicates += len(duplicates)
-                    logger.warning(
-                        f"db_persist: Found {len(duplicates)} potential duplicates for "
-                        f"NIT {nit_emisor}, total={total}"
-                    )
+        # ── 3. Duplicate detection ──
+        duplicates = []
+        if nit_emisor and total is not None and fecha is not None:
+            duplicates = db_service.check_duplicates(db, nit_emisor, total, fecha)
+            txn_pending_id = _as_str(getattr(txn_pending, "id", ""))
+            duplicates = [
+                d
+                for d in duplicates
+                if _as_str(getattr(d, "id", "")) != txn_pending_id
+            ]
+            if duplicates:
+                logger.warning(
+                    "db_persist: Found %d potential duplicates for NIT %s, total=%s",
+                    len(duplicates), nit_emisor, total,
+                )
 
-            # ── 4. Classify PUC and create TransactionPosted ──
-            cuenta_puc = tx_data.get("cuenta_puc", "519595")  # Fallback to Gastos Diversos
-            puc_descripcion = tx_data.get("cuenta_nombre", "")
+        # ── 4. Classify PUC and create TransactionPosted ──
+        contador_output = state.get("contador_output", {}) if mode == "process" else interpreted
 
-            # Validate PUC exists
-            puc_record = db_service.validate_puc_exists(db, cuenta_puc)
-            if puc_record:
-                puc_descripcion = puc_record.nombre
-            else:
-                logger.warning(f"db_persist: PUC code {cuenta_puc} not found")
+        if mode == "process":
+            asientos = contador_output.get("asientos", [])
+            debit_line = next(
+                (a for a in asientos if str(a.get("tipo_movimiento", "")).lower() == "debito"),
+                None,
+            )
+            cuenta_puc = _as_str((debit_line or {}).get("cuenta_puc"))
+            puc_descripcion = _as_str((debit_line or {}).get("nombre_cuenta"))
+            if not cuenta_puc:
+                state["error"] = "db_persist: contador output missing debit cuenta_puc"
+                return state
+        else:
+            cuenta_puc = interpreted.get("cuenta_puc", "519595")  # legacy fallback
+            puc_descripcion = _as_str(interpreted.get("cuenta_nombre"))
 
-            retefuente = _safe_decimal(tx_data.get("retefuente")) or Decimal("0")
-            reteica = _safe_decimal(tx_data.get("reteica")) or Decimal("0")
-            iva = _safe_decimal(tx_data.get("iva") or tx_data.get("iva_valor")) or Decimal("0")
-            neto = _safe_decimal(tx_data.get("neto_a_pagar")) or (total or Decimal("0"))
+        puc_record = db_service.validate_puc_exists(db, cuenta_puc)
+        if puc_record:
+            puc_descripcion = _as_str(getattr(puc_record, "nombre", "")) or puc_descripcion
+        else:
+            if mode == "process":
+                state["error"] = f"db_persist: PUC code {cuenta_puc} not found"
+                return state
+            logger.warning("db_persist: PUC code %s not found, using as-is", cuenta_puc)
 
-            # Build journal entries JSON
+        # Tax values
+        retefuente = _safe_decimal(interpreted.get("retefuente")) or Decimal("0")
+        reteica = _safe_decimal(interpreted.get("reteica")) or Decimal("0")
+        iva = (
+            _safe_decimal(interpreted.get("iva") or interpreted.get("iva_valor"))
+            or Decimal("0")
+        )
+        neto = _safe_decimal(interpreted.get("neto_a_pagar")) or (total or Decimal("0"))
+
+        # Build journal entries JSON
+        if mode == "process":
+            journal_json = _journal_entries_from_contador(
+                fecha=fecha or datetime.now(timezone.utc),
+                asientos=contador_output.get("asientos", []),
+                nit=nit_emisor,
+                descripcion=descripcion,
+            )
+            neto = total or Decimal("0")
+        else:
             journal_json = _build_journal_entries(
                 fecha=fecha or datetime.now(timezone.utc),
                 cuenta_puc=cuenta_puc,
@@ -166,79 +241,102 @@ def db_persist_node(state: AgentState) -> AgentState:
                 descripcion=descripcion,
             )
 
-            txn_posted = db_service.create_transaction_posted(
+        # Auditor output is available only in process mode
+        auditor_out = state.get("auditor_output") or {}
+
+        txn_posted = db_service.create_transaction_posted(
+            db,
+            transaction_pending_id=_as_str(getattr(txn_pending, "id", "")),
+            cuenta_puc=cuenta_puc,
+            puc_descripcion=puc_descripcion,
+            retefuente=retefuente,
+            reteica=reteica,
+            iva=iva,
+            neto_a_pagar=neto,
+            journal_entries_json=journal_json,
+            tax_references=interpreted.get("referencias_legales", []),
+            agent_reasoning={
+                "contador": (contador_output if mode == "process" else {}),
+                "auditor": auditor_out,
+            },
+        )
+        logger.info("db_persist: Created TransactionPosted %s", txn_posted.id)
+
+        # ── 5. Create normalized JournalEntryLines ──
+        lines = db_service.create_journal_entry_lines(
+            db, _as_str(getattr(txn_posted, "id", "")), journal_json
+        )
+        logger.info("db_persist: Created %d journal entry lines", len(lines))
+
+        # ── 6. Mark pipeline job as completed ──
+        if mode == "ingest":
+            db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
+        process_id = _as_str(state.get("process_id"), "")
+        if mode == "process" and process_id:
+            db_service.update_process_job(
                 db,
-                transaction_pending_id=txn_pending.id,
-                cuenta_puc=cuenta_puc,
-                puc_descripcion=puc_descripcion,
-                retefuente=retefuente,
-                reteica=reteica,
-                iva=iva,
-                neto_a_pagar=neto,
-                journal_entries_json=journal_json,
-                tax_references=tx_data.get("referencias_legales", []),
-                agent_reasoning=tx_data.get("agent_reasoning"),
+                process_id,
+                status=ProcessStatus.COMPLETED,
+                current_stage="completed",
+                current_agent="db_persist",
+                progress=100,
+                agent_log_entry={
+                    "agent": "db_persist",
+                    "stage": "completed",
+                    "status": "completed",
+                },
             )
-            logger.info(f"db_persist: Created TransactionPosted {txn_posted.id}")
-            posted_ids.append(txn_posted.id)
-
-            # ── 5. Create normalized JournalEntryLines ──
-            lines = db_service.create_journal_entry_lines(
-                db, txn_posted.id, journal_json
-            )
-            total_lines += len(lines)
-            logger.info(f"db_persist: Created {len(lines)} journal entry lines")
-
-            # ── 5.5. Auto-Vectorize into ChromaDB ──
-            try:
-                rag = get_rag_service()
-                doc_text = state.get("raw_text", "")
-                nit_para_rag = nit_emisor or "unknown_nit"
-                
-                if doc_text:
-                    rag.add_empresa_doc(
-                        nit=nit_para_rag,
-                        text=doc_text,
-                        metadata={
-                            "fecha": str(fecha),
-                            "total": str(total),
-                            "descripcion": descripcion,
-                            "ingest_id": ingest_id,
-                            "transaction_id": txn_posted.id
-                        }
-                    )
-                    logger.info(f"db_persist: Vectorized transaction to ChromaDB for NIT {nit_para_rag}")
-            except Exception as e:
-                # Do not hard fail the entire API if vectorization fails
-                logger.error(f"db_persist: Failed to vectorize to ChromaDB: {e}", exc_info=True)
-
-        # ── 6. Mark IngestJob as completed ──
-        db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
 
         # ── 7. Enrich state result ──
         state["db_result"] = {
             "ingest_id": ingest_id,
-            "processed_transactions": len(transactions),
-            "journal_lines_count": total_lines,
-            "duplicates_found": total_duplicates,
+            "transaction_pending_id": _as_str(getattr(txn_pending, "id", "")),
+            "transaction_posted_id": _as_str(getattr(txn_posted, "id", "")),
+            "journal_lines_count": len(lines),
+            "duplicates_found": len(duplicates),
+            "cuenta_puc": cuenta_puc,
+            "puc_descripcion": puc_descripcion,
+            "audit_approved": state.get("audit_approved"),
+            "audit_nivel_riesgo": auditor_out.get("nivel_riesgo"),
+            "audit_puntaje_calidad": auditor_out.get("puntaje_calidad"),
+            "audit_hallazgos_count": len(auditor_out.get("hallazgos", [])),
         }
 
-        # Update the main result
-        if state.get("result"):
-            state["result"]["db_persisted"] = True
-            state["result"]["ingest_id"] = ingest_id
-            state["result"]["transaction_ids"] = posted_ids
+        if not state.get("result"):
+            state["result"] = {}
+        state["result"]["db_persisted"] = True
+        state["result"]["ingest_id"] = ingest_id
+        state["result"]["transaction_id"] = _as_str(getattr(txn_posted, "id", ""))
+        state["result"]["audit_approved"] = state.get("audit_approved")
+        state["result"]["audit_nivel_riesgo"] = auditor_out.get("nivel_riesgo")
 
-        logger.info(f"db_persist: Successfully persisted {len(transactions)} txs for ingest {ingest_id}")
+        logger.info(
+            "db_persist: Successfully persisted all data for ingest %s", ingest_id
+        )
 
-    except Exception as e:
-        logger.error(f"db_persist: Error persisting data: {e}", exc_info=True)
-        state["error"] = f"DB persist error: {str(e)}"
-        if ingest_id:
+    except Exception as exc:
+        logger.error("db_persist: Error persisting data: %s", exc, exc_info=True)
+        state["error"] = f"db_persist error: {exc}"
+
+        if ingest_id and mode == "ingest":
             try:
                 db_service.update_ingest_job(
                     db, ingest_id, IngestStatus.FAILED,
-                    extraction_errors=[str(e)],
+                    extraction_errors=[str(exc)],
+                )
+            except Exception:
+                pass
+
+        process_id = _as_str(state.get("process_id"), "")
+        if process_id and mode == "process":
+            try:
+                db_service.update_process_job(
+                    db,
+                    process_id,
+                    status=ProcessStatus.FAILED,
+                    current_stage="failed",
+                    current_agent="db_persist",
+                    error_message=str(exc),
                 )
             except Exception:
                 pass
@@ -246,6 +344,37 @@ def db_persist_node(state: AgentState) -> AgentState:
         db.close()
 
     return state
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+def _journal_entries_from_contador(
+    *,
+    fecha: datetime,
+    asientos: list,
+    nit: str,
+    descripcion: str,
+) -> list:
+    """Convert ContadorOutput.asientos to journal_entries_json format."""
+    fecha_iso = fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
+    entries = []
+    for asiento in asientos:
+        tipo = str(asiento.get("tipo_movimiento", "")).lower()
+        valor = _safe_decimal(asiento.get("valor")) or Decimal("0")
+        entries.append(
+            {
+                "fecha": fecha_iso,
+                "cuenta": str(asiento.get("cuenta_puc", "")),
+                "descripcion": asiento.get("nombre_cuenta") or descripcion,
+                "tercero_nit": nit,
+                "detalle": asiento.get("descripcion") or descripcion,
+                "debito": str(valor if tipo == "debito" else Decimal("0")),
+                "credito": str(valor if tipo == "credito" else Decimal("0")),
+            }
+        )
+    return entries
 
 
 def _build_preview(interpreted: dict) -> dict:
@@ -270,25 +399,19 @@ def _build_journal_entries(
     descripcion: str,
 ) -> list:
     """
-    Build double-entry (partida doble) journal entries.
+    Build double-entry (partida doble) journal entries for the ingest path.
 
     For a typical purchase/expense:
-    - DEBIT the expense account (PUC) for total
+    - DEBIT the expense account (PUC) for base (total - IVA)
     - DEBIT IVA descontable (240802) if IVA > 0
-    - CREDIT the vendor payable (220505) for base + IVA
+    - CREDIT vendor payable (220505) for base + IVA - retenciones
     - CREDIT retefuente (240815) if retention > 0
     - CREDIT reteICA (236540) if reteica > 0
-
-    Returns a list of dicts with JSON-serialisable values (fecha as ISO string)
-    ready to be stored in the ``journal_entries_json`` JSONB column.
     """
     entries = []
-    base = total - iva  # Base gravable (before IVA)
-
-    # Serialize fecha to ISO string for JSONB storage
+    base = total - iva
     fecha_iso = fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
 
-    # Debit: Expense/Cost account
     if base > 0:
         entries.append({
             "fecha": fecha_iso,
@@ -300,7 +423,6 @@ def _build_journal_entries(
             "credito": "0",
         })
 
-    # Debit: IVA descontable
     if iva > 0:
         entries.append({
             "fecha": fecha_iso,
@@ -312,7 +434,6 @@ def _build_journal_entries(
             "credito": "0",
         })
 
-    # Credit: Proveedor / Cuentas por pagar
     total_credito_proveedor = total - retefuente - reteica
     if total_credito_proveedor > 0:
         entries.append({
@@ -325,7 +446,6 @@ def _build_journal_entries(
             "credito": str(total_credito_proveedor),
         })
 
-    # Credit: Retención en la fuente
     if retefuente > 0:
         entries.append({
             "fecha": fecha_iso,
@@ -337,7 +457,6 @@ def _build_journal_entries(
             "credito": str(retefuente),
         })
 
-    # Credit: ReteICA
     if reteica > 0:
         entries.append({
             "fecha": fecha_iso,
