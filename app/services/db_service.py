@@ -14,6 +14,8 @@ from sqlalchemy import func, and_, cast, Integer
 from sqlalchemy.orm import Session
 
 from app.models.database import (
+    CompanySettings,
+    ReteicaTarifa,
     IngestJob,
     IngestStatus,
     TransactionPending,
@@ -287,24 +289,24 @@ def create_journal_entry_lines(
 
 # ─── Accounting Books ───────────────────────────────────────────
 
-def get_libro_diario(
+def get_daily_journal(
     db: Session,
-    fecha_inicio: datetime = None,
-    fecha_fin: datetime = None,
+    start_date: datetime = None,
+    end_date: datetime = None,
 ) -> List[JournalEntryLine]:
-    """Libro Diario — all journal entries in chronological order."""
+    """Daily Journal — all journal entries in chronological order."""
     query = db.query(JournalEntryLine)
-    if fecha_inicio:
-        query = query.filter(JournalEntryLine.fecha >= fecha_inicio)
-    if fecha_fin:
-        query = query.filter(JournalEntryLine.fecha <= fecha_fin)
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
     return query.order_by(JournalEntryLine.fecha, JournalEntryLine.comprobante).all()
 
 
-def get_libro_mayor(
+def get_general_ledger(
     db: Session,
-    fecha_inicio: datetime = None,
-    fecha_fin: datetime = None,
+    start_date: datetime = None,
+    end_date: datetime = None,
 ) -> List[Dict]:
     """
     Libro Mayor — aggregated by cuenta_puc.
@@ -313,57 +315,57 @@ def get_libro_mayor(
     query = db.query(
         JournalEntryLine.cuenta_puc,
         JournalEntryLine.cuenta_nombre,
-        func.sum(JournalEntryLine.debito).label("total_debito"),
-        func.sum(JournalEntryLine.credito).label("total_credito"),
+        func.sum(JournalEntryLine.debito).label("total_debit"),
+        func.sum(JournalEntryLine.credito).label("total_credit"),
     ).group_by(
         JournalEntryLine.cuenta_puc,
         JournalEntryLine.cuenta_nombre,
     )
 
-    if fecha_inicio:
-        query = query.filter(JournalEntryLine.fecha >= fecha_inicio)
-    if fecha_fin:
-        query = query.filter(JournalEntryLine.fecha <= fecha_fin)
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
 
     results = query.order_by(JournalEntryLine.cuenta_puc).all()
 
     return [
         {
-            "cuenta": r.cuenta_puc,
-            "nombre": r.cuenta_nombre,
-            "total_debito": float(r.total_debito or 0),
-            "total_credito": float(r.total_credito or 0),
-            "saldo_neto": float((r.total_debito or 0) - (r.total_credito or 0)),
+            "account": r.cuenta_puc,
+            "name": r.cuenta_nombre,
+            "total_debit": float(r.total_debit or 0),
+            "total_credit": float(r.total_credit or 0),
+            "net_balance": float((r.total_debit or 0) - (r.total_credit or 0)),
         }
         for r in results
     ]
 
 
-def get_libro_auxiliar(
+def get_subsidiary_journal(
     db: Session,
-    cuenta_puc: str,
-    fecha_inicio: datetime = None,
-    fecha_fin: datetime = None,
+    account: str,
+    start_date: datetime = None,
+    end_date: datetime = None,
 ) -> List[JournalEntryLine]:
-    """Libro Auxiliar — detail for a specific account."""
-    query = db.query(JournalEntryLine).filter(JournalEntryLine.cuenta_puc == cuenta_puc)
-    if fecha_inicio:
-        query = query.filter(JournalEntryLine.fecha >= fecha_inicio)
-    if fecha_fin:
-        query = query.filter(JournalEntryLine.fecha <= fecha_fin)
+    """Subsidiary journal — detail for a specific account."""
+    query = db.query(JournalEntryLine).filter(JournalEntryLine.cuenta_puc == account)
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
     return query.order_by(JournalEntryLine.fecha).all()
 
 
-def get_balance_general(db: Session, fecha_corte: datetime = None) -> Dict:
+def get_balance_sheet(db: Session, cutoff_date: datetime = None) -> Dict:
     """
-    Balance General (Estado de Situación Financiera).
-    Activo (clase 1) = Pasivo (clase 2) + Patrimonio (clase 3)
+    Balance Sheet (Statement of Financial Position).
+    Assets (class 1) = Liabilities (class 2) + Equity (class 3)
 
     Revenue (4) and Expenses (5,6) flow into retained earnings.
     """
     query = db.query(JournalEntryLine)
-    if fecha_corte:
-        query = query.filter(JournalEntryLine.fecha <= fecha_corte)
+    if cutoff_date:
+        query = query.filter(JournalEntryLine.fecha <= cutoff_date)
 
     # Group by first digit of cuenta_puc (clase)
     lines = query.all()
@@ -382,18 +384,18 @@ def get_balance_general(db: Session, fecha_corte: datetime = None) -> Dict:
                 totals[clase] += (line.credito or Decimal("0")) - (line.debito or Decimal("0"))
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
-    utilidad_neta = totals[4] - totals[5] - totals[6]
+    net_profit = totals[4] - totals[5] - totals[6]
 
     return {
-        "activos": float(totals[1]),
-        "pasivos": float(totals[2]),
-        "patrimonio": float(totals[3]),
-        "ingresos": float(totals[4]),
-        "gastos": float(totals[5]),
-        "costos": float(totals[6]),
-        "utilidad_neta": float(utilidad_neta),
-        "patrimonio_total": float(totals[3] + utilidad_neta),
-        "cuadre": totals[1] == totals[2] + totals[3] + utilidad_neta,
+        "assets": float(totals[1]),
+        "liabilities": float(totals[2]),
+        "equity": float(totals[3]),
+        "revenue": float(totals[4]),
+        "expenses": float(totals[5]),
+        "cost_of_sales": float(totals[6]),
+        "net_profit": float(net_profit),
+        "total_equity": float(totals[3] + net_profit),
+        "is_balanced": totals[1] == totals[2] + totals[3] + net_profit,
     }
 
 
@@ -424,22 +426,22 @@ def search_transactions(
 
 def check_duplicates(
     db: Session,
-    nit_emisor: str,
+    issuer_nit: str,
     total: Decimal,
-    fecha: datetime,
+    date: datetime,
     days_window: int = 3,
 ) -> List[TransactionPending]:
     """Check for potential duplicate transactions (same NIT, amount, date ±N days)."""
-    fecha_inicio = fecha - timedelta(days=days_window)
-    fecha_fin = fecha + timedelta(days=days_window)
+    start_date = date - timedelta(days=days_window)
+    end_date = date + timedelta(days=days_window)
 
     return (
         db.query(TransactionPending)
         .filter(
-            TransactionPending.nit_emisor == nit_emisor,
+            TransactionPending.nit_emisor == issuer_nit,
             TransactionPending.total == total,
-            TransactionPending.fecha >= fecha_inicio,
-            TransactionPending.fecha <= fecha_fin,
+            TransactionPending.fecha >= start_date,
+            TransactionPending.fecha <= end_date,
         )
         .all()
     )
@@ -531,9 +533,8 @@ def update_process_job(
     if error_message is not None:
         job.error_message = error_message
     if agent_log_entry:
-        if job.agent_log is None:
-            job.agent_log = []
-        job.agent_log = job.agent_log + [agent_log_entry]
+        existing = job.agent_log if isinstance(job.agent_log, list) else []
+        job.agent_log = existing + [agent_log_entry]
 
     db.commit()
     db.refresh(job)
@@ -543,6 +544,64 @@ def update_process_job(
 def get_process_job(db: Session, process_id: str) -> Optional[ProcessJob]:
     """Get a process job by ID."""
     return db.query(ProcessJob).filter(ProcessJob.id == process_id).first()
+
+
+def get_active_process_job_for_ingest(
+    db: Session, ingest_id: str
+) -> Optional[ProcessJob]:
+    """
+    Get an active (non-failed) ProcessJob for the given ingest_id.
+    
+    Returns the latest ProcessJob that is not FAILED or CANCELLED.
+    This prevents duplicate processing of the same ingest job.
+    """
+    return (
+        db.query(ProcessJob)
+        .filter(
+            ProcessJob.ingest_id == ingest_id,
+            ProcessJob.status.in_([ProcessStatus.QUEUED, ProcessStatus.RUNNING, ProcessStatus.COMPLETED]),
+        )
+        .order_by(ProcessJob.created_at.desc())
+        .first()
+    )
+
+
+def get_process_result_transactions(db: Session, ingest_id: str) -> List[Dict[str, Any]]:
+    """Get final posted transaction payload for a given ingest job."""
+    rows = (
+        db.query(TransactionPending, TransactionPosted)
+        .join(
+            TransactionPosted,
+            TransactionPosted.transaction_pending_id == TransactionPending.id,
+        )
+        .filter(TransactionPending.ingest_id == ingest_id)
+        .all()
+    )
+
+    result: List[Dict[str, Any]] = []
+    for pending, posted in rows:
+        result.append(
+            {
+                "transaction_pending_id": pending.id,
+                "transaction_posted_id": posted.id,
+                "date": pending.fecha.isoformat() if pending.fecha else None,
+                "issuer_nit": pending.nit_emisor,
+                "receiver_nit": pending.nit_receptor,
+                "description": pending.descripcion,
+                "total": float(pending.total) if pending.total is not None else None,
+                "puc_account": posted.cuenta_puc,
+                "puc_description": posted.puc_descripcion,
+                "withholding_tax": float(posted.retefuente or 0),
+                "ica_tax": float(posted.reteica or 0),
+                "vat": float(posted.iva or 0),
+                "net_amount_due": float(posted.neto_a_pagar or 0),
+                "journal_entries": posted.journal_entries_json or [],
+                "tax_references": posted.tax_references or [],
+                "agent_reasoning": posted.agent_reasoning or {},
+            }
+        )
+
+    return result
 
 
 # ─── AuditLog ────────────────────────────────────────────────────
@@ -569,23 +628,148 @@ def create_audit_log(
 
 # ─── Terceros ────────────────────────────────────────────────────
 
-def get_or_create_tercero(
+def get_or_create_third_party(
     db: Session,
     nit: str,
-    razon_social: str = "Desconocido",
-    tipo: str = "proveedor",
+    business_name: str = "Unknown",
+    party_type: str = "proveedor",
     commit: bool = True,
 ) -> Tercero:
-    """Get existing tercero by NIT or create a new one."""
+    """Get existing third party by NIT or create a new one."""
     tercero = db.query(Tercero).filter(Tercero.nit == nit).first()
     if not tercero:
         from app.models.database import TerceroTipo
         tercero = Tercero(
             nit=nit,
-            razon_social=razon_social,
-            tipo=TerceroTipo(tipo),
+            razon_social=business_name,
+            tipo=TerceroTipo(party_type),
         )
         db.add(tercero)
         _commit_or_flush(db, commit)
         db.refresh(tercero)
     return tercero
+
+
+# ─── Company Settings ─────────────────────────────────────────────────────────
+
+def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
+    """Return the CompanySettings row for the given NIT, or None if not found."""
+    return db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
+
+
+def upsert_company_settings(db: Session, nit: str, data: dict, commit: bool = True) -> CompanySettings:
+    """Create or fully replace the CompanySettings row for the given NIT."""
+    row = db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
+    if row:
+        for key, value in data.items():
+            setattr(row, key, value)
+    else:
+        row = CompanySettings(nit=nit, **data)
+        db.add(row)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+# ─── ReteICA Tarifa Lookup ────────────────────────────────────────────────────
+
+# Maps CIIU code prefixes to ISIC/CIIU section letters.
+# This covers the most common sections used in Colombia.
+_CIIU_SECTION_MAP: dict[str, str] = {
+    "01": "A", "02": "A", "03": "A",               # Agricultura, ganadería
+    "05": "B", "06": "B", "07": "B", "08": "B",    # Minería
+    "10": "C", "11": "C", "12": "C", "13": "C",    # Industria manufacturera
+    "14": "C", "15": "C", "16": "C", "17": "C",
+    "18": "C", "19": "C", "20": "C", "21": "C",
+    "22": "C", "23": "C", "24": "C", "25": "C",
+    "26": "C", "27": "C", "28": "C", "29": "C",
+    "30": "C", "31": "C", "32": "C", "33": "C",
+    "35": "D",                                       # Electricidad, gas
+    "36": "E", "37": "E", "38": "E", "39": "E",    # Agua y saneamiento
+    "41": "F", "42": "F", "43": "F",               # Construcción
+    "45": "G", "46": "G", "47": "G",               # Comercio
+    "49": "H", "50": "H", "51": "H", "52": "H",   # Transporte
+    "53": "H",
+    "55": "I", "56": "I",                           # Alojamiento, restaurantes
+    "58": "J", "59": "J", "60": "J", "61": "J",   # Información, tecnología
+    "62": "J", "63": "J",
+    "64": "K", "65": "K", "66": "K",               # Financiero, seguros
+    "68": "L",                                       # Inmobiliario
+    "69": "M", "70": "M", "71": "M", "72": "M",   # Profesional, científico
+    "73": "M", "74": "M", "75": "M",
+    "77": "N", "78": "N", "79": "N", "80": "N",   # Servicios administrativos
+    "81": "N", "82": "N",
+    "84": "O",                                       # Administración pública
+    "85": "P",                                       # Educación
+    "86": "Q", "87": "Q", "88": "Q",               # Salud
+    "90": "R", "91": "R", "92": "R", "93": "R",   # Entretenimiento
+    "94": "S", "95": "S", "96": "S",               # Otras actividades de servicios
+    "97": "T",                                       # Hogares
+}
+
+
+def _normalize_municipio(ciudad: str) -> str:
+    """Normalize a city name for DB lookup (lowercase, remove accents)."""
+    import unicodedata
+    normalized = unicodedata.normalize("NFD", ciudad.lower().strip())
+    return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+
+
+def _ciiu_to_section(ciiu: str) -> str:
+    """Map a CIIU code to its ISIC section letter."""
+    prefix = ciiu.strip()[:2]
+    return _CIIU_SECTION_MAP.get(prefix, "general")
+
+
+def get_reteica_tarifa(db: Session, ciudad: str, ciiu: str) -> Optional[float]:
+    """
+    Look up the ReteICA rate for a given city and CIIU code.
+
+    Lookup priority:
+      1. municipio + ciiu_seccion (exact city + sector)
+      2. municipio + 'general'    (city-wide default)
+      3. 'general' + 'general'    (national fallback)
+
+    Returns the rate as a float (decimal fraction), or None if no entry found.
+    """
+    municipio = _normalize_municipio(ciudad)
+    seccion = _ciiu_to_section(ciiu)
+
+    # 1. Exact city + sector
+    if seccion != "general":
+        row = (
+            db.query(ReteicaTarifa)
+            .filter(
+                ReteicaTarifa.municipio == municipio,
+                ReteicaTarifa.ciiu_seccion == seccion,
+            )
+            .first()
+        )
+        if row:
+            return float(row.tasa)
+
+    # 2. City general
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == municipio,
+            ReteicaTarifa.ciiu_seccion == "general",
+        )
+        .first()
+    )
+    if row:
+        return float(row.tasa)
+
+    # 3. National fallback
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == "general",
+            ReteicaTarifa.ciiu_seccion == "general",
+        )
+        .first()
+    )
+    if row:
+        return float(row.tasa)
+
+    return None

@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     # --- Gemini / Google AI ------------------------------------------------
     gemini_api_key: str = Field("", alias="GEMINI_API_KEY")
     gemini_model: str = Field("gemini-2.5-flash", alias="GEMINI_MODEL")
-    gemini_embedding_model: str = Field("models/gemini-embedding-001", alias="GEMINI_EMBEDDING_MODEL")
+
+    # --- HuggingFace API (embeddings + reranker) ---------------------------
+    huggingface_api_key: str = Field("", alias="HUGGINGFACE_API_KEY")
 
     # --- LlamaCloud API ----------------------------------------------------
     llama_cloud_api_key: str = Field("", alias="LLAMA_CLOUD_API_KEY")
@@ -33,7 +35,6 @@ class Settings(BaseSettings):
 
     # --- Storage -----------------------------------------------------------
     upload_folder: str = Field("./storage/uploads", alias="UPLOAD_FOLDER")
-    chroma_persist_path: str = Field("./storage/chromadb", alias="CHROMA_PERSIST_PATH")
 
     # --- Paths -------------------------------------------------------------
     base_path: Path = Path(__file__).parent.parent.parent
@@ -49,13 +50,19 @@ class Settings(BaseSettings):
     )
 
     def model_post_init(self, __context) -> None:
-        """Fix Render's postgres:// scheme → postgresql:// for SQLAlchemy 2.0."""
-        if self.database_url.startswith("postgres://"):
-            object.__setattr__(
-                self,
-                "database_url",
-                self.database_url.replace("postgres://", "postgresql://", 1),
-            )
+        """Normalize DB URL and enforce SSL for Supabase-hosted Postgres."""
+        normalized_url = self.database_url
+
+        if normalized_url.startswith("postgres://"):
+            normalized_url = normalized_url.replace("postgres://", "postgresql://", 1)
+
+        is_supabase = "supabase.co" in normalized_url or "pooler.supabase.com" in normalized_url
+        if is_supabase and "sslmode=" not in normalized_url:
+            separator = "&" if "?" in normalized_url else "?"
+            normalized_url = f"{normalized_url}{separator}sslmode=require"
+
+        if normalized_url != self.database_url:
+            object.__setattr__(self, "database_url", normalized_url)
 
     @property
     def is_production(self) -> bool:

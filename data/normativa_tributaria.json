@@ -118,5 +118,285 @@
     "titulo": "Marco Normativo Contable Colombiano - Grupos NIIF",
     "contenido": "Colombia adoptó las NIIF mediante la Ley 1314 de 2009 y el Decreto 2420 de 2015 (DUR 2420). Las empresas se clasifican en tres grupos para efectos de la norma contable aplicable: Grupo 1 (NIIF Plenas): entidades de interés público, emisores de valores, entidades con activos superiores a 30.000 SMLV o más de 200 empleados. Grupo 2 (NIIF para PYMES): empresas con activos entre 500 y 30.000 SMLV o más de 10 empleados; no clasificadas en Grupo 1 ni 3. Grupo 3 (Microempresas - SIPLICO): activos inferiores a 500 SMLV y no más de 10 empleados. El Plan Único de Cuentas (PUC) del Decreto 2650 de 1993 sigue vigente como referencia para clasificación de cuentas.",
     "tags": ["NIIF", "PUC", "grupos_contables", "empresas", "Colombia", "normativa"]
+  },
+  {
+    "id": "ET_ART_24",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 24",
+    "titulo": "Ingresos de Fuente Nacional",
+    "contenido": "Se consideran ingresos de fuente nacional los provenientes de la explotación de bienes materiales e inmateriales dentro del país y la prestación de servicios dentro de su territorio, de manera permanente o transitoria, con o sin establecimiento propio. También son ingresos de fuente nacional: los obtenidos en la enajenación de bienes que se encuentren en Colombia al momento de su enajenación; los provenientes de capitales cuyo deudor es residente o domiciliado en Colombia; los dividendos de sociedades colombianas; y las rentas de actividades comerciales, industriales o de servicios ejercidas en el territorio nacional. Esta distinción es fundamental para determinar la obligación tributaria de personas naturales o jurídicas extranjeras sin residencia ni domicilio en Colombia.",
+    "tags": ["fuente_nacional", "ingresos", "residencia", "extranjeros", "territorio_colombiano", "renta"]
+  },
+  {
+    "id": "ET_ART_26",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 26",
+    "titulo": "Renta Líquida",
+    "contenido": "La renta líquida gravable se determina así: de la suma de todos los ingresos ordinarios y extraordinarios realizados en el año o período gravable, que sean susceptibles de producir un incremento neto del patrimonio y que no hayan sido expresamente exceptuados, se restan las devoluciones, rebajas y descuentos, con lo cual se obtienen los ingresos netos. De los ingresos netos se restan los costos realizados imputables a tales ingresos, con lo cual se obtiene la renta bruta. De la renta bruta se restan las deducciones realizadas, con lo cual se obtiene la renta líquida. La renta líquida es la base gravable del impuesto sobre la renta, salvo cuando sea inferior a la renta presuntiva.",
+    "tags": ["renta_liquida", "renta_bruta", "ingresos_netos", "deducciones", "costos", "base_gravable"]
+  },
+  {
+    "id": "ET_ART_28",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 28",
+    "titulo": "Realización del Ingreso para Obligados a Llevar Contabilidad",
+    "contenido": "Para los contribuyentes obligados a llevar contabilidad, los ingresos realizados fiscalmente son los ingresos devengados contablemente en el año o período gravable. Los ingresos por dividendos o participaciones se entienden realizados en el momento del pago o abono en cuenta. Los ingresos provenientes de la prestación de servicios se realizan cuando el servicio ha sido prestado. Esta norma establece la concordancia entre el reconocimiento contable bajo NIIF y el reconocimiento fiscal, eliminando en la mayoría de los casos las diferencias temporarias por calendar differences. Las diferencias que persistan generan activos o pasivos por impuesto diferido.",
+    "tags": ["realizacion_ingreso", "contabilidad", "NIIF", "devengo", "ingreso_fiscal", "impuesto_diferido"]
+  },
+  {
+    "id": "ET_ART_58",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 58",
+    "titulo": "Realización del Costo para Obligados a Llevar Contabilidad",
+    "contenido": "Para los contribuyentes obligados a llevar contabilidad, los costos y gastos realizados fiscalmente son los devengados contablemente en el año o período gravable. No son aceptados como costos o deducciones los gastos no devengados contablemente en el período. Cuando el costo o gasto no sea deducible conforme a las normas especiales del Estatuto Tributario, deberá reconocerse una diferencia entre el tratamiento contable y el fiscal, generando impuesto diferido. Los pagos en efectivo anuales que superen 100 UVT acumulados por beneficiario no son deducibles si no se realizan a través del sistema financiero (bancarización).",
+    "tags": ["realizacion_costo", "gasto_deducible", "contabilidad", "devengo", "bancarizacion", "impuesto_diferido"]
+  },
+  {
+    "id": "ET_ART_60",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 60",
+    "titulo": "Activos Movibles e Inventarios",
+    "contenido": "Son activos movibles los bienes corporales muebles o inmuebles y los incorporales que se enajenan dentro del giro ordinario de los negocios del contribuyente e implican ordinariamente existencias al principio y al fin de cada año o período gravable. El costo de los inventarios puede determinarse bajo los métodos de identificación específica, PEPS (primeras en entrar, primeras en salir) o costo promedio ponderado. Para efectos del impuesto sobre la renta, el costo de venta de los activos movibles se determina conforme a los sistemas de inventarios permanente o periódico reconocidos contablemente bajo NIIF.",
+    "tags": ["activos_movibles", "inventarios", "PEPS", "costo_promedio", "existencias", "costo_venta"]
+  },
+  {
+    "id": "ET_ART_83",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 83",
+    "titulo": "Deducción por Depreciación",
+    "contenido": "Son deducibles cantidades razonables por la depreciación causada por desgaste y deterioro de bienes usados en negocios o actividades productoras de renta. La depreciación puede calcularse por los métodos de línea recta, reducción de saldos u otro de reconocido valor técnico. Las vidas útiles fiscales orientativas son: inmuebles (edificios) 20 años (5% anual), maquinaria y equipo 10 años (10% anual), vehículos y computadores 5 años (20% anual). Las diferencias entre la depreciación fiscal y la contable NIIF generan impuesto diferido. Los activos totalmente depreciados que continúan en uso deben mantenerse en el balance a un valor residual mínimo.",
+    "tags": ["depreciacion", "deduccion", "activos_fijos", "linea_recta", "vida_util", "impuesto_diferido"]
+  },
+  {
+    "id": "ET_ART_118",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 118",
+    "titulo": "Deducción de Intereses y Subcapitalización",
+    "contenido": "Son deducibles los intereses que se paguen o reconozcan sobre deudas que tengan relación de causalidad con la actividad productora de renta. No son deducibles los intereses pagados sobre deudas con vinculados del exterior que superen tres veces el patrimonio líquido del contribuyente al inicio del período gravable (regla de subcapitalización). Los intereses pagados a vinculados económicos del exterior deben cumplir el principio de plena competencia. La DIAN puede rechazar la deducción cuando los intereses no correspondan a tasas de mercado o cuando la deuda no tenga sustancia económica suficiente.",
+    "tags": ["intereses", "deduccion", "subcapitalizacion", "vinculados_exterior", "credito", "plena_competencia"]
+  },
+  {
+    "id": "ET_ART_142",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 142",
+    "titulo": "Renta Bruta en Enajenación de Activos",
+    "contenido": "La renta bruta o pérdida bruta proveniente de la enajenación de activos a cualquier título está constituida por la diferencia entre el precio de enajenación y el costo del activo enajenado. El costo fiscal de los activos fijos comprende el costo de adquisición más mejoras capitalizables, menos la depreciación o amortización acumulada. En la enajenación de inmuebles, el precio de venta declarado no puede ser inferior al 70% del valor del avalúo catastral o comercial oficial. La ganancia en enajenación de activos fijos poseídos por más de 2 años constituye ganancia ocasional, no renta ordinaria.",
+    "tags": ["renta_bruta", "enajenacion", "activos_fijos", "costo_fiscal", "precio_venta", "ganancia_ocasional"]
+  },
+  {
+    "id": "ET_ART_148",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 148",
+    "titulo": "Deudas de Dudoso o Difícil Cobro",
+    "contenido": "Son deducibles, para los contribuyentes que lleven contabilidad por el sistema de causación, las deudas manifiestamente perdidas o sin valor que se hayan descargado durante el año o período gravable, siempre que provengan de operaciones productoras de renta. La provisión individual de cartera deducible se calcula sobre deudas de dudoso cobro originadas en operaciones productoras de renta y se contabiliza en el grupo 145 (Provisión deudores). Las entidades financieras tienen reglas especiales de provisión de cartera conforme a la circular básica contable de la Superintendencia Financiera de Colombia.",
+    "tags": ["deudas_incobrables", "provision_cartera", "deduccion", "causacion", "cartera", "cuenta_145"]
+  },
+  {
+    "id": "ET_ART_158",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 158-3",
+    "titulo": "Deducción por Inversión en Activos Fijos Reales Productivos",
+    "contenido": "Los contribuyentes del impuesto sobre la renta que realicen nuevas inversiones en activos fijos reales productivos adquiridos, incluso bajo arrendamiento financiero (leasing), podrán deducir en el período gravable el 50% del valor de la inversión efectiva. Son activos fijos reales productivos los activos tangibles que forman parte del patrimonio, participan de manera directa y permanente en la actividad productora de renta y se deprecian o amortizan fiscalmente. Esta deducción, conocida como deducción por inversión, no es acumulable con el descuento del Art. 258-1 ET en el mismo período.",
+    "tags": ["deduccion", "activos_fijos", "inversion", "50%", "reales_productivos", "leasing"]
+  },
+  {
+    "id": "ET_ART_206",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 206",
+    "titulo": "Rentas de Trabajo Exentas",
+    "contenido": "Están gravados con el impuesto sobre la renta la totalidad de los pagos o abonos en cuenta provenientes de la relación laboral o legal y reglamentaria. Sin embargo, se consideran rentas exentas del trabajo: las indemnizaciones por accidente de trabajo o enfermedad; las indemnizaciones por despido sin justa causa hasta ciertos límites; los retiros de fondos de pensiones; y el 25% del valor total de los pagos laborales, limitado mensualmente a 240 UVT. Esta exención del 25% hasta 240 UVT mensuales es la más utilizada en liquidación de impuesto sobre rentas de trabajo para empleados. La depuración incluye además ingresos no constitutivos de renta, deducciones y rentas exentas especiales.",
+    "tags": ["rentas_exentas", "nomina", "25%", "240_UVT", "trabajo", "impuesto_renta", "empleados"]
+  },
+  {
+    "id": "ET_ART_226",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 226",
+    "titulo": "Descuento por Impuestos Pagados en el Exterior",
+    "contenido": "Los contribuyentes nacionales que perciban rentas de fuente extranjera sujetas a impuesto en Colombia tienen derecho a descontar del impuesto sobre la renta colombiano el impuesto de renta pagado en el extranjero sobre esas mismas rentas, siempre que el descuento no exceda el monto del impuesto que deba pagar en Colombia por esas rentas. El crédito tributario por impuestos en el exterior es equivalente al impuesto de renta o su análogo pagado en el país de la fuente. Se acredita mediante certificación de la autoridad tributaria extranjera o del pagador del ingreso. Este mecanismo evita la doble tributación internacional.",
+    "tags": ["descuento_tributario", "impuesto_exterior", "doble_tributacion", "renta_extranjera", "credito_fiscal"]
+  },
+  {
+    "id": "ET_ART_260",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 260-1 al 260-11",
+    "titulo": "Precios de Transferencia",
+    "contenido": "Los contribuyentes del impuesto sobre la renta que realicen operaciones con vinculados en el exterior o en zonas francas están obligados a determinar sus ingresos, costos y deducciones aplicando el Principio de Plena Competencia, es decir, como si fueran entre partes independientes en condiciones y circunstancias comparables. Los métodos aceptados son: Precio Comparable No Controlado, Precio de Reventa, Costo Adicionado, Distribución de Utilidades y Márgenes Transaccionales. Los contribuyentes que superen los umbrales establecidos (operaciones con vinculados que superen 45.000 UVT o patrimonio bruto mayor a 100.000 UVT) deben presentar declaración informativa y documentación comprobatoria.",
+    "tags": ["precios_transferencia", "vinculados", "plena_competencia", "operaciones_exterior", "DIAN", "documentacion"]
+  },
+  {
+    "id": "ET_ART_300",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 300",
+    "titulo": "Ganancia Ocasional en Venta de Activos Fijos",
+    "contenido": "Se consideran ganancias ocasionales: la utilidad en la enajenación de activos fijos poseídos por más de 2 años; las utilidades originadas en la liquidación de sociedades; lo recibido por concepto de herencias, legados y donaciones; y los premios de loterías y similares. La tarifa del impuesto complementario de ganancias ocasionales es del 15% para personas jurídicas y personas naturales. La base gravable es el precio de venta menos el costo fiscal del activo. Las pérdidas ocasionales solo pueden compensarse contra ganancias ocasionales del mismo período; no son deducibles de la renta ordinaria.",
+    "tags": ["ganancia_ocasional", "activos_fijos", "15%", "2_años", "enajenacion", "herencias", "loteria"]
+  },
+  {
+    "id": "ET_ART_319",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 319",
+    "titulo": "Aportes en Especie a Sociedades",
+    "contenido": "El aporte de bienes a una sociedad nacional no genera ingreso gravado ni pérdida deducible para el aportante, siempre que se cumplan los requisitos del artículo. La sociedad receptora del aporte debe reconocer el activo por el mismo valor fiscal que tenía en cabeza del aportante antes del aporte (neutralidad fiscal). El aportante debe recibir a cambio acciones o cuotas partes de la sociedad. Si posteriormente se enajenan las acciones recibidas, se liquidará la renta o ganancia ocasional correspondiente. Las reglas de reorganizaciones empresariales neutras buscan evitar que las fusiones, escisiones y aportes generen cargas tributarias inmediatas que desincentiven la restructuración de grupos empresariales.",
+    "tags": ["aportes", "sociedad", "activos", "acciones", "reorganizacion", "neutralidad_fiscal", "fusion"]
+  },
+  {
+    "id": "ET_ART_365",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 365",
+    "titulo": "Retención en la Fuente - Mecanismo de Recaudo",
+    "contenido": "La retención en la fuente tiene por objeto conseguir en forma gradual que el impuesto sobre la renta se recaude en lo posible dentro del mismo ejercicio gravable en que se cause. Los agentes de retención, al realizar un pago o abono en cuenta, deben efectuar la retención correspondiente y declarar y pagar los valores retenidos en las fechas establecidas por el Gobierno Nacional. La retención en la fuente no es un impuesto independiente sino un mecanismo de recaudo anticipado del impuesto de renta. Los valores retenidos constituyen un crédito para el beneficiario en su declaración de renta del período correspondiente (cuenta 1365 - Anticipo de impuestos y contribuciones).",
+    "tags": ["retencion_fuente", "mecanismo", "agente_retenedor", "recaudo", "anticipo", "cuenta_1365"]
+  },
+  {
+    "id": "ET_ART_366",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 366",
+    "titulo": "Tarifas de Retención - Otros Ingresos Tributarios",
+    "contenido": "Sin perjuicio de las retenciones previstas expresamente en el Estatuto Tributario, el Gobierno Nacional puede fijar tarifas de retención para los conceptos no contemplados, cuando lo estime conveniente para asegurar el recaudo del impuesto. La tarifa general de retención para pagos no especificados (otros ingresos) es del 2.5% sobre el pago o abono en cuenta. Los agentes de retención son solidariamente responsables por los valores que dejen de retener en los casos en que la ley los obliga. Las retenciones mal practicadas generan sanción de retención e intereses de mora sobre el valor no retenido.",
+    "tags": ["retefuente", "tarifa_general", "2.5%", "agente_retenedor", "responsabilidad", "otros_ingresos"]
+  },
+  {
+    "id": "ET_ART_369",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 369",
+    "titulo": "Cuándo No se Efectúa Retención en la Fuente",
+    "contenido": "No están sujetos a retención en la fuente los pagos o abonos en cuenta cuando: (a) el pago sea inferior a la cuantía mínima sujeta a retención establecida por el Gobierno (para servicios: 4 UVT; para compras: 27 UVT; honorarios y comisiones no tienen cuantía mínima); (b) los beneficiarios sean entidades de derecho público; (c) los beneficiarios sean fondos de inversión colectiva o de valores regulados; (d) el pagador sea una persona natural sin calidad de agente de retención. El agente retenedor debe certificar al beneficiario la retención practicada mediante el certificado de retenciones (independiente o incluido en la factura).",
+    "tags": ["retefuente", "cuantia_minima", "UVT", "no_retencion", "entidades_publicas", "agente_retenedor"]
+  },
+  {
+    "id": "ET_ART_395",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 395",
+    "titulo": "Retención en la Fuente sobre Dividendos",
+    "contenido": "Los dividendos y participaciones pagados o abonados en cuenta a personas naturales residentes en Colombia que no provienen de utilidades gravadas en cabeza de la sociedad están sujetos a una tarifa del 15% cuando superen 300 UVT. Los dividendos correspondientes a utilidades que no fueron gravadas en cabeza de la sociedad se someten primero a la tarifa general del impuesto de renta de la sociedad (35%) y luego al 15% adicional sobre el valor neto. Las sociedades nacionales que reciben dividendos de otras sociedades nacionales no están sujetas a retención sobre esos dividendos. Las reglas de dividendos aplican también a las distribuciones de utilidades en sociedades por acciones simplificadas (SAS).",
+    "tags": ["dividendos", "retencion_fuente", "15%", "300_UVT", "personas_naturales", "utilidades"]
+  },
+  {
+    "id": "ET_ART_406",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 406",
+    "titulo": "Retención en la Fuente sobre Pagos al Exterior",
+    "contenido": "Deberán retener en la fuente, a la tarifa del impuesto respectivo, los agentes de retención que hagan pagos o abonos en cuenta por concepto de rentas sujetas a impuesto en Colombia a favor de: sociedades u otras entidades extranjeras sin domicilio en Colombia; personas naturales extranjeras sin residencia en Colombia; sucesiones de causantes extranjeros sin residencia en Colombia. Los pagos al exterior por servicios técnicos, asistencia técnica, consultoría y explotación de intangibles están sujetos a retención según las tarifas del artículo 408 ET. La retención sobre pagos al exterior se declara en el formulario 350 (Declaración de retenciones en la fuente).",
+    "tags": ["pagos_exterior", "retencion_fuente", "extranjeros", "no_residentes", "formulario_350"]
+  },
+  {
+    "id": "ET_ART_408",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 408",
+    "titulo": "Tarifas de Retención para Extranjeros sin Domicilio",
+    "contenido": "Para pagos al exterior por los siguientes conceptos aplican las tarifas de retención: intereses, comisiones, honorarios y servicios técnicos: 15%; regalías y explotación de intangibles: 20%; contratos de servicios de administración y management fees: 15%; arrendamiento de maquinaria o equipo: 10%; beneficios o regalías de software: 20%. Estas tarifas pueden reducirse mediante los Convenios para Evitar la Doble Imposición (CDI) que Colombia ha suscrito con España, Chile, Suiza, Canadá, México, Corea, India, República Checa, entre otros. En estos casos, el pagador debe verificar el certificado de residencia fiscal del beneficiario para aplicar el convenio.",
+    "tags": ["tarifas_exterior", "retencion", "no_residentes", "CDI", "regalias", "servicios_tecnicos", "convenios"]
+  },
+  {
+    "id": "ET_ART_420",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 420",
+    "titulo": "Hechos que Generan el IVA",
+    "contenido": "El IVA se causa en los siguientes hechos: (a) la venta de bienes corporales muebles e inmuebles no excluidos expresamente; (b) la venta o cesiones de derechos sobre activos intangibles relacionados únicamente con la propiedad industrial; (c) la prestación de servicios en el territorio nacional; (d) la importación de bienes corporales no excluidos; (e) la circulación, venta u operación de juegos de suerte y azar. El impuesto se causa en el momento de emisión de la factura electrónica de venta, o en la fecha de la entrega material del bien, o en la fecha de la prestación del servicio, lo que ocurra primero. La tarifa general del IVA es del 19%.",
+    "tags": ["IVA", "hecho_generador", "ventas", "servicios", "importaciones", "causacion_IVA", "19%"]
+  },
+  {
+    "id": "ET_ART_447",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 447",
+    "titulo": "Base Gravable General del IVA",
+    "contenido": "En la venta y prestación de servicios, la base gravable del IVA es el valor total de la operación, sea que ésta se realice de contado o a crédito, incluyendo los gastos directos de financiación ordinaria, extraordinaria o moratoria, accesorios, acarreos, instalaciones, seguros, comisiones, garantías y demás erogaciones complementarias, aunque se facturen o convengan por separado. De la base gravable se pueden deducir anulaciones, rescisiones y descuentos que consten en la factura. Los empaques y envases son parte de la base gravable salvo que sean retornables y así se haga constar en la factura.",
+    "tags": ["IVA", "base_gravable", "valor_total", "operacion", "descuentos", "facturacion"]
+  },
+  {
+    "id": "ET_ART_469",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 469",
+    "titulo": "Bienes Gravados con Tarifa Diferencial del 5%",
+    "contenido": "Están gravados con la tarifa del 5% del IVA, entre otros: los planes de medicina prepagada; los seguros de vida individual; algunos vehículos de transporte público; los computadores y tabletas cuyo valor sea inferior a 50 UVT; los bicicletas no motorizadas de valor inferior a 50 UVT; los bienes de origen agropecuario como café sin tostar, arroz para uso industrial y aceites en bruto; y los servicios de vigilancia (seguridad). La tarifa del 5% es diferencial y aplica IVA descontable por los insumos utilizados en su producción o comercialización, a diferencia de los bienes excluidos que no causan IVA y no generan derecho a descontar.",
+    "tags": ["IVA", "5%", "tarifa_diferencial", "medicina_prepagada", "seguros_vida", "vehiculos", "computadores"]
+  },
+  {
+    "id": "ET_ART_471",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 471",
+    "titulo": "Tarifas del IVA en Servicios",
+    "contenido": "Los servicios no expresamente excluidos o exentos están gravados con la tarifa general del IVA del 19%. Servicios excluidos más comunes: servicios de salud; servicios de educación; servicios de transporte público nacional de pasajeros; arrendamiento de inmuebles para vivienda; servicios de internet para estratos 1, 2 y 3; servicios de aseo y vigilancia prestados por personas jurídicas. Servicios gravados al 19%: honorarios de profesionales (abogados, contadores, médicos en consulta particular); publicidad; consultoría; servicios de restaurante con base gravable especial. Los servicios de restaurante y bar tienen tarifa especial del 8% con impoconsumo.",
+    "tags": ["IVA", "servicios_gravados", "19%", "servicios_excluidos", "restaurante", "8%", "honorarios"]
+  },
+  {
+    "id": "ET_ART_477",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 477",
+    "titulo": "Bienes Exentos del IVA (Canasta Familiar)",
+    "contenido": "Están exentos del IVA y dan derecho a devolución o compensación del IVA pagado en insumos: los animales vivos de las especies bovina, porcina, ovina y caprina; los peces vivos; los libros y revistas de carácter científico y cultural; los medicamentos para uso humano y animal; los bienes de la canasta familiar básica: leche y productos lácteos, huevos, carnes frescas, frutas y verduras, cereales, leguminosas, tubérculos, pan. Los productores de bienes exentos (tarifa 0%) tienen derecho a la devolución del IVA descontable acumulado en materias primas e insumos (régimen de IVA cero), distinto a los bienes excluidos que no generan este derecho.",
+    "tags": ["IVA", "exento", "canasta_familiar", "devoluciones", "alimentos", "medicamentos", "libros"]
+  },
+  {
+    "id": "ET_ART_490",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 490",
+    "titulo": "Impuestos Descontables del IVA",
+    "contenido": "El total del IVA pagado o causado en la adquisición o importación de bienes o servicios que computen como costo o gasto de la empresa y que se destinen a las operaciones gravadas o exentas, puede descontarse del IVA generado en el período. El IVA descontable se registra en la cuenta 2408 (IVA por pagar) de forma separada o en 1370 según el PUC. Cuando los bienes o servicios se destinan indistintamente a operaciones gravadas, exentas y excluidas, el descuento se realiza en proporción al porcentaje de operaciones gravadas y exentas sobre el total de ingresos del período (regla de pro-rata del IVA).",
+    "tags": ["IVA_descontable", "IVA", "cuenta_2408", "pro_rata", "impuestos_descontables", "credito_fiscal"]
+  },
+  {
+    "id": "ET_ART_497",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 497",
+    "titulo": "Período Fiscal del IVA",
+    "contenido": "El período fiscal del IVA es bimestral para: los grandes contribuyentes; los responsables del IVA con ingresos brutos en el año anterior iguales o superiores a 92.000 UVT. El período es cuatrimestral para los responsables con ingresos brutos inferiores a 92.000 UVT. Los períodos bimestrales son: enero-febrero, marzo-abril, mayo-junio, julio-agosto, septiembre-octubre, noviembre-diciembre. Los períodos cuatrimestrales son: enero-abril, mayo-agosto, septiembre-diciembre. La declaración de IVA se presenta en el formulario 300 y el pago debe realizarse en los plazos fijados por el Gobierno Nacional para cada período.",
+    "tags": ["IVA", "periodo_fiscal", "bimestral", "cuatrimestral", "92000_UVT", "formulario_300", "declaracion"]
+  },
+  {
+    "id": "ET_ART_555",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 555-2",
+    "titulo": "Registro Único Tributario (RUT)",
+    "contenido": "El Registro Único Tributario (RUT) constituye el mecanismo único para identificar, ubicar y clasificar a los sujetos de obligaciones administradas por la DIAN. Están obligados a inscribirse en el RUT: los contribuyentes del impuesto sobre la renta; los responsables del IVA; los agentes retenedores; los importadores y exportadores; y toda persona natural o jurídica que deba cumplir obligaciones administradas por la DIAN. El RUT se identifica mediante el Número de Identificación Tributaria (NIT), que para personas jurídicas es asignado por la Cámara de Comercio en el momento del registro mercantil. La actualización del RUT es una obligación permanente cuando cambian las condiciones del contribuyente.",
+    "tags": ["RUT", "NIT", "registro", "DIAN", "identificacion_tributaria", "obligados", "camara_comercio"]
+  },
+  {
+    "id": "ET_ART_575",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 575",
+    "titulo": "Obligados a Presentar Declaraciones Tributarias",
+    "contenido": "Están obligados a presentar declaración del impuesto sobre la renta: los contribuyentes del régimen ordinario; los contribuyentes del régimen especial; las personas naturales y jurídicas extranjeras con fuentes de ingreso colombianas. No están obligadas a declarar las personas naturales que cumplan todos los requisitos del Art. 592 ET: ingresos brutos inferiores a 1.400 UVT, patrimonio bruto inferior a 4.500 UVT, consumos con tarjeta de crédito inferiores a 1.400 UVT, total de consignaciones inferior a 1.400 UVT. Los plazos para presentar la declaración de renta dependen de si el contribuyente es gran contribuyente, persona jurídica o persona natural.",
+    "tags": ["declaracion_renta", "obligados", "UVT", "persona_natural", "persona_juridica", "plazo"]
+  },
+  {
+    "id": "ET_ART_588",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 588",
+    "titulo": "Corrección de Declaraciones Tributarias",
+    "contenido": "Los contribuyentes pueden corregir sus declaraciones tributarias dentro de los 2 años siguientes al vencimiento del plazo para declarar, sin necesidad de autorización previa. La sanción por corrección que aumente el impuesto o disminuya el saldo a favor es del 10% del mayor valor a pagar o del menor saldo a favor resultante cuando se corrige antes del emplazamiento para corregir, y del 20% cuando se hace después del emplazamiento. No se aplica sanción por corrección cuando la modificación implique disminución del impuesto a cargo o aumento del saldo a favor. Las correcciones que impliquen nulidades o inexactitudes dolosas tienen tratamiento sancionatorio diferente.",
+    "tags": ["correccion_declaracion", "sancion", "10%", "20%", "2_años", "emplazamiento", "DIAN"]
+  },
+  {
+    "id": "ET_ART_631",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 631",
+    "titulo": "Información Exógena - Deber de Informar a la DIAN",
+    "contenido": "El Director General de la DIAN puede solicitar a personas naturales, jurídicas o entidades, contribuyentes o no, información sobre domicilio, actividad, patrimonio, ingresos, costos, deducciones, aportes parafiscales, retenciones, impuestos descontables y cualquier dato necesario para la correcta determinación de los tributos. La información exógena más relevante incluye: información de clientes y proveedores por compras y ventas que superen los umbrales; información financiera de bancos; contratos con montos superiores a los límites; pagos a empleados. La resolución anual de la DIAN fija los obligados, conceptos, valores y plazos para cada reporte.",
+    "tags": ["informacion_exogena", "DIAN", "terceros", "reporte", "obligacion", "datos_fiscales", "resolucion"]
+  },
+  {
+    "id": "ET_ART_651",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 651",
+    "titulo": "Sanción por No Enviar Información a la DIAN",
+    "contenido": "Las personas y entidades que no envíen la información requerida por la DIAN dentro del plazo establecido, o que la envíen con errores o incompleta, incurrirán en: (a) sanción por extemporaneidad del 0.5% de las sumas sobre las cuales no se informó, por cada mes de retraso, con un máximo del 5% del total de las sumas; (b) sanción por información incorrecta o incompleta del 1% de las sumas reportadas erróneamente, con máximo del 10%; (c) sanción mínima de 10 UVT para personas naturales y 20 UVT para personas jurídicas. La sanción se reduce en un 50% si se subsana antes de la notificación del acto sancionatorio y en un 75% si se subsana dentro de los 2 meses siguientes.",
+    "tags": ["sancion", "informacion_exogena", "0.5%", "5%", "UVT", "DIAN", "multa"]
+  },
+  {
+    "id": "ET_ART_683",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 683",
+    "titulo": "Espíritu de Justicia en la Aplicación Tributaria",
+    "contenido": "Los funcionarios públicos con atribuciones y deberes relacionados con la liquidación y cobro de los impuestos nacionales deberán tener siempre por norma que son servidores públicos, que la aplicación recta de las leyes debe estar presidida por un relevante espíritu de justicia, y que el Estado no aspira a que al contribuyente se le exija más de aquello con que la misma ley ha querido que coadyuve a las cargas públicas de la nación. En virtud de este principio, las dudas razonables en la interpretación de las normas tributarias se resuelven a favor del contribuyente (principio indubio pro contribuyente). Este principio limita el exceso en los poderes de fiscalización de la DIAN.",
+    "tags": ["espiritu_justicia", "principios", "interpretacion", "contribuyente", "DIAN", "indubio_pro_contribuyente"]
+  },
+  {
+    "id": "ET_ART_714",
+    "fuente": "Estatuto Tributario",
+    "articulo": "Artículo 714",
+    "titulo": "Firmeza de las Declaraciones Tributarias",
+    "contenido": "La declaración tributaria queda en firme si transcurridos 3 años contados desde el vencimiento del plazo para declarar no se ha notificado requerimiento especial. Si la declaración se presenta de forma extemporánea, el término de firmeza es de 3 años contados desde la fecha de presentación. Para los contribuyentes que declaren pérdidas fiscales o que realicen compensaciones de pérdidas de períodos anteriores, el término de firmeza es de 6 años. La firmeza de la declaración impide a la DIAN practicar liquidaciones oficiales de revisión o corrección después de estos plazos. Los términos de firmeza se interrumpen por la notificación del requerimiento especial dentro del período de firmeza.",
+    "tags": ["firmeza", "declaracion_tributaria", "3_años", "6_años", "prescripcion", "requerimiento_especial", "DIAN"]
   }
 ]

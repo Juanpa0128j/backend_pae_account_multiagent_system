@@ -36,6 +36,63 @@ class ProcessResponse(BaseModel):
     status: str
 
 
+class ProcessStatusResponse(BaseModel):
+    """Response for GET /process/status/{process_id}"""
+    process_id: str
+    status: str
+    current_stage: Optional[str] = None
+    current_agent: Optional[str] = None
+    progress: Optional[int] = None
+    error_message: Optional[str] = None
+    agent_log: Optional[List[Dict[str, Any]]] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class ProcessResultResponse(BaseModel):
+    """Response for GET /process/result/{process_id}"""
+    process_id: str
+    ingest_id: str
+    status: str
+    transactions: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class CompanyProfileSetupRequest(BaseModel):
+    """
+    User-friendly input for automatic tax rate configuration.
+
+    The user provides what they know (city, CIIU, régimen) and the agent
+    determines the correct tax rates from the normative RAG.
+    """
+    nombre: Optional[str] = None
+    ciudad: str = Field(..., min_length=2, description="City where the company operates, e.g. 'Bogotá', 'Medellín', 'Cali'")
+    codigo_ciiu: str = Field(..., min_length=1, description="CIIU economic activity code from the company's RUT")
+    iva_responsable: bool = Field(..., description="True if régimen común (IVA applies), False if régimen simplificado")
+
+
+class CompanySettingsRequest(BaseModel):
+    """Request body for creating or updating company tax settings."""
+    nombre: Optional[str] = None
+    ciudad: Optional[str] = None
+    codigo_ciiu: Optional[str] = None
+    iva_responsable: bool = True
+    tasa_retefuente_servicios: float = 0.11
+    tasa_retefuente_bienes: float = 0.03
+    tasa_retefuente_arrendamiento: float = 0.10
+    tasa_reteica: float = 0.0069
+    tasa_iva_general: float = 0.19
+
+
+class CompanySettingsResponse(CompanySettingsRequest):
+    """Response body for company tax settings endpoints."""
+    nit: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
 class ReportResponse(BaseModel):
     report: str
     data: Dict[str, Any]

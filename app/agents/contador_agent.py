@@ -11,6 +11,7 @@ output and the schema errors are re-sent to Gemini for self-correction.
 
 import logging
 
+from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.gemini_client import get_gemini_client
 
@@ -22,13 +23,13 @@ def contador_node(state: AgentState) -> AgentState:
     Contador node: classifies raw transactions into PUC-coded journal entries.
 
     Reads:
-        state["raw_transactions"]   – list of staged transaction dicts
+        state["raw_transactions"]    – list of staged transaction dicts
         state["correction_feedback"] – schema errors from previous attempt (retry)
 
     Writes:
-        state["contador_output"]    – ContadorOutput-compatible dict
-        state["current_stage"]      – "contador"
-        state["current_agent"]      – "contador"
+        state["contador_output"]     – ContadorOutput-compatible dict
+        state["current_stage"]       – "contador"
+        state["current_agent"]       – "contador"
     """
     if state.get("error"):
         logger.warning("contador: skipping due to upstream error: %s", state["error"])
@@ -43,6 +44,11 @@ def contador_node(state: AgentState) -> AgentState:
     is_retry = bool(state.get("correction_feedback"))
     state["current_agent"] = "contador"
     state["current_stage"] = "contador"
+
+    append_log(state, "contador", "node_start", {
+        "tx_count": len(raw_transactions),
+        "is_retry": is_retry,
+    })
 
     # Enrich context with RAG-retrieved PUC context when available
     rag_context: list[dict] = []
@@ -87,10 +93,12 @@ def contador_node(state: AgentState) -> AgentState:
         state["result"]["status"] = "clasificado"
 
         logger.info("contador: classification complete")
+        append_log(state, "contador", "node_complete", {"stage": "classifying"})
 
     except Exception as exc:
         state["error"] = f"contador error: {exc}"
         logger.error(state["error"], exc_info=True)
+        append_log(state, "contador", "node_error", {"error": str(exc)})
         if not state.get("result"):
             state["result"] = {}
         state["result"]["status"] = "error"

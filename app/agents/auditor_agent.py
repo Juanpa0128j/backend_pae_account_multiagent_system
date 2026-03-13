@@ -22,6 +22,7 @@ and schema errors are re-sent to Gemini for self-correction.
 
 import logging
 
+from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.gemini_client import get_gemini_client
 
@@ -39,6 +40,9 @@ def auditor_node(state: AgentState) -> AgentState:
 
     Writes:
         state["auditor_output"]      – AuditorOutput-compatible dict
+        state["audit_approved"]      – bool approval decision
+        state["audit_decision"]      – "approved" | "rejected"
+        state["audit_feedback"]      – rejection reason (if rejected)
         state["current_stage"]       – "auditor"
         state["current_agent"]       – "auditor"
     """
@@ -56,6 +60,11 @@ def auditor_node(state: AgentState) -> AgentState:
     is_retry = bool(state.get("correction_feedback"))
     state["current_agent"] = "auditor"
     state["current_stage"] = "auditor"
+
+    append_log(state, "auditor", "node_start", {
+        "tx_count": len(raw_transactions),
+        "is_retry": is_retry,
+    })
 
     try:
         gemini = get_gemini_client()
@@ -76,11 +85,21 @@ def auditor_node(state: AgentState) -> AgentState:
         state["correction_feedback"] = None
 
         state["auditor_output"] = auditor_output
+        approved = bool(auditor_output.get("aprobado", False))
+        state["audit_approved"] = approved
+        state["audit_rejection_reason"] = (
+            auditor_output.get("resumen") if not approved else None
+        )
+        # Also set unified field names used by the supervisor FSM
+        state["audit_decision"] = "approved" if approved else "rejected"
+        state["audit_feedback"] = (
+            auditor_output.get("resumen") if not approved else None
+        )
 
         if not state.get("result"):
             state["result"] = {}
         state["result"]["auditor_output"] = auditor_output
-        state["result"]["audit_approved"] = auditor_output.get("aprobado", False)
+        state["result"]["audit_approved"] = approved
 
         logger.info(
             "auditor: audit complete — aprobado=%s nivel_riesgo=%s puntaje=%s",
@@ -88,10 +107,15 @@ def auditor_node(state: AgentState) -> AgentState:
             auditor_output.get("nivel_riesgo"),
             auditor_output.get("puntaje_calidad"),
         )
+        append_log(state, "auditor", "node_complete", {
+            "approved": approved,
+            "nivel_riesgo": auditor_output.get("nivel_riesgo"),
+        })
 
     except Exception as exc:
         state["error"] = f"auditor error: {exc}"
         logger.error(state["error"], exc_info=True)
+        append_log(state, "auditor", "node_error", {"error": str(exc)})
         if not state.get("result"):
             state["result"] = {}
         state["result"]["status"] = "error"

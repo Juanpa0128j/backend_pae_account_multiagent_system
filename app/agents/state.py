@@ -16,6 +16,14 @@ class ValidationRecord(TypedDict):
     timestamp: str
 
 
+class LogEntry(TypedDict):
+    """Structured execution log entry written by each agent node."""
+    timestamp: str   # ISO UTC string
+    agent: str       # node/agent name
+    event: str       # event type: routing_start | routing_complete | validation_success | etc.
+    details: dict    # free-form event-specific payload
+
+
 class AgentState(TypedDict):
     """
     State object passed through the agent graph.
@@ -35,13 +43,17 @@ class AgentState(TypedDict):
     - mode: Pipeline mode: ingest or process
     - raw_transactions: Staged transactions used by contador (process pipeline)
     - contador_output: Structured contador output (ContadorOutput-compatible dict)
+    - tributario_output: Structured tributario output (TributarioOutput-compatible dict)
+    - company_config: Tax rates loaded from company_settings DB for the nit_receptor; None = use defaults
     - process_id: Process job id when running accounting pipeline
     - pending_transaction_id: Staged transaction id currently being posted
     - current_stage: Human-readable pipeline stage for status updates
-    - agent_log: Timeline entries for process status/debugging
+    - agent_log: Timeline entries for process status/debugging (List[LogEntry])
     - auditor_output: Structured auditor output (AuditorOutput-compatible dict)
     - audit_approved: Whether the auditor approved the transaction
     - audit_rejection_reason: Reason for rejection if not approved
+    - audit_decision: Decision from Auditor agent: "approved" | "rejected" | None
+    - audit_feedback: Rejection reason from Auditor, fed back to Contador for retry
     """
 
     file_path: str
@@ -58,10 +70,14 @@ class AgentState(TypedDict):
     mode: str
     raw_transactions: List[dict]
     contador_output: dict
+    tributario_output: dict
+    company_config: Optional[dict]
     process_id: Optional[str]
     pending_transaction_id: Optional[str]
     current_stage: Optional[str]
-    agent_log: List[dict]
+    agent_log: List[LogEntry]
     auditor_output: dict
     audit_approved: Optional[bool]
     audit_rejection_reason: Optional[str]
+    audit_decision: Optional[str]
+    audit_feedback: Optional[str]

@@ -41,3 +41,6 @@ htmlcov/
 .coverage
 coverage.xml
 test_*.pdf
+
+# Claude
+.claude/
