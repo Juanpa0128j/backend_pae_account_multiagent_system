@@ -26,7 +26,7 @@ import pytest
 
 from app.agents.auditor_agent import auditor_node
 from app.agents.contador_agent import contador_node
-from app.agents.graph import create_process_graph, invoke_process_pipeline
+from app.agents.graph import create_agent_graph, invoke_process_pipeline
 from app.agents.state import AgentState
 from app.agents.supervisor import (
     process_supervisor_node,
@@ -488,22 +488,22 @@ class TestConditionalEdges:
 class TestProcessGraphStructure:
 
     def test_graph_compiles(self):
-        graph = create_process_graph()
+        graph = create_agent_graph()
         assert graph is not None
 
     def test_expected_nodes_present(self):
-        graph = create_process_graph()
+        graph = create_agent_graph()
         nodes = {n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")}
         for expected in (
-            "process_supervisor", "contador", "validate_contador",
-            "auditor", "validate_auditor", "db_persist",
+            "supervisor", "ingesta", "validate_output", "db_persist",
+            "contador", "tributario", "auditor", "reportero", "error_terminal",
         ):
             assert expected in nodes, f"Node '{expected}' missing from process graph"
 
     def test_node_count(self):
-        graph = create_process_graph()
+        graph = create_agent_graph()
         nodes = [n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")]
-        assert len(nodes) == 6
+        assert len(nodes) == 9
 
 
 # ===========================================================================
@@ -556,7 +556,7 @@ class TestProcessGraphE2E:
 
         # RAG service not needed in this test
         with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
-            graph = create_process_graph()
+            graph = create_agent_graph()
             state = _base_state()
             final = graph.invoke(state)
 
@@ -584,7 +584,7 @@ class TestProcessGraphE2E:
         mock_aud_factory.return_value = mock_aud
 
         with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
-            graph = create_process_graph()
+            graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
         assert final.get("error") is None
@@ -618,7 +618,7 @@ class TestProcessGraphE2E:
         mock_aud_factory.return_value = mock_aud
 
         with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
-            graph = create_process_graph()
+            graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
         assert final.get("error") is None
@@ -654,7 +654,7 @@ class TestProcessGraphE2E:
         mock_aud_factory.return_value = mock_aud
 
         with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
-            graph = create_process_graph()
+            graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
         assert final.get("error") is None
@@ -669,7 +669,7 @@ class TestProcessGraphE2E:
         mock_cnt_factory.return_value = mock_cnt
 
         with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
-            graph = create_process_graph()
+            graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
         assert final.get("error") is not None
@@ -691,7 +691,7 @@ class TestProcessGraphE2E:
         mock_aud_factory.return_value = mock_aud
 
         with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
-            graph = create_process_graph()
+            graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
         db_result = final.get("db_result", {})

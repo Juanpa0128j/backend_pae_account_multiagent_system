@@ -6,8 +6,8 @@ Unified 9-node graph — all pipelines routed via supervisor FSM:
   Pipeline 1 (mode="ingest"):
     supervisor → ingesta → validate_output → [retry|error|end→db_persist] → END
   Pipeline 2 (mode="process"):
-    supervisor → contador → validate_contador → [retry→contador|end→tributario]
-        → tributario → supervisor → auditor → validate_auditor → [retry→auditor|end→db_persist]
+    supervisor -> contador -> supervisor -> tributario -> supervisor -> auditor
+         -> supervisor -> db_persist -> END
   Reporting (mode="reporting"):
     supervisor → reportero → END
   Error path:
@@ -28,14 +28,9 @@ from app.agents.persist_node import db_persist_node
 from app.agents.state import AgentState
 from app.agents.supervisor import (
     error_terminal_node,
-    process_supervisor_node,
     route_after_supervisor,
     should_retry_agent,
-    should_retry_auditor,
-    should_retry_contador,
     supervisor_node,
-    validate_auditor_output_node,
-    validate_contador_output_node,
     validate_output_node,
 )
 from app.agents.tributario_agent import tributario_node
@@ -49,49 +44,6 @@ logger = logging.getLogger(__name__)
 # Core execution fields are intentionally excluded to prevent accidental
 # runtime corruption.
 _ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset({"ingest_id", "mode"})
-
-
-def create_process_graph() -> Any:
-    """
-    Create and return the process graph.
-    """
-    graph = StateGraph(AgentState)
-
-    graph.add_node("process_supervisor", process_supervisor_node)
-    graph.add_node("contador", contador_node)
-    graph.add_node("validate_contador", validate_contador_output_node)
-    graph.add_node("auditor", auditor_node)
-    graph.add_node("validate_auditor", validate_auditor_output_node)
-    graph.add_node("db_persist", db_persist_node)
-
-    graph.add_edge("process_supervisor", "contador")
-    graph.add_edge("contador", "validate_contador")
-    graph.add_conditional_edges(
-        "validate_contador",
-        should_retry_contador,
-        {
-            "retry": "contador",
-            "end": "auditor",
-        },
-    )
-    graph.add_edge("auditor", "validate_auditor")
-    graph.add_conditional_edges(
-        "validate_auditor",
-        should_retry_auditor,
-        {
-            "retry": "auditor",
-            "end": "db_persist",
-        },
-    )
-    graph.add_edge("db_persist", END)
-    graph.set_entry_point("process_supervisor")
-
-    compiled_graph = graph.compile()
-    logger.info(
-        "Process graph created and compiled "
-        "(contador + validation + auditor + validation + DB persist)"
-    )
-    return compiled_graph
 
 
 def create_agent_graph() -> Any:
@@ -246,7 +198,8 @@ def invoke_process_pipeline(
 
     Invoke the accounting process pipeline starting from staged transactions.
     """
-    graph = create_process_graph()
+    # Use the unified graph so process/ingest/reporting share one FSM.
+    graph = create_agent_graph()
 
 
     state: AgentState = {
