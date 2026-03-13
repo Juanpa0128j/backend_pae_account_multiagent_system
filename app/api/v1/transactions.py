@@ -17,6 +17,7 @@ class TransactionListItem(BaseModel):
     total: float
     status: str
     nit_emisor: str
+    ingest_id: Optional[str] = None
 
 
 @router.get("/", response_model=List[TransactionListItem])
@@ -46,6 +47,7 @@ async def list_transactions(
             total=float(t.total) if t.total else 0,
             status=t.status.value if t.status else "unknown",
             nit_emisor=t.nit_emisor or "",
+            ingest_id=t.ingest_id,
         )
         for t in txns
     ]
@@ -95,6 +97,7 @@ async def search_transactions(
             "total": float(t.total) if t.total else 0,
             "status": t.status.value if t.status else "unknown",
             "nit_emisor": t.nit_emisor or "",
+            "ingest_id": t.ingest_id,
         }
         for t in txns
     ]

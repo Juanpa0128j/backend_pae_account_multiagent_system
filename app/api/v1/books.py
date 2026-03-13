@@ -36,7 +36,7 @@ async def get_books(
     ff = _parse_date(fecha_fin)
 
     if tipo == "diario":
-        lines = db_service.get_libro_diario(db, fi, ff)
+        lines = db_service.get_daily_journal(db, fi, ff)
         return [
             {
                 "fecha": str(l.fecha) if l.fecha else "",
@@ -50,12 +50,12 @@ async def get_books(
         ]
 
     elif tipo == "mayor":
-        return db_service.get_libro_mayor(db, fi, ff)
+        return db_service.get_general_ledger(db, fi, ff)
 
     elif tipo == "auxiliar":
         if not cuenta_puc:
             return {"error": "cuenta_puc is required for auxiliar"}
-        lines = db_service.get_libro_auxiliar(db, cuenta_puc, fi, ff)
+        lines = db_service.get_subsidiary_journal(db, cuenta_puc, fi, ff)
         return [
             {
                 "fecha": str(l.fecha) if l.fecha else "",
@@ -69,7 +69,7 @@ async def get_books(
         ]
 
     elif tipo == "balance":
-        return db_service.get_balance_general(db, ff)
+        return db_service.get_balance_sheet(db, ff)
 
     else:
         return {"error": f"Unknown book type: {tipo}. Use diario, mayor, auxiliar, or balance."}
