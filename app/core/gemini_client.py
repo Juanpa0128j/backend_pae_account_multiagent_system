@@ -183,6 +183,7 @@ Corrige los errores indicados y vuelve a extraer la información."""
         self,
         raw_transactions: list,
         *,
+        rag_context: list[dict] | None = None,
         correction_feedback: str | None = None,
     ) -> dict:
         """
@@ -197,6 +198,24 @@ Corrige los errores indicados y vuelve a extraer la información."""
             for t in raw_transactions
         )
 
+        rag_context = rag_context or []
+        rag_lines: list[str] = []
+        for item in rag_context[:5]:
+            if isinstance(item, dict):
+                rag_lines.append(
+                    str(
+                        item.get("content")
+                        or item.get("text")
+                        or item.get("document")
+                        or item
+                    )
+                )
+            else:
+                rag_lines.append(str(getattr(item, "content", item)))
+        rag_section = "\n".join(line for line in rag_lines if line).strip()
+        if not rag_section:
+            rag_section = "Sin contexto normativo adicional."
+
         prompt = f"""Eres un contador experto en normativa colombiana (PUC).
 
 Transacciones pendientes de clasificar:
@@ -206,7 +225,7 @@ Genera el asiento contable siguiendo el Plan Único de Cuentas (PUC) colombiano.
 - Usa cuentas PUC reales (ej: 5195 para gastos, 1110 para bancos/caja)
 - Garantiza que el total de débitos == total de créditos (partida doble)
 - tipo_movimiento debe ser "debito" o "credito" (minúsculas)
-- tipo_documento debe ser uno de: recibo, factura, extracto, nota_credito, nota_debito, comprobante_egreso, otro"""
+- tipo_documento debe ser uno de: recibo, factura, extracto, nota_credito, nota_debito, comprobante_egreso, otro\n\nContexto normativo/RAG (si existe):\n{rag_section}"""
 
         if correction_feedback:
             prompt += f"""
