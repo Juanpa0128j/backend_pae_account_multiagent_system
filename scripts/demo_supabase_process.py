@@ -74,6 +74,12 @@ class FakeLlamaParse:
 class FakeGeminiClient:
     """Deterministic Gemini replacement for ingest + process demo runs."""
 
+    class _Justification:
+        def __init__(self, referencias: list[str], justificacion: str, confirma_tasas: bool):
+            self.referencias = referencias
+            self.justificacion = justificacion
+            self.confirma_tasas = confirma_tasas
+
     def extract_transactions(
         self,
         text: str,
@@ -89,18 +95,20 @@ class FakeGeminiClient:
         }
         # Keep both contracts: IngestOutput schema + legacy fields consumed by db_persist.
         return {
-            "transactions": [tx],
             "fecha": tx["fecha"],
-            "nit_emisor": tx["nit_emisor"],
-            "nit_receptor": tx["nit_receptor"],
-            "total": tx["total"],
-            "descripcion": tx["descripcion"],
-            "items": tx["items"],
+            "monto": tx["total"],
+            "concepto": tx["descripcion"],
+            "beneficiario": "Proveedor Demo S.A.S.",
+            "empresa": "PAE Demo Company",
+            "referencia": "FAC-DEMO-2026-0001",
+            "tipo_documento": "factura",
+            "transactions": [tx],
         }
 
     def extract_contador_output(
         self,
         raw_transactions: list[dict[str, Any]],
+        rag_context: list[dict[str, Any]] | None = None,
         correction_feedback: str | None = None,
     ) -> dict[str, Any]:
         tx = raw_transactions[0] if raw_transactions else {}
@@ -134,6 +142,34 @@ class FakeGeminiClient:
             ],
             "total_debitos": float(total),
             "total_creditos": float(total),
+        }
+
+    def justify_tax_analysis(self, tax_amounts: dict[str, Any], rag_context: str) -> _Justification:
+        _ = rag_context
+        return self._Justification(
+            referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],
+            justificacion=(
+                "Analisis tributario validado para demo con tasas estandar de Colombia "
+                "y referencias normativas base."
+            ),
+            confirma_tasas=True,
+        )
+
+    def extract_auditor_output(
+        self,
+        contador_output: dict[str, Any],
+        raw_transactions: list[dict[str, Any]],
+        correction_feedback: str | None = None,
+    ) -> dict[str, Any]:
+        _ = (contador_output, raw_transactions, correction_feedback)
+        return {
+            "fecha_auditoria": datetime.now(timezone.utc).date().isoformat(),
+            "documento_referencia": "DEMO-SUPABASE-PIPELINE",
+            "aprobado": True,
+            "nivel_riesgo": "bajo",
+            "hallazgos": [],
+            "puntaje_calidad": 95,
+            "resumen": "Auditoria aprobada: asientos balanceados y consistentes para el demo.",
         }
 
 
@@ -226,7 +262,9 @@ def _ensure_demo_puc_accounts() -> None:
 
 
 def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
-    with patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse), patch(
+    with patch("app.agents.ingest_agent.LlamaCloud", FakeLlamaParse, create=True), patch(
+        "app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True
+    ), patch(
         "app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()
     ):
         return invoke_agent(pdf_path)
@@ -285,7 +323,10 @@ def _create_process_context(ingest_result: dict[str, Any], pdf_path: str) -> Dem
 
 
 def _run_process_pipeline(ctx: DemoContext) -> dict[str, Any]:
-    with patch("app.agents.contador_agent.get_gemini_client", return_value=FakeGeminiClient()):
+    fake_client = FakeGeminiClient()
+    with patch("app.agents.contador_agent.get_gemini_client", return_value=fake_client), patch(
+        "app.agents.tributario_agent.get_gemini_client", return_value=fake_client
+    ), patch("app.agents.auditor_agent.get_gemini_client", return_value=fake_client):
         return invoke_process_pipeline(
             ingest_id=ctx.ingest_id,
             raw_transactions=ctx.raw_transactions,

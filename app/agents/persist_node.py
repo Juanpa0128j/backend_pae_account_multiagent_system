@@ -363,34 +363,6 @@ def _run_persist(state: AgentState) -> AgentState:
         )
         logger.info("db_persist: Created %d journal entry lines", len(lines))
 
-        # ── 6. Mark pipeline job as completed ──
-        if mode == "ingest":
-            db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
-        process_id = _as_str(state.get("process_id"), "")
-        if mode == "process" and process_id:
-            db_service.update_process_job(
-                db,
-
-                transaction_pending_id=_as_str(getattr(txn_pending, "id", ""), ""),
-                cuenta_puc=cuenta_puc,
-                puc_descripcion=puc_descripcion,
-                retefuente=retefuente,
-                reteica=reteica,
-                iva=iva,
-                neto_a_pagar=neto,
-                journal_entries_json=journal_json,
-                tax_references=tx_data.get("referencias_legales", []),
-                agent_reasoning=tx_data.get("agent_reasoning"),
-            )
-            posted_ids.append(_as_str(getattr(txn_posted, "id", ""), ""))
-
-            lines = db_service.create_journal_entry_lines(
-                db,
-                _as_str(getattr(txn_posted, "id", ""), ""),
-                journal_json,
-            )
-            total_lines += len(lines)
-
         if mode == "ingest":
             db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
         else:
