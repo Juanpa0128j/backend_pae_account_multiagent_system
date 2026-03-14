@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -11,9 +13,29 @@ router = APIRouter()
 
 
 def _classify_process_error(error_message: str | None) -> tuple[str | None, str | None, str | None]:
-    """Classify process failures for API consumers."""
+    """Classify process failures for API consumers.
+
+    Accepts either:
+    - Structured JSON payloads in ``error_message`` with keys
+      ``error_category``, ``error_code`` and ``remediation``.
+    - Legacy free-form text, classified via substring matching.
+    """
     if not error_message:
         return None, None, None
+
+    stripped = error_message.lstrip()
+    if stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+            if isinstance(payload, dict):
+                category = payload.get("error_category")
+                code = payload.get("error_code")
+                remediation = payload.get("remediation")
+                if category is not None or code is not None or remediation is not None:
+                    return category, code, remediation
+        except Exception:
+            # Fall back to legacy text classification.
+            pass
 
     msg = error_message.lower()
 

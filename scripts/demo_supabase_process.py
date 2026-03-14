@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.agents.graph import invoke_agent, invoke_process_pipeline
+from app.agents.graph import invoke_ingest_pipeline, invoke_process_pipeline
 from app.core.config import settings
 from app.core.database import SessionLocal, check_db_connection
 from app.models.database import CuentaPUC, JournalEntryLine, NaturalezaCuenta, TransactionPosted
@@ -267,7 +267,7 @@ def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
     ), patch(
         "app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()
     ):
-        return invoke_agent(pdf_path)
+        return invoke_ingest_pipeline(pdf_path)
 
 
 def _create_process_context(ingest_result: dict[str, Any], pdf_path: str) -> DemoContext:

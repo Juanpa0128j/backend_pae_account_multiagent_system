@@ -283,6 +283,24 @@ def _ensure_minimum_puc() -> None:
                     activa=True,
                 )
             )
+
+        # Tributario precondition: company tax settings must exist for nit_receptor.
+        db_service.upsert_company_settings(
+            db,
+            nit="800333444",
+            data={
+                "nombre": "Empresa Demo E2E",
+                "ciudad": "Cali",
+                "codigo_ciiu": "6920",
+                "iva_responsable": True,
+                "tasa_retefuente_servicios": Decimal("0.11"),
+                "tasa_retefuente_bienes": Decimal("0.03"),
+                "tasa_retefuente_arrendamiento": Decimal("0.10"),
+                "tasa_reteica": Decimal("0.0069"),
+                "tasa_iva_general": Decimal("0.19"),
+            },
+            commit=False,
+        )
         db.commit()
 
 

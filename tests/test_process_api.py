@@ -388,3 +388,78 @@ def test_get_process_result_failed_business_precondition_returns_409(monkeypatch
     assert body["error_category"] == "business_precondition"
     assert body["error_code"] == "MISSING_COMPANY_SETTINGS"
 
+
+def test_get_process_status_prefers_structured_error_payload(monkeypatch):
+    app.dependency_overrides[get_db] = _override_db
+    client = TestClient(app)
+
+    structured_error = (
+        '{"error_category":"business_precondition",'
+        '"error_code":"MISSING_COMPANY_SETTINGS",'
+        '"remediation":"Configure company settings and retry.",'
+        '"message":"Human-readable message"}'
+    )
+
+    monkeypatch.setattr(
+        db_service,
+        "get_process_job",
+        lambda db, process_id: SimpleNamespace(
+            id=process_id,
+            ingest_id="ing_001",
+            status=ProcessStatus.FAILED,
+            current_stage="failed",
+            current_agent="supervisor",
+            progress=100,
+            error_message=structured_error,
+            agent_log=[],
+            created_at=datetime.now(timezone.utc),
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    response = client.get("/api/v1/process/status/proc_struct")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error_category"] == "business_precondition"
+    assert body["error_code"] == "MISSING_COMPANY_SETTINGS"
+    assert body["remediation"] == "Configure company settings and retry."
+
+    app.dependency_overrides.clear()
+
+
+def test_get_process_status_falls_back_when_structured_payload_invalid_json(monkeypatch):
+    app.dependency_overrides[get_db] = _override_db
+    client = TestClient(app)
+
+    invalid_json_error = (
+        '{not valid json} Tributario precondition failed: '
+        'missing company tax settings for NIT 800999888'
+    )
+
+    monkeypatch.setattr(
+        db_service,
+        "get_process_job",
+        lambda db, process_id: SimpleNamespace(
+            id=process_id,
+            ingest_id="ing_001",
+            status=ProcessStatus.FAILED,
+            current_stage="failed",
+            current_agent="supervisor",
+            progress=100,
+            error_message=invalid_json_error,
+            agent_log=[],
+            created_at=datetime.now(timezone.utc),
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    response = client.get("/api/v1/process/status/proc_invalid_json")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error_category"] == "business_precondition"
+    assert body["error_code"] == "MISSING_COMPANY_SETTINGS"
+
+    app.dependency_overrides.clear()
+
