@@ -19,6 +19,7 @@ Tests cover:
 
 import pytest
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.agents.tributario_agent import (
@@ -477,3 +478,54 @@ def test_smoke_1500000_servicios(mock_rag_cls, mock_gemini_fn):
     assert impuestos["reteica"]    == Decimal("10350.00")
     assert impuestos["IVA"]        == Decimal("285000.00")
     assert Decimal(output["total_impuestos"]) == Decimal("460350.00")
+
+
+@patch("app.services.db_service.get_company_settings", return_value=None)
+@patch("app.core.database.SessionLocal")
+def test_process_mode_fails_when_company_settings_missing(mock_session_local, mock_get_settings):
+    """Process mode must fail fast when no company_settings row exists for NIT."""
+    _ = mock_get_settings
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+
+    state = _make_state(VALID_CONTADOR_OUTPUT)
+    state["raw_transactions"] = [{"nit_receptor": "800999888"}]
+
+    result = tributario_node(state)
+
+    assert result.get("error") is not None
+    assert "missing company tax settings" in result["error"].lower()
+    assert "/api/v1/settings/company/800999888/setup" in result["error"]
+
+
+@patch("app.services.db_service.get_company_settings")
+@patch("app.core.database.SessionLocal")
+@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_process_mode_uses_company_settings_when_present(
+    mock_rag_cls,
+    mock_gemini_fn,
+    mock_session_local,
+    mock_get_settings,
+):
+    """Process mode should continue successfully when company settings exist."""
+    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_settings.return_value = SimpleNamespace(
+        tasa_retefuente_servicios=Decimal("0.110000"),
+        tasa_retefuente_bienes=Decimal("0.030000"),
+        tasa_retefuente_arrendamiento=Decimal("0.100000"),
+        tasa_reteica=Decimal("0.006900"),
+        tasa_iva_general=Decimal("0.190000"),
+        iva_responsable=True,
+    )
+
+    state = _make_state(VALID_CONTADOR_OUTPUT)
+    state["raw_transactions"] = [{"nit_receptor": "800999888"}]
+
+    result = tributario_node(state)
+
+    assert result.get("error") is None
+    assert result["tributario_output"] != {}
