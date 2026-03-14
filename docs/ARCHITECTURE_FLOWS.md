@@ -59,6 +59,49 @@ Key idea:
 - One unified graph handles multiple modes.
 - API routes orchestrate background jobs and expose polling/result endpoints.
 
+## 1.1) FSM State Catalog (Unified Graph)
+
+The unified LangGraph finite-state machine has 9 explicit runtime states:
+
+1. supervisor
+  Purpose: central router and gatekeeper.
+  Behavior: reads mode and current_agent, applies validation/routing rules, and decides the next state.
+
+2. ingesta
+  Purpose: document extraction and transaction interpretation.
+  Behavior: parses source files and builds structured extracted data for ingest mode.
+
+3. validate_output
+  Purpose: schema validation and retry control for ingest output.
+  Behavior: validates extracted payload, emits correction feedback, loops to ingesta on retryable errors, or advances to persistence.
+
+4. contador
+  Purpose: accounting classification.
+  Behavior: classifies transactions into accounting entries and produces contador output for downstream tax/audit checks.
+
+5. tributario
+  Purpose: tax calculation and legal grounding.
+  Behavior: computes retefuente, reteica, and IVA; enriches entries; loads company tax config and fails fast in process mode when required settings are missing.
+
+6. auditor
+  Purpose: accounting quality and compliance decision.
+  Behavior: validates consistency and can approve, reject (loop back to contador), or fail the process.
+
+7. db_persist
+  Purpose: centralized persistence layer.
+  Behavior: writes ingest/process outputs to DB (jobs, pending/posted transactions, journal lines, audit logs) and updates job statuses.
+
+8. reportero
+  Purpose: reporting mode terminal worker.
+  Behavior: generates reporting outputs and exits without accounting persistence flow.
+
+9. error_terminal
+  Purpose: controlled failure sink.
+  Behavior: ends execution when a non-recoverable error is detected upstream.
+
+Note:
+- LangGraph also has internal start/end markers, but they are framework boundary states rather than business runtime states.
+
 ## 2) Pipeline 1: Ingest Flow
 
 ```mermaid
