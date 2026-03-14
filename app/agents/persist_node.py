@@ -258,8 +258,8 @@ def _run_persist(state: AgentState) -> AgentState:
                     db,
                     ingest_id=ingest_id,
                     fecha=fecha,
-                    nit_emisor=nit_emisor or None,
-                    nit_receptor=nit_receptor or None,
+                    nit_emisor=nit_emisor,
+                    nit_receptor=nit_receptor,
                     total=total,
                     descripcion=descripcion,
                     items=items if isinstance(items, list) else [],
@@ -322,6 +322,12 @@ def _run_persist(state: AgentState) -> AgentState:
                     descripcion=descripcion,
                 )
                 neto = total
+                tax_references = tx_data.get("referencias_legales", [])
+                auditor_out = state.get("auditor_output") or {}
+                agent_reasoning = {
+                    "contador": contador_output,
+                    "auditor": auditor_out,
+                }
             else:
                 journal_json = _build_journal_entries(
                     fecha=fecha,
@@ -334,34 +340,33 @@ def _run_persist(state: AgentState) -> AgentState:
                     nit=nit_emisor,
                     descripcion=descripcion,
                 )
+                tax_references = interpreted.get("referencias_legales", [])
+                raw_reasoning = tx_data.get("agent_reasoning")
+                agent_reasoning = raw_reasoning if isinstance(raw_reasoning, dict) else {}
 
+            txn_posted = db_service.create_transaction_posted(
+                db,
+                transaction_pending_id=_as_str(getattr(txn_pending, "id", "")),
+                cuenta_puc=cuenta_puc,
+                puc_descripcion=puc_descripcion,
+                retefuente=retefuente,
+                reteica=reteica,
+                iva=iva,
+                neto_a_pagar=neto,
+                journal_entries_json=journal_json,
+                tax_references=tax_references,
+                agent_reasoning=agent_reasoning,
+            )
+            posted_ids.append(_as_str(getattr(txn_posted, "id", ""), ""))
+            logger.info("db_persist: Created TransactionPosted %s", txn_posted.id)
 
-        # Auditor output is available only in process mode
+            lines = db_service.create_journal_entry_lines(
+                db, _as_str(getattr(txn_posted, "id", "")), journal_json
+            )
+            total_lines += len(lines)
+            logger.info("db_persist: Created %d journal entry lines", len(lines))
+
         auditor_out = state.get("auditor_output") or {}
-
-        txn_posted = db_service.create_transaction_posted(
-            db,
-            transaction_pending_id=_as_str(getattr(txn_pending, "id", "")),
-            cuenta_puc=cuenta_puc,
-            puc_descripcion=puc_descripcion,
-            retefuente=retefuente,
-            reteica=reteica,
-            iva=iva,
-            neto_a_pagar=neto,
-            journal_entries_json=journal_json,
-            tax_references=interpreted.get("referencias_legales", []),
-            agent_reasoning={
-                "contador": (contador_output if mode == "process" else {}),
-                "auditor": auditor_out,
-            },
-        )
-        logger.info("db_persist: Created TransactionPosted %s", txn_posted.id)
-
-        # ── 5. Create normalized JournalEntryLines ──
-        lines = db_service.create_journal_entry_lines(
-            db, _as_str(getattr(txn_posted, "id", "")), journal_json
-        )
-        logger.info("db_persist: Created %d journal entry lines", len(lines))
 
         if mode == "ingest":
             db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
