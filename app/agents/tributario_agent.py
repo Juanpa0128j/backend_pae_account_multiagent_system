@@ -398,6 +398,7 @@ def tributario_node(state: AgentState) -> AgentState:
         if iva_to_add > 0:
             asientos_enriquecidos.append({
                 "cuenta_puc":       CUENTA_IVA,
+                "nombre_cuenta":    "IVA Descontable",
                 "descripcion":      "IVA descontable — Art. 477 ET",
                 "tipo_movimiento":  "debito",
                 "valor":            str(iva_to_add),
@@ -407,6 +408,7 @@ def tributario_node(state: AgentState) -> AgentState:
         if retefuente_val > 0:
             asientos_enriquecidos.append({
                 "cuenta_puc":       CUENTA_RETEFUENTE,
+                "nombre_cuenta":    "Retención en la Fuente por Pagar",
                 "descripcion":      f"Retención en la Fuente por pagar — {referencias[0] if referencias else 'Art. 383 ET'}",
                 "tipo_movimiento":  "credito",
                 "valor":            str(retefuente_val),
@@ -415,6 +417,7 @@ def tributario_node(state: AgentState) -> AgentState:
         if reteica_val > 0:
             asientos_enriquecidos.append({
                 "cuenta_puc":       CUENTA_RETEICA,
+                "nombre_cuenta":    "Retención ICA por Pagar",
                 "descripcion":      "Retención ICA por pagar — Decreto 2048/1992",
                 "tipo_movimiento":  "credito",
                 "valor":            str(reteica_val),

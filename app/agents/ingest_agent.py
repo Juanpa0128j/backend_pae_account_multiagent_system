@@ -13,7 +13,10 @@ from app.agents.state import AgentState
 from app.core.config import get_settings
 from app.core.gemini_client import get_gemini_client
 from app.core.logger import get_logger
-from llama_cloud import LlamaCloud
+try:
+    from llama_cloud import LlamaCloud  # type: ignore[import-untyped]
+except ImportError:
+    LlamaCloud = None  # type: ignore[assignment,misc]
 
 logger = get_logger("app.agents.ingest")
 
