@@ -44,6 +44,9 @@ class ProcessStatusResponse(BaseModel):
     current_agent: Optional[str] = None
     progress: Optional[int] = None
     error_message: Optional[str] = None
+    error_category: Optional[str] = None
+    error_code: Optional[str] = None
+    remediation: Optional[str] = None
     agent_log: Optional[List[Dict[str, Any]]] = None
     created_at: Optional[str] = None
     started_at: Optional[str] = None
@@ -56,6 +59,10 @@ class ProcessResultResponse(BaseModel):
     ingest_id: str
     status: str
     transactions: List[Dict[str, Any]] = Field(default_factory=list)
+    error_message: Optional[str] = None
+    error_category: Optional[str] = None
+    error_code: Optional[str] = None
+    remediation: Optional[str] = None
 
 
 class CompanyProfileSetupRequest(BaseModel):
