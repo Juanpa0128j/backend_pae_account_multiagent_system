@@ -26,7 +26,7 @@ import pytest
 
 from app.agents.auditor_agent import auditor_node
 from app.agents.contador_agent import contador_node
-from app.agents.graph import create_agent_graph, invoke_process_pipeline
+from app.agents.graph import create_agent_graph, invoke_accounting_pipeline
 from app.agents.state import AgentState
 from app.agents.supervisor import (
     process_supervisor_node,
@@ -808,7 +808,7 @@ class TestProcessGraphDBIntegration:
         mock_aud_factory.return_value = mock_aud
 
         with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
-            result = invoke_process_pipeline(
+            result = invoke_accounting_pipeline(
                 ingest_id=self._ingest_id,
                 raw_transactions=list(VALID_RAW_TRANSACTIONS),
                 pending_transaction_id=self._pending_id,
@@ -866,7 +866,7 @@ class TestProcessGraphDBIntegration:
         mock_aud_factory.return_value = mock_aud
 
         with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
-            result = invoke_process_pipeline(
+            result = invoke_accounting_pipeline(
                 ingest_id=self._ingest_id,
                 raw_transactions=list(VALID_RAW_TRANSACTIONS),
                 pending_transaction_id=self._pending_id,

@@ -111,10 +111,10 @@ def create_agent_graph() -> Any:
 
 
 # ---------------------------------------------------------------------------
-# invoke_agent — Pipeline 1 (ingest) entry point
+# invoke_ingest_pipeline — Pipeline 1 (ingest) entry point
 # ---------------------------------------------------------------------------
 
-def invoke_agent(file_path: str, initial_state: dict | None = None) -> dict:
+def invoke_ingest_pipeline(file_path: str, initial_state: dict | None = None) -> dict:
     """
 
     Invoke the unified agent graph for a file upload (Pipeline 1).
@@ -162,7 +162,7 @@ def invoke_agent(file_path: str, initial_state: dict | None = None) -> dict:
         disallowed = set(initial_state.keys()) - _ALLOWED_INITIAL_STATE_KEYS
         if disallowed:
             raise ValueError(
-                f"invoke_agent: initial_state contains disallowed keys: {sorted(disallowed)}. "
+                f"invoke_ingest_pipeline: initial_state contains disallowed keys: {sorted(disallowed)}. "
                 f"Permitted keys: {sorted(_ALLOWED_INITIAL_STATE_KEYS)}"
             )
         for key, value in initial_state.items():
@@ -183,11 +183,11 @@ def invoke_agent(file_path: str, initial_state: dict | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# invoke_process_pipeline — Pipeline 2 (accounting) entry point
+# invoke_accounting_pipeline — Pipeline 2 (accounting) entry point
 # ---------------------------------------------------------------------------
 
 
-def invoke_process_pipeline(
+def invoke_accounting_pipeline(
     *,
     ingest_id: str,
     raw_transactions: list[dict],
@@ -239,3 +239,5 @@ def invoke_process_pipeline(
     result["agent_log"] = final_state.get("agent_log", [])
 
     return result
+
+

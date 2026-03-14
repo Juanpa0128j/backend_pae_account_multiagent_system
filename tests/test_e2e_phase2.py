@@ -10,7 +10,7 @@ dependencies mocked. Validates:
   - Retry cycle: invalid output → correction_feedback → retry → success
   - Exhausted retries: 3 invalid → validation_exhausted event, error set
   - agent_log: populated with standardised entries at each node
-  - invoke_agent: returns agent_log and validation_history in result dict
+  - invoke_ingest_pipeline: returns agent_log and validation_history in result dict
 """
 
 import pytest
@@ -443,7 +443,7 @@ class TestRetryFlow:
 
 
 # ---------------------------------------------------------------------------
-# invoke_agent wrapper
+# invoke_ingest_pipeline wrapper
 # ---------------------------------------------------------------------------
 
 class TestInvokeAgent:
@@ -458,9 +458,9 @@ class TestInvokeAgent:
         mock_llama.return_value = _mock_llama().return_value
         mock_gemini.return_value = _mock_gemini(VALID_DATA).return_value
 
-        from app.agents.graph import invoke_agent
+        from app.agents.graph import invoke_ingest_pipeline
 
-        result = invoke_agent(dummy_pdf)
+        result = invoke_ingest_pipeline(dummy_pdf)
         assert "agent_log" in result
         assert isinstance(result["agent_log"], list)
         assert len(result["agent_log"]) > 0
@@ -476,8 +476,8 @@ class TestInvokeAgent:
         mock_llama.return_value = _mock_llama().return_value
         mock_gemini.return_value = _mock_gemini(VALID_DATA).return_value
 
-        from app.agents.graph import invoke_agent
+        from app.agents.graph import invoke_ingest_pipeline
 
-        result = invoke_agent(dummy_pdf)
+        result = invoke_ingest_pipeline(dummy_pdf)
         assert "validation_history" in result
         assert len(result["validation_history"]) >= 1

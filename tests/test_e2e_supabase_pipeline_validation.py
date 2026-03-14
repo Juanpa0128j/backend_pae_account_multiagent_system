@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 from reportlab.pdfgen import canvas
 
-from app.agents.graph import invoke_agent, invoke_process_pipeline
+from app.agents.graph import invoke_ingest_pipeline, invoke_accounting_pipeline
 from app.core.config import settings
 from app.core.database import SessionLocal, check_db_connection
 from app.models.database import (
@@ -235,7 +235,7 @@ def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
     with patch("app.agents.ingest_agent.LlamaCloud", FakeLlamaParse, create=True), patch(
         "app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True
     ), patch("app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()):
-        return invoke_agent(pdf_path)
+        return invoke_ingest_pipeline(pdf_path)
 
 
 def _create_context_from_ingest(ingest_result: dict[str, Any], pdf_path: str) -> SupabaseE2EContext:
@@ -267,7 +267,7 @@ def _run_process_pipeline(ctx: SupabaseE2EContext) -> dict[str, Any]:
     with patch("app.agents.contador_agent.get_gemini_client", return_value=fake_client), patch(
         "app.agents.tributario_agent.get_gemini_client", return_value=fake_client
     ), patch("app.agents.auditor_agent.get_gemini_client", return_value=fake_client):
-        return invoke_process_pipeline(
+        return invoke_accounting_pipeline(
             ingest_id=ctx.ingest_id,
             raw_transactions=ctx.raw_transactions,
             pending_transaction_id=ctx.pending_id,

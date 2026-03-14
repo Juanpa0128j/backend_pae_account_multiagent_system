@@ -30,7 +30,7 @@ from unittest.mock import patch
 import pytest
 from reportlab.pdfgen import canvas
 
-from app.agents.graph import create_agent_graph, invoke_agent
+from app.agents.graph import create_agent_graph, invoke_ingest_pipeline
 from app.core.config import settings
 from app.core.database import SessionLocal, check_db_connection
 from app.models.agent_outputs import (
@@ -321,7 +321,7 @@ def _invoke_ingest(pdf_path: str) -> dict[str, Any]:
         patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
         patch("app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()),
     ):
-        return invoke_agent(pdf_path)
+        return invoke_ingest_pipeline(pdf_path)
 
 
 def _make_base_state() -> dict[str, Any]:
@@ -394,7 +394,7 @@ def _invoke_process_full_state(
 
 @pytest.fixture(scope="module")
 def ingest_result() -> dict[str, Any]:
-    """Ejecuta el pipeline de ingesta y devuelve el result dict de invoke_agent."""
+    """Ejecuta el pipeline de ingesta y devuelve el result dict de invoke_ingest_pipeline."""
     _require_supabase()
     _ensure_minimum_puc()
     pdf_path = _create_demo_pdf()
