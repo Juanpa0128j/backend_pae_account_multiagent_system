@@ -22,7 +22,7 @@ load_dotenv()
 # Add project to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from app.agents.graph import invoke_agent
+from app.agents.graph import invoke_ingest_pipeline
 from app.core.gemini_client import GeminiClient
 
 
@@ -125,7 +125,7 @@ def test_full_agent(pdf_path: str):
     
     try:
         print(f"Processing: {pdf_path}")
-        result = invoke_agent(pdf_path)
+        result = invoke_ingest_pipeline(pdf_path)
         
         if result.get("status") == "completed":
             print("✅ Agent completed successfully!")

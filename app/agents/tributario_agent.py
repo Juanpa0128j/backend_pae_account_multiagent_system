@@ -161,11 +161,13 @@ def tributario_node(state: AgentState) -> AgentState:
 
     try:
         # ------------------------------------------------------------------
-        # Step 1 — Load company tax config from DB (falls back to defaults)
+        # Step 1 — Load company tax config from DB.
+        # In process mode this is a hard precondition: no silent defaults.
         # ------------------------------------------------------------------
+        mode = state.get("mode", "ingest")
         company_config = state.get("company_config")
+        nit_receptor = None
         if not company_config:
-            nit_receptor = None
             for tx in (state.get("raw_transactions") or []):
                 nit_receptor = tx.get("nit_receptor")
                 if nit_receptor:
@@ -191,15 +193,45 @@ def tributario_node(state: AgentState) -> AgentState:
                                 f"Tributario: loaded company settings for NIT {nit_receptor}"
                             )
                         else:
-                            logger.info(
-                                f"Tributario: no company settings for NIT {nit_receptor} — using defaults"
+                            logger.warning(
+                                "Tributario: missing company settings for NIT %s",
+                                nit_receptor,
                             )
                     finally:
                         _db.close()
                 except Exception as cfg_err:
                     logger.warning(
-                        f"Tributario: could not load company settings ({cfg_err}) — using defaults"
+                        "Tributario: could not load company settings (%s)",
+                        cfg_err,
                     )
+
+        has_staged_transactions = bool(state.get("raw_transactions"))
+        if mode == "process" and has_staged_transactions and not company_config:
+            setup_endpoint = "/api/v1/settings/company/{nit}/setup"
+            if nit_receptor:
+                state["error"] = (
+                    "Tributario precondition failed: missing company tax settings for "
+                    f"NIT {nit_receptor}. Configure it first at "
+                    f"{setup_endpoint.format(nit=nit_receptor)}"
+                )
+                details = {
+                    "error": state["error"],
+                    "nit_receptor": nit_receptor,
+                    "required_endpoint": setup_endpoint,
+                }
+            else:
+                state["error"] = (
+                    "Tributario precondition failed: missing nit_receptor in raw_transactions. "
+                    "Cannot resolve company tax settings."
+                )
+                details = {
+                    "error": state["error"],
+                    "nit_receptor": None,
+                    "required_endpoint": setup_endpoint,
+                }
+            logger.error(state["error"])
+            append_log(state, "tributario", "node_error", details)
+            return state
 
         append_log(state, "tributario", "config_loaded", {
             "source": "db" if company_config else "defaults",
@@ -398,6 +430,7 @@ def tributario_node(state: AgentState) -> AgentState:
         if iva_to_add > 0:
             asientos_enriquecidos.append({
                 "cuenta_puc":       CUENTA_IVA,
+                "nombre_cuenta":    "IVA Descontable",
                 "descripcion":      "IVA descontable — Art. 477 ET",
                 "tipo_movimiento":  "debito",
                 "valor":            str(iva_to_add),
@@ -407,6 +440,7 @@ def tributario_node(state: AgentState) -> AgentState:
         if retefuente_val > 0:
             asientos_enriquecidos.append({
                 "cuenta_puc":       CUENTA_RETEFUENTE,
+                "nombre_cuenta":    "Retención en la Fuente por Pagar",
                 "descripcion":      f"Retención en la Fuente por pagar — {referencias[0] if referencias else 'Art. 383 ET'}",
                 "tipo_movimiento":  "credito",
                 "valor":            str(retefuente_val),
@@ -415,6 +449,7 @@ def tributario_node(state: AgentState) -> AgentState:
         if reteica_val > 0:
             asientos_enriquecidos.append({
                 "cuenta_puc":       CUENTA_RETEICA,
+                "nombre_cuenta":    "Retención ICA por Pagar",
                 "descripcion":      "Retención ICA por pagar — Decreto 2048/1992",
                 "tipo_movimiento":  "credito",
                 "valor":            str(reteica_val),

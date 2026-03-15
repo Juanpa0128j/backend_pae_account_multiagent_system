@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks, status
 from sqlalchemy.orm import Session
 from app.models.schemas import IngestResponse, IngestDetailResponse
-from app.agents.graph import invoke_agent
+from app.agents.graph import invoke_ingest_pipeline
 from app.core.database import get_db
 from app.services import db_service
 from app.models.database import IngestStatus
@@ -26,7 +26,7 @@ def save_temp_file(file_content: bytes, filename: str) -> str:
 def process_ingest_background(temp_file_path: str, ingest_id: str):
     logger.info(f"Invoking background agent for: {ingest_id}")
     try:
-        invoke_agent(
+        invoke_ingest_pipeline(
             temp_file_path,
             initial_state={"ingest_id": ingest_id},
         )

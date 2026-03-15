@@ -45,13 +45,16 @@ from pydantic import ValidationError
 @pytest.fixture
 def valid_ingest_data() -> dict:
     return {
-        "fecha": "2026-01-15",
-        "monto": 150000.00,
-        "concepto": "Pago servicio de internet",
-        "beneficiario": "Claro Colombia",
-        "empresa": "Mi Empresa SAS",
-        "referencia": "TXN-2026-001",
-        "tipo_documento": "factura",
+        "transactions": [
+            {
+                "fecha": "2026-01-15",
+                "nit_emisor": "900123456",
+                "nit_receptor": "800999888",
+                "total": 150000.00,
+                "descripcion": "Pago servicio de internet",
+                "items": [],
+            }
+        ]
     }
 
 
@@ -128,40 +131,42 @@ class TestIngestOutput:
 
     def test_valid_output(self, valid_ingest_data):
         output = IngestOutput.model_validate(valid_ingest_data)
-        assert output.fecha == date(2026, 1, 15)
-        assert output.monto == Decimal("150000.00")
-        assert output.tipo_documento == TipoDocumento.FACTURA
+        assert len(output.transactions) == 1
+        tx = output.transactions[0]
+        assert tx.fecha == date(2026, 1, 15)
+        assert tx.total == Decimal("150000.00")
+        assert tx.nit_emisor == "900123456"
 
-    def test_missing_required_field(self, valid_ingest_data):
-        del valid_ingest_data["concepto"]
+    def test_missing_required_field_nit_emisor(self, valid_ingest_data):
+        del valid_ingest_data["transactions"][0]["nit_emisor"]
         with pytest.raises(ValidationError) as exc_info:
             IngestOutput.model_validate(valid_ingest_data)
-        assert "concepto" in str(exc_info.value)
+        assert "nit_emisor" in str(exc_info.value)
 
     def test_invalid_date_format(self, valid_ingest_data):
-        valid_ingest_data["fecha"] = "15/01/2026"
+        valid_ingest_data["transactions"][0]["fecha"] = "15/01/2026"
         with pytest.raises(ValidationError):
             IngestOutput.model_validate(valid_ingest_data)
 
-    def test_negative_amount(self, valid_ingest_data):
-        valid_ingest_data["monto"] = -100
+    def test_negative_total(self, valid_ingest_data):
+        valid_ingest_data["transactions"][0]["total"] = -100
         with pytest.raises(ValidationError):
             IngestOutput.model_validate(valid_ingest_data)
 
-    def test_invalid_tipo_documento(self, valid_ingest_data):
-        valid_ingest_data["tipo_documento"] = "carta"
+    def test_invalid_transactions_type(self):
+        """transactions must be a list, not a string."""
         with pytest.raises(ValidationError):
-            IngestOutput.model_validate(valid_ingest_data)
+            IngestOutput.model_validate({"transactions": "not-a-list"})
 
-    def test_concepto_too_short(self, valid_ingest_data):
-        valid_ingest_data["concepto"] = "ab"
-        with pytest.raises(ValidationError):
-            IngestOutput.model_validate(valid_ingest_data)
+    def test_empty_transactions_is_valid(self):
+        """An empty transactions list is allowed (default)."""
+        output = IngestOutput.model_validate({"transactions": []})
+        assert output.transactions == []
 
-    def test_optional_referencia_null(self, valid_ingest_data):
-        valid_ingest_data["referencia"] = None
+    def test_optional_fecha_null(self, valid_ingest_data):
+        valid_ingest_data["transactions"][0]["fecha"] = None
         output = IngestOutput.model_validate(valid_ingest_data)
-        assert output.referencia is None
+        assert output.transactions[0].fecha is None
 
 
 # =========================================================================
@@ -327,7 +332,8 @@ class TestOutputValidator:
         assert result.validated_output is not None
 
     def test_validate_invalid_ingest(self, validator):
-        bad_data = {"fecha": "bad", "monto": -1}
+        # total < 0 violates the ge=0 constraint on RawTransactionItem
+        bad_data = {"transactions": [{"total": -999, "nit_emisor": "x", "nit_receptor": "y"}]}
         result = validator.validate("ingesta", bad_data)
         assert not result.is_valid
         assert result.status == ValidationStatus.INVALID
@@ -346,8 +352,9 @@ class TestOutputValidator:
         # 3 valid + 2 invalid = 60% compliance
         for _ in range(3):
             validator.validate("ingesta", valid_ingest_data)
+        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
         for _ in range(2):
-            validator.validate("ingesta", {"bad": True})
+            validator.validate("ingesta", invalid)
         assert validator.schema_compliance_rate() == 0.6
 
     def test_compliance_rate_per_agent(
@@ -359,11 +366,13 @@ class TestOutputValidator:
         assert validator.schema_compliance_rate("contador") == 0.0
 
     def test_should_retry(self, validator):
-        result = validator.validate("ingesta", {"bad": True}, attempt=1)
+        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
+        result = validator.validate("ingesta", invalid, attempt=1)
         assert validator.should_retry(result) is True
 
     def test_should_not_retry_on_max_attempts(self, validator):
-        result = validator.validate("ingesta", {"bad": True}, attempt=3)
+        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
+        result = validator.validate("ingesta", invalid, attempt=3)
         assert validator.should_retry(result) is False
 
     def test_build_correction_prompt(self, validator):
@@ -373,8 +382,9 @@ class TestOutputValidator:
         assert "ESQUEMA ESPERADO" in prompt
 
     def test_get_metrics(self, validator, valid_ingest_data):
+        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
         validator.validate("ingesta", valid_ingest_data)
-        validator.validate("ingesta", {"bad": True})
+        validator.validate("ingesta", invalid)
         metrics = validator.get_metrics()
         assert metrics["total_validations"] == 2
         assert metrics["total_passed"] == 1
@@ -389,7 +399,8 @@ class TestOutputValidator:
         assert metrics["total_validations"] == 0
 
     def test_error_summary_format(self, validator):
-        result = validator.validate("ingesta", {"bad": True})
+        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
+        result = validator.validate("ingesta", invalid)
         summary = result.error_summary()
         assert "ingesta" in summary
         assert "attempt" in summary

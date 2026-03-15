@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import patch, MagicMock, Mock
 
-from app.agents.graph import create_agent_graph, invoke_process_pipeline
+from app.agents.graph import create_agent_graph, invoke_accounting_pipeline
 from app.agents.state import AgentState
 from app.agents.contador_agent import contador_node
 from app.agents.supervisor import (
@@ -239,7 +239,7 @@ class TestContadorNode:
         result_state = contador_node(process_state)
         
         assert result_state.get("error") is not None
-        assert "no staged transactions" in result_state["error"].lower()
+        assert "no raw_transactions" in result_state["error"].lower()
 
 
 # ─── Test: Validation Node ────────────────────────────────────────
@@ -345,17 +345,45 @@ class TestContadorRetryLogic:
 class TestFullProcessPipeline:
     """Test complete process pipeline execution."""
 
+    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.persist_node.SessionLocal")
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
     @patch("app.agents.contador_agent.get_gemini_client")
     def test_process_pipeline_happy_path(
-        self, mock_get_client, mock_puc_check, mock_session
+        self,
+        mock_get_client,
+        mock_puc_check,
+        mock_session,
+        mock_get_company_settings,
+        mock_get_auditor_client,
     ):
         """Full pipeline: staged TX → contador → validation → persist → success."""
         # Mock Gemini to return valid contador output
         mock_client = MagicMock()
         mock_client.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
         mock_get_client.return_value = mock_client
+
+        mock_auditor = MagicMock()
+        mock_auditor.extract_auditor_output.return_value = {
+            "fecha_auditoria": "2026-03-07",
+            "documento_referencia": "FAC-TEST-001",
+            "aprobado": True,
+            "nivel_riesgo": "bajo",
+            "hallazgos": [],
+            "puntaje_calidad": 95,
+            "resumen": "Asientos validados correctamente.",
+        }
+        mock_get_auditor_client.return_value = mock_auditor
+
+        company_row = Mock()
+        company_row.tasa_retefuente_servicios = Decimal("0.110000")
+        company_row.tasa_retefuente_bienes = Decimal("0.030000")
+        company_row.tasa_retefuente_arrendamiento = Decimal("0.100000")
+        company_row.tasa_reteica = Decimal("0.006900")
+        company_row.tasa_iva_general = Decimal("0.190000")
+        company_row.iva_responsable = True
+        mock_get_company_settings.return_value = company_row
 
         # Mock PUC validation to always succeed
         mock_puc_record = Mock()
@@ -378,7 +406,7 @@ class TestFullProcessPipeline:
         mock_db.query.return_value.filter.return_value.first.return_value = mock_pending
 
         # Invoke process pipeline
-        result = invoke_process_pipeline(
+        result = invoke_accounting_pipeline(
             ingest_id="ingest_001",
             raw_transactions=[VALID_RAW_TRANSACTION],
             pending_transaction_id="pending_001",
@@ -389,9 +417,17 @@ class TestFullProcessPipeline:
         # Should complete successfully
         assert result.get("error") is None, "Pipeline should complete without error"
 
+    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
     @patch("app.agents.contador_agent.get_gemini_client")
-    def test_process_pipeline_retry_then_success(self, mock_get_client, mock_puc_check):
+    def test_process_pipeline_retry_then_success(
+        self,
+        mock_get_client,
+        mock_puc_check,
+        mock_get_company_settings,
+        mock_get_auditor_client,
+    ):
         """Pipeline should retry contador on first failure, then succeed."""
         # Mock Gemini: first call returns invalid, second returns valid
         mock_client = MagicMock()
@@ -405,6 +441,27 @@ class TestFullProcessPipeline:
 
         mock_client.extract_contador_output.side_effect = side_effect_contador
         mock_get_client.return_value = mock_client
+
+        mock_auditor = MagicMock()
+        mock_auditor.extract_auditor_output.return_value = {
+            "fecha_auditoria": "2026-03-07",
+            "documento_referencia": "FAC-TEST-001",
+            "aprobado": True,
+            "nivel_riesgo": "bajo",
+            "hallazgos": [],
+            "puntaje_calidad": 95,
+            "resumen": "Asientos validados correctamente.",
+        }
+        mock_get_auditor_client.return_value = mock_auditor
+
+        company_row = Mock()
+        company_row.tasa_retefuente_servicios = Decimal("0.110000")
+        company_row.tasa_retefuente_bienes = Decimal("0.030000")
+        company_row.tasa_retefuente_arrendamiento = Decimal("0.100000")
+        company_row.tasa_reteica = Decimal("0.006900")
+        company_row.tasa_iva_general = Decimal("0.190000")
+        company_row.iva_responsable = True
+        mock_get_company_settings.return_value = company_row
 
         # Mock PUC validation
         mock_puc_record = Mock()
@@ -422,7 +479,7 @@ class TestFullProcessPipeline:
             mock_pending.descripcion = "Test"
             mock_db.query.return_value.filter.return_value.first.return_value = mock_pending
 
-            result = invoke_process_pipeline(
+            result = invoke_accounting_pipeline(
                 ingest_id="ingest_001",
                 raw_transactions=[VALID_RAW_TRANSACTION],
                 pending_transaction_id="pending_001",
@@ -456,7 +513,7 @@ class TestFullProcessPipeline:
             mock_pending.nit_emisor = "900123456"
             mock_db.query.return_value.filter.return_value.first.return_value = mock_pending
 
-            result = invoke_process_pipeline(
+            result = invoke_accounting_pipeline(
                 ingest_id="ingest_001",
                 raw_transactions=[VALID_RAW_TRANSACTION],
                 pending_transaction_id="pending_001",

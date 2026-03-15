@@ -17,9 +17,11 @@ from pathlib import Path
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.database import SessionLocal
+
 from app.core.logger import get_logger
 from app.services import db_service
 from app.services.validation_engine import ValidationResult, get_validator
+
 
 logger = get_logger("app.agents.supervisor")
 
@@ -163,13 +165,26 @@ def supervisor_node(state: AgentState) -> AgentState:
             return state
 
         if current == "auditor":
-            decision = state.get("audit_decision", "approved")
-            if decision == "rejected":
+            # Validate AuditorOutput schema before deciding whether to persist.
+            state = validate_auditor_output_node(state)
+            if state.get("correction_feedback"):
+                state["current_agent"] = "auditor"
+                append_log(state, "supervisor", "routing_complete", {
+                    "next_agent": "auditor", "reason": "validation_failed",
+                })
+            elif state.get("error"):
+                state["current_agent"] = ""
+                append_log(state, "supervisor", "routing_error", {
+                    "reason": "auditor_validation_exhausted",
+                })
+            elif state.get("audit_approved") is False:
                 state["current_agent"] = "contador"
                 state["correction_feedback"] = (
-                    state.get("audit_feedback") or "Audit rejected — please reclassify"
+                    state.get("audit_rejection_reason")
+                    or state.get("audit_feedback")
+                    or "Audit rejected - please reclassify"
                 )
-                logger.warning("Supervisor: Auditor rejected — re-routing to Contador")
+                logger.warning("Supervisor: Auditor rejected - re-routing to Contador")
                 append_log(state, "supervisor", "routing_complete", {
                     "next_agent": "contador", "reason": "audit_rejected",
                 })
@@ -443,16 +458,85 @@ def should_retry_agent(state: AgentState) -> str:
         return "retry"
     return "end"
 
-
 MAX_CONTADOR_RETRIES = 3
 
 
 def should_retry_contador(state: AgentState) -> str:
-    """Conditional edge for process graph retries. Enforces a retry limit."""
+    """Conditional edge for contador retries in the process graph."""
     if state.get("correction_feedback") and state.get("retry_count", 0) < MAX_CONTADOR_RETRIES:
         return "retry"
     return "end"
 
+
+def validate_auditor_output_node(state: AgentState) -> AgentState:
+    """Validate AuditorOutput schema and propagate audit decision into state."""
+    if state.get("error"):
+        return state
+
+    agent_name = "auditor"
+    raw_output = state.get("auditor_output") or {}
+    attempt = state.get("retry_count", 0) + 1
+
+    validator = get_validator()
+    result: ValidationResult = validator.validate(agent_name, raw_output, attempt=attempt)
+
+    state["validation_history"].append(
+        {
+            "agent_name": agent_name,
+            "attempt": attempt,
+            "is_valid": result.is_valid,
+            "errors": result.errors,
+            "timestamp": result.timestamp,
+        }
+    )
+
+    if not result.is_valid:
+        if validator.should_retry(result):
+            state["correction_feedback"] = validator.build_correction_prompt(result)
+            state["retry_count"] = attempt
+            return state
+        state["error"] = (
+            f"Schema validation failed for '{agent_name}' after {attempt} attempts. "
+            f"Last errors:\n{result.error_summary()}"
+        )
+        if not state.get("result"):
+            state["result"] = {}
+        state["result"]["status"] = "validation_error"
+        state["result"]["validation_errors"] = result.errors
+        state["correction_feedback"] = None
+        return state
+
+    validated = (
+        result.validated_output.model_dump(mode="json")
+        if result.validated_output
+        else raw_output
+    )
+    state["audit_approved"] = validated.get("aprobado", False)
+    state["audit_rejection_reason"] = (
+        validated.get("resumen") if not validated.get("aprobado") else None
+    )
+    state["audit_decision"] = "approved" if validated.get("aprobado") else "rejected"
+    state["audit_feedback"] = (
+        validated.get("resumen") if not validated.get("aprobado") else None
+    )
+    state["auditor_output"] = validated
+    state["correction_feedback"] = None
+    state["retry_count"] = 0
+    state["current_stage"] = "audit_complete"
+    if not state.get("result"):
+        state["result"] = {}
+    state["result"]["auditor_output"] = validated
+    return state
+
+
+MAX_AUDITOR_RETRIES = 3
+
+
+def should_retry_auditor(state: AgentState) -> str:
+    """Conditional edge for auditor retries in the process graph."""
+    if state.get("correction_feedback") and state.get("retry_count", 0) < MAX_AUDITOR_RETRIES:
+        return "retry"
+    return "end"
 
 # ---------------------------------------------------------------------------
 # Error terminal — unified graph
@@ -495,3 +579,4 @@ def route_after_supervisor(state: AgentState) -> str:
         "reportero": "reportero",
     }
     return routing_map.get(agent, "error_terminal")
+

@@ -13,6 +13,30 @@ def _override_db():
     yield SimpleNamespace()
 
 
+def _mock_process_preconditions(
+    monkeypatch,
+    *,
+    has_staged: bool = True,
+    nit_receptor: str | None = "800999888",
+    has_company_settings: bool = True,
+):
+    staged_rows = []
+    if has_staged:
+        staged_rows = [SimpleNamespace(id="txn_001", nit_receptor=nit_receptor)]
+
+    monkeypatch.setattr(
+        db_service,
+        "get_transactions_by_ingest",
+        lambda db, ingest_id: staged_rows,
+    )
+
+    monkeypatch.setattr(
+        db_service,
+        "get_company_settings",
+        lambda db, nit: SimpleNamespace(nit=nit) if has_company_settings else None,
+    )
+
+
 def test_start_process_job_returns_process_id(monkeypatch):
     app.dependency_overrides[get_db] = _override_db
     client = TestClient(app)
@@ -24,6 +48,7 @@ def test_start_process_job_returns_process_id(monkeypatch):
         "get_ingest_job",
         lambda db, ingest_id: SimpleNamespace(id=ingest_id, file_path="/tmp/test.pdf"),
     )
+    _mock_process_preconditions(monkeypatch)
     
     # Mock the new idempotency check function
     monkeypatch.setattr(
@@ -86,6 +111,7 @@ def test_get_process_status_polling(monkeypatch):
     assert body["status"] == "running"
     assert body["progress"] == 42  # Progress is present when set, null when not set
     assert body["current_stage"] == "ingesta"
+    assert body["error_category"] is None
 
     app.dependency_overrides.clear()
 
@@ -106,7 +132,7 @@ def test_get_process_result_not_completed_returns_202(monkeypatch):
 
     response = client.get("/api/v1/process/result/proc_123")
     assert response.status_code == 202
-    assert "still being processed" in response.json()["detail"]
+    assert "still being processed" in response.json()["message"]
 
     app.dependency_overrides.clear()
 
@@ -160,6 +186,7 @@ def test_post_accounting_returns_existing_process_job_idempotent(monkeypatch):
         "get_ingest_job",
         lambda db, ingest_id: SimpleNamespace(id=ingest_id, file_path="/tmp/test.pdf"),
     )
+    _mock_process_preconditions(monkeypatch)
 
     # Existing process job (already running)
     existing_job = SimpleNamespace(
@@ -230,6 +257,7 @@ def test_post_accounting_creates_new_job_if_previous_failed(monkeypatch):
         "get_ingest_job",
         lambda db, ingest_id: SimpleNamespace(id=ingest_id, file_path="/tmp/test.pdf"),
     )
+    _mock_process_preconditions(monkeypatch)
 
     # No active job exists (previous one failed)
     monkeypatch.setattr(
@@ -278,6 +306,160 @@ def test_post_accounting_creates_new_job_if_previous_failed(monkeypatch):
     assert response2.status_code == 200
     assert response2.json()["process_id"] == "proc_second"
     assert captured["started_count"] == 2  # Two start calls
+
+    app.dependency_overrides.clear()
+
+
+def test_post_accounting_fails_precondition_when_company_settings_missing(monkeypatch):
+    app.dependency_overrides[get_db] = _override_db
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        db_service,
+        "get_ingest_job",
+        lambda db, ingest_id: SimpleNamespace(id=ingest_id, file_path="/tmp/test.pdf"),
+    )
+    _mock_process_preconditions(monkeypatch, has_company_settings=False)
+
+    response = client.post("/api/v1/process/accounting/ing_003")
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["error_category"] == "business_precondition"
+    assert detail["error_code"] == "MISSING_COMPANY_SETTINGS"
+
+    app.dependency_overrides.clear()
+
+
+def test_get_process_status_includes_business_precondition_category(monkeypatch):
+    app.dependency_overrides[get_db] = _override_db
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        db_service,
+        "get_process_job",
+        lambda db, process_id: SimpleNamespace(
+            id=process_id,
+            ingest_id="ing_001",
+            status=ProcessStatus.FAILED,
+            current_stage="failed",
+            current_agent="supervisor",
+            progress=100,
+            error_message=(
+                "Tributario precondition failed: missing company tax settings for NIT 800999888. "
+                "Configure it first at /api/v1/settings/company/800999888/setup"
+            ),
+            agent_log=[],
+            created_at=datetime.now(timezone.utc),
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    response = client.get("/api/v1/process/status/proc_fail")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error_category"] == "business_precondition"
+    assert body["error_code"] == "MISSING_COMPANY_SETTINGS"
+
+    app.dependency_overrides.clear()
+
+
+def test_get_process_result_failed_business_precondition_returns_409(monkeypatch):
+    app.dependency_overrides[get_db] = _override_db
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        db_service,
+        "get_process_job",
+        lambda db, process_id: SimpleNamespace(
+            id=process_id,
+            ingest_id="ing_001",
+            status=ProcessStatus.FAILED,
+            error_message=(
+                "Tributario precondition failed: missing company tax settings for NIT 800999888. "
+                "Configure it first at /api/v1/settings/company/800999888/setup"
+            ),
+        ),
+    )
+
+    response = client.get("/api/v1/process/result/proc_fail")
+    assert response.status_code == 409
+    body = response.json()
+    assert body["error_category"] == "business_precondition"
+    assert body["error_code"] == "MISSING_COMPANY_SETTINGS"
+
+
+def test_get_process_status_prefers_structured_error_payload(monkeypatch):
+    app.dependency_overrides[get_db] = _override_db
+    client = TestClient(app)
+
+    structured_error = (
+        '{"error_category":"business_precondition",'
+        '"error_code":"MISSING_COMPANY_SETTINGS",'
+        '"remediation":"Configure company settings and retry.",'
+        '"message":"Human-readable message"}'
+    )
+
+    monkeypatch.setattr(
+        db_service,
+        "get_process_job",
+        lambda db, process_id: SimpleNamespace(
+            id=process_id,
+            ingest_id="ing_001",
+            status=ProcessStatus.FAILED,
+            current_stage="failed",
+            current_agent="supervisor",
+            progress=100,
+            error_message=structured_error,
+            agent_log=[],
+            created_at=datetime.now(timezone.utc),
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    response = client.get("/api/v1/process/status/proc_struct")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error_category"] == "business_precondition"
+    assert body["error_code"] == "MISSING_COMPANY_SETTINGS"
+    assert body["remediation"] == "Configure company settings and retry."
+
+    app.dependency_overrides.clear()
+
+
+def test_get_process_status_falls_back_when_structured_payload_invalid_json(monkeypatch):
+    app.dependency_overrides[get_db] = _override_db
+    client = TestClient(app)
+
+    invalid_json_error = (
+        '{not valid json} Tributario precondition failed: '
+        'missing company tax settings for NIT 800999888'
+    )
+
+    monkeypatch.setattr(
+        db_service,
+        "get_process_job",
+        lambda db, process_id: SimpleNamespace(
+            id=process_id,
+            ingest_id="ing_001",
+            status=ProcessStatus.FAILED,
+            current_stage="failed",
+            current_agent="supervisor",
+            progress=100,
+            error_message=invalid_json_error,
+            agent_log=[],
+            created_at=datetime.now(timezone.utc),
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    response = client.get("/api/v1/process/status/proc_invalid_json")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error_category"] == "business_precondition"
+    assert body["error_code"] == "MISSING_COMPANY_SETTINGS"
 
     app.dependency_overrides.clear()
 

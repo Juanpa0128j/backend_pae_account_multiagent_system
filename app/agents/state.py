@@ -3,11 +3,12 @@ Agent state definitions for the pilot agent.
 Defines the shared state passed between agent nodes.
 """
 
-from typing import Optional, TypedDict, List
+from typing import List, Optional, TypedDict
 
 
 class ValidationRecord(TypedDict):
     """Record of a single validation attempt."""
+
     agent_name: str
     attempt: int
     is_valid: bool
@@ -48,9 +49,13 @@ class AgentState(TypedDict):
     - pending_transaction_id: Staged transaction id currently being posted
     - current_stage: Human-readable pipeline stage for status updates
     - agent_log: Timeline entries for process status/debugging (List[LogEntry])
+    - auditor_output: Structured auditor output (AuditorOutput-compatible dict)
+    - audit_approved: Whether the auditor approved the transaction
+    - audit_rejection_reason: Reason for rejection if not approved
     - audit_decision: Decision from Auditor agent: "approved" | "rejected" | None
     - audit_feedback: Rejection reason from Auditor, fed back to Contador for retry
     """
+
     file_path: str
     raw_text: str
     interpreted_data: dict
@@ -71,5 +76,8 @@ class AgentState(TypedDict):
     pending_transaction_id: Optional[str]
     current_stage: Optional[str]
     agent_log: List[LogEntry]
+    auditor_output: dict
+    audit_approved: Optional[bool]
+    audit_rejection_reason: Optional[str]
     audit_decision: Optional[str]
     audit_feedback: Optional[str]

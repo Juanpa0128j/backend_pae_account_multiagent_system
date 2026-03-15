@@ -11,7 +11,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from app.agents.graph import invoke_agent
+from app.agents.graph import invoke_accounting_pipeline
 from app.core.database import SessionLocal
 from app.models.database import ProcessStatus
 from app.services import db_service
@@ -40,23 +40,58 @@ async def run_process_job(process_id: str) -> None:
             return
 
         ingest_job = db_service.get_ingest_job(db, process_job.ingest_id)
-        if not ingest_job or not ingest_job.file_path:
+        if not ingest_job:
             db_service.update_process_job(
                 db,
                 process_id=process_id,
                 status=ProcessStatus.FAILED,
                 current_stage="init",
                 progress=0,
-                error_message="Ingest job or file path not found",
+                error_message="Ingest job not found",
                 agent_log_entry={
                     "timestamp": _utc_iso(),
                     "agent": "supervisor",
                     "stage": "init",
                     "event": "failed",
-                    "message": "Ingest job or file path not found",
+                    "message": "Ingest job not found",
                 },
             )
             return
+
+        staged = db_service.get_transactions_by_ingest(db, process_job.ingest_id)
+        if not staged:
+            db_service.update_process_job(
+                db,
+                process_id=process_id,
+                status=ProcessStatus.FAILED,
+                current_stage="init",
+                progress=0,
+                error_message="No staged transactions found for ingest job",
+                agent_log_entry={
+                    "timestamp": _utc_iso(),
+                    "agent": "supervisor",
+                    "stage": "init",
+                    "event": "failed",
+                    "message": "No staged transactions found for ingest job",
+                },
+            )
+            return
+
+        pending_id = str(staged[0].id)
+        raw_transactions: list[dict] = []
+        for tx in staged:
+            raw_transactions.append(
+                {
+                    "id": str(tx.id),
+                    "fecha": tx.fecha.isoformat() if tx.fecha else None,
+                    "nit_emisor": tx.nit_emisor,
+                    "nit_receptor": tx.nit_receptor,
+                    "total": float(tx.total) if tx.total is not None else 0.0,
+                    "descripcion": tx.descripcion,
+                    "items": tx.items if isinstance(tx.items, list) else [],
+                    "raw_data": tx.raw_data if isinstance(tx.raw_data, dict) else {},
+                }
+            )
 
         db_service.update_process_job(
             db,
@@ -77,13 +112,13 @@ async def run_process_job(process_id: str) -> None:
         db_service.update_process_job(
             db,
             process_id=process_id,
-            current_stage="ingesta",
-            current_agent="ingesta",
+            current_stage="contador",
+            current_agent="contador",
             progress=35,
             agent_log_entry={
                 "timestamp": _utc_iso(),
-                "agent": "ingesta",
-                "stage": "ingesta",
+                "agent": "contador",
+                "stage": "contador",
                 "event": "running",
                 "message": "Ejecutando workflow de agentes",
             },
@@ -91,27 +126,28 @@ async def run_process_job(process_id: str) -> None:
 
         result = await asyncio.wait_for(
             asyncio.to_thread(
-                invoke_agent,
-                ingest_job.file_path,
-                {"ingest_id": process_job.ingest_id},
+                invoke_accounting_pipeline,
+                ingest_id=process_job.ingest_id,
+                raw_transactions=raw_transactions,
+                pending_transaction_id=pending_id,
+                process_id=process_id,
             ),
             timeout=MAX_PROCESS_SECONDS,
         )
 
-        status_value = str(result.get("status", "")).lower()
-        if status_value in {"failed", "error", "rejected", "validation_error"}:
+        if result.get("error"):
             db_service.update_process_job(
                 db,
                 process_id=process_id,
                 status=ProcessStatus.FAILED,
-                current_stage="auditor",
-                current_agent="auditor",
+                current_stage="failed",
+                current_agent="supervisor",
                 progress=100,
                 error_message=result.get("error") or "El workflow finalizó con error",
                 agent_log_entry={
                     "timestamp": _utc_iso(),
-                    "agent": "auditor",
-                    "stage": "auditor",
+                    "agent": "supervisor",
+                    "stage": "failed",
                     "event": "failed",
                     "message": result.get("error") or "El workflow finalizó con error",
                 },

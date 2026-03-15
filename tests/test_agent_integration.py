@@ -26,7 +26,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.database import Base
-from app.agents.graph import create_agent_graph, invoke_agent
+from app.agents.graph import create_agent_graph, invoke_ingest_pipeline
 from app.agents.state import AgentState
 from app.models.database import (
     IngestJob,
@@ -558,15 +558,15 @@ class TestErrorPropagation:
         assert "Gemini API quota" in final_state["error"] or "Ingest error" in final_state["error"]
 
 
-# ─── TEST: invoke_agent wrapper ──────────────────────────────────
+# ─── TEST: invoke_ingest_pipeline wrapper ──────────────────────────────────
 
 class TestInvokeAgent:
-    """Test the invoke_agent() convenience function."""
+    """Test the invoke_ingest_pipeline() convenience function."""
 
     @patch("app.agents.ingest_agent.extract_text_from_pdf", side_effect=_mock_extract_text)
     @patch("app.agents.ingest_agent.GeminiClient")
     def test_invoke_agent_returns_result(self, MockGeminiCls, mock_pdf, tmp_path):
-        """invoke_agent() should return a dict with status and validation_history."""
+        """invoke_ingest_pipeline() should return a dict with status and validation_history."""
         mock_instance = MagicMock()
         mock_instance.extract_receipt_data.side_effect = _mock_gemini_valid
         MockGeminiCls.return_value = mock_instance
@@ -574,7 +574,7 @@ class TestInvokeAgent:
         dummy_pdf = tmp_path / "test_invoice.pdf"
         dummy_pdf.write_bytes(b"%PDF-1.4 dummy")
 
-        result = invoke_agent(str(dummy_pdf))
+        result = invoke_ingest_pipeline(str(dummy_pdf))
 
         assert isinstance(result, dict)
         assert result.get("status") == "completed"
@@ -592,7 +592,7 @@ class TestInvokeAgent:
         dummy_pdf = tmp_path / "invoice2.pdf"
         dummy_pdf.write_bytes(b"%PDF-1.4 dummy")
 
-        result = invoke_agent(str(dummy_pdf))
+        result = invoke_ingest_pipeline(str(dummy_pdf))
 
         assert result.get("db_persisted") is True
         assert result.get("ingest_id") is not None
@@ -612,7 +612,7 @@ class TestApiEndpoint:
         if root not in sys.path:
             sys.path.insert(0, root)
 
-    @patch("app.api.v1.ingest.invoke_agent")
+    @patch("app.api.v1.ingest.invoke_ingest_pipeline")
     def test_upload_endpoint(self, mock_invoke):
         """POST /upload with a PDF should return IngestResponse."""
         from fastapi.testclient import TestClient
