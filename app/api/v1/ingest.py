@@ -96,6 +96,18 @@ async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
             "descripcion": tx.descripcion,
             "items": tx.items if isinstance(tx.items, list) else []
         })
+
+    # Reconcile stale ingest states: if transactions are already staged but the
+    # job is still pending/processing, mark it as completed so clients can
+    # advance to the accounting phase.
+    if (
+        raw_txs
+        and job.status in (IngestStatus.PENDING_PROCESSING, IngestStatus.PROCESSING)
+        and not job.extraction_errors
+    ):
+        updated = db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
+        if updated:
+            job = updated
     
     return {
         "ingest_id": job.id,
