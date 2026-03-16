@@ -413,8 +413,16 @@ class TestOutputValidator:
 class TestSchemaRegistry:
 
     def test_all_agents_registered(self):
-        expected = {"ingesta", "contador", "tributario", "auditor"}
-        assert set(AGENT_OUTPUT_SCHEMAS.keys()) == expected
+        # Core processing agents must be present
+        core = {"ingesta", "contador", "tributario", "auditor"}
+        # Reportero report-type schemas (not used in retry-validation loop)
+        reportero = {
+            "reportero_balance", "reportero_pnl", "reportero_cashflow",
+            "reportero_iva", "reportero_withholdings",
+        }
+        registered = set(AGENT_OUTPUT_SCHEMAS.keys())
+        assert core.issubset(registered)
+        assert reportero.issubset(registered)
 
     def test_schemas_are_pydantic_models(self):
         from pydantic import BaseModel

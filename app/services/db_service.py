@@ -773,3 +773,16 @@ def get_reteica_tarifa(db: Session, ciudad: str, ciiu: str) -> Optional[float]:
         return float(row.tasa)
 
     return None
+
+
+# ─── VectorDocument ───────────────────────────────────────────────────────────
+
+def count_vector_documents(db: Session, collection_name: str) -> int:
+    """Return document count for a collection (health/readiness check)."""
+    from sqlalchemy import text as _text  # noqa: PLC0415
+    result = db.execute(
+        _text("SELECT COUNT(*) FROM vector_documents WHERE collection_name = :c"),
+        {"c": collection_name},
+    ).scalar()
+    return int(result or 0)
+
