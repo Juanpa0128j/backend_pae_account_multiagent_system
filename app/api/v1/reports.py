@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from app.agents.graph import invoke_reporting_pipeline
+from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutput
 
 router = APIRouter()
 
@@ -12,8 +13,9 @@ def _build_params(start_date: Optional[date], end_date: Optional[date]) -> dict:
     params = {}
     if start_date:
         params["start_date"] = start_date.isoformat()
-    if end_date:
-        params["end_date"] = end_date.isoformat()
+    # Always include end_date so the query has an upper bound matching the
+    # documented "default: today" behaviour.
+    params["end_date"] = (end_date or date.today()).isoformat()
     return params
 
 
@@ -25,7 +27,7 @@ def _run_report(report_type: str, params: dict) -> dict:
     return result.get("report", {})
 
 
-@router.get("/balance")
+@router.get("/balance", response_model=BalanceSheetOutput)
 async def get_balance_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
@@ -38,7 +40,7 @@ async def get_balance_report(
     return _run_report("balance", _build_params(start_date, end_date))
 
 
-@router.get("/pnl")
+@router.get("/pnl", response_model=PnLOutput)
 async def get_pnl_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
@@ -51,7 +53,7 @@ async def get_pnl_report(
     return _run_report("pnl", _build_params(start_date, end_date))
 
 
-@router.get("/cashflow")
+@router.get("/cashflow", response_model=CashFlowOutput)
 async def get_cashflow_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),

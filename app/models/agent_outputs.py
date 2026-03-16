@@ -458,7 +458,7 @@ class CuentaResumen(BaseModel):
 
     codigo: str = Field(..., description="PUC account code")
     nombre: str = Field(..., description="Account name")
-    saldo: Decimal = Field(..., description="Net balance for the period")
+    saldo: float = Field(..., description="Net balance for the period")
 
 
 class BalanceSheetOutput(BaseModel):
@@ -473,11 +473,11 @@ class BalanceSheetOutput(BaseModel):
     period_start: Optional[str] = Field(None, description="Start date ISO YYYY-MM-DD, or null for all-time")
     period_end: str = Field(..., description="Cutoff date ISO YYYY-MM-DD")
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
-    activos: Decimal = Field(..., description="Total assets (class 1 accounts)")
-    pasivos: Decimal = Field(..., description="Total liabilities (class 2 accounts)")
-    patrimonio: Decimal = Field(..., description="Equity (class 3 accounts)")
-    utilidad_neta: Decimal = Field(..., description="Net profit: revenue - expenses - COGS")
-    patrimonio_total: Decimal = Field(..., description="Equity + Net Profit")
+    activos: float = Field(..., description="Total assets (class 1 accounts)")
+    pasivos: float = Field(..., description="Total liabilities (class 2 accounts)")
+    patrimonio: float = Field(..., description="Equity (class 3 accounts)")
+    utilidad_neta: float = Field(..., description="Net profit: revenue - expenses - COGS")
+    patrimonio_total: float = Field(..., description="Equity + Net Profit")
     cuadre: bool = Field(..., description="True if assets == liabilities + total equity")
     mensaje_cuadre: str = Field(..., description="Human-readable balance validation message")
     notas_normativas: List[str] = Field(
@@ -492,17 +492,17 @@ class PnLOutput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     report_type: str = Field(default="profit_and_loss")
-    period_start: str = Field(..., description="Start date ISO YYYY-MM-DD")
+    period_start: Optional[str] = Field(None, description="Start date ISO YYYY-MM-DD, or null for all-time")
     period_end: str = Field(..., description="End date ISO YYYY-MM-DD")
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
     ingresos: List[CuentaResumen] = Field(default_factory=list, description="Revenue accounts (class 4)")
     costo_ventas: List[CuentaResumen] = Field(default_factory=list, description="COGS accounts (class 6)")
     gastos: List[CuentaResumen] = Field(default_factory=list, description="Expense accounts (class 5)")
-    total_ingresos: Decimal = Field(..., description="Total revenue")
-    total_costo_ventas: Decimal = Field(..., description="Total COGS")
-    total_gastos: Decimal = Field(..., description="Total operating expenses")
-    utilidad_bruta: Decimal = Field(..., description="Gross profit: revenue - COGS")
-    utilidad_neta: Decimal = Field(..., description="Net profit: gross - expenses")
+    total_ingresos: float = Field(..., description="Total revenue")
+    total_costo_ventas: float = Field(..., description="Total COGS")
+    total_gastos: float = Field(..., description="Total operating expenses")
+    utilidad_bruta: float = Field(..., description="Gross profit: revenue - COGS")
+    utilidad_neta: float = Field(..., description="Net profit: gross - expenses")
     notas_normativas: List[str] = Field(
         default_factory=list,
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
@@ -515,14 +515,14 @@ class CashFlowOutput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     report_type: str = Field(default="cash_flow")
-    period_start: str = Field(..., description="Start date ISO YYYY-MM-DD")
+    period_start: Optional[str] = Field(None, description="Start date ISO YYYY-MM-DD, or null for all-time")
     period_end: str = Field(..., description="End date ISO YYYY-MM-DD")
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
     cuentas_efectivo: List[CuentaResumen] = Field(
         default_factory=list,
         description="Cash and bank accounts (class 11XX)",
     )
-    total_efectivo: Decimal = Field(..., description="Net balance across all cash accounts")
+    total_efectivo: float = Field(..., description="Net balance across all cash accounts")
     nota: str = Field(
         default="Flujo de caja directo — saldo neto de cuentas de efectivo y bancos (clase 11).",
         description="Methodology note",
@@ -539,12 +539,12 @@ class IVAOutput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     report_type: str = Field(default="iva_report")
-    period_start: str = Field(..., description="Start date ISO YYYY-MM-DD")
+    period_start: Optional[str] = Field(None, description="Start date ISO YYYY-MM-DD, or null for all-time")
     period_end: str = Field(..., description="End date ISO YYYY-MM-DD")
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
-    iva_generado: Decimal = Field(..., ge=0, description="IVA generated on sales (account 240808)")
-    iva_descontable: Decimal = Field(..., ge=0, description="IVA deductible on purchases (account 240802)")
-    iva_a_pagar: Decimal = Field(..., description="Net IVA payable: generated - deductible")
+    iva_generado: float = Field(..., ge=0, description="IVA generated on sales (account 240808)")
+    iva_descontable: float = Field(..., ge=0, description="IVA deductible on purchases (account 240802)")
+    iva_a_pagar: float = Field(..., description="Net IVA payable: generated - deductible")
     referencias: List[str] = Field(
         default_factory=lambda: ["Art. 477 ET", "Art. 24 ET"],
         description="Applicable legal references",
@@ -557,12 +557,12 @@ class WithholdingsOutput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     report_type: str = Field(default="withholdings_report")
-    period_start: str = Field(..., description="Start date ISO YYYY-MM-DD")
+    period_start: Optional[str] = Field(None, description="Start date ISO YYYY-MM-DD, or null for all-time")
     period_end: str = Field(..., description="End date ISO YYYY-MM-DD")
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
-    retencion_en_la_fuente: Decimal = Field(..., ge=0, description="Retefuente balance (account 240815)")
-    retencion_ica: Decimal = Field(..., ge=0, description="ReteICA balance (account 236540)")
-    total_retenciones: Decimal = Field(..., ge=0, description="Total withholdings")
+    retencion_en_la_fuente: float = Field(..., ge=0, description="Retefuente balance (account 240815)")
+    retencion_ica: float = Field(..., ge=0, description="ReteICA balance (account 236540)")
+    total_retenciones: float = Field(..., ge=0, description="Total withholdings")
     referencias: List[str] = Field(
         default_factory=lambda: ["Art. 383 ET", "Decreto 2048/1992"],
         description="Applicable legal references",

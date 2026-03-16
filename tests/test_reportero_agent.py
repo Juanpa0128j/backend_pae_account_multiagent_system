@@ -99,9 +99,10 @@ def _mock_db_modules(svc_mock: MagicMock) -> dict:
     mock_database_module = MagicMock(spec=ModuleType)
     mock_database_module.SessionLocal = MagicMock(return_value=MagicMock())
 
-    # Keep real app.services package if it's already loaded; otherwise mock it.
-    mock_services_pkg = sys.modules.get("app.services") or MagicMock()
-    # Ensure the package has a db_service attribute pointing to our mock.
+    # Always use a fresh ModuleType — never mutates the real app.services object
+    # (patch.dict restores sys.modules mappings but NOT attribute mutations on an
+    # existing module object, which could leak mock state to other tests).
+    mock_services_pkg = ModuleType("app.services")
     mock_services_pkg.db_service = svc_mock
 
     return {
