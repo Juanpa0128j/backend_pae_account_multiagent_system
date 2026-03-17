@@ -232,9 +232,9 @@ def _ensure_minimum_puc() -> None:
 
 
 def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
-    with patch("app.agents.ingest_agent.LlamaCloud", FakeLlamaParse, create=True), patch(
-        "app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True
-    ), patch("app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()):
+    with patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True), patch(
+        "app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()
+    ):
         return invoke_ingest_pipeline(pdf_path)
 
 

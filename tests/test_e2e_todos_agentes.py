@@ -335,7 +335,6 @@ def _was_routed_to(agent_log: list[dict], next_agent: str) -> bool:
 
 def _invoke_ingest(pdf_path: str) -> dict[str, Any]:
     with (
-        patch("app.agents.ingest_agent.LlamaCloud", FakeLlamaParse, create=True),
         patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
         patch("app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()),
     ):

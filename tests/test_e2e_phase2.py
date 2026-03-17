@@ -21,12 +21,13 @@ from app.core.gemini_client import TaxJustification
 # ---------------------------------------------------------------------------
 # Mock targets — must match the import location in each module
 # ---------------------------------------------------------------------------
-MOCK_LLAMA = "app.agents.ingest_agent.LlamaCloud"
+MOCK_LLAMA_PARSE = "app.agents.ingest_agent.LlamaParse"
 MOCK_GEMINI = "app.agents.ingest_agent.get_gemini_client"
 MOCK_SESSION = "app.agents.persist_node.SessionLocal"
 MOCK_DB_SVC = "app.agents.persist_node.db_service"
 MOCK_TRIBUTARIO_GEMINI = "app.agents.tributario_agent.get_gemini_client"
 MOCK_TRIBUTARIO_RAG = "app.agents.tributario_agent.get_rag_service"
+MOCK_AUDITOR_GEMINI = "app.agents.auditor_agent.get_gemini_client"
 
 # ---------------------------------------------------------------------------
 # Test data
@@ -96,6 +97,21 @@ def _setup_tributario_mocks(mock_trib_rag_cls, mock_trib_gemini_fn):
         confirma_tasas=True,
     )
     mock_trib_gemini_fn.return_value = mock_gc
+
+
+def _setup_auditor_mock(mock_auditor_gemini_fn):
+    """Provide a deterministic auditor output that satisfies required schema."""
+    mock_gc = MagicMock()
+    mock_gc.extract_auditor_output.return_value = {
+        "fecha_auditoria": "2026-01-16",
+        "documento_referencia": "Transaccion_2026-01-15_NIT_900123456",
+        "aprobado": True,
+        "nivel_riesgo": "bajo",
+        "hallazgos": [],
+        "puntaje_calidad": 95,
+        "resumen": "Auditoria aprobada sin hallazgos materiales.",
+    }
+    mock_auditor_gemini_fn.return_value = mock_gc
 
 
 def _mock_llama(text: str = SAMPLE_TEXT):
@@ -210,7 +226,7 @@ class TestPipeline1HappyPath:
     @patch(MOCK_DB_SVC)
     @patch(MOCK_SESSION)
     @patch(MOCK_GEMINI)
-    @patch(MOCK_LLAMA)
+    @patch(MOCK_LLAMA_PARSE)
     def test_full_ingesta_pipeline_no_error(
         self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
     ):
@@ -227,7 +243,7 @@ class TestPipeline1HappyPath:
     @patch(MOCK_DB_SVC)
     @patch(MOCK_SESSION)
     @patch(MOCK_GEMINI)
-    @patch(MOCK_LLAMA)
+    @patch(MOCK_LLAMA_PARSE)
     def test_agent_log_contains_routing_and_validation(
         self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
     ):
@@ -246,7 +262,7 @@ class TestPipeline1HappyPath:
     @patch(MOCK_DB_SVC)
     @patch(MOCK_SESSION)
     @patch(MOCK_GEMINI)
-    @patch(MOCK_LLAMA)
+    @patch(MOCK_LLAMA_PARSE)
     def test_agent_log_entry_schema(
         self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
     ):
@@ -319,9 +335,11 @@ class TestPipeline2Routing:
         with patch(MOCK_SESSION), patch(MOCK_DB_SVC), \
                 patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc, \
                 patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag, \
-                patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini:
+                patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini, \
+                patch(MOCK_AUDITOR_GEMINI) as mock_auditor_gemini:
             mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
             _setup_tributario_mocks(mock_trib_rag, mock_trib_gemini)
+            _setup_auditor_mock(mock_auditor_gemini)
             # Provide raw_transactions so process supervisor doesn't error
             s = _base_state(dummy_pdf, mode="process")
             s["raw_transactions"] = [
@@ -358,10 +376,12 @@ class TestPipeline2Routing:
                 patch(MOCK_SESSION), patch(MOCK_DB_SVC), \
                 patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc, \
                 patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag, \
-                patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini:
+                patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini, \
+                patch(MOCK_AUDITOR_GEMINI) as mock_auditor_gemini:
             mock_gc.return_value.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
             mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
             _setup_tributario_mocks(mock_trib_rag, mock_trib_gemini)
+            _setup_auditor_mock(mock_auditor_gemini)
             fs = create_agent_graph().invoke(s)
 
         # Supervisor should have logged routing to db_persist after audit approved
@@ -381,7 +401,7 @@ class TestRetryFlow:
     @patch(MOCK_DB_SVC)
     @patch(MOCK_SESSION)
     @patch(MOCK_GEMINI)
-    @patch(MOCK_LLAMA)
+    @patch(MOCK_LLAMA_PARSE)
     def test_retry_once_then_success(
         self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
     ):
@@ -413,7 +433,7 @@ class TestRetryFlow:
         assert "validation_success" in events
 
     @patch(MOCK_GEMINI)
-    @patch(MOCK_LLAMA)
+    @patch(MOCK_LLAMA_PARSE)
     def test_exhausted_retries_sets_error(self, mock_llama, mock_gemini, dummy_pdf):
         """3 invalid outputs → error set, validation_exhausted in agent_log."""
         mock_llama.return_value = _mock_llama().return_value
@@ -427,7 +447,7 @@ class TestRetryFlow:
         assert "validation_exhausted" in events
 
     @patch(MOCK_GEMINI)
-    @patch(MOCK_LLAMA)
+    @patch(MOCK_LLAMA_PARSE)
     def test_exhausted_retries_does_not_call_db(
         self, mock_llama, mock_gemini, dummy_pdf
     ):
@@ -450,7 +470,7 @@ class TestInvokeAgent:
     @patch(MOCK_DB_SVC)
     @patch(MOCK_SESSION)
     @patch(MOCK_GEMINI)
-    @patch(MOCK_LLAMA)
+    @patch(MOCK_LLAMA_PARSE)
     def test_result_includes_agent_log(
         self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
     ):
@@ -468,7 +488,7 @@ class TestInvokeAgent:
     @patch(MOCK_DB_SVC)
     @patch(MOCK_SESSION)
     @patch(MOCK_GEMINI)
-    @patch(MOCK_LLAMA)
+    @patch(MOCK_LLAMA_PARSE)
     def test_result_includes_validation_history(
         self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
     ):
