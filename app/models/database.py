@@ -26,6 +26,7 @@ from sqlalchemy import (
     Integer,
     Boolean,
     ForeignKey,
+    PrimaryKeyConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.types import JSON
@@ -367,3 +368,35 @@ class AuditLog(Base):
 
     def __repr__(self):
         return f"<AuditLog(action={self.action}, entity={self.entity_type}:{self.entity_id})>"
+
+
+class VectorDocument(Base):
+    """
+    Stored text documents with embeddings for RAG retrieval.
+
+    Corresponds to the vector_documents table created in migration c3f8a2d91b5e.
+    Primary key is composite: (collection_name, id).
+
+    Note: the embedding column (vector(1024)) is intentionally omitted from
+    this ORM model because SQLAlchemy does not natively understand the pgvector
+    type. All embedding operations use raw SQL via sqlalchemy.text() in
+    vectordb.py and rag_service.py.
+
+    Collections used:
+      - normativa_colombia_v1  : shared PUC + Estatuto Tributario (read-only)
+      - empresa_{nit}_docs     : per-company documents (read/write)
+    """
+    __tablename__ = "vector_documents"
+
+    id              = Column(String, nullable=False)
+    collection_name = Column(String(255), nullable=False)
+    content         = Column(Text, nullable=False)
+    metadata_       = Column("metadata", JSONB, default=dict)
+    created_at      = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        PrimaryKeyConstraint("collection_name", "id"),
+    )
+
+    def __repr__(self):
+        return f"<VectorDocument(collection={self.collection_name}, id={self.id})>"
