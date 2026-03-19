@@ -85,3 +85,7 @@ class AgentState(TypedDict):
     audit_feedback: Optional[str]
     report_type: Optional[str]
     report_params: Optional[dict]
+    # Document classification fields (ingestion pipeline)
+    document_classification: Optional[dict]  # DocumentClassification serialized
+    pathway: Optional[str]  # "build_from_scratch" | "work_with_existing"
+    parsed_content: Optional[list]  # Structured tabular data from Excel sheets

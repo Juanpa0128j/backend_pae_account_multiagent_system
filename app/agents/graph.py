@@ -1,9 +1,11 @@
 """
 LangGraph StateGraph for the PAE multi-agent system.
 
-Unified 9-node graph — all pipelines routed via supervisor FSM:
-  Pipeline 1 (mode="ingest"):
+Unified 10-node graph — all pipelines routed via supervisor FSM:
+  Pipeline 1a (mode="ingest", Vía A — build from scratch):
     supervisor → ingesta → validate_output → [retry|error|end→db_persist] → END
+  Pipeline 1b (mode="ingest", Vía B — work with existing):
+    supervisor → import_existing → db_persist → END
   Pipeline 2 (mode="process"):
     supervisor -> contador -> supervisor -> tributario -> supervisor -> auditor
          -> supervisor -> db_persist -> END
@@ -20,6 +22,7 @@ from langgraph.graph import END, StateGraph
 
 from app.agents.auditor_agent import auditor_node
 from app.agents.contador_agent import contador_node
+from app.agents.import_existing_node import import_existing_node
 from app.agents.ingest_agent import ingest_node
 from app.agents.persist_node import db_persist_node
 from app.agents.reportero_agent import reportero_node
@@ -63,6 +66,7 @@ def create_agent_graph() -> Any:
     graph.add_node("tributario", tributario_node)
     graph.add_node("auditor", auditor_node)
     graph.add_node("reportero", reportero_node)
+    graph.add_node("import_existing", import_existing_node)
 
     # --- supervisor dispatches to the correct worker ---
     graph.add_conditional_edges(
@@ -75,6 +79,7 @@ def create_agent_graph() -> Any:
             "auditor": "auditor",
             "db_persist": "db_persist",
             "reportero": "reportero",
+            "import_existing": "import_existing",
             "error_terminal": "error_terminal",
         },
     )
@@ -91,6 +96,9 @@ def create_agent_graph() -> Any:
     graph.add_edge("contador", "supervisor")
     graph.add_edge("tributario", "supervisor")
     graph.add_edge("auditor", "supervisor")
+
+    # --- Vía B: import_existing → db_persist ---
+    graph.add_edge("import_existing", "db_persist")
 
     # --- terminals ---
     graph.add_edge("reportero", END)
@@ -134,6 +142,9 @@ def _base_state() -> AgentState:
         "audit_feedback": None,
         "report_type": None,
         "report_params": None,
+        "document_classification": None,
+        "pathway": None,
+        "parsed_content": None,
     }
 
 

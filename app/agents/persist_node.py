@@ -128,7 +128,13 @@ def _db_persist_inner_with_cleanup(state: AgentState) -> AgentState:
 def _run_persist(state: AgentState) -> AgentState:
     """Core persistence logic. Raises on failure; called by the retry wrappers."""
     mode = state.get("mode", "ingest")
+    pathway = state.get("pathway", "build_from_scratch")
     interpreted = state.get("interpreted_data", {}) or {}
+
+    # --- Vía B: persist existing financial statement directly ---
+    if mode == "ingest" and pathway == "work_with_existing":
+        _persist_financial_statement(state)
+        return state
 
     if mode == "process":
         contador_output = state.get("contador_output") or interpreted
@@ -197,7 +203,6 @@ def _run_persist(state: AgentState) -> AgentState:
 
     ingest_id = _as_str(state.get("ingest_id"), "")
     db = SessionLocal()
-    ingest_id = _as_str(state.get("ingest_id"), "")
 
     try:
 
@@ -295,7 +300,14 @@ def _run_persist(state: AgentState) -> AgentState:
                     state["error"] = msg
                     raise RuntimeError(msg)
             else:
-                cuenta_puc = _as_str(tx_data.get("cuenta_puc"), "") or "519595"
+                cuenta_puc = _as_str(tx_data.get("cuenta_puc"), "")
+                if not cuenta_puc:
+                    logger.warning(
+                        "db_persist: No PUC code in ingest data — "
+                        "defaulting to 519595 (Otros Gastos). "
+                        "Run accounting pipeline to classify properly."
+                    )
+                    cuenta_puc = "519595"
                 puc_descripcion = _as_str(tx_data.get("cuenta_nombre"), "")
 
             puc_record = db_service.validate_puc_exists(db, cuenta_puc)
@@ -480,6 +492,85 @@ def _journal_entries_from_contador(*, fecha: datetime, asientos: list, nit: str,
     return entries
 
 
+def _persist_financial_statement(state: AgentState) -> None:
+    """Persist a Vía B financial statement (balance, PnL, or libro auxiliar)."""
+    import uuid as _uuid
+    from app.models.database import FinancialStatement, IngestStatus
+
+    interpreted = state.get("interpreted_data") or state.get("result", {}).get("data", {})
+    classification = state.get("document_classification") or {}
+    doc_type = classification.get("doc_type", "unknown")
+
+    if not interpreted:
+        msg = "db_persist: No financial statement data to persist (Vía B)"
+        logger.error(msg)
+        state["error"] = msg
+        raise RuntimeError(msg)
+
+    ingest_id = _as_str(state.get("ingest_id"), "")
+    db = SessionLocal()
+
+    try:
+        # Create or update IngestJob
+        if ingest_id:
+            ingest_job = db_service.get_ingest_job(db, ingest_id)
+            if ingest_job:
+                db_service.update_ingest_job(db, ingest_id, IngestStatus.PROCESSING)
+        else:
+            file_name = state.get("file_path", "unknown").split("/")[-1]
+            ingest_job = db_service.create_ingest_job(db, file_name, state.get("file_path"))
+            ingest_id = _as_str(getattr(ingest_job, "id", ""), "")
+            state["ingest_id"] = ingest_id
+
+        # Create FinancialStatement record
+        stmt = FinancialStatement(
+            id=str(_uuid.uuid4()),
+            ingest_id=ingest_id,
+            statement_type=doc_type,
+            period_start=None,  # Could be extracted from classification
+            period_end=None,
+            entity_nit=classification.get("entity_nit"),
+            data=interpreted,
+        )
+        db.add(stmt)
+        db.commit()
+
+        # Mark ingest as completed
+        db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
+
+        state["db_result"] = {
+            "ingest_id": ingest_id,
+            "financial_statement_id": stmt.id,
+            "statement_type": doc_type,
+            "pathway": "work_with_existing",
+        }
+
+        if state.get("result") is not None:
+            state["result"]["db_persisted"] = True
+            state["result"]["ingest_id"] = ingest_id
+            state["result"]["financial_statement_id"] = stmt.id
+
+        logger.info(
+            "db_persist: Vía B financial statement persisted (ingest=%s, stmt=%s)",
+            ingest_id, stmt.id,
+        )
+
+    except Exception as e:
+        db.rollback()
+        logger.error("db_persist: Vía B persistence failed: %s", e, exc_info=True)
+        state["error"] = f"DB persist error (Vía B): {str(e)}"
+        if ingest_id:
+            try:
+                db_service.update_ingest_job(
+                    db, ingest_id, IngestStatus.FAILED,
+                    extraction_errors=[str(e)],
+                )
+            except Exception:
+                pass
+    finally:
+        db.close()
+
+
 def _build_preview(interpreted: dict) -> dict:
     return {
         "nit_emisor": interpreted.get("nit_emisor"),
@@ -580,6 +671,19 @@ def _build_journal_entries(
                 "debito": "0",
                 "credito": str(reteica),
             }
+        )
+
+    # Validate double-entry principle (partida doble)
+    total_debitos = sum(Decimal(e["debito"]) for e in entries)
+    total_creditos = sum(Decimal(e["credito"]) for e in entries)
+    if total_debitos != total_creditos:
+        logger.error(
+            "Double-entry violation in _build_journal_entries: "
+            "debits (%s) != credits (%s)",
+            total_debitos, total_creditos,
+        )
+        raise RuntimeError(
+            f"Unbalanced journal entries: D={total_debitos} C={total_creditos}"
         )
 
     return entries

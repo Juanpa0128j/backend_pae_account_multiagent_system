@@ -220,7 +220,7 @@ class TestGraphStructure:
     def test_graph_node_count(self):
         graph = create_agent_graph()
         node_names = [n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")]
-        assert len(node_names) == 4
+        assert len(node_names) == 9
 
 
 # ─── TEST: Happy Path (Full Pipeline) ───────────────────────────

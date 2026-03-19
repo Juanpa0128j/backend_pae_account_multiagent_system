@@ -191,6 +191,8 @@ class IngestJob(Base):
         default=IngestStatus.PENDING_PROCESSING,
         nullable=False,
     )
+    document_type = Column(String(50), nullable=True, comment="DocumentType enum value")
+    pathway = Column(String(30), nullable=True, comment="build_from_scratch | work_with_existing")
 
     raw_preview = Column(JSONB, nullable=True, comment="Quick preview of extracted data")
     extraction_errors = Column(JSONB, nullable=True, comment="List of error messages")
@@ -368,6 +370,32 @@ class AuditLog(Base):
 
     def __repr__(self):
         return f"<AuditLog(action={self.action}, entity={self.entity_type}:{self.entity_id})>"
+
+
+class FinancialStatement(Base):
+    """
+    Stored financial statements received via Vía B (work_with_existing).
+
+    These are pre-existing balance sheets, income statements, or auxiliary
+    ledgers uploaded by the user and stored directly for reporting.
+    """
+    __tablename__ = "financial_statements"
+
+    id = Column(String(50), primary_key=True, index=True)
+    ingest_id = Column(String(50), ForeignKey("ingest_jobs.id"), nullable=False, index=True)
+    statement_type = Column(String(50), nullable=False, comment="balance_general | estado_resultados | libro_auxiliar")
+    period_start = Column(DateTime(timezone=True), nullable=True)
+    period_end = Column(DateTime(timezone=True), nullable=True)
+    entity_nit = Column(String(20), nullable=True)
+    data = Column(JSONB, nullable=False, comment="Full parsed financial statement data")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    ingest_job = relationship("IngestJob", backref="financial_statements")
+
+    def __repr__(self):
+        return f"<FinancialStatement(id={self.id}, type={self.statement_type})>"
 
 
 class VectorDocument(Base):

@@ -70,14 +70,73 @@ def supervisor_node(state: AgentState) -> AgentState:
             })
             return state
 
-        if not file_path.lower().endswith(".pdf"):
-            state["error"] = f"Only PDF files are supported. Got: {file_path}"
+        _SUPPORTED_EXTENSIONS = (".pdf", ".xlsx", ".xml")
+        if not any(file_path.lower().endswith(ext) for ext in _SUPPORTED_EXTENSIONS):
+            state["error"] = (
+                f"Unsupported file type. Accepted: PDF, Excel, XML. Got: {file_path}"
+            )
             logger.error(state["error"])
             append_log(state, "supervisor", "routing_error", {
-                "reason": "not_pdf", "file_path": file_path,
+                "reason": "unsupported_format", "file_path": file_path,
             })
             return state
 
+        # --- Extract text preview and classify document ---
+        ext = Path(file_path).suffix.lower()
+        text_preview = ""
+        try:
+            if ext == ".xlsx":
+                from app.services.excel_parser import parse_excel
+                markdown_text, tabular_data = parse_excel(file_path)
+                state["raw_text"] = markdown_text
+                state["parsed_content"] = tabular_data
+                text_preview = markdown_text[:3000]
+            elif ext == ".pdf":
+                from app.services.pdf_processor import extract_text_from_pdf
+                text_preview = extract_text_from_pdf(file_path)[:3000]
+        except Exception as preview_err:
+            logger.warning(
+                "Supervisor: text preview extraction failed: %s", preview_err
+            )
+
+        # Classify document by content using LLM
+        try:
+            from app.services.doc_classifier import classify_document
+            from app.models.document_types import IngestPathway
+
+            classification = classify_document(
+                text_preview=text_preview,
+                source_format=ext.lstrip("."),
+            )
+            state["document_classification"] = classification.model_dump(mode="json")
+            state["pathway"] = classification.pathway.value
+
+            append_log(state, "supervisor", "document_classified", {
+                "doc_type": classification.doc_type.value,
+                "pathway": classification.pathway.value,
+                "confidence": classification.confidence,
+            })
+
+            if classification.pathway == IngestPathway.WORK_WITH_EXISTING:
+                state["mode"] = "ingest"
+                state["current_agent"] = "import_existing"
+                logger.info(
+                    "Supervisor: Vía B — routing to import_existing for %s (%s)",
+                    file_path, classification.doc_type.value,
+                )
+                append_log(state, "supervisor", "routing_complete", {
+                    "next_agent": "import_existing", "mode": "ingest",
+                    "pathway": "work_with_existing",
+                })
+                return state
+        except Exception as classify_err:
+            logger.warning(
+                "Supervisor: document classification failed (continuing with default): %s",
+                classify_err,
+            )
+            state["pathway"] = "build_from_scratch"
+
+        # Vía A (default) — route to ingesta
         state["mode"] = "ingest"
         state["current_agent"] = "ingesta"
         logger.info(f"Supervisor: routing to ingesta for {file_path}")
@@ -572,6 +631,7 @@ def route_after_supervisor(state: AgentState) -> str:
     agent = state.get("current_agent", "ingesta")
     routing_map = {
         "ingesta": "ingesta",
+        "import_existing": "import_existing",
         "contador": "contador",
         "tributario": "tributario",
         "auditor": "auditor",

@@ -158,10 +158,10 @@ class TestIngestOutput:
         with pytest.raises(ValidationError):
             IngestOutput.model_validate({"transactions": "not-a-list"})
 
-    def test_empty_transactions_is_valid(self):
-        """An empty transactions list is allowed (default)."""
-        output = IngestOutput.model_validate({"transactions": []})
-        assert output.transactions == []
+    def test_empty_transactions_is_rejected(self):
+        """An empty transactions list is rejected (at least 1 required)."""
+        with pytest.raises(ValidationError, match="at least 1 item"):
+            IngestOutput.model_validate({"transactions": []})
 
     def test_optional_fecha_null(self, valid_ingest_data):
         valid_ingest_data["transactions"][0]["fecha"] = None

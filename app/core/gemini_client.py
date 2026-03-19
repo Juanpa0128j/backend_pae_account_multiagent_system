@@ -200,6 +200,22 @@ class GeminiClient:
         self.tax_model = self.model.with_structured_output(TaxJustification)
         self.tax_lookup_model = self.model.with_structured_output(TaxRateLookup)
 
+        # Document classifier and content-specific extraction models
+        from app.services.doc_classifier import _ClassificationResponse
+        from app.models.ingest_schemas import (
+            BankStatementContent,
+            TaxDeclarationContent,
+            TaxAnnexContent,
+            AuxiliaryLedgerContent,
+            FinancialStatementContent,
+        )
+        self.classifier_model = self.model.with_structured_output(_ClassificationResponse)
+        self.bank_statement_model = self.model.with_structured_output(BankStatementContent)
+        self.tax_declaration_model = self.model.with_structured_output(TaxDeclarationContent)
+        self.tax_annex_model = self.model.with_structured_output(TaxAnnexContent)
+        self.auxiliary_ledger_model = self.model.with_structured_output(AuxiliaryLedgerContent)
+        self.financial_statement_model = self.model.with_structured_output(FinancialStatementContent)
+
     @staticmethod
     def _as_dict(response: BaseModel | dict[str, Any]) -> dict[str, Any]:
         if isinstance(response, BaseModel):
@@ -458,6 +474,134 @@ Y cita fuentes legales."""
             response.tasa_reteica,
         )
         return response
+
+
+    # ------------------------------------------------------------------
+    # Document classification
+    # ------------------------------------------------------------------
+
+    def classify_document(self, text_preview: str) -> Any:
+        """Classify a document based on its content using LLM."""
+        from app.services.doc_classifier import CLASSIFICATION_PROMPT
+
+        prompt = CLASSIFICATION_PROMPT.format(text_preview=text_preview)
+        try:
+            response = self.classifier_model.invoke([HumanMessage(content=prompt)])
+            return self._as_model(
+                type(response) if isinstance(response, BaseModel) else response.__class__,
+                response,
+            ) if isinstance(response, BaseModel) else response
+        except Exception as e:
+            logger.error("Gemini classify_document failed: %s", e)
+            raise
+
+    # ------------------------------------------------------------------
+    # Content-specific extraction methods
+    # ------------------------------------------------------------------
+
+    def extract_bank_statement(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        """Extract bank statement data from document text."""
+        prompt = f"""Eres un experto contable colombiano.
+
+Texto extraído de un extracto bancario:
+---
+{text}
+---
+
+Extrae la información del extracto: cuenta bancaria, entidad, saldo inicial,
+saldo final, y todos los movimientos con fecha, descripción, débito, crédito y saldo."""
+
+        if correction_feedback:
+            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
+
+        response = self.bank_statement_model.invoke([HumanMessage(content=prompt)])
+        return self._as_dict(response)
+
+    def extract_tax_declaration(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        """Extract tax declaration data (IVA, ReteICA) from document text."""
+        prompt = f"""Eres un experto tributario colombiano.
+
+Texto extraído de una declaración tributaria (IVA o ReteICA):
+---
+{text}
+---
+
+Extrae: número de formulario DIAN, período, NIT del declarante,
+valores por renglón del formulario (como dict renglón→valor), y total a pagar."""
+
+        if correction_feedback:
+            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
+
+        response = self.tax_declaration_model.invoke([HumanMessage(content=prompt)])
+        return self._as_dict(response)
+
+    def extract_tax_annex(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        """Extract tax annex tabular data from document text."""
+        prompt = f"""Eres un experto tributario colombiano.
+
+Texto extraído de un anexo de declaración tributaria:
+---
+{text}
+---
+
+Extrae: tipo de anexo (iva/reteica/etc.), período, y la tabla de detalle
+con NIT, razón social, base gravable, tarifa y retención por cada tercero.
+Incluye totales de base y retención."""
+
+        if correction_feedback:
+            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
+
+        response = self.tax_annex_model.invoke([HumanMessage(content=prompt)])
+        return self._as_dict(response)
+
+    def extract_auxiliary_ledger(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        """Extract auxiliary ledger data from document text."""
+        prompt = f"""Eres un experto contable colombiano.
+
+Texto extraído de un libro auxiliar contable:
+---
+{text}
+---
+
+Extrae cada línea del auxiliar: fecha, cuenta PUC, nombre de cuenta,
+NIT del tercero, detalle, débito, crédito y saldo.
+Si el auxiliar es de una cuenta específica, indica cuál."""
+
+        if correction_feedback:
+            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
+
+        response = self.auxiliary_ledger_model.invoke([HumanMessage(content=prompt)])
+        return self._as_dict(response)
+
+    def extract_financial_statement(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        """Extract financial statement data (balance or P&L) from document text."""
+        prompt = f"""Eres un experto contable colombiano (NIIF/PUC).
+
+Texto extraído de un estado financiero:
+---
+{text}
+---
+
+Determina si es un balance general o estado de resultados.
+Extrae: tipo, período, NIT de la entidad, y todas las cuentas PUC con sus
+nombres y saldos. Para balance general incluye totales de activos, pasivos
+y patrimonio. Para estado de resultados incluye utilidad neta."""
+
+        if correction_feedback:
+            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
+
+        response = self.financial_statement_model.invoke([HumanMessage(content=prompt)])
+        return self._as_dict(response)
 
 
 @lru_cache(maxsize=1)

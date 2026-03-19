@@ -100,8 +100,16 @@ async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
     # Reconcile stale ingest states: if transactions are already staged but the
     # job is still pending/processing, mark it as completed so clients can
     # advance to the accounting phase.
+    # Guard: only reconcile if the job was created more than 60 seconds ago
+    # to avoid racing with the background ingest task.
+    from datetime import datetime, timezone, timedelta
+    is_stale = (
+        job.created_at
+        and (datetime.now(timezone.utc) - job.created_at) > timedelta(seconds=60)
+    )
     if (
         raw_txs
+        and is_stale
         and job.status in (IngestStatus.PENDING_PROCESSING, IngestStatus.PROCESSING)
         and not job.extraction_errors
     ):
