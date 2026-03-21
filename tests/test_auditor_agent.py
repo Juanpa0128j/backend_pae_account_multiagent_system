@@ -503,7 +503,7 @@ class TestProcessGraphStructure:
     def test_node_count(self):
         graph = create_agent_graph()
         nodes = [n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")]
-        assert len(nodes) == 9
+        assert len(nodes) == 10
 
 
 # ===========================================================================
@@ -566,31 +566,49 @@ class TestProcessGraphE2E:
         assert final["db_result"]["journal_lines_count"] == 2
         assert len(final["validation_history"]) >= 2  # contador + auditor validated
 
+    @patch("app.agents.tributario_agent.get_gemini_client")
     @patch("app.agents.auditor_agent.get_gemini_client")
     @patch("app.agents.contador_agent.get_gemini_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
-    def test_rejected_audit_still_persists(self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory):
+    def test_rejected_audit_triggers_self_correction_then_approves(
+        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory
+    ):
         """
-        A rejected audit is recorded in DB (business risk tracked), not hard-blocked.
-        The pipeline completes without error; audit_approved=False is in db_result.
+        Self-correction cycle: auditor rejects once → supervisor routes back to
+        contador with feedback → contador corrects → auditor approves → db_persist.
+        Pipeline completes without error; audit_approved=True.
         """
         mock_cnt = MagicMock()
         mock_cnt.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
         mock_cnt_factory.return_value = mock_cnt
 
+        # Reject on first call, approve on second (after self-correction)
+        audit_calls = {"n": 0}
+        def auditor_side_effect(*args, **kwargs):
+            audit_calls["n"] += 1
+            if audit_calls["n"] == 1:
+                return dict(REJECTED_AUDITOR_OUTPUT)
+            return dict(VALID_AUDITOR_OUTPUT)
+
         mock_aud = MagicMock()
-        mock_aud.extract_auditor_output.return_value = dict(REJECTED_AUDITOR_OUTPUT)
+        mock_aud.extract_auditor_output.side_effect = auditor_side_effect
         mock_aud_factory.return_value = mock_aud
+
+        mock_trib = MagicMock()
+        mock_trib.justify_tax_analysis.return_value = MagicMock(
+            referencias=["Art. 383 ET"], justificacion="ok", confirma_tasas=True
+        )
+        mock_trib_factory.return_value = mock_trib
 
         with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
             graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
-        assert final.get("error") is None
-        assert final["audit_approved"] is False
+        assert final.get("error") is None, final.get("error")
+        assert final["audit_approved"] is True
         assert final["db_result"] is not None
-        assert final["db_result"]["audit_approved"] is False
+        assert audit_calls["n"] == 2, "Auditor should have been called twice (reject + approve)"
 
     @patch("app.agents.auditor_agent.get_gemini_client")
     @patch("app.agents.contador_agent.get_gemini_client")
@@ -849,10 +867,11 @@ class TestProcessGraphDBIntegration:
         finally:
             db.close()
 
+    @patch("app.agents.tributario_agent.get_gemini_client")
     @patch("app.agents.auditor_agent.get_gemini_client")
     @patch("app.agents.contador_agent.get_gemini_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
-    def test_rejected_audit_stored_with_findings(self, _mock_puc, mock_cnt_factory, mock_aud_factory):
+    def test_rejected_audit_stored_with_findings(self, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory):
         """A rejected audit must persist with aprobado=False recorded in agent_reasoning."""
         from app.core.database import SessionLocal
         from app.models.database import TransactionPosted
@@ -865,7 +884,14 @@ class TestProcessGraphDBIntegration:
         mock_aud.extract_auditor_output.return_value = dict(REJECTED_AUDITOR_OUTPUT)
         mock_aud_factory.return_value = mock_aud
 
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
+        mock_trib = MagicMock()
+        mock_trib.justify_tax_analysis.return_value = MagicMock(
+            referencias=["Art. 383 ET"], justificacion="ok", confirma_tasas=True
+        )
+        mock_trib_factory.return_value = mock_trib
+
+        with patch("app.agents.tributario_agent.get_rag_service", side_effect=Exception("no RAG")), \
+             patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
             result = invoke_accounting_pipeline(
                 ingest_id=self._ingest_id,
                 raw_transactions=list(VALID_RAW_TRANSACTIONS),

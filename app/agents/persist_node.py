@@ -40,6 +40,19 @@ def _as_str(value: Any, default: str = "") -> str:
     return str(value)
 
 
+def _sanitize_for_json(value: Any) -> Any:
+    """Recursively convert non-JSON-serializable types to safe types."""
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_for_json(v) for v in value]
+    return value
+
+
 
 def _safe_decimal(value: Any) -> Optional[Decimal]:
 
@@ -193,7 +206,48 @@ def _run_persist(state: AgentState) -> AgentState:
         }
         transactions = [tx_data]
     else:
-        transactions = interpreted.get("transactions", []) if isinstance(interpreted, dict) else []
+        # New rich-schema path: interpreted_data is a typed content dict (FacturaVentaContent, etc.)
+        # Build a single tx_data from the structured fields.
+        if isinstance(interpreted, dict) and "transactions" not in interpreted:
+            emisor = interpreted.get("emisor") or {}
+            receptor = interpreted.get("receptor") or {}
+            totales = interpreted.get("totales") or {}
+            tx_data = {
+                "fecha": (
+                    interpreted.get("fecha_emision")
+                    or interpreted.get("fecha_registro")
+                    or interpreted.get("fecha")
+                ),
+                "nit_emisor": _as_str(
+                    emisor.get("nit") or interpreted.get("nit_emisor"), ""
+                ),
+                "nit_receptor": _as_str(
+                    receptor.get("nit") or interpreted.get("nit_receptor"), ""
+                ),
+                "total": str(
+                    totales.get("total_a_pagar")
+                    or totales.get("total")
+                    or interpreted.get("total")
+                    or interpreted.get("valor_total")
+                    or 0
+                ),
+                "concepto": _as_str(
+                    interpreted.get("descripcion_general")
+                    or interpreted.get("concepto")
+                    or interpreted.get("tipo_documento", ""),
+                    "",
+                ),
+                "descripcion": _as_str(
+                    interpreted.get("descripcion_general")
+                    or interpreted.get("concepto")
+                    or interpreted.get("tipo_documento", ""),
+                    "",
+                ),
+                "items": _sanitize_for_json(interpreted.get("items") or interpreted.get("detalle_items") or []),
+            }
+            transactions = [tx_data]
+        else:
+            transactions = interpreted.get("transactions", []) if isinstance(interpreted, dict) else []
         if not transactions:
             msg = "db_persist: No transactions to persist"
             logger.warning(msg)

@@ -38,14 +38,14 @@ def process_ingest_background(temp_file_path: str, ingest_id: str):
 @router.post("/upload", response_model=IngestResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
-    Upload and process a PDF/Excel/XML file (receipt/invoice).
+    Upload and process a PDF/Excel/XML/image file (receipt/invoice/scan).
     Returns 202 Accepted immediately.
     """
     # Validate file type
-    if not file.filename.lower().endswith(('.pdf', '.xlsx', '.xml')):
+    if not file.filename.lower().endswith(('.pdf', '.xlsx', '.xml', '.jpg', '.jpeg', '.png')):
         raise HTTPException(
-            status_code=422, 
-            detail="Unsupported file type. Accepted: PDF, Excel, XML",
+            status_code=422,
+            detail="Unsupported file type. Accepted: PDF, Excel, XML, JPG, PNG",
             headers={"error_code": "INVALID_FILE_TYPE"}
         )
     

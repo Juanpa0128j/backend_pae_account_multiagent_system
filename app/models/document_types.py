@@ -23,11 +23,27 @@ class DocumentType(str, Enum):
     DECLARACION_RETEICA = "declaracion_reteica"
     ANEXO_TRIBUTARIO = "anexo_tributario"
     AUXILIAR_IMPUESTO = "auxiliar_impuesto"
+    DECLARACION_ICA = "declaracion_ica"
+    AUTORRETENCION_ICA = "autorretencion_ica"
+    ANEXO_IVA = "anexo_iva"
+    AUXILIAR_IVA = "auxiliar_iva"
+    COMPROBANTE_EGRESO = "comprobante_egreso"
+    DOCUMENTO_SOPORTE = "documento_soporte"
+    RECIBO_CAJA = "recibo_caja"
+    NOMINA = "nomina"
+    CONCILIACION_BANCARIA = "conciliacion_bancaria"
+    CUENTA_COBRO = "cuenta_cobro"
+    PLANILLA_SEGURIDAD_SOCIAL = "planilla_seguridad_social"
+    RECIBO_PAGO_IMPUESTO = "recibo_pago_impuesto"
 
     # Vía B — Existing financial statements (use for derived reports)
     BALANCE_GENERAL = "balance_general"
     ESTADO_RESULTADOS = "estado_resultados"
     LIBRO_AUXILIAR = "libro_auxiliar"
+    FLUJO_DE_CAJA = "flujo_de_caja"
+    CAMBIOS_PATRIMONIO = "cambios_patrimonio"
+    NOTAS_ESTADOS_FINANCIEROS = "notas_estados_financieros"
+    LIBRO_DIARIO = "libro_diario"
 
     # Fallback
     OTRO = "otro"
@@ -52,10 +68,26 @@ PATHWAY_MAP: dict[DocumentType, IngestPathway] = {
     DocumentType.DECLARACION_RETEICA: IngestPathway.BUILD_FROM_SCRATCH,
     DocumentType.ANEXO_TRIBUTARIO: IngestPathway.BUILD_FROM_SCRATCH,
     DocumentType.AUXILIAR_IMPUESTO: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.DECLARACION_ICA: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.AUTORRETENCION_ICA: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.ANEXO_IVA: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.AUXILIAR_IVA: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.COMPROBANTE_EGRESO: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.DOCUMENTO_SOPORTE: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.RECIBO_CAJA: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.NOMINA: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.CONCILIACION_BANCARIA: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.CUENTA_COBRO: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.PLANILLA_SEGURIDAD_SOCIAL: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.RECIBO_PAGO_IMPUESTO: IngestPathway.BUILD_FROM_SCRATCH,
     # Vía B — existing financial statements
     DocumentType.BALANCE_GENERAL: IngestPathway.WORK_WITH_EXISTING,
     DocumentType.ESTADO_RESULTADOS: IngestPathway.WORK_WITH_EXISTING,
     DocumentType.LIBRO_AUXILIAR: IngestPathway.WORK_WITH_EXISTING,
+    DocumentType.FLUJO_DE_CAJA: IngestPathway.WORK_WITH_EXISTING,
+    DocumentType.CAMBIOS_PATRIMONIO: IngestPathway.WORK_WITH_EXISTING,
+    DocumentType.NOTAS_ESTADOS_FINANCIEROS: IngestPathway.WORK_WITH_EXISTING,
+    DocumentType.LIBRO_DIARIO: IngestPathway.WORK_WITH_EXISTING,
     # Fallback
     DocumentType.OTRO: IngestPathway.BUILD_FROM_SCRATCH,
 }

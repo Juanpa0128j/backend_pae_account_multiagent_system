@@ -136,15 +136,20 @@ class IngestOutput(BaseModel):
     """
     Schema for the Ingesta (Ingest) agent output.
 
-    Aligned with what Gemini's RawTransactionsList actually produces:
-    a dict with a "transactions" list. Top-level metadata fields are
-    optional since Gemini does not always produce them.
+    Each document type now returns its own rich structured dict via a dedicated
+    Gemini extraction method.  This wrapper validates only the common optional
+    fields that may appear across all document types; unknown fields are allowed
+    so that doc-type-specific fields pass through without errors.
+
+    The `transactions` field is kept for legacy compatibility but is no longer
+    required — new extraction methods return structured content objects instead
+    of transaction lists.
     """
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="allow")
 
     transactions: List[RawTransactionItem] = Field(
-        ..., min_length=1,
-        description="Extracted list of individual transaction items (at least one required)"
+        default_factory=list,
+        description="Legacy transaction list (empty for new structured extraction methods)"
     )
     fecha: Optional[date] = Field(
         None, description="Document date in YYYY-MM-DD format"

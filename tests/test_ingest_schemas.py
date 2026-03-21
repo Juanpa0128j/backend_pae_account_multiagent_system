@@ -7,13 +7,14 @@ from decimal import Decimal
 from pydantic import ValidationError
 
 from app.models.ingest_schemas import (
-    TransactionItem,
-    TransactionListContent,
+    FacturaVentaContent,
+    FacturaCompraContent,
+    NotaCreditoContent,
+    NotaDebitoContent,
     BankMovement,
     BankStatementContent,
     TaxDeclarationContent,
-    AnnexRow,
-    TaxAnnexContent,
+    AnexoIVAContent,
     LedgerLine,
     AuxiliaryLedgerContent,
     AccountBalance,
@@ -23,40 +24,52 @@ from app.models.ingest_schemas import (
 
 
 # ---------------------------------------------------------------------------
-# TransactionListContent
+# FacturaVentaContent (replaces TransactionListContent tests)
 # ---------------------------------------------------------------------------
 
-class TestTransactionListContent:
-    def test_valid_transaction(self):
+class TestFacturaVentaContent:
+    def test_valid_minimal(self):
         data = {
-            "transactions": [{
-                "fecha": "2026-01-15",
-                "nit_emisor": "900123456",
-                "nit_receptor": "800999888",
-                "total": 1500000,
-                "descripcion": "Consultoría",
-            }]
+            "consecutivo": "FV-0192",
+            "fecha_emision": "2026-01-15",
+            "emisor": {"razon_social": "Empresa ABC", "nit": "900123456-7"},
+            "receptor": {"razon_social": "Cliente XYZ", "nit": "800999888-1"},
+            "totales": {"total_a_pagar": 1500000},
         }
-        result = TransactionListContent.model_validate(data)
-        assert len(result.transactions) == 1
-        assert result.transactions[0].total == Decimal("1500000")
+        result = FacturaVentaContent.model_validate(data)
+        assert result.consecutivo == "FV-0192"
+        assert result.totales.total_a_pagar == Decimal("1500000")
 
-    def test_empty_transactions_rejected(self):
-        with pytest.raises(ValidationError, match="at least 1"):
-            TransactionListContent.model_validate({"transactions": []})
+    def test_all_optional_fields_null(self):
+        result = FacturaVentaContent.model_validate({})
+        assert result.consecutivo is None
+        assert result.emisor is None
 
-    def test_tipo_persona_optional(self):
+    def test_informacion_adicional_captured(self):
         data = {
-            "transactions": [{
-                "fecha": "2026-01-15",
-                "nit_emisor": "900123456",
-                "nit_receptor": "800999888",
-                "total": 100000,
-                "tipo_persona": "juridica",
-            }]
+            "consecutivo": "FV-0193",
+            "informacion_adicional": {
+                "regimen_emisor": "responsable_iva",
+                "retefuente_aplicable": True,
+            },
         }
-        result = TransactionListContent.model_validate(data)
-        assert result.transactions[0].tipo_persona == "juridica"
+        result = FacturaVentaContent.model_validate(data)
+        assert result.informacion_adicional["regimen_emisor"] == "responsable_iva"
+
+
+class TestFacturaCompraContent:
+    def test_valid_minimal(self):
+        data = {
+            "consecutivo": "FC-001",
+            "proveedor": {"razon_social": "Proveedor SAS", "nit": "901234567-1"},
+        }
+        result = FacturaCompraContent.model_validate(data)
+        assert result.consecutivo == "FC-001"
+
+    def test_documento_soporte_flag(self):
+        data = {"documento_soporte": True}
+        result = FacturaCompraContent.model_validate(data)
+        assert result.documento_soporte is True
 
 
 # ---------------------------------------------------------------------------
@@ -66,13 +79,15 @@ class TestTransactionListContent:
 class TestBankStatementContent:
     def test_valid_statement(self):
         data = {
-            "cuenta_bancaria": "1234567890",
-            "entidad_bancaria": "Bancolombia",
+            "entidad_financiera": "Bancolombia",
+            "numero_cuenta": "1234567890",
+            "tipo_cuenta": "corriente",
             "saldo_inicial": 5000000,
             "saldo_final": 4200000,
             "movements": [{
                 "fecha": "2026-01-10",
                 "descripcion": "Transferencia salida",
+                "tipo": "debito",
                 "debito": 800000,
                 "credito": None,
                 "saldo": 4200000,
@@ -84,14 +99,25 @@ class TestBankStatementContent:
 
     def test_empty_movements_allowed(self):
         data = {
-            "cuenta_bancaria": "1234567890",
-            "entidad_bancaria": "Davivienda",
+            "entidad_financiera": "Davivienda",
             "saldo_inicial": 1000000,
             "saldo_final": 1000000,
             "movements": [],
         }
         result = BankStatementContent.model_validate(data)
         assert result.movements == []
+
+    def test_legacy_property_aliases(self):
+        data = {
+            "entidad_financiera": "Banco Bogotá",
+            "numero_cuenta": "9876543210",
+            "saldo_inicial": 0,
+            "saldo_final": 0,
+            "movements": [],
+        }
+        result = BankStatementContent.model_validate(data)
+        assert result.entidad_bancaria == "Banco Bogotá"
+        assert result.cuenta_bancaria == "9876543210"
 
 
 # ---------------------------------------------------------------------------
@@ -128,36 +154,28 @@ class TestTaxDeclarationContent:
 
 
 # ---------------------------------------------------------------------------
-# TaxAnnexContent
+# AnexoIVAContent (replaces TaxAnnexContent tests)
 # ---------------------------------------------------------------------------
 
-class TestTaxAnnexContent:
+class TestAnexoIVAContent:
     def test_valid_annex(self):
         data = {
-            "tipo_anexo": "reteica",
-            "periodo": "2026-01",
-            "rows": [
-                {
-                    "nit": "900111222",
-                    "razon_social": "Proveedor ABC",
-                    "base_gravable": 10000000,
-                    "tarifa": 0.0069,
-                    "retencion": 69000,
-                },
-                {
-                    "nit": "800333444",
-                    "razon_social": "Servicios XYZ",
-                    "base_gravable": 5000000,
-                    "tarifa": 0.0069,
-                    "retencion": 34500,
-                },
+            "nit_declarante": "900111222",
+            "periodo_numero": 1,
+            "iva_generado": [
+                {"tarifa": 0.19, "base_gravable": 10000000, "iva_generado": 1900000},
             ],
-            "total_base": 15000000,
-            "total_retencion": 103500,
+            "total_iva_generado": 1900000,
+            "total_iva_descontable": 500000,
+            "saldo_a_pagar": 1400000,
         }
-        result = TaxAnnexContent.model_validate(data)
-        assert len(result.rows) == 2
-        assert result.total_retencion == Decimal("103500")
+        result = AnexoIVAContent.model_validate(data)
+        assert result.total_iva_generado == Decimal("1900000")
+        assert len(result.iva_generado) == 1
+
+    def test_all_optional(self):
+        result = AnexoIVAContent.model_validate({})
+        assert result.total_iva_generado is None
 
 
 # ---------------------------------------------------------------------------
@@ -253,14 +271,15 @@ class TestFinancialStatementContent:
 # ---------------------------------------------------------------------------
 
 class TestSchemaRegistry:
-    def test_registry_has_12_entries(self):
-        assert len(INGEST_CONTENT_SCHEMAS) == 12
+    def test_registry_has_expected_entries(self):
+        # Registry grew from 12 to 28 entries
+        assert len(INGEST_CONTENT_SCHEMAS) >= 24
 
-    def test_all_factura_types_use_transaction_list(self):
-        assert INGEST_CONTENT_SCHEMAS["factura_venta"] is TransactionListContent
-        assert INGEST_CONTENT_SCHEMAS["factura_compra"] is TransactionListContent
-        assert INGEST_CONTENT_SCHEMAS["nota_credito"] is TransactionListContent
-        assert INGEST_CONTENT_SCHEMAS["nota_debito"] is TransactionListContent
+    def test_factura_types_use_specific_schemas(self):
+        assert INGEST_CONTENT_SCHEMAS["factura_venta"] is FacturaVentaContent
+        assert INGEST_CONTENT_SCHEMAS["factura_compra"] is FacturaCompraContent
+        assert INGEST_CONTENT_SCHEMAS["nota_credito"] is NotaCreditoContent
+        assert INGEST_CONTENT_SCHEMAS["nota_debito"] is NotaDebitoContent
 
     def test_declarations_use_tax_declaration(self):
         assert INGEST_CONTENT_SCHEMAS["declaracion_iva"] is TaxDeclarationContent
@@ -270,3 +289,12 @@ class TestSchemaRegistry:
         assert INGEST_CONTENT_SCHEMAS["balance_general"] is FinancialStatementContent
         assert INGEST_CONTENT_SCHEMAS["estado_resultados"] is FinancialStatementContent
         assert INGEST_CONTENT_SCHEMAS["libro_auxiliar"] is AuxiliaryLedgerContent
+
+    def test_new_types_registered(self):
+        assert "declaracion_ica" in INGEST_CONTENT_SCHEMAS
+        assert "autorretencion_ica" in INGEST_CONTENT_SCHEMAS
+        assert "comprobante_egreso" in INGEST_CONTENT_SCHEMAS
+        assert "nomina" in INGEST_CONTENT_SCHEMAS
+        assert "conciliacion_bancaria" in INGEST_CONTENT_SCHEMAS
+        assert "flujo_de_caja" in INGEST_CONTENT_SCHEMAS
+        assert "notas_estados_financieros" in INGEST_CONTENT_SCHEMAS

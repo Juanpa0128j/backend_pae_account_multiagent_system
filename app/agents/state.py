@@ -83,6 +83,7 @@ class AgentState(TypedDict):
     audit_rejection_reason: Optional[str]
     audit_decision: Optional[str]
     audit_feedback: Optional[str]
+    audit_rejection_count: int  # how many times auditor has rejected — not reset by retry_count
     report_type: Optional[str]
     report_params: Optional[dict]
     # Document classification fields (ingestion pipeline)

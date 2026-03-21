@@ -44,6 +44,7 @@ def supervisor_node(state: AgentState) -> AgentState:
         ("agent_log", []),
         ("audit_decision", None),
         ("audit_feedback", None),
+        ("audit_rejection_count", 0),
     ]:
         if state.get(field) is None:
             state[field] = default
@@ -70,10 +71,10 @@ def supervisor_node(state: AgentState) -> AgentState:
             })
             return state
 
-        _SUPPORTED_EXTENSIONS = (".pdf", ".xlsx", ".xml")
+        _SUPPORTED_EXTENSIONS = (".pdf", ".xlsx", ".xml", ".jpg", ".jpeg", ".png")
         if not any(file_path.lower().endswith(ext) for ext in _SUPPORTED_EXTENSIONS):
             state["error"] = (
-                f"Unsupported file type. Accepted: PDF, Excel, XML. Got: {file_path}"
+                f"Unsupported file type. Accepted: PDF, Excel, XML, JPG, PNG. Got: {file_path}"
             )
             logger.error(state["error"])
             append_log(state, "supervisor", "routing_error", {
@@ -237,16 +238,31 @@ def supervisor_node(state: AgentState) -> AgentState:
                     "reason": "auditor_validation_exhausted",
                 })
             elif state.get("audit_approved") is False:
-                state["current_agent"] = "contador"
-                state["correction_feedback"] = (
-                    state.get("audit_rejection_reason")
-                    or state.get("audit_feedback")
-                    or "Audit rejected - please reclassify"
-                )
-                logger.warning("Supervisor: Auditor rejected - re-routing to Contador")
-                append_log(state, "supervisor", "routing_complete", {
-                    "next_agent": "contador", "reason": "audit_rejected",
-                })
+                rejection_count = state.get("audit_rejection_count", 0) + 1
+                state["audit_rejection_count"] = rejection_count
+                if rejection_count > 2:
+                    # Max audit retries exceeded — persist with rejection flags.
+                    state["current_agent"] = "db_persist"
+                    logger.warning(
+                        "Supervisor: Audit rejection retry limit reached — persisting with rejection"
+                    )
+                    append_log(state, "supervisor", "routing_complete", {
+                        "next_agent": "db_persist", "reason": "audit_rejected_max_retries",
+                    })
+                else:
+                    state["current_agent"] = "contador"
+                    state["correction_feedback"] = (
+                        state.get("audit_rejection_reason")
+                        or state.get("audit_feedback")
+                        or "Audit rejected - please reclassify"
+                    )
+                    logger.warning(
+                        "Supervisor: Auditor rejected — re-routing to Contador (rejection %d/2)",
+                        rejection_count,
+                    )
+                    append_log(state, "supervisor", "routing_complete", {
+                        "next_agent": "contador", "reason": "audit_rejected",
+                    })
             else:
                 state["current_agent"] = "db_persist"
                 append_log(state, "supervisor", "routing_complete", {

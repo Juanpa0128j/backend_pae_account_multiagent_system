@@ -1,8 +1,9 @@
 """
 Ingesta (Ingest) worker node for the agent graph.
 
-Supports multiple document formats (PDF, XLSX) and routes interpretation
-to the appropriate Gemini extraction method based on document classification.
+Supports multiple document formats (PDF, XLSX, and images JPG/PNG) and routes
+interpretation to the appropriate Gemini extraction method based on document
+classification. Images are parsed via LlamaParse identical to PDFs.
 
 On retry (when correction_feedback is present), the agent re-sends the
 raw text to Gemini along with the schema errors so the model can self-correct.
@@ -30,18 +31,40 @@ _TRANSIENT_EXC = (TimeoutError, ConnectionError, OSError)
 
 # Dispatch table: doc_type → GeminiClient method name
 _EXTRACT_METHOD_MAP: dict[str, str] = {
-    "factura_venta": "extract_transactions",
-    "factura_compra": "extract_transactions",
-    "nota_credito": "extract_transactions",
-    "nota_debito": "extract_transactions",
+    # Invoice-like documents
+    "factura_venta": "extract_factura_venta",
+    "factura_compra": "extract_factura_compra",
+    "nota_credito": "extract_nota_credito",
+    "nota_debito": "extract_nota_debito",
+    # Bank documents
     "extracto_bancario": "extract_bank_statement",
+    # Tax declarations
     "declaracion_iva": "extract_tax_declaration",
     "declaracion_reteica": "extract_tax_declaration",
-    "anexo_tributario": "extract_tax_annex",
+    "declaracion_ica": "extract_declaracion_ica",
+    "autorretencion_ica": "extract_autorretencion_ica",
+    # Tax annexes and auxiliaries
+    "anexo_tributario": "extract_anexo_iva",
+    "anexo_iva": "extract_anexo_iva",
     "auxiliar_impuesto": "extract_auxiliary_ledger",
+    "auxiliar_iva": "extract_auxiliar_iva",
+    # Financial statements (Vía B)
     "balance_general": "extract_financial_statement",
     "estado_resultados": "extract_financial_statement",
     "libro_auxiliar": "extract_auxiliary_ledger",
+    "libro_diario": "extract_libro_diario",
+    "flujo_de_caja": "extract_flujo_caja",
+    "cambios_patrimonio": "extract_cambios_patrimonio",
+    "notas_estados_financieros": "extract_notas_financieras",
+    # Vouchers (JPG source docs)
+    "comprobante_egreso": "extract_comprobante_egreso",
+    "documento_soporte": "extract_documento_soporte",
+    "recibo_caja": "extract_recibo_caja",
+    "nomina": "extract_nomina",
+    "conciliacion_bancaria": "extract_conciliacion_bancaria",
+    "cuenta_cobro": "extract_cuenta_cobro",
+    "planilla_seguridad_social": "extract_planilla_seg_social",
+    "recibo_pago_impuesto": "extract_recibo_pago_impuesto",
 }
 
 
@@ -75,10 +98,11 @@ def _gemini_with_retry_generic(method, raw_text: str, correction_feedback=None):
 
 def ingest_node(state: AgentState) -> AgentState:
     """
-    Ingest node: Extracts from document (PDF/XLSX) and interprets with Gemini.
+    Ingest node: Extracts from document (PDF/XLSX/image) and interprets with Gemini.
 
-    Supports multiple formats and routes interpretation to the appropriate
-    Gemini method based on document classification from the supervisor.
+    Supports multiple formats (PDF, XLSX, JPG, JPEG, PNG) and routes interpretation
+    to the appropriate Gemini method based on document classification from the supervisor.
+    Images are parsed via LlamaParse exactly like PDFs.
     """
     # If supervisor already flagged an error, skip processing
     if state.get("error"):
@@ -110,8 +134,9 @@ def ingest_node(state: AgentState) -> AgentState:
                 else:
                     logger.info("Ingest: Re-using Excel text extracted by supervisor")
                 raw_text = state["raw_text"]
-            elif ext == ".pdf":
-                logger.info(f"Ingest: Extracting text from {file_path} using LlamaParse")
+            elif ext in (".pdf", ".jpg", ".jpeg", ".png"):
+                format_label = "image" if ext in (".jpg", ".jpeg", ".png") else "PDF"
+                logger.info(f"Ingest: Extracting text from {file_path} ({format_label}) using LlamaParse")
                 if LlamaParse is not None:
                     parser = LlamaParse(
                         api_key=settings.llama_cloud_api_key,
@@ -194,30 +219,39 @@ def ingest_node(state: AgentState) -> AgentState:
             append_log(state, "ingesta", "node_error", {"error": state["error"]})
             return state
 
-        raw_txs = interpreted_data.get("transactions", [])
-        if not isinstance(raw_txs, list):
-            state["error"] = "Gemini 'transactions' field is not a list"
-            logger.error(state["error"])
-            append_log(state, "ingesta", "node_error", {"error": state["error"]})
-            return state
+        # Legacy: old extract_transactions returned {"transactions": [...]}.
+        # All document types now return rich structured content objects via
+        # dedicated extraction methods — the transactions-list path is no longer used.
+        _TRANSACTION_DOC_TYPES: set[str] = set()
 
-        if not raw_txs:
-            state["error"] = "Gemini extracted zero transactions from document"
-            logger.warning(state["error"])
-            append_log(state, "ingesta", "node_error", {"error": state["error"]})
-            return state
+        if doc_type in _TRANSACTION_DOC_TYPES:
+            raw_txs = interpreted_data.get("transactions", [])
+            if not isinstance(raw_txs, list):
+                state["error"] = "Gemini 'transactions' field is not a list"
+                logger.error(state["error"])
+                append_log(state, "ingesta", "node_error", {"error": state["error"]})
+                return state
+            if not raw_txs:
+                state["error"] = "Gemini extracted zero transactions from document"
+                logger.warning(state["error"])
+                append_log(state, "ingesta", "node_error", {"error": state["error"]})
+                return state
+            state["raw_transactions"] = raw_txs
+            data_summary = {"tx_count": len(raw_txs)}
+            result_data = raw_txs
+        else:
+            # Non-transaction documents: store interpreted_data directly, raw_transactions empty
+            state["raw_transactions"] = []
+            data_summary = {"doc_type": doc_type, "fields": list(interpreted_data.keys())}
+            result_data = interpreted_data
 
-        state["raw_transactions"] = raw_txs
-
-        append_log(state, "ingesta", "interpretation_complete", {
-            "tx_count": len(raw_txs),
-        })
+        append_log(state, "ingesta", "interpretation_complete", data_summary)
 
         # Step 3: Format result
         state["result"] = {
             "process_id": str(uuid.uuid4()),
             "status": "completed",
-            "data": raw_txs,
+            "data": result_data,
             "message": "Document successfully processed",
         }
 

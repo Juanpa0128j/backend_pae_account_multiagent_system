@@ -140,6 +140,7 @@ def _base_state() -> AgentState:
         "audit_rejection_reason": None,
         "audit_decision": None,
         "audit_feedback": None,
+        "audit_rejection_count": 0,
         "report_type": None,
         "report_params": None,
         "document_classification": None,
@@ -187,6 +188,10 @@ def invoke_ingest_pipeline(file_path: str, initial_state: dict | None = None) ->
     result["validation_history"] = final_state.get("validation_history", [])
     result["db_result"] = final_state.get("db_result")
     result["agent_log"] = final_state.get("agent_log", [])
+    if not result.get("ingest_id"):
+        result["ingest_id"] = final_state.get("ingest_id", "")
+    if final_state.get("error") and not result.get("error"):
+        result["error"] = final_state.get("error")
     return result
 
 

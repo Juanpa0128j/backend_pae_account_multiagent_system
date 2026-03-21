@@ -1,18 +1,23 @@
-import logging
+"""
+Gemini client — backward-compatibility shim.
+
+All extraction logic has moved to `app.core.llm_client.LLMClient`.
+This module keeps:
+  - Pydantic structured-output models (imported by agents and tests)
+  - Ingest schema re-exports (imported by llm_client methods)
+  - GENERAL_EXTRACTION_INSTRUCTIONS constant
+  - GeminiClient / get_gemini_client aliases pointing to LLMClient
+"""
 from decimal import Decimal
-from functools import lru_cache
 from typing import Any, Dict, List, Literal, Optional, TypeVar
 
-from langchain_core.messages import HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field, field_validator
-
-from app.core.config import get_settings
-
-logger = logging.getLogger(__name__)
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
+# ---------------------------------------------------------------------------
+# Pydantic structured-output models (used by agents & tests)
+# ---------------------------------------------------------------------------
 
 class RawTransaction(BaseModel):
     """Structured schema for extracted receipt/invoice data."""
@@ -42,7 +47,7 @@ class RawTransactionsList(BaseModel):
 
 
 class AsientoContableGemini(BaseModel):
-    """Simplified journal entry schema for Gemini structured output."""
+    """Simplified journal entry schema for structured output."""
 
     cuenta_puc: str = Field(description="PUC account code (1-6 digits)")
     descripcion: str = Field(description="Description of the entry")
@@ -60,11 +65,9 @@ class AsientoContableGemini(BaseModel):
 
 
 class ContadorOutputGemini(BaseModel):
-    """ContadorOutput-compatible schema for Gemini structured output."""
+    """ContadorOutput-compatible schema for structured output."""
 
-    fecha_registro: str = Field(
-        description="Accounting registration date YYYY-MM-DD"
-    )
+    fecha_registro: str = Field(description="Accounting registration date YYYY-MM-DD")
     tipo_documento: str = Field(
         description=(
             "Document type: recibo, factura, extracto, nota_credito, "
@@ -89,23 +92,21 @@ class ContadorOutputGemini(BaseModel):
 
 
 class AuditorHallazgoGemini(BaseModel):
-    """Single audit finding emitted by auditor structured output."""
+    """Single audit finding."""
 
-    codigo: str = Field(description="Codigo del hallazgo, por ejemplo AUD-001")
+    codigo: str = Field(description="Finding code in format AUD-XXX")
     severidad: Literal["info", "advertencia", "error", "critico"] = Field(
-        description="Severidad del hallazgo"
+        description="Finding severity level"
     )
-    descripcion: str = Field(description="Descripcion breve del hallazgo")
+    descripcion: str = Field(description="Clear description of the finding")
     campo_afectado: Optional[str] = Field(
         None, description="Campo contable afectado (opcional)"
     )
-    recomendacion: str = Field(
-        description="Recomendacion para corregir el hallazgo"
-    )
+    recomendacion: str = Field(description="Recomendacion para corregir el hallazgo")
 
 
 class AuditorOutputGemini(BaseModel):
-    """AuditorOutput-compatible schema for Gemini structured output."""
+    """AuditorOutput-compatible schema for structured output."""
 
     fecha_auditoria: str = Field(description="Fecha de auditoria en formato YYYY-MM-DD")
     documento_referencia: str = Field(description="Referencia del documento auditado")
@@ -126,7 +127,7 @@ class AuditorOutputGemini(BaseModel):
 
 
 class TaxJustification(BaseModel):
-    """Structured output for Gemini tax justification calls."""
+    """Structured output for tax justification calls."""
 
     referencias: List[str] = Field(
         description="Legal articles cited, e.g. ['Art. 383 ET', 'Decreto 2048/1992']"
@@ -140,7 +141,7 @@ class TaxJustification(BaseModel):
 
 
 class TaxRateLookup(BaseModel):
-    """Structured output for Gemini tax profile setup."""
+    """Structured output for tax profile setup."""
 
     tasa_retefuente_servicios: Decimal = Field(
         description="Retefuente rate for services as decimal fraction, e.g. 0.11"
@@ -176,436 +177,106 @@ class TaxRateLookup(BaseModel):
         return v
 
 
-class GeminiClient:
-    """Wrapper for Google Generative AI (Gemini) API via LangChain."""
+# ---------------------------------------------------------------------------
+# Ingest schema re-exports (used by llm_client extraction methods)
+# ---------------------------------------------------------------------------
+
+from app.models.ingest_schemas import (  # noqa: E402
+    FacturaVentaContent,
+    FacturaCompraContent,
+    NotaCreditoContent,
+    NotaDebitoContent,
+    BankStatementContent,
+    TaxDeclarationContent,
+    DeclaracionICAContent,
+    AutoretencionICAContent,
+    AnexoIVAContent,
+    AuxiliarIVAContent,
+    AuxiliaryLedgerContent,
+    FinancialStatementContent,
+    LibroDiarioContent,
+    FlujoDeCajaContent,
+    CambiosPatrimonioContent,
+    NotasEstadosFinancierosContent,
+    ComprobanteEgresoContent,
+    DocumentoSoporteContent,
+    ReciboCajaContent,
+    NominaContent,
+    ConciliacionBancariaContent,
+    CuentaCobroContent,
+    PlanillaSegSocialContent,
+    ReciboPagoImpuestoContent,
+)
+
+__all__ = [
+    "RawTransaction",
+    "RawTransactionsList",
+    "AsientoContableGemini",
+    "ContadorOutputGemini",
+    "AuditorHallazgoGemini",
+    "AuditorOutputGemini",
+    "TaxJustification",
+    "TaxRateLookup",
+    "GENERAL_EXTRACTION_INSTRUCTIONS",
+    "GeminiClient",
+    "get_gemini_client",
+    # ingest schemas
+    "FacturaVentaContent",
+    "FacturaCompraContent",
+    "NotaCreditoContent",
+    "NotaDebitoContent",
+    "BankStatementContent",
+    "TaxDeclarationContent",
+    "DeclaracionICAContent",
+    "AutoretencionICAContent",
+    "AnexoIVAContent",
+    "AuxiliarIVAContent",
+    "AuxiliaryLedgerContent",
+    "FinancialStatementContent",
+    "LibroDiarioContent",
+    "FlujoDeCajaContent",
+    "CambiosPatrimonioContent",
+    "NotasEstadosFinancierosContent",
+    "ComprobanteEgresoContent",
+    "DocumentoSoporteContent",
+    "ReciboCajaContent",
+    "NominaContent",
+    "ConciliacionBancariaContent",
+    "CuentaCobroContent",
+    "PlanillaSegSocialContent",
+    "ReciboPagoImpuestoContent",
+]
+
+# ---------------------------------------------------------------------------
+# Shared extraction instructions constant
+# ---------------------------------------------------------------------------
+
+GENERAL_EXTRACTION_INSTRUCTIONS = """
+INSTRUCCIONES GENERALES DE EXTRACCIÓN:
+1. Extrae SOLO los campos que estén presentes en el documento. Si un campo no existe, usa null.
+2. Fechas: formato ISO 8601 (YYYY-MM-DD). Si solo hay mes/año, usa el último día del mes.
+3. NIT: incluir dígito de verificación separado por guion (ej: 900123456-7). Si el DV no aparece, déjalo como el NIT sin DV.
+4. Moneda: todos los valores monetarios son numéricos, sin separadores de miles, usando punto como decimal. Moneda por defecto: COP.
+5. Tarifas de impuestos: como decimal (ej: 19% → 0.19, 4.14‰ → 0.00414).
+6. En el campo `informacion_adicional`, captura TODO lo que pueda ser útil para el procesamiento contable posterior:
+   - Conceptos de retención mencionados (retefuente, reteICA, reteIVA)
+   - Referencias a resoluciones DIAN, acuerdos municipales, decretos
+   - Actividades económicas (códigos CIIU)
+   - Régimen tributario del emisor/receptor
+   - Centros de costo, proyectos o contratos referenciados
+   - Sellos, firmas y autorizaciones presentes
+   - Números de contrato, órdenes de compra, referencias cruzadas
+   - Cualquier anomalía, dato inusual o información ambigua
+   - Observaciones que el contador, tributarista o auditor necesitarían conocer
+"""
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility aliases
+# ---------------------------------------------------------------------------
+
+from app.core.llm_client import LLMClient as GeminiClient, get_llm_client  # noqa: E402
 
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
-        settings = get_settings()
-        self.api_key = api_key or settings.gemini_api_key
-        self.model_name = model or settings.gemini_model
 
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY not set and not provided")
-
-        self.model = ChatGoogleGenerativeAI(
-            model=self.model_name,
-            google_api_key=self.api_key,
-            temperature=0.0,
-            max_output_tokens=2048,
-        )
-
-        self.structured_model = self.model.with_structured_output(RawTransactionsList)
-        self.contador_model = self.model.with_structured_output(ContadorOutputGemini)
-        self.auditor_model = self.model.with_structured_output(AuditorOutputGemini)
-        self.tax_model = self.model.with_structured_output(TaxJustification)
-        self.tax_lookup_model = self.model.with_structured_output(TaxRateLookup)
-
-        # Document classifier and content-specific extraction models
-        from app.services.doc_classifier import _ClassificationResponse
-        from app.models.ingest_schemas import (
-            BankStatementContent,
-            TaxDeclarationContent,
-            TaxAnnexContent,
-            AuxiliaryLedgerContent,
-            FinancialStatementContent,
-        )
-        self.classifier_model = self.model.with_structured_output(_ClassificationResponse)
-        self.bank_statement_model = self.model.with_structured_output(BankStatementContent)
-        self.tax_declaration_model = self.model.with_structured_output(TaxDeclarationContent)
-        self.tax_annex_model = self.model.with_structured_output(TaxAnnexContent)
-        self.auxiliary_ledger_model = self.model.with_structured_output(AuxiliaryLedgerContent)
-        self.financial_statement_model = self.model.with_structured_output(FinancialStatementContent)
-
-    @staticmethod
-    def _as_dict(response: BaseModel | dict[str, Any]) -> dict[str, Any]:
-        if isinstance(response, BaseModel):
-            return response.model_dump(mode="json")
-        return dict(response)
-
-    @staticmethod
-    def _as_model(model_cls: type[ModelT], response: BaseModel | dict[str, Any]) -> ModelT:
-        if isinstance(response, model_cls):
-            return response
-        if isinstance(response, BaseModel):
-            return model_cls.model_validate(response.model_dump(mode="json"))
-        return model_cls.model_validate(response)
-
-    def extract_transactions(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        prompt = f"""Eres un contable experto en lectura de recibos, facturas y comprobantes colombianos.
-
-Texto extraido del documento:
----
-{text}
----
-
-Extrae la informacion como una lista de transacciones.
-Asegurate de obtener NIT emisor, NIT receptor, total, descripcion y fecha."""
-
-        if correction_feedback:
-            prompt += f"""
-
-=== CORRECCION REQUERIDA ===
-{correction_feedback}
-
-Corrige los errores indicados y vuelve a extraer la informacion."""
-
-        try:
-            response = self.structured_model.invoke([HumanMessage(content=prompt)])
-            data = self._as_dict(response)
-            logger.debug("Extracted transactions: %s", data)
-            return data
-        except Exception as e:
-            logger.error("Gemini API error in extract_transactions: %s", e)
-            raise
-
-    def extract_contador_output(
-        self,
-        raw_transactions: list,
-        *,
-        rag_context: list[dict] | None = None,
-        correction_feedback: str | None = None,
-    ) -> dict:
-        txns_text = "\n".join(
-            (
-                f"- Fecha: {t.get('fecha', 'N/A')}, NIT emisor: {t.get('nit_emisor', 'N/A')}, "
-                f"Total: {t.get('total', 0)}, Descripcion: {t.get('descripcion', 'N/A')}"
-            )
-            for t in raw_transactions
-        )
-
-        rag_context = rag_context or []
-        rag_lines: list[str] = []
-        for item in rag_context[:5]:
-            if isinstance(item, dict):
-                rag_lines.append(
-                    str(item.get("content") or item.get("text") or item.get("document") or item)
-                )
-            else:
-                rag_lines.append(str(getattr(item, "content", item)))
-        rag_section = "\n".join(line for line in rag_lines if line).strip()
-        if not rag_section:
-            rag_section = "Sin contexto normativo adicional."
-
-        prompt = f"""Eres un contador experto en normativa colombiana (PUC).
-
-Transacciones pendientes de clasificar:
-{txns_text}
-
-Genera el asiento contable siguiendo el PUC colombiano.
-- Usa cuentas PUC reales
-- Garantiza que total_debitos == total_creditos
-- tipo_movimiento debe ser 'debito' o 'credito'
-- tipo_documento debe estar en: recibo, factura, extracto, nota_credito, nota_debito, comprobante_egreso, otro
-
-Contexto normativo/RAG:
-{rag_section}"""
-
-        if correction_feedback:
-            prompt += f"""
-
-=== CORRECCION REQUERIDA ===
-{correction_feedback}
-
-Corrige los errores indicados y regenera el asiento contable."""
-
-        try:
-            response = self.contador_model.invoke([HumanMessage(content=prompt)])
-            data = self._as_dict(response)
-            logger.debug("Contador output generated: %s", data)
-            return data
-        except Exception as e:
-            logger.error("Gemini API error in extract_contador_output: %s", e)
-            raise
-
-    def extract_auditor_output(
-        self,
-        *,
-        contador_output: dict,
-        raw_transactions: list,
-        correction_feedback: str | None = None,
-    ) -> dict:
-        asientos = contador_output.get("asientos", []) if isinstance(contador_output, dict) else []
-        asientos_text = "\n".join(
-            (
-                f"- cuenta={a.get('cuenta_puc', 'N/A')} "
-                f"tipo={a.get('tipo_movimiento', 'N/A')} valor={a.get('valor', 0)} "
-                f"desc={a.get('descripcion', '')}"
-            )
-            for a in asientos[:20]
-        )
-        tx_text = "\n".join(
-            (
-                f"- fecha={t.get('fecha', 'N/A')} nit_emisor={t.get('nit_emisor', 'N/A')} "
-                f"total={t.get('total', 0)} desc={t.get('descripcion', '')}"
-            )
-            for t in raw_transactions[:10]
-        )
-
-        prompt = f"""Eres un auditor contable colombiano (NIIF/DIAN).
-
-Transacciones origen:
-{tx_text or '- Sin transacciones en entrada'}
-
-Salida del contador:
-- fecha_registro: {contador_output.get('fecha_registro')}
-- tipo_documento: {contador_output.get('tipo_documento')}
-- total_debitos: {contador_output.get('total_debitos')}
-- total_creditos: {contador_output.get('total_creditos')}
-- asientos:
-{asientos_text or '- Sin asientos'}
-
-Evalua coherencia semantica, soporte documental, riesgo fiscal y calidad de la descripcion.
-Devuelve una salida estructurada que incluya obligatoriamente:
-- fecha_auditoria (YYYY-MM-DD)
-- documento_referencia
-- aprobado (bool)
-- nivel_riesgo (bajo|medio|alto|critico)
-- hallazgos (lista de objetos con codigo AUD-XXX, severidad, descripcion, campo_afectado opcional, recomendacion)
-- puntaje_calidad (0-100)
-- resumen
-Si detectas errores graves, marca aprobado=false y explica claramente en resumen."""
-
-        if correction_feedback:
-            prompt += f"""
-
-=== CORRECCION REQUERIDA ===
-{correction_feedback}
-
-Corrige los errores de esquema y regenera la auditoria."""
-
-        try:
-            response = self.auditor_model.invoke([HumanMessage(content=prompt)])
-            data = self._as_dict(response)
-            logger.debug("Auditor output generated: %s", data)
-            return data
-        except Exception as e:
-            logger.error("Gemini API error in extract_auditor_output: %s", e)
-            raise
-
-    def justify_tax_analysis(self, tax_amounts: dict, rag_context: str) -> TaxJustification:
-        retefuente = tax_amounts.get("retefuente", 0)
-        reteica = tax_amounts.get("reteica", 0)
-        iva = tax_amounts.get("iva", 0)
-        tasa_retefuente = tax_amounts.get("tasa_retefuente", "11%")
-        tasa_reteica = tax_amounts.get("tasa_reteica", "0.69%")
-        tasa_iva = tax_amounts.get("tasa_iva", "19%")
-        tipo_transaccion = tax_amounts.get("tipo_transaccion", "servicios")
-
-        normativa_section = rag_context.strip() if rag_context else "No se encontro normativa en la base vectorial."
-
-        prompt = f"""Eres un experto tributario colombiano.
-
-Esta transaccion de tipo '{tipo_transaccion}' requiere:
-- Retefuente: ${retefuente:,.0f} (tasa {tasa_retefuente})
-- ReteICA: ${reteica:,.0f} (tasa {tasa_reteica})
-- IVA: ${iva:,.0f} (tasa {tasa_iva})
-
-Normativa aplicable:
----
-{normativa_section}
----
-
-Confirma si las tasas son correctas, cita articulos y da justificacion breve."""
-
-        try:
-            response = self.tax_model.invoke([HumanMessage(content=prompt)])
-            return self._as_model(TaxJustification, response)
-        except Exception as e:
-            logger.warning(
-                "GeminiClient.justify_tax_analysis failed (%s) - returning fallback",
-                e,
-            )
-            return TaxJustification(
-                referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],
-                justificacion=(
-                    "Retenciones aplicadas segun tasas vigentes del Estatuto Tributario "
-                    "colombiano. Retefuente segun Art. 383 ET para servicios; ReteICA segun "
-                    "tarifas municipales; IVA segun Art. 477 ET tarifa general."
-                ),
-                confirma_tasas=True,
-            )
-
-    def compute_tax_rates_from_profile(
-        self,
-        ciudad: str,
-        codigo_ciiu: str,
-        iva_responsable: bool,
-        rag_context: str,
-    ) -> TaxRateLookup:
-        regimen_desc = (
-            "regimen comun (responsable de IVA)"
-            if iva_responsable
-            else "regimen simplificado (no responsable de IVA)"
-        )
-        normativa_section = (
-            rag_context.strip()
-            if rag_context
-            else "No se encontro informacion especifica en la base normativa."
-        )
-
-        prompt = f"""Eres un experto en tributacion colombiana.
-
-Empresa:
-- Ciudad: {ciudad}
-- Codigo CIIU: {codigo_ciiu}
-- Regimen: {regimen_desc}
-
-Normativa:
----
-{normativa_section}
----
-
-Devuelve tasas como fracciones decimales para:
-- tasa_retefuente_servicios
-- tasa_retefuente_bienes
-- tasa_retefuente_arrendamiento
-- tasa_reteica
-- tasa_iva_general
-Y cita fuentes legales."""
-
-        response = self._as_model(
-            TaxRateLookup,
-            self.tax_lookup_model.invoke([HumanMessage(content=prompt)]),
-        )
-        logger.info(
-            "Tax rate lookup: ciudad=%s ciiu=%s reteica=%s",
-            ciudad,
-            codigo_ciiu,
-            response.tasa_reteica,
-        )
-        return response
-
-
-    # ------------------------------------------------------------------
-    # Document classification
-    # ------------------------------------------------------------------
-
-    def classify_document(self, text_preview: str) -> Any:
-        """Classify a document based on its content using LLM."""
-        from app.services.doc_classifier import CLASSIFICATION_PROMPT
-
-        prompt = CLASSIFICATION_PROMPT.format(text_preview=text_preview)
-        try:
-            response = self.classifier_model.invoke([HumanMessage(content=prompt)])
-            return self._as_model(
-                type(response) if isinstance(response, BaseModel) else response.__class__,
-                response,
-            ) if isinstance(response, BaseModel) else response
-        except Exception as e:
-            logger.error("Gemini classify_document failed: %s", e)
-            raise
-
-    # ------------------------------------------------------------------
-    # Content-specific extraction methods
-    # ------------------------------------------------------------------
-
-    def extract_bank_statement(
-        self, text: str, *, correction_feedback: str | None = None
-    ) -> dict:
-        """Extract bank statement data from document text."""
-        prompt = f"""Eres un experto contable colombiano.
-
-Texto extraído de un extracto bancario:
----
-{text}
----
-
-Extrae la información del extracto: cuenta bancaria, entidad, saldo inicial,
-saldo final, y todos los movimientos con fecha, descripción, débito, crédito y saldo."""
-
-        if correction_feedback:
-            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
-
-        response = self.bank_statement_model.invoke([HumanMessage(content=prompt)])
-        return self._as_dict(response)
-
-    def extract_tax_declaration(
-        self, text: str, *, correction_feedback: str | None = None
-    ) -> dict:
-        """Extract tax declaration data (IVA, ReteICA) from document text."""
-        prompt = f"""Eres un experto tributario colombiano.
-
-Texto extraído de una declaración tributaria (IVA o ReteICA):
----
-{text}
----
-
-Extrae: número de formulario DIAN, período, NIT del declarante,
-valores por renglón del formulario (como dict renglón→valor), y total a pagar."""
-
-        if correction_feedback:
-            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
-
-        response = self.tax_declaration_model.invoke([HumanMessage(content=prompt)])
-        return self._as_dict(response)
-
-    def extract_tax_annex(
-        self, text: str, *, correction_feedback: str | None = None
-    ) -> dict:
-        """Extract tax annex tabular data from document text."""
-        prompt = f"""Eres un experto tributario colombiano.
-
-Texto extraído de un anexo de declaración tributaria:
----
-{text}
----
-
-Extrae: tipo de anexo (iva/reteica/etc.), período, y la tabla de detalle
-con NIT, razón social, base gravable, tarifa y retención por cada tercero.
-Incluye totales de base y retención."""
-
-        if correction_feedback:
-            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
-
-        response = self.tax_annex_model.invoke([HumanMessage(content=prompt)])
-        return self._as_dict(response)
-
-    def extract_auxiliary_ledger(
-        self, text: str, *, correction_feedback: str | None = None
-    ) -> dict:
-        """Extract auxiliary ledger data from document text."""
-        prompt = f"""Eres un experto contable colombiano.
-
-Texto extraído de un libro auxiliar contable:
----
-{text}
----
-
-Extrae cada línea del auxiliar: fecha, cuenta PUC, nombre de cuenta,
-NIT del tercero, detalle, débito, crédito y saldo.
-Si el auxiliar es de una cuenta específica, indica cuál."""
-
-        if correction_feedback:
-            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
-
-        response = self.auxiliary_ledger_model.invoke([HumanMessage(content=prompt)])
-        return self._as_dict(response)
-
-    def extract_financial_statement(
-        self, text: str, *, correction_feedback: str | None = None
-    ) -> dict:
-        """Extract financial statement data (balance or P&L) from document text."""
-        prompt = f"""Eres un experto contable colombiano (NIIF/PUC).
-
-Texto extraído de un estado financiero:
----
-{text}
----
-
-Determina si es un balance general o estado de resultados.
-Extrae: tipo, período, NIT de la entidad, y todas las cuentas PUC con sus
-nombres y saldos. Para balance general incluye totales de activos, pasivos
-y patrimonio. Para estado de resultados incluye utilidad neta."""
-
-        if correction_feedback:
-            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}"
-
-        response = self.financial_statement_model.invoke([HumanMessage(content=prompt)])
-        return self._as_dict(response)
-
-
-@lru_cache(maxsize=1)
 def get_gemini_client() -> GeminiClient:
-    """Return the singleton GeminiClient instance (cached after first call)."""
-
-    return GeminiClient()
+    """Backward-compatible alias for get_llm_client()."""
+    return get_llm_client()
