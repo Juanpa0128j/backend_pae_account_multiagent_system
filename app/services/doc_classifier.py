@@ -45,8 +45,8 @@ CLASSIFICATION_PROMPT = """Eres un experto contable colombiano. Analiza el sigui
 Tipos de documento posibles:
 
 DOCUMENTOS FUENTE (para construir contabilidad desde cero):
-- factura_venta: Factura de venta emitida. Contiene datos del vendedor, comprador, items/servicios vendidos, subtotal, IVA, total.
-- factura_compra: Factura de compra recibida. Similar a factura de venta pero desde la perspectiva del comprador.
+- factura_venta: Factura de venta ELECTRÓNICA emitida (con CUFE o código QR DIAN, resolución de facturación). Contiene datos del vendedor, comprador, items/servicios vendidos, subtotal, IVA, total. Obligatoriamente tiene un número consecutivo con prefijo (ej. FV-192, F-001) y cuadra con resolución DIAN.
+- factura_compra: Factura de compra recibida de un proveedor obligado a facturar. Similar a factura_venta pero desde la perspectiva del comprador.
 - extracto_bancario: Extracto o estado de cuenta bancario. Lista de movimientos con fechas, conceptos, débitos, créditos y saldos.
 - nota_credito: Nota crédito comercial. Reduce el valor de una factura previamente emitida.
 - nota_debito: Nota débito comercial. Incrementa el valor de una factura previamente emitida.
@@ -59,7 +59,7 @@ DOCUMENTOS FUENTE (para construir contabilidad desde cero):
 - anexo_iva: Anexo de declaración de IVA. Detalla IVA generado por tarifa y IVA descontable por concepto.
 - auxiliar_iva: Libro auxiliar de cuentas de IVA (generado, descontable, por pagar). Movimientos de cuentas 2408xx con débitos, créditos, saldos.
 - comprobante_egreso: Comprobante de egreso o pago. Registro de salida de efectivo con beneficiario, concepto, valor, retenciones aplicadas y forma de pago.
-- documento_soporte: Documento soporte en adquisiciones a no obligados a facturar (art. 1.6.1.4.12 DUR 1625/2016). Similar a factura de compra pero para proveedores sin obligación de facturar.
+- documento_soporte: Documento soporte en adquisiciones a no obligados a facturar (art. 1.6.1.4.12 DUR 1625/2016). Lo emite el COMPRADOR para soportar compras a personas naturales o informales. Señales FUERTES: vendedor con régimen "0-49 No responsable de IVA", texto "Solución Gratuita DIAN", "Representación Gráfica" sin CUFE, prefijo "DS" o "DM" en el número de documento, vendedor es persona natural (cédula, no NIT). Si el vendedor aparece como "No responsable de IVA" o el documento fue "Generado por: Solución Gratuita DIAN", clasifica SIEMPRE como documento_soporte aunque tenga formato de factura.
 - recibo_caja: Recibo de caja. Registro de ingreso de efectivo con pagador, concepto, valor y forma de pago.
 - nomina: Nómina o liquidación de salarios. Contiene empleados, salarios, deducciones (salud, pensión, retención), prestaciones sociales y neto a pagar.
 - conciliacion_bancaria: Conciliación bancaria. Reconcilia saldo en libros con saldo en extracto bancario, listando partidas en tránsito.
@@ -83,8 +83,14 @@ Contenido del documento:
 {text_preview}
 ---
 
-Clasifica el documento. Si el documento contiene cuentas PUC con saldos organizados jerárquicamente, probablemente es un estado financiero existente.
-Si contiene transacciones individuales con fecha, NIT, valores, es un documento fuente.
+Clasifica el documento. Reglas clave:
+- Si tiene CUFE o resolución DIAN → factura_venta o factura_compra (electrónica)
+- Si tiene prefijo "DS" en el número o el proveedor es persona natural sin NIT → documento_soporte
+- Si tiene prefijo "CE" o "Comprobante de Egreso" → comprobante_egreso
+- Si tiene prefijo "RC" o "Recibo de Caja" → recibo_caja
+- Si contiene cuentas PUC con saldos organizados jerárquicamente → estado financiero existente (balance_general, estado_resultados, etc.)
+- Si contiene movimientos de IVA (cuentas 2408xx) → auxiliar_iva
+
 Extrae también el NIT de la entidad, el nombre, y el período si están presentes."""
 
 

@@ -20,6 +20,11 @@ def _parse_decimal(v):
         return None
     if isinstance(v, (int, float)):
         return Decimal(str(v))
+    if isinstance(v, dict):
+        # LLM sometimes returns a breakdown dict instead of a flat total.
+        # Sum all numeric leaf values as a best-effort total.
+        total = sum(float(val) for val in v.values() if isinstance(val, (int, float)))
+        return Decimal(str(total)) if total else None
     return v
 
 
@@ -679,6 +684,75 @@ class FinancialStatementContent(ContentBase):
 
 
 # ---------------------------------------------------------------------------
+# 12b. BalanceGeneralContent — focused schema for balance_general
+# ---------------------------------------------------------------------------
+
+class BalanceGeneralContent(ContentBase):
+    """Balance general / Estado de situación financiera."""
+    entidad: Optional[NitEntidad] = Field(None)
+    periodo_fin: Optional[str] = Field(None, description="Cut-off date YYYY-MM-DD")
+    marco_normativo: Optional[str] = Field(None, description="NIIF_plenas | NIIF_pymes | NIF_microempresas")
+    activos_corrientes: Optional[ActivosCorrientes] = Field(None)
+    activos_no_corrientes: Optional[ActivosNoCorrientes] = Field(None)
+    pasivos_corrientes: Optional[PasivosCorrientes] = Field(None)
+    pasivos_no_corrientes: Optional[PasivosNoCorrientes] = Field(None)
+    patrimonio: Optional[Patrimonio] = Field(None)
+    total_activos: Optional[Decimal] = Field(None)
+    total_pasivos: Optional[Decimal] = Field(None)
+    total_patrimonio: Optional[Decimal] = Field(None)
+    verificacion_ecuacion: Optional[bool] = Field(None, description="True if activos == pasivos + patrimonio")
+    accounts: Optional[List[AccountBalance]] = Field(None, description="Flat list of all PUC accounts with balances")
+    informacion_adicional: Optional[Dict[str, Any]] = Field(None)
+
+    @field_validator(
+        "total_activos", "total_pasivos", "total_patrimonio",
+        mode="before",
+    )
+    @classmethod
+    def parse_amounts(cls, v):
+        return _parse_decimal(v)
+
+
+# ---------------------------------------------------------------------------
+# 12c. EstadoResultadosContent — focused schema for estado_resultados
+# ---------------------------------------------------------------------------
+
+class EstadoResultadosContent(ContentBase):
+    """Estado de resultados / Estado de pérdidas y ganancias."""
+    entidad: Optional[NitEntidad] = Field(None)
+    periodo_inicio: Optional[str] = Field(None, description="YYYY-MM-DD")
+    periodo_fin: Optional[str] = Field(None, description="YYYY-MM-DD")
+    marco_normativo: Optional[str] = Field(None, description="NIIF_plenas | NIIF_pymes | NIF_microempresas")
+    ingresos_ordinarios: Optional[Decimal] = Field(None)
+    otros_ingresos: Optional[Decimal] = Field(None)
+    total_ingresos: Optional[Decimal] = Field(None)
+    costo_ventas: Optional[Decimal] = Field(None)
+    utilidad_bruta: Optional[Decimal] = Field(None)
+    gastos_administracion: Optional[Decimal] = Field(None)
+    gastos_venta: Optional[Decimal] = Field(None)
+    total_gastos_operacionales: Optional[Decimal] = Field(None)
+    utilidad_operacional: Optional[Decimal] = Field(None)
+    ingresos_financieros: Optional[Decimal] = Field(None)
+    gastos_financieros: Optional[Decimal] = Field(None)
+    utilidad_antes_impuestos: Optional[Decimal] = Field(None)
+    impuesto_renta: Optional[Decimal] = Field(None)
+    utilidad_neta: Optional[Decimal] = Field(None)
+    accounts: Optional[List[AccountBalance]] = Field(None, description="Flat list of all PUC accounts (class 4, 5, 6)")
+    informacion_adicional: Optional[Dict[str, Any]] = Field(None)
+
+    @field_validator(
+        "ingresos_ordinarios", "otros_ingresos", "total_ingresos",
+        "costo_ventas", "utilidad_bruta", "gastos_administracion", "gastos_venta",
+        "total_gastos_operacionales", "utilidad_operacional", "ingresos_financieros",
+        "gastos_financieros", "utilidad_antes_impuestos", "impuesto_renta", "utilidad_neta",
+        mode="before",
+    )
+    @classmethod
+    def parse_amounts(cls, v):
+        return _parse_decimal(v)
+
+
+# ---------------------------------------------------------------------------
 # 13. LibroDiarioContent — libro_diario
 # ---------------------------------------------------------------------------
 
@@ -1075,8 +1149,8 @@ INGEST_CONTENT_SCHEMAS: dict[str, type[BaseModel]] = {
     DocumentType.PLANILLA_SEGURIDAD_SOCIAL.value: PlanillaSegSocialContent,
     DocumentType.RECIBO_PAGO_IMPUESTO.value: ReciboPagoImpuestoContent,
     # Original Vía B types (with upgraded schemas)
-    DocumentType.BALANCE_GENERAL.value: FinancialStatementContent,
-    DocumentType.ESTADO_RESULTADOS.value: FinancialStatementContent,
+    DocumentType.BALANCE_GENERAL.value: BalanceGeneralContent,
+    DocumentType.ESTADO_RESULTADOS.value: EstadoResultadosContent,
     DocumentType.LIBRO_AUXILIAR.value: AuxiliaryLedgerContent,
     # New Vía B types
     DocumentType.LIBRO_DIARIO.value: LibroDiarioContent,

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # --- OpenAI (first fallback when Gemini quota is exhausted) ------------
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openai_model: str = Field("gpt-4o-mini", alias="OPENAI_MODEL")
+    openai_model_large: str = Field("gpt-4.1", alias="OPENAI_MODEL_LARGE")
 
     # --- Groq (second fallback) --------------------------------------------
     groq_api_key: str = Field("", alias="GROQ_API_KEY")

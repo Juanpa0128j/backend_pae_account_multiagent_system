@@ -84,6 +84,13 @@ def extract_text_llamaparse(file_path: Path, cache_dir: Path, no_cache: bool = F
     documents = parser.load_data(str(file_path))
     text = "\n\n".join(doc.text for doc in documents)
 
+    # LlamaParse can silently return empty text on some scanned PDFs — retry with plain text mode
+    if not text.strip():
+        info(f"  [llamaparse] markdown returned empty — retrying with result_type='text'")
+        parser = LlamaParse(api_key=api_key, result_type="text", fast_mode=not is_image)
+        documents = parser.load_data(str(file_path))
+        text = "\n\n".join(doc.text for doc in documents)
+
     # Save to cache
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(text, encoding="utf-8")
@@ -257,6 +264,7 @@ def process_file(file_path: Path, cache_dir: Path, gemini_client, no_cache: bool
         # Step 3: Extract
         extracted = extract(raw_text, classification["doc_type"], gemini_client)
         result["extracted_fields"] = list(extracted.keys())
+        result["extracted_data"] = extracted
 
         # Step 4: Validate schema
         validation = validate_schema(extracted, classification["doc_type"])
@@ -294,7 +302,7 @@ def main():
     parser = argparse.ArgumentParser(description="Test the ingestion pipeline against real documents.")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--all", action="store_true", help="Process all files in --dir")
-    group.add_argument("--file", help="Process a single file")
+    group.add_argument("--file", nargs="+", help="Process one or more files")
     parser.add_argument(
         "--dir",
         default="ejemplos_docs_ingesta",
@@ -331,9 +339,11 @@ def main():
 
     # Collect files
     if args.file:
-        files = [Path(args.file).resolve()]
-        if not files[0].exists():
-            print(f"{RED}File not found: {args.file}{RESET}")
+        files = [Path(f).resolve() for f in args.file]
+        missing = [f for f in files if not f.exists()]
+        if missing:
+            for m in missing:
+                print(f"{RED}File not found: {m}{RESET}")
             sys.exit(1)
     else:
         base_dir = PROJECT_ROOT / args.dir
@@ -343,11 +353,8 @@ def main():
         files = collect_files(base_dir)
         print(f"\n{BOLD}Found {len(files)} files in {base_dir}{RESET}")
 
-    # Cache dir
-    if args.file:
-        cache_dir = Path(args.file).resolve().parent / CACHE_DIR_NAME
-    else:
-        cache_dir = PROJECT_ROOT / args.dir / CACHE_DIR_NAME
+    # Default cache dir (used for --all; per-file mode uses file's own parent)
+    default_cache_dir = PROJECT_ROOT / args.dir / CACHE_DIR_NAME
 
     # Process
     results = []
@@ -357,6 +364,8 @@ def main():
     schema_fail = 0
 
     for i, file_path in enumerate(files, 1):
+        # Each file uses a cache dir co-located with the file itself
+        cache_dir = file_path.parent / CACHE_DIR_NAME
         print(f"\n{BOLD}[{i}/{len(files)}] {file_path.name}{RESET}")
         result = process_file(
             file_path, cache_dir, gemini_client,

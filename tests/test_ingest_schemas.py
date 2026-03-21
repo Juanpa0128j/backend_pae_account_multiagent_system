@@ -19,6 +19,8 @@ from app.models.ingest_schemas import (
     AuxiliaryLedgerContent,
     AccountBalance,
     FinancialStatementContent,
+    BalanceGeneralContent,
+    EstadoResultadosContent,
     INGEST_CONTENT_SCHEMAS,
 )
 
@@ -286,8 +288,8 @@ class TestSchemaRegistry:
         assert INGEST_CONTENT_SCHEMAS["declaracion_reteica"] is TaxDeclarationContent
 
     def test_via_b_types_use_correct_schemas(self):
-        assert INGEST_CONTENT_SCHEMAS["balance_general"] is FinancialStatementContent
-        assert INGEST_CONTENT_SCHEMAS["estado_resultados"] is FinancialStatementContent
+        assert INGEST_CONTENT_SCHEMAS["balance_general"] is BalanceGeneralContent
+        assert INGEST_CONTENT_SCHEMAS["estado_resultados"] is EstadoResultadosContent
         assert INGEST_CONTENT_SCHEMAS["libro_auxiliar"] is AuxiliaryLedgerContent
 
     def test_new_types_registered(self):

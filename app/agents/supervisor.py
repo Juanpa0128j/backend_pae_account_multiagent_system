@@ -92,6 +92,11 @@ def supervisor_node(state: AgentState) -> AgentState:
                 state["raw_text"] = markdown_text
                 state["parsed_content"] = tabular_data
                 text_preview = markdown_text[:3000]
+            elif ext == ".xml":
+                from app.services.xml_parser import parse_xml
+                xml_text = parse_xml(file_path)
+                state["raw_text"] = xml_text
+                text_preview = xml_text[:3000]
             elif ext == ".pdf":
                 from app.services.pdf_processor import extract_text_from_pdf
                 text_preview = extract_text_from_pdf(file_path)[:3000]
@@ -109,7 +114,16 @@ def supervisor_node(state: AgentState) -> AgentState:
                 text_preview=text_preview,
                 source_format=ext.lstrip("."),
             )
-            state["document_classification"] = classification.model_dump(mode="json")
+            classification_dict = classification.model_dump(mode="json")
+            # If the caller explicitly provided a company_nit, use it instead of
+            # the NIT auto-detected from the document content.
+            if state.get("company_nit"):
+                classification_dict["entity_nit"] = state["company_nit"]
+                logger.info(
+                    "Supervisor: company_nit override applied — using %s instead of auto-detected %s",
+                    state["company_nit"], classification.entity_nit,
+                )
+            state["document_classification"] = classification_dict
             state["pathway"] = classification.pathway.value
 
             append_log(state, "supervisor", "document_classified", {

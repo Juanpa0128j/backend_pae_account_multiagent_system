@@ -890,8 +890,18 @@ class TestProcessGraphDBIntegration:
         )
         mock_trib_factory.return_value = mock_trib
 
+        # Provide company settings so tributario precondition passes
+        mock_company_row = MagicMock()
+        mock_company_row.tasa_retefuente_servicios = 0.11
+        mock_company_row.tasa_retefuente_bienes = 0.025
+        mock_company_row.tasa_retefuente_arrendamiento = 0.035
+        mock_company_row.tasa_reteica = 0.00414
+        mock_company_row.tasa_iva_general = 0.19
+        mock_company_row.iva_responsable = True
+
         with patch("app.agents.tributario_agent.get_rag_service", side_effect=Exception("no RAG")), \
-             patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
+             patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")), \
+             patch("app.services.db_service.get_company_settings", return_value=mock_company_row):
             result = invoke_accounting_pipeline(
                 ingest_id=self._ingest_id,
                 raw_transactions=list(VALID_RAW_TRANSACTIONS),

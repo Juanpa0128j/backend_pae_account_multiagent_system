@@ -1,7 +1,8 @@
 import logging
 import tempfile
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks, status
+from typing import Optional
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks, status
 from sqlalchemy.orm import Session
 from app.models.schemas import IngestResponse, IngestDetailResponse
 from app.agents.graph import invoke_ingest_pipeline
@@ -23,12 +24,15 @@ def save_temp_file(file_content: bytes, filename: str) -> str:
     
     return str(temp_path)
 
-def process_ingest_background(temp_file_path: str, ingest_id: str):
-    logger.info(f"Invoking background agent for: {ingest_id}")
+def process_ingest_background(temp_file_path: str, ingest_id: str, company_nit: Optional[str] = None):
+    logger.info(f"Invoking background agent for: {ingest_id} (company_nit={company_nit})")
+    initial: dict = {"ingest_id": ingest_id}
+    if company_nit:
+        initial["company_nit"] = company_nit
     try:
         invoke_ingest_pipeline(
             temp_file_path,
-            initial_state={"ingest_id": ingest_id},
+            initial_state=initial,
         )
     except Exception as e:
         logger.error(f"Error in background ingest {ingest_id}: {e}", exc_info=True)
@@ -36,10 +40,18 @@ def process_ingest_background(temp_file_path: str, ingest_id: str):
         Path(temp_file_path).unlink(missing_ok=True)
 
 @router.post("/upload", response_model=IngestResponse, status_code=status.HTTP_202_ACCEPTED)
-async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    company_nit: Optional[str] = Form(None, description="Company NIT to associate with this document. If omitted, the NIT is auto-detected from the document content."),
+    db: Session = Depends(get_db),
+):
     """
     Upload and process a PDF/Excel/XML/image file (receipt/invoice/scan).
     Returns 202 Accepted immediately.
+
+    Optionally pass `company_nit` as a form field to explicitly associate the document
+    with a company, overriding the NIT auto-detected from the document content.
     """
     # Validate file type
     if not file.filename.lower().endswith(('.pdf', '.xlsx', '.xml', '.jpg', '.jpeg', '.png')):
@@ -51,13 +63,39 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
     
     try:
         file_content = await file.read()
+
+        # Validate file is not empty
+        if not file_content:
+            raise HTTPException(status_code=422, detail="Uploaded file is empty")
+
+        # Magic-byte check: reject obviously wrong/corrupt files early
+        _MAGIC: dict[str, bytes] = {
+            ".pdf":  b"%PDF",
+            ".xlsx": b"PK\x03\x04",   # ZIP-based Office Open XML
+            ".xml":  b"<?xml",
+            ".jpg":  b"\xff\xd8\xff",
+            ".jpeg": b"\xff\xd8\xff",
+            ".png":  b"\x89PNG",
+        }
+        _ext = Path(file.filename).suffix.lower()
+        _expected_magic = _MAGIC.get(_ext)
+        if _expected_magic and not file_content[: len(_expected_magic)].startswith(_expected_magic):
+            # XML may start with a BOM or whitespace — allow those through
+            if _ext == ".xml" and file_content.lstrip()[:5] in (b"<?xml", b"<Invoice", b"<Credit", b"<Debit"):
+                pass
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"File content does not match its extension ({_ext}). The file may be corrupt or password-protected.",
+                )
+
         temp_file_path = save_temp_file(file_content, file.filename)
         logger.info(f"Saved uploaded file to: {temp_file_path}")
         
         ingest_job = db_service.create_ingest_job(db, file.filename, temp_file_path)
         logger.info(f"Created IngestJob: {ingest_job.id}")
         
-        background_tasks.add_task(process_ingest_background, temp_file_path, str(ingest_job.id))
+        background_tasks.add_task(process_ingest_background, temp_file_path, str(ingest_job.id), company_nit)
         
         return IngestResponse(
             message="File uploaded successfully and queued for processing",

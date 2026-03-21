@@ -49,8 +49,8 @@ _EXTRACT_METHOD_MAP: dict[str, str] = {
     "auxiliar_impuesto": "extract_auxiliary_ledger",
     "auxiliar_iva": "extract_auxiliar_iva",
     # Financial statements (Vía B)
-    "balance_general": "extract_financial_statement",
-    "estado_resultados": "extract_financial_statement",
+    "balance_general": "extract_balance_general",
+    "estado_resultados": "extract_estado_resultados",
     "libro_auxiliar": "extract_auxiliary_ledger",
     "libro_diario": "extract_libro_diario",
     "flujo_de_caja": "extract_flujo_caja",
@@ -134,21 +134,59 @@ def ingest_node(state: AgentState) -> AgentState:
                 else:
                     logger.info("Ingest: Re-using Excel text extracted by supervisor")
                 raw_text = state["raw_text"]
+            elif ext == ".xml":
+                logger.info(f"Ingest: Extracting text from {file_path} using XML parser")
+                from app.services.xml_parser import parse_xml
+                raw_text = parse_xml(file_path)
+                state["raw_text"] = raw_text
             elif ext in (".pdf", ".jpg", ".jpeg", ".png"):
                 format_label = "image" if ext in (".jpg", ".jpeg", ".png") else "PDF"
                 logger.info(f"Ingest: Extracting text from {file_path} ({format_label}) using LlamaParse")
-                if LlamaParse is not None:
-                    parser = LlamaParse(
-                        api_key=settings.llama_cloud_api_key,
-                        result_type="markdown",
-                    )
-                else:
+                if LlamaParse is None:
                     raise RuntimeError(
                         "LlamaParse client is not available. "
                         "Install llama-parse and configure LLAMA_CLOUD_API_KEY."
                     )
-                documents = parser.load_data(file_path)
-                raw_text = "\n\n".join([doc.text for doc in documents])
+
+                # Cache parsed text next to the source file to avoid redundant API calls.
+                _cache_dir = Path(file_path).parent / ".parse_cache"
+                _safe_name = Path(file_path).name.replace(" ", "_")
+                _cache_path = _cache_dir / f"{_safe_name}.md"
+                if _cache_path.exists():
+                    logger.info("Ingest: Using cached parse for %s", Path(file_path).name)
+                    raw_text = _cache_path.read_text(encoding="utf-8")
+                else:
+                    try:
+                        parser = LlamaParse(
+                            api_key=settings.llama_cloud_api_key,
+                            result_type="markdown",
+                        )
+                        documents = parser.load_data(file_path)
+                        raw_text = "\n\n".join([doc.text for doc in documents])
+                    except (KeyError, Exception) as _parse_err:
+                        logger.warning(
+                            "LlamaParse markdown mode failed (%s) — retrying with result_type='text'",
+                            _parse_err,
+                        )
+                        raw_text = ""
+
+                    # LlamaParse can silently return empty text on some scanned PDFs
+                    # without raising an exception — fall back to plain text mode.
+                    if not raw_text.strip():
+                        logger.warning(
+                            "LlamaParse markdown returned empty text — retrying with result_type='text'"
+                        )
+                        parser = LlamaParse(
+                            api_key=settings.llama_cloud_api_key,
+                            result_type="text",
+                        )
+                        documents = parser.load_data(file_path)
+                        raw_text = "\n\n".join([doc.text for doc in documents])
+
+                    # Save to cache (even if empty, to avoid re-hitting the API)
+                    _cache_dir.mkdir(parents=True, exist_ok=True)
+                    _cache_path.write_text(raw_text, encoding="utf-8")
+
                 state["raw_text"] = raw_text
             else:
                 state["error"] = f"Unsupported file format: {ext}"
@@ -170,13 +208,11 @@ def ingest_node(state: AgentState) -> AgentState:
             return state
 
         if len(stripped_text) < 50:
-            state["error"] = (
-                f"Extracted text too short ({len(stripped_text)} chars) "
-                "— document may be corrupted or empty"
+            logger.warning(
+                "Ingest: extracted text is very short (%d chars) — proceeding but extraction quality may be low",
+                len(stripped_text),
             )
-            logger.warning(state["error"])
-            append_log(state, "ingesta", "node_error", {"error": state["error"]})
-            return state
+            append_log(state, "ingesta", "short_text_warning", {"text_chars": len(stripped_text)})
 
         append_log(state, "ingesta", "extraction_complete", {
             "text_chars": len(raw_text),

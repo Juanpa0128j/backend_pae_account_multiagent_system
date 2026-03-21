@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # Keys that callers are permitted to pre-set via the initial_state parameter.
 # Core execution fields are intentionally excluded to prevent accidental
 # runtime corruption.
-_ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset({"ingest_id", "mode"})
+_ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset({"ingest_id", "mode", "company_nit"})
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +146,7 @@ def _base_state() -> AgentState:
         "document_classification": None,
         "pathway": None,
         "parsed_content": None,
+        "company_nit": None,
     }
 
 

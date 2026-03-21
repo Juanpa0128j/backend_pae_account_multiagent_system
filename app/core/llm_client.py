@@ -97,6 +97,11 @@ class LLMClient:
 
         raise RuntimeError(f"All LLM providers exhausted for {schema_cls.__name__}")
 
+    def _invoke_large(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
+        """Use gpt-4.1 (1M token context) for documents that exceed the standard model window."""
+        logger.info("_invoke_large: routing to large-context model for %s", schema_cls.__name__)
+        return self._openai.invoke_large(schema_cls, prompt)
+
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
@@ -458,16 +463,21 @@ Documento:
         return self._as_dict(self._invoke(AuxiliaryLedgerContent, prompt))
 
     def extract_financial_statement(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, FinancialStatementContent
+        """Legacy dispatcher — routes to the dedicated method based on content."""
+        # Try to detect which type it is from a keyword scan before invoking LLM
+        lower = text[:2000].lower()
+        if any(k in lower for k in ("utilidad", "ingresos", "gastos", "costo de venta", "resultado")):
+            return self.extract_estado_resultados(text, correction_feedback=correction_feedback)
+        return self.extract_balance_general(text, correction_feedback=correction_feedback)
+
+    def extract_balance_general(self, text: str, *, correction_feedback: str | None = None) -> dict:
+        """Extract balance general / estado de situación financiera."""
+        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, BalanceGeneralContent
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
-Eres un experto contable colombiano (NIIF/PUC). Extrae la información de este ESTADO FINANCIERO.
+Eres un experto contable colombiano (NIIF/PUC). Extrae la información de este BALANCE GENERAL (Estado de Situación Financiera).
 
-Primero determina si es un BALANCE GENERAL o ESTADO DE RESULTADOS.
-
-Para BALANCE GENERAL: extrae entidad (NIT, razón social), fecha de corte, marco normativo (NIIF plenas/Pymes/microempresas), activos corrientes y no corrientes con sus subcategorías y totales, pasivos corrientes y no corrientes con subcategorías y totales, patrimonio descompuesto (capital, reservas, resultados ejercicio, acumulados), totales de activos/pasivos/patrimonio, verificación de ecuación contable (A = P + Patrim), y lista plana de todas las cuentas PUC con saldos.
-
-Para ESTADO DE RESULTADOS: extrae entidad, período (inicio y fin), presentación (por función/naturaleza), ingresos ordinarios y otros, costos de ventas/servicios, utilidad bruta, gastos operacionales (administración, ventas, depreciaciones), utilidad operacional, ingresos y gastos financieros, utilidad antes de impuestos, impuesto de renta, utilidad neta, y lista plana de todas las cuentas PUC.
+Extrae obligatoriamente: entidad (NIT, razón social), fecha de corte, marco normativo (NIIF plenas/Pymes/microempresas), activos corrientes y no corrientes con subcategorías y totales, pasivos corrientes y no corrientes con subcategorías y totales, patrimonio descompuesto (capital, reservas, resultados ejercicio, resultados acumulados), totales de activos/pasivos/patrimonio, verificación ecuación contable (activos == pasivos + patrimonio), y lista plana de todas las cuentas PUC con saldos.
 
 Documento:
 ---
@@ -475,7 +485,24 @@ Documento:
 ---"""
         if correction_feedback:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
-        return self._as_dict(self._invoke(FinancialStatementContent, prompt))
+        return self._as_dict(self._invoke(BalanceGeneralContent, prompt))
+
+    def extract_estado_resultados(self, text: str, *, correction_feedback: str | None = None) -> dict:
+        """Extract estado de resultados / P&L."""
+        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, EstadoResultadosContent
+        prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
+
+Eres un experto contable colombiano (NIIF/PUC). Extrae la información de este ESTADO DE RESULTADOS (Estado de Pérdidas y Ganancias).
+
+Extrae obligatoriamente: entidad (NIT, razón social), período (fecha inicio y fin), marco normativo, ingresos ordinarios, otros ingresos, total ingresos, costo de ventas/servicios, utilidad bruta, gastos operacionales (administración y ventas por separado como totales — si el documento da un desglose, suma los componentes y pon el total en el campo correspondiente), utilidad operacional, ingresos y gastos financieros, utilidad antes de impuestos, impuesto de renta, utilidad neta, y lista plana de todas las cuentas PUC clase 4/5/6.
+
+Documento:
+---
+{text}
+---"""
+        if correction_feedback:
+            prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
+        return self._as_dict(self._invoke(EstadoResultadosContent, prompt))
 
     def extract_declaracion_ica(self, text: str, *, correction_feedback: str | None = None) -> dict:
         from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, DeclaracionICAContent
@@ -539,7 +566,9 @@ Documento:
 ---"""
         if correction_feedback:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
-        return self._as_dict(self._invoke(AuxiliarIVAContent, prompt))
+        # Use the large-context model (gpt-4.1, 1M tokens) — auxiliar IVA XLSX files
+        # routinely exceed gpt-4o's 128K limit.
+        return self._as_dict(self._invoke_large(AuxiliarIVAContent, prompt))
 
     def extract_libro_diario(self, text: str, *, correction_feedback: str | None = None) -> dict:
         from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, LibroDiarioContent

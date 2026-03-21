@@ -56,6 +56,7 @@ class AgentState(TypedDict):
     - audit_feedback: Rejection reason from Auditor, fed back to Contador for retry
     - report_type: Reporting pipeline — one of "balance" | "pnl" | "cashflow" | "iva" | "withholdings"
     - report_params: Reporting pipeline — filter params, e.g. {"start_date": "2026-01-01", "end_date": "2026-01-31"}
+    - company_nit: Explicitly set company NIT from the API caller; overrides auto-detected entity_nit from document
     """
 
     file_path: str
@@ -90,3 +91,4 @@ class AgentState(TypedDict):
     document_classification: Optional[dict]  # DocumentClassification serialized
     pathway: Optional[str]  # "build_from_scratch" | "work_with_existing"
     parsed_content: Optional[list]  # Structured tabular data from Excel sheets
+    company_nit: Optional[str]  # Explicitly set by API caller; overrides auto-detected entity_nit
