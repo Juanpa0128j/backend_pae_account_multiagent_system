@@ -7,6 +7,10 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+pytest.importorskip("sqlalchemy")
+
 from app.agents.persist_node import db_persist_node
 
 

@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import patch, MagicMock, Mock
 
+pytest.importorskip("langgraph")
+
 from app.agents.graph import create_agent_graph, invoke_accounting_pipeline
 from app.agents.state import AgentState
 from app.agents.contador_agent import contador_node
