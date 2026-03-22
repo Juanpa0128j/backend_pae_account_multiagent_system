@@ -9,13 +9,17 @@ from app.models.agent_outputs import IVAOutput, WithholdingsOutput
 router = APIRouter()
 
 
-def _build_params(start_date: Optional[date], end_date: Optional[date]) -> dict:
-    params = {}
+def _build_params(
+    start_date: Optional[date],
+    end_date: Optional[date],
+    include_analysis: bool = False,
+) -> dict:
+    params: dict = {}
     if start_date:
         params["start_date"] = start_date.isoformat()
-    # Always include end_date so the query has an upper bound matching the
-    # documented "default: today" behaviour.
     params["end_date"] = (end_date or date.today()).isoformat()
+    if include_analysis:
+        params["include_analysis"] = True
     return params
 
 
@@ -27,27 +31,31 @@ def _run_report(report_type: str, params: dict) -> dict:
     return result.get("report", {})
 
 
-@router.get("/iva", response_model=IVAOutput)
+@router.get("/iva")
 async def get_iva_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
     Reporte IVA.
     Computes IVA generated (account 240808) vs. IVA deductible (account 240802)
     and returns the net IVA payable with applicable legal references.
+    Optionally includes LLM-powered analysis when include_analysis=true.
     """
-    return _run_report("iva", _build_params(start_date, end_date))
+    return _run_report("iva", _build_params(start_date, end_date, include_analysis))
 
 
-@router.get("/withholdings", response_model=WithholdingsOutput)
+@router.get("/withholdings")
 async def get_withholdings_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
     Reporte Retenciones.
     Returns Retefuente (account 240815) and ReteICA (account 236540) balances
     with applicable legal references.
+    Optionally includes LLM-powered analysis when include_analysis=true.
     """
-    return _run_report("withholdings", _build_params(start_date, end_date))
+    return _run_report("withholdings", _build_params(start_date, end_date, include_analysis))

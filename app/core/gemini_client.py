@@ -176,6 +176,73 @@ class TaxRateLookup(BaseModel):
         return v
 
 
+# ---------------------------------------------------------------------------
+# Reportero Analysis Schemas
+# ---------------------------------------------------------------------------
+
+class ExplicacionResultadoGemini(BaseModel):
+    """Detailed explanation of a financial metric."""
+
+    metrica: str = Field(description="Metric name, e.g. 'activos_totales', 'razon_corriente'")
+    valor: float = Field(description="The metric's numeric value")
+    explicacion: str = Field(description="WHY this value — root causes, contributing accounts, business implications")
+    nivel: Literal["positivo", "neutral", "negativo"] = Field(description="Traffic light assessment")
+
+
+class PrediccionPeriodoGemini(BaseModel):
+    """Single month financial prediction."""
+
+    periodo: str = Field(description="Target month as YYYY-MM, e.g. '2026-04'")
+    ingresos_estimados: float = Field(description="Projected revenue for the month")
+    gastos_estimados: float = Field(description="Projected expenses for the month")
+    utilidad_estimada: float = Field(description="Projected net profit for the month")
+    confianza: Literal["alta", "media", "baja"] = Field(
+        description="Confidence level based on data volume and trend consistency"
+    )
+
+
+class InterpretacionRatioGemini(BaseModel):
+    """Interpretation of a single financial ratio."""
+
+    ratio: str = Field(description="Ratio name in Spanish")
+    valor: Optional[float] = Field(None, description="Numeric value")
+    interpretacion: str = Field(description="What this ratio means for the business")
+    que_significa: str = Field(description="Plain-language explanation for non-accountants")
+
+
+class ReporteroAnalysisGemini(BaseModel):
+    """Full structured analysis output from the Reportero LLM call."""
+
+    resumen_ejecutivo: str = Field(description="2-3 paragraph executive summary of financial health")
+    explicaciones: List[ExplicacionResultadoGemini] = Field(
+        description="Detailed explanation of EACH major financial result"
+    )
+    interpretacion_ratios: List[InterpretacionRatioGemini] = Field(
+        description="Interpretation of each financial ratio"
+    )
+    tendencias: str = Field(description="Narrative of how revenue, expenses, profit evolved over recent months")
+    predicciones: List[PrediccionPeriodoGemini] = Field(
+        description="3-month financial projections"
+    )
+    predicciones_narrativa: str = Field(
+        description="Plain-language interpretation of predictions: where the company is headed, risks, inflection points"
+    )
+    alertas: List[str] = Field(description="Risk alerts and early warning signals")
+    recomendaciones: List[str] = Field(description="3-5 actionable recommendations")
+    nivel_salud_financiera: Literal["bueno", "aceptable", "preocupante", "critico"] = Field(
+        description="Overall financial health assessment"
+    )
+
+
+class ReporteroBriefAnalysisGemini(BaseModel):
+    """Brief analysis for individual report types (balance, pnl, etc.)."""
+
+    resumen: str = Field(description="1-2 paragraph summary of this specific report")
+    puntos_clave: List[str] = Field(description="3-5 key takeaways")
+    alertas: List[str] = Field(default_factory=list, description="Risk alerts if any")
+    recomendaciones: List[str] = Field(default_factory=list, description="1-3 recommendations")
+
+
 class GeminiClient:
     """Wrapper for Google Generative AI (Gemini) API via LangChain."""
 
@@ -199,6 +266,8 @@ class GeminiClient:
         self.auditor_model = self.model.with_structured_output(AuditorOutputGemini)
         self.tax_model = self.model.with_structured_output(TaxJustification)
         self.tax_lookup_model = self.model.with_structured_output(TaxRateLookup)
+        self.reportero_model = self.model.with_structured_output(ReporteroAnalysisGemini)
+        self.reportero_brief_model = self.model.with_structured_output(ReporteroBriefAnalysisGemini)
 
     @staticmethod
     def _as_dict(response: BaseModel | dict[str, Any]) -> dict[str, Any]:
@@ -458,6 +527,81 @@ Y cita fuentes legales."""
             response.tasa_reteica,
         )
         return response
+
+
+    def generate_financial_analysis(
+        self,
+        financial_data: dict,
+        rag_context: str,
+        system_prompt: str,
+    ) -> dict:
+        """Generate a comprehensive financial analysis using the reportero model.
+
+        Args:
+            financial_data: Dict with balance_summary, pnl_summary, ratios,
+                            monthly_trends, predicciones_numericas, top_accounts, etc.
+            rag_context: Normative RAG context string.
+            system_prompt: The reportero system prompt constant.
+
+        Returns:
+            Dict from ReporteroAnalysisGemini structured output.
+        """
+        import json
+
+        user_prompt = f"""{system_prompt}
+
+=== DATOS FINANCIEROS A ANALIZAR ===
+{json.dumps(financial_data, ensure_ascii=False, indent=2, default=str)}
+
+=== CONTEXTO NORMATIVO (RAG) ===
+{rag_context if rag_context else "Sin contexto normativo adicional disponible."}
+
+Genera el análisis financiero completo siguiendo la estructura requerida.
+Todas las respuestas deben ser en español."""
+
+        try:
+            response = self.reportero_model.invoke([HumanMessage(content=user_prompt)])
+            data = self._as_dict(response)
+            logger.info("Reportero financial analysis generated successfully")
+            return data
+        except Exception as e:
+            logger.error("Gemini API error in generate_financial_analysis: %s", e)
+            raise
+
+    def generate_brief_report_analysis(
+        self,
+        report_type: str,
+        report_data: dict,
+        rag_context: str,
+    ) -> dict:
+        """Generate a brief LLM analysis for a specific report type.
+
+        Used when include_analysis=true on individual report endpoints.
+        """
+        import json
+
+        prompt = f"""Eres un Director Financiero experto en contabilidad colombiana (NIIF, PUC, Estatuto Tributario).
+
+Analiza el siguiente reporte de tipo '{report_type}' y proporciona:
+1. Un resumen ejecutivo breve (1-2 párrafos)
+2. Los 3-5 puntos clave más importantes
+3. Alertas de riesgo si las hay
+4. 1-3 recomendaciones accionables
+
+=== DATOS DEL REPORTE ===
+{json.dumps(report_data, ensure_ascii=False, indent=2, default=str)}
+
+=== CONTEXTO NORMATIVO ===
+{rag_context if rag_context else "Sin contexto normativo adicional."}
+
+Responde en español."""
+
+        try:
+            response = self.reportero_brief_model.invoke([HumanMessage(content=prompt)])
+            return self._as_dict(response)
+        except Exception as e:
+            logger.warning("Brief report analysis failed (non-fatal): %s", e)
+            return {"error": f"Análisis LLM no disponible: {e}"}
 
 
 @lru_cache(maxsize=1)
