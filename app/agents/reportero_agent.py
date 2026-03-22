@@ -147,7 +147,8 @@ def _debit_nature_balance(row: dict) -> Decimal:
 
 def _build_balance(db, params: dict, svc) -> dict:
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
-    data = svc.get_balance_sheet(db, cutoff_date=end_date)
+    company_nit = params.get("company_nit")
+    data = svc.get_balance_sheet(db, cutoff_date=end_date, company_nit=company_nit)
 
     activos = Decimal(str(data["assets"]))
     pasivos = Decimal(str(data["liabilities"]))
@@ -178,6 +179,7 @@ def _build_balance(db, params: dict, svc) -> dict:
         "report_type": "balance_sheet",
         "period_start": params.get("start_date"),
         "period_end": params.get("end_date") or _today_iso(),
+        "company_nit": company_nit,
         "generated_at": _now_iso(),
         "activos": float(activos),
         "pasivos": float(pasivos),
@@ -193,7 +195,10 @@ def _build_balance(db, params: dict, svc) -> dict:
 def _build_pnl(db, params: dict, svc) -> dict:
     start_date = _parse_date_param(params.get("start_date"))
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
-    ledger = svc.get_general_ledger(db, start_date=start_date, end_date=end_date)
+    company_nit = params.get("company_nit")
+    ledger = svc.get_general_ledger(
+        db, start_date=start_date, end_date=end_date, company_nit=company_nit
+    )
 
     ingresos_rows = _ledger_by_prefix(ledger, _CLASS_INGRESOS)
     gastos_rows = _ledger_by_prefix(ledger, _CLASS_GASTOS)
@@ -222,6 +227,7 @@ def _build_pnl(db, params: dict, svc) -> dict:
         "report_type": "profit_and_loss",
         "period_start": params.get("start_date"),
         "period_end": params.get("end_date") or _today_iso(),
+        "company_nit": company_nit,
         "generated_at": _now_iso(),
         "ingresos": ingresos,
         "costo_ventas": costo_ventas,
@@ -238,7 +244,10 @@ def _build_pnl(db, params: dict, svc) -> dict:
 def _build_cashflow(db, params: dict, svc) -> dict:
     start_date = _parse_date_param(params.get("start_date"))
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
-    ledger = svc.get_general_ledger(db, start_date=start_date, end_date=end_date)
+    company_nit = params.get("company_nit")
+    ledger = svc.get_general_ledger(
+        db, start_date=start_date, end_date=end_date, company_nit=company_nit
+    )
 
     efectivo_rows = _ledger_by_prefix(ledger, _PREFIX_EFECTIVO)
     cuentas_efectivo = [
@@ -261,6 +270,7 @@ def _build_cashflow(db, params: dict, svc) -> dict:
         "report_type": "cash_flow",
         "period_start": params.get("start_date"),
         "period_end": params.get("end_date") or _today_iso(),
+        "company_nit": company_nit,
         "generated_at": _now_iso(),
         "cuentas_efectivo": cuentas_efectivo,
         "total_efectivo": float(total_efectivo),
@@ -275,7 +285,10 @@ def _build_cashflow(db, params: dict, svc) -> dict:
 def _build_iva(db, params: dict, svc) -> dict:
     start_date = _parse_date_param(params.get("start_date"))
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
-    ledger = svc.get_general_ledger(db, start_date=start_date, end_date=end_date)
+    company_nit = params.get("company_nit")
+    ledger = svc.get_general_ledger(
+        db, start_date=start_date, end_date=end_date, company_nit=company_nit
+    )
 
     generado_row = _ledger_by_exact(ledger, _CUENTA_IVA_GENERADO)
     descontable_row = _ledger_by_exact(ledger, _CUENTA_IVA_DESCONTABLE)
@@ -296,6 +309,7 @@ def _build_iva(db, params: dict, svc) -> dict:
         "report_type": "iva_report",
         "period_start": params.get("start_date"),
         "period_end": params.get("end_date") or _today_iso(),
+        "company_nit": company_nit,
         "generated_at": _now_iso(),
         "iva_generado": float(iva_generado),
         "iva_descontable": float(iva_descontable),
@@ -307,7 +321,10 @@ def _build_iva(db, params: dict, svc) -> dict:
 def _build_withholdings(db, params: dict, svc) -> dict:
     start_date = _parse_date_param(params.get("start_date"))
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
-    ledger = svc.get_general_ledger(db, start_date=start_date, end_date=end_date)
+    company_nit = params.get("company_nit")
+    ledger = svc.get_general_ledger(
+        db, start_date=start_date, end_date=end_date, company_nit=company_nit
+    )
 
     retefuente_row = _ledger_by_exact(ledger, _CUENTA_RETEFUENTE)
     reteica_row = _ledger_by_exact(ledger, _CUENTA_RETEICA)
@@ -327,6 +344,7 @@ def _build_withholdings(db, params: dict, svc) -> dict:
         "report_type": "withholdings_report",
         "period_start": params.get("start_date"),
         "period_end": params.get("end_date") or _today_iso(),
+        "company_nit": company_nit,
         "generated_at": _now_iso(),
         "retencion_en_la_fuente": float(retefuente),
         "retencion_ica": float(reteica),
@@ -381,6 +399,8 @@ def reportero_node(state: AgentState) -> AgentState:
         return state
 
     params: dict = state.get("report_params") or {}
+    if state.get("company_nit") and not params.get("company_nit"):
+        params["company_nit"] = state.get("company_nit")
     state["current_agent"] = "reportero"
     state["current_stage"] = "reportero"
 

@@ -237,6 +237,7 @@ def invoke_reporting_pipeline(
     *,
     report_type: str,
     report_params: dict | None = None,
+    company_nit: str | None = None,
 ) -> dict:
     """
     Invoke the unified agent graph for report generation (mode='reporting').
@@ -259,6 +260,7 @@ def invoke_reporting_pipeline(
     state["mode"] = "reporting"
     state["report_type"] = report_type
     state["report_params"] = report_params or {}
+    state["company_nit"] = company_nit
 
     logger.info("invoke_reporting_pipeline: report_type=%s params=%s", report_type, report_params)
     final_state = graph.invoke(state)

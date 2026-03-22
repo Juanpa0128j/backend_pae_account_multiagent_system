@@ -153,6 +153,19 @@ class TestReporteroNodeBalance:
         assert report["cuadre"] is False
         assert "DESCUADRE" in report["mensaje_cuadre"]
 
+    def test_balance_passes_company_nit_filter(self):
+        state = base_reporting_state("balance", end_date=_END)
+        state["company_nit"] = "900.123.456-7"
+        svc = MagicMock()
+        svc.get_balance_sheet.return_value = _BALANCE_DATA
+
+        with patch.dict(sys.modules, _mock_db_modules(svc)):
+            result_state = reportero_node(state)
+
+        assert result_state.get("error") is None
+        _, kwargs = svc.get_balance_sheet.call_args
+        assert kwargs["company_nit"] == "900.123.456-7"
+
 
 class TestReporteroNodePnL:
     def test_pnl_report_aggregation(self):
@@ -354,6 +367,7 @@ def _pipeline_ok(report_data: dict) -> dict:
 @pytest.fixture
 def client():
     """FastAPI TestClient — DB and vectordb disabled, pipeline mocked per test."""
+    pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient  # lazy: only available in container env
     with patch("app.core.database.SessionLocal"), \
          patch("app.core.vectordb.get_vectordb", return_value=MagicMock()):
@@ -402,6 +416,18 @@ class TestReportsAPI:
         _, kwargs = mock_fn.call_args
         assert kwargs["report_params"]["start_date"] == _START
         assert kwargs["report_params"]["end_date"]   == _END
+
+    def test_get_balance_with_company_nit(self, client):
+        with patch("app.api.v1.reports.invoke_reporting_pipeline",
+                   return_value=_pipeline_ok(_MOCK_BALANCE_RESULT)) as mock_fn:
+            resp = client.get(
+                "/api/v1/reports/balance",
+                params={"company_nit": "900.123.456-7"},
+            )
+
+        assert resp.status_code == 200
+        _, kwargs = mock_fn.call_args
+        assert kwargs["company_nit"] == "900123456-7"
 
     def test_reports_pipeline_error_returns_500(self, client):
         with patch("app.api.v1.reports.invoke_reporting_pipeline",

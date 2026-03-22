@@ -20,6 +20,7 @@ from app.core.database import SessionLocal
 
 from app.core.logger import get_logger
 from app.services import db_service
+from app.services.nit_utils import normalize_optional_nit
 from app.services.validation_engine import ValidationResult, get_validator
 
 
@@ -115,13 +116,23 @@ def supervisor_node(state: AgentState) -> AgentState:
                 source_format=ext.lstrip("."),
             )
             classification_dict = classification.model_dump(mode="json")
+            classification_dict["entity_nit"] = normalize_optional_nit(
+                classification_dict.get("entity_nit")
+            )
             # If the caller explicitly provided a company_nit, use it instead of
             # the NIT auto-detected from the document content.
             if state.get("company_nit"):
-                classification_dict["entity_nit"] = state["company_nit"]
+                override_nit = normalize_optional_nit(state.get("company_nit"))
+                if not override_nit:
+                    state["error"] = "Supervisor: provided company_nit is empty after normalization"
+                    append_log(state, "supervisor", "routing_error", {
+                        "reason": "invalid_company_nit",
+                    })
+                    return state
+                classification_dict["entity_nit"] = override_nit
                 logger.info(
                     "Supervisor: company_nit override applied — using %s instead of auto-detected %s",
-                    state["company_nit"], classification.entity_nit,
+                    override_nit, classification.entity_nit,
                 )
             state["document_classification"] = classification_dict
             state["pathway"] = classification.pathway.value

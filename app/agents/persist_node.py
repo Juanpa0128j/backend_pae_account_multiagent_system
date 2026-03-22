@@ -23,6 +23,7 @@ from app.core.database import SessionLocal
 from app.core.logger import get_logger
 from app.models.database import IngestStatus, ProcessStatus, TransactionPending
 from app.services import db_service
+from app.services.nit_utils import normalize_optional_nit
 
 
 
@@ -74,6 +75,24 @@ def _safe_datetime(value: Any) -> Optional[datetime]:
             return datetime.strptime(str(value), fmt).replace(tzinfo=timezone.utc)
         except ValueError:
             continue
+    return None
+
+
+def _resolve_company_nit(state: AgentState, tx_data: dict[str, Any] | None = None) -> Optional[str]:
+    """Resolve tenant company NIT with explicit override precedence."""
+    if state.get("company_nit"):
+        return normalize_optional_nit(state.get("company_nit"))
+
+    classification = state.get("document_classification") or {}
+    class_nit = classification.get("entity_nit")
+    if class_nit:
+        return normalize_optional_nit(class_nit)
+
+    if tx_data:
+        receiver_nit = tx_data.get("nit_receptor")
+        if receiver_nit:
+            return normalize_optional_nit(receiver_nit)
+
     return None
 
 
@@ -301,6 +320,7 @@ def _run_persist(state: AgentState) -> AgentState:
             total = _safe_decimal(tx_data.get("total") or tx_data.get("valor_total")) or Decimal("0")
             nit_emisor = _as_str(tx_data.get("nit_emisor"), "").strip()
             nit_receptor = _as_str(tx_data.get("nit_receptor"), "").strip()
+            company_nit = _resolve_company_nit(state, tx_data)
             descripcion = _as_str(tx_data.get("concepto") or tx_data.get("descripcion"), "")
             items = tx_data.get("items") or tx_data.get("detalle_items") or []
 
@@ -316,6 +336,7 @@ def _run_persist(state: AgentState) -> AgentState:
                 txn_pending = db_service.create_transaction_pending(
                     db,
                     ingest_id=ingest_id,
+                    company_nit=company_nit,
                     fecha=fecha,
                     nit_emisor=nit_emisor,
                     nit_receptor=nit_receptor,
@@ -413,6 +434,7 @@ def _run_persist(state: AgentState) -> AgentState:
             txn_posted = db_service.create_transaction_posted(
                 db,
                 transaction_pending_id=_as_str(getattr(txn_pending, "id", "")),
+                company_nit=company_nit,
                 cuenta_puc=cuenta_puc,
                 puc_descripcion=puc_descripcion,
                 retefuente=retefuente,
@@ -427,7 +449,10 @@ def _run_persist(state: AgentState) -> AgentState:
             logger.info("db_persist: Created TransactionPosted %s", txn_posted.id)
 
             lines = db_service.create_journal_entry_lines(
-                db, _as_str(getattr(txn_posted, "id", "")), journal_json
+                db,
+                _as_str(getattr(txn_posted, "id", "")),
+                journal_json,
+                company_nit=company_nit,
             )
             total_lines += len(lines)
             logger.info("db_persist: Created %d journal entry lines", len(lines))
@@ -548,8 +573,7 @@ def _journal_entries_from_contador(*, fecha: datetime, asientos: list, nit: str,
 
 def _persist_financial_statement(state: AgentState) -> None:
     """Persist a Vía B financial statement (balance, PnL, or libro auxiliar)."""
-    import uuid as _uuid
-    from app.models.database import FinancialStatement, IngestStatus
+    from app.models.database import IngestStatus
 
     interpreted = state.get("interpreted_data") or state.get("result", {}).get("data", {})
     classification = state.get("document_classification") or {}
@@ -581,17 +605,36 @@ def _persist_financial_statement(state: AgentState) -> None:
             ingest_job.document_type = doc_type
             ingest_job.pathway = state.get("pathway", "work_with_existing")
 
+        company_nit = _resolve_company_nit(state)
+        if company_nit is None:
+            raise ValueError("Vía B persistence requires a company NIT (provided or detected)")
+
+        period_start = _safe_datetime(
+            classification.get("period_start") or interpreted.get("periodo_inicio")
+        )
+        period_end = _safe_datetime(
+            classification.get("period_end")
+            or interpreted.get("periodo_fin")
+            or interpreted.get("periodo_corte")
+        )
+
+        if not period_end:
+            # Keep persistence backward compatible: if no period is extractable,
+            # anchor the statement to current timestamp as period end.
+            period_end = datetime.now(timezone.utc)
+
         # Create FinancialStatement record
-        stmt = FinancialStatement(
-            id=str(_uuid.uuid4()),
+        stmt = db_service.create_financial_statement(
+            db,
             ingest_id=ingest_id,
             statement_type=doc_type,
-            period_start=None,
-            period_end=None,
-            entity_nit=classification.get("entity_nit"),
+            period_start=period_start,
+            period_end=period_end,
+            entity_nit=company_nit,
+            source_mode="direct",
             data=interpreted,
+            commit=False,
         )
-        db.add(stmt)
 
         # Mark ingest as completed and commit everything in one transaction
         db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED, commit=False)

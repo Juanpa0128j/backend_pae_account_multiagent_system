@@ -27,6 +27,8 @@ from app.models.database import (
     AuditLog,
     CuentaPUC,
     Tercero,
+    FinancialStatement,
+    FinancialStatementLineage,
 )
 from app.core.logger import get_logger
 
@@ -116,12 +118,14 @@ def create_transaction_pending(
     descripcion: str = None,
     items: List[Dict] = None,
     raw_data: Dict = None,
+    company_nit: str = None,
     commit: bool = True,
 ) -> TransactionPending:
     """Create a pending transaction from extracted data."""
     txn = TransactionPending(
         id=_generate_id("txn_"),
         ingest_id=ingest_id,
+        company_nit=company_nit,
         fecha=fecha,
         nit_emisor=nit_emisor,
         nit_receptor=nit_receptor,
@@ -200,12 +204,14 @@ def create_transaction_posted(
     journal_entries_json: List[Dict] = None,
     tax_references: List[str] = None,
     agent_reasoning: Dict = None,
+    company_nit: str = None,
     commit: bool = True,
 ) -> TransactionPosted:
     """Create a fully processed posted transaction."""
     posted = TransactionPosted(
         id=_generate_id("posted_"),
         transaction_pending_id=transaction_pending_id,
+        company_nit=company_nit,
         cuenta_puc=cuenta_puc,
         puc_descripcion=puc_descripcion,
         retefuente=retefuente,
@@ -261,6 +267,7 @@ def create_journal_entry_lines(
     transaction_posted_id: str,
     entries: List[Dict[str, Any]],
     commit: bool = True,
+    company_nit: str = None,
 ) -> List[JournalEntryLine]:
     """Create normalized journal entry lines for a posted transaction."""
     lines = []
@@ -268,6 +275,7 @@ def create_journal_entry_lines(
         line = JournalEntryLine(
             transaction_posted_id=transaction_posted_id,
             fecha=_parse_fecha(entry.get("fecha", datetime.now(timezone.utc))),
+            company_nit=company_nit,
             comprobante=entry.get("comprobante"),
             cuenta_puc=entry["cuenta"],
             cuenta_nombre=entry.get("descripcion", ""),
@@ -293,9 +301,12 @@ def get_daily_journal(
     db: Session,
     start_date: datetime = None,
     end_date: datetime = None,
+    company_nit: str = None,
 ) -> List[JournalEntryLine]:
     """Daily Journal — all journal entries in chronological order."""
     query = db.query(JournalEntryLine)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
@@ -307,6 +318,7 @@ def get_general_ledger(
     db: Session,
     start_date: datetime = None,
     end_date: datetime = None,
+    company_nit: str = None,
 ) -> List[Dict]:
     """
     Libro Mayor — aggregated by cuenta_puc.
@@ -326,6 +338,8 @@ def get_general_ledger(
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
         query = query.filter(JournalEntryLine.fecha <= end_date)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
 
     results = query.order_by(JournalEntryLine.cuenta_puc).all()
 
@@ -346,6 +360,7 @@ def get_subsidiary_journal(
     account: str,
     start_date: datetime = None,
     end_date: datetime = None,
+    company_nit: str = None,
 ) -> List[JournalEntryLine]:
     """Subsidiary journal — detail for a specific account."""
     query = db.query(JournalEntryLine).filter(JournalEntryLine.cuenta_puc == account)
@@ -353,10 +368,12 @@ def get_subsidiary_journal(
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
         query = query.filter(JournalEntryLine.fecha <= end_date)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
     return query.order_by(JournalEntryLine.fecha).all()
 
 
-def get_balance_sheet(db: Session, cutoff_date: datetime = None) -> Dict:
+def get_balance_sheet(db: Session, cutoff_date: datetime = None, company_nit: str = None) -> Dict:
     """
     Balance Sheet (Statement of Financial Position).
     Assets (class 1) = Liabilities (class 2) + Equity (class 3)
@@ -366,6 +383,8 @@ def get_balance_sheet(db: Session, cutoff_date: datetime = None) -> Dict:
     query = db.query(JournalEntryLine)
     if cutoff_date:
         query = query.filter(JournalEntryLine.fecha <= cutoff_date)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
 
     # Group by first digit of cuenta_puc (clase)
     lines = query.all()
@@ -585,6 +604,7 @@ def get_process_result_transactions(db: Session, ingest_id: str) -> List[Dict[st
                 "transaction_pending_id": pending.id,
                 "transaction_posted_id": posted.id,
                 "date": pending.fecha.isoformat() if pending.fecha else None,
+                "company_nit": pending.company_nit,
                 "issuer_nit": pending.nit_emisor,
                 "receiver_nit": pending.nit_receptor,
                 "description": pending.descripcion,
@@ -624,6 +644,79 @@ def create_audit_log(
     db.add(log)
     _commit_or_flush(db, commit)
     return log
+
+
+# ─── Financial Statements (Vía B + derived) ───────────────────────────────
+
+def create_financial_statement(
+    db: Session,
+    *,
+    ingest_id: str,
+    statement_type: str,
+    data: Dict[str, Any],
+    entity_nit: str = None,
+    period_start: datetime = None,
+    period_end: datetime = None,
+    source_mode: str = "direct",
+    commit: bool = True,
+) -> FinancialStatement:
+    row = FinancialStatement(
+        id=_generate_id("fs_"),
+        ingest_id=ingest_id,
+        statement_type=statement_type,
+        period_start=period_start,
+        period_end=period_end,
+        entity_nit=entity_nit,
+        source_mode=source_mode,
+        data=data,
+    )
+    db.add(row)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def create_financial_statement_lineage(
+    db: Session,
+    *,
+    target_statement_id: str,
+    source_statement_id: str,
+    relation_type: str = "input",
+    commit: bool = True,
+) -> FinancialStatementLineage:
+    row = FinancialStatementLineage(
+        id=_generate_id("fsl_"),
+        target_statement_id=target_statement_id,
+        source_statement_id=source_statement_id,
+        relation_type=relation_type,
+    )
+    db.add(row)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def get_financial_statements(
+    db: Session,
+    *,
+    company_nit: str,
+    statement_type: str | None = None,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+    source_mode: str | None = None,
+) -> List[FinancialStatement]:
+    query = db.query(FinancialStatement).filter(FinancialStatement.entity_nit == company_nit)
+
+    if statement_type:
+        query = query.filter(FinancialStatement.statement_type == statement_type)
+    if source_mode:
+        query = query.filter(FinancialStatement.source_mode == source_mode)
+    if period_start:
+        query = query.filter(FinancialStatement.period_start >= period_start)
+    if period_end:
+        query = query.filter(FinancialStatement.period_end <= period_end)
+
+    return query.order_by(FinancialStatement.period_end.desc(), FinancialStatement.created_at.desc()).all()
 
 
 # ─── Terceros ────────────────────────────────────────────────────

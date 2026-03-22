@@ -217,6 +217,7 @@ class TransactionPending(Base):
 
     # Core transaction data
     fecha = Column(DateTime(timezone=True), nullable=True)
+    company_nit = Column(String(20), nullable=True, index=True, comment="Owning company NIT (tenant)")
     nit_emisor = Column(String(20), nullable=True, index=True)
     nit_receptor = Column(String(20), nullable=True, index=True)
     total = Column(Numeric(15, 2), nullable=True)
@@ -254,6 +255,7 @@ class TransactionPosted(Base):
         nullable=False,
         index=True,
     )
+    company_nit = Column(String(20), nullable=True, index=True, comment="Owning company NIT (tenant)")
 
     # PUC classification
     cuenta_puc = Column(String(10), nullable=False, index=True)
@@ -308,6 +310,7 @@ class JournalEntryLine(Base):
     )
 
     fecha = Column(DateTime(timezone=True), nullable=False)
+    company_nit = Column(String(20), nullable=True, index=True, comment="Owning company NIT (tenant)")
     comprobante = Column(String(20), nullable=True, comment="Voucher/receipt number")
     cuenta_puc = Column(String(10), nullable=False, index=True)
     cuenta_nombre = Column(String(255), nullable=True)
@@ -387,6 +390,7 @@ class FinancialStatement(Base):
     period_start = Column(DateTime(timezone=True), nullable=True)
     period_end = Column(DateTime(timezone=True), nullable=True)
     entity_nit = Column(String(20), nullable=True)
+    source_mode = Column(String(20), nullable=False, server_default="direct", comment="direct | derived")
     data = Column(JSONB, nullable=False, comment="Full parsed financial statement data")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -396,6 +400,34 @@ class FinancialStatement(Base):
 
     def __repr__(self):
         return f"<FinancialStatement(id={self.id}, type={self.statement_type})>"
+
+
+class FinancialStatementLineage(Base):
+    """
+    Explicit lineage for derived financial statements.
+
+    Each row links one derived target statement to one source input statement.
+    """
+
+    __tablename__ = "financial_statement_lineage"
+
+    id = Column(String(50), primary_key=True, index=True)
+    target_statement_id = Column(
+        String(50), ForeignKey("financial_statements.id"), nullable=False, index=True
+    )
+    source_statement_id = Column(
+        String(50), ForeignKey("financial_statements.id"), nullable=False, index=True
+    )
+    relation_type = Column(
+        String(30), nullable=False, server_default="input", comment="input | reference"
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self):
+        return (
+            f"<FinancialStatementLineage(target={self.target_statement_id}, "
+            f"source={self.source_statement_id})>"
+        )
 
 
 class VectorDocument(Base):

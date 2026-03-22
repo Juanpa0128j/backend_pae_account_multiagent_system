@@ -8,6 +8,7 @@ from app.models.schemas import IngestResponse, IngestDetailResponse
 from app.agents.graph import invoke_ingest_pipeline
 from app.core.database import get_db
 from app.services import db_service
+from app.services.nit_utils import normalize_nit
 from app.models.database import IngestStatus
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,13 @@ async def upload_file(
         )
     
     try:
+        normalized_company_nit = None
+        if company_nit is not None:
+            try:
+                normalized_company_nit = normalize_nit(company_nit)
+            except ValueError as nit_err:
+                raise HTTPException(status_code=422, detail=f"Invalid company_nit: {nit_err}")
+
         file_content = await file.read()
 
         # Validate file is not empty
@@ -95,7 +103,12 @@ async def upload_file(
         ingest_job = db_service.create_ingest_job(db, file.filename, temp_file_path)
         logger.info(f"Created IngestJob: {ingest_job.id}")
         
-        background_tasks.add_task(process_ingest_background, temp_file_path, str(ingest_job.id), company_nit)
+        background_tasks.add_task(
+            process_ingest_background,
+            temp_file_path,
+            str(ingest_job.id),
+            normalized_company_nit,
+        )
         
         return IngestResponse(
             message="File uploaded successfully and queued for processing",
