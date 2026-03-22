@@ -97,11 +97,6 @@ class LLMClient:
 
         raise RuntimeError(f"All LLM providers exhausted for {schema_cls.__name__}")
 
-    def _invoke_large(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
-        """Use gpt-4.1 (1M token context) for documents that exceed the standard model window."""
-        logger.info("_invoke_large: routing to large-context model for %s", schema_cls.__name__)
-        return self._openai.invoke_large(schema_cls, prompt)
-
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
@@ -566,9 +561,7 @@ Documento:
 ---"""
         if correction_feedback:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
-        # Use the large-context model (gpt-4.1, 1M tokens) — auxiliar IVA XLSX files
-        # routinely exceed gpt-4o's 128K limit.
-        return self._as_dict(self._invoke_large(AuxiliarIVAContent, prompt))
+        return self._as_dict(self._invoke(AuxiliarIVAContent, prompt))
 
     def extract_libro_diario(self, text: str, *, correction_feedback: str | None = None) -> dict:
         from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, LibroDiarioContent

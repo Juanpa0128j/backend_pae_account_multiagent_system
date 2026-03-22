@@ -20,9 +20,7 @@ class OpenAIProvider:
         settings = get_settings()
         self._api_key = settings.openai_api_key
         self._model_name = settings.openai_model
-        self._model_name_large = settings.openai_model_large
         self._models: dict[type[BaseModel], Any] = {}
-        self._models_large: dict[type[BaseModel], Any] = {}
 
         if not self._api_key:
             raise ValueError("OPENAI_API_KEY not set")
@@ -32,12 +30,7 @@ class OpenAIProvider:
             api_key=self._api_key,
             temperature=0,
         )
-        self._base_large = ChatOpenAI(
-            model=self._model_name_large,
-            api_key=self._api_key,
-            temperature=0,
-        )
-        logger.info("OpenAIProvider initialised (%s / large: %s)", self._model_name, self._model_name_large)
+        logger.info("OpenAIProvider initialised (%s)", self._model_name)
 
     def _get_model(self, schema_cls: type[BaseModel]) -> Any:
         if schema_cls not in self._models:
@@ -46,16 +39,6 @@ class OpenAIProvider:
             )
         return self._models[schema_cls]
 
-    def _get_model_large(self, schema_cls: type[BaseModel]) -> Any:
-        if schema_cls not in self._models_large:
-            self._models_large[schema_cls] = self._base_large.with_structured_output(
-                schema_cls, method="function_calling"
-            )
-        return self._models_large[schema_cls]
-
     def invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
         return self._get_model(schema_cls).invoke([HumanMessage(content=prompt)])
 
-    def invoke_large(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
-        """Use the large-context model (gpt-4.1, 1M token window) for oversized documents."""
-        return self._get_model_large(schema_cls).invoke([HumanMessage(content=prompt)])
