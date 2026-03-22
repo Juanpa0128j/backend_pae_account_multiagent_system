@@ -14,10 +14,8 @@ logger = logging.getLogger(__name__)
 
 try:
     from openpyxl import load_workbook
-    from openpyxl.utils import get_column_letter
 except ImportError:
     load_workbook = None  # type: ignore[assignment,misc]
-    get_column_letter = None  # type: ignore[assignment,misc]
 
 
 def parse_excel(file_path: str) -> tuple[str, list[dict[str, Any]]]:
@@ -61,17 +59,20 @@ def parse_excel(file_path: str) -> tuple[str, list[dict[str, Any]]]:
             continue
 
         # Find headers: first non-empty row
-        header_idx = 0
+        header_idx = None
         for i, row in enumerate(rows_raw):
-            if any(cell for cell in row):
+            if any(cell is not None for cell in row):
                 header_idx = i
                 break
 
-        headers = [str(cell) if cell else f"col_{j}" for j, cell in enumerate(rows_raw[header_idx])]
+        if header_idx is None:
+            continue  # all rows are empty — skip this sheet
+
+        headers = [str(cell) if cell is not None else f"col_{j}" for j, cell in enumerate(rows_raw[header_idx])]
         data_rows: list[dict[str, Any]] = []
 
         for row in rows_raw[header_idx + 1:]:
-            if not any(cell for cell in row):
+            if not any(cell is not None for cell in row):
                 continue  # skip empty rows
             row_dict = {}
             for j, cell in enumerate(row):

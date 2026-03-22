@@ -98,9 +98,9 @@ def _gemini_with_retry_generic(method, raw_text: str, correction_feedback=None):
 
 def ingest_node(state: AgentState) -> AgentState:
     """
-    Ingest node: Extracts from document (PDF/XLSX/image) and interprets with Gemini.
+    Ingest node: Extracts from document (PDF/XLSX/XML/image) and interprets with Gemini.
 
-    Supports multiple formats (PDF, XLSX, JPG, JPEG, PNG) and routes interpretation
+    Supports multiple formats (PDF, XLSX, XML, JPG, JPEG, PNG) and routes interpretation
     to the appropriate Gemini method based on document classification from the supervisor.
     Images are parsed via LlamaParse exactly like PDFs.
     """

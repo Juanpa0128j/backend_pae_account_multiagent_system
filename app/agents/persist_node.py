@@ -565,32 +565,37 @@ def _persist_financial_statement(state: AgentState) -> None:
     db = SessionLocal()
 
     try:
-        # Create or update IngestJob
+        # Create or update IngestJob (without committing yet)
         if ingest_id:
             ingest_job = db_service.get_ingest_job(db, ingest_id)
-            if ingest_job:
-                db_service.update_ingest_job(db, ingest_id, IngestStatus.PROCESSING)
         else:
             file_name = state.get("file_path", "unknown").split("/")[-1]
-            ingest_job = db_service.create_ingest_job(db, file_name, state.get("file_path"))
+            ingest_job = db_service.create_ingest_job(
+                db, file_name, state.get("file_path"), commit=False
+            )
             ingest_id = _as_str(getattr(ingest_job, "id", ""), "")
             state["ingest_id"] = ingest_id
+
+        # Populate routing metadata on the job
+        if ingest_job:
+            ingest_job.document_type = doc_type
+            ingest_job.pathway = state.get("pathway", "work_with_existing")
 
         # Create FinancialStatement record
         stmt = FinancialStatement(
             id=str(_uuid.uuid4()),
             ingest_id=ingest_id,
             statement_type=doc_type,
-            period_start=None,  # Could be extracted from classification
+            period_start=None,
             period_end=None,
             entity_nit=classification.get("entity_nit"),
             data=interpreted,
         )
         db.add(stmt)
-        db.commit()
 
-        # Mark ingest as completed
-        db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
+        # Mark ingest as completed and commit everything in one transaction
+        db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED, commit=False)
+        db.commit()
 
         state["db_result"] = {
             "ingest_id": ingest_id,
