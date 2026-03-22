@@ -57,6 +57,7 @@ class AgentState(TypedDict):
     - report_type: Reporting pipeline — one of "balance" | "pnl" | "cashflow" | "iva" | "withholdings" | "analysis"
     - report_params: Reporting pipeline — filter params, e.g. {"start_date": "2026-01-01", "end_date": "2026-01-31", "include_analysis": true}
     - report_include_analysis: Optional flag to add LLM narrative to standard reports
+    - company_nit: Explicitly set company NIT from the API caller; overrides auto-detected entity_nit from document
     """
 
     file_path: str
@@ -84,6 +85,12 @@ class AgentState(TypedDict):
     audit_rejection_reason: Optional[str]
     audit_decision: Optional[str]
     audit_feedback: Optional[str]
+    audit_rejection_count: int  # how many times auditor has rejected — not reset by retry_count
     report_type: Optional[str]
     report_params: Optional[dict]
     report_include_analysis: Optional[bool]
+    # Document classification fields (ingestion pipeline)
+    document_classification: Optional[dict]  # DocumentClassification serialized
+    pathway: Optional[str]  # "build_from_scratch" | "work_with_existing"
+    parsed_content: Optional[list]  # Structured tabular data from Excel sheets
+    company_nit: Optional[str]  # Explicitly set by API caller; overrides auto-detected entity_nit

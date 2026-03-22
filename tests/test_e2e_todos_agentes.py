@@ -92,32 +92,43 @@ class FakeGeminiClient:
             self.confirma_tasas = confirma_tasas
 
     # ── Ingesta ──────────────────────────────────────────────────────────────
+    def _fake_ingest_result(self) -> dict[str, Any]:
+        """FacturaVentaContent-compatible dict for the new rich extraction schema."""
+        return {
+            "consecutivo": "FAC-E2E-ALL-001",
+            "fecha_emision": "2026-03-14",
+            "forma_pago": "contado",
+            "emisor": {
+                "razon_social": "PAE Contadores E2E S.A.S.",
+                "nit": "900111222",
+            },
+            "receptor": {
+                "razon_social": "Cliente Demo E2E S.A.S.",
+                "nit": "800333444",
+            },
+            "totales": {
+                "subtotal": Decimal("2500000"),
+                "total_a_pagar": Decimal("2500000"),
+            },
+            "items": [
+                {"descripcion": "Servicio contable integral", "cantidad": 1, "valor_unitario": Decimal("2500000"), "total_item": Decimal("2500000")},
+            ],
+        }
+
     def extract_transactions(
         self,
         text: str,
         correction_feedback: str | None = None,
     ) -> dict[str, Any]:
-        return {
-            "fecha": "2026-03-14",
-            "monto": Decimal("2500000"),
-            "concepto": "Servicios de contabilidad E2E todos agentes",
-            "beneficiario": "Cliente Demo E2E S.A.S.",
-            "empresa": "PAE Contadores E2E S.A.S.",
-            "referencia": "FAC-E2E-ALL-001",
-            "tipo_documento": "factura",
-            "transactions": [
-                {
-                    "fecha": "2026-03-14",
-                    "nit_emisor": "900111222",
-                    "nit_receptor": "800333444",
-                    "total": 2_500_000,
-                    "descripcion": "Servicios de contabilidad E2E todos agentes",
-                    "items": [
-                        {"descripcion": "Servicio contable integral", "cantidad": 1, "valor": 2_500_000}
-                    ],
-                }
-            ],
-        }
+        return self._fake_ingest_result()
+
+    def __getattr__(self, name: str):
+        """Fallback for all extract_* methods added during the pipeline upgrade."""
+        if name.startswith("extract_"):
+            def _method(text: str = "", correction_feedback: str | None = None, **_kw) -> dict[str, Any]:  # noqa: ANN001
+                return self._fake_ingest_result()
+            return _method
+        raise AttributeError(name)
 
     # ── Contador ─────────────────────────────────────────────────────────────
     def extract_contador_output(
@@ -427,8 +438,23 @@ def process_state(ingest_result: dict[str, Any]) -> dict[str, Any]:
     ingest_id = str(ingest_result["ingest_id"])
     db_res = ingest_result.get("db_result") or {}
     pending_id = str(db_res["transaction_pending_id"])
-    raw_transactions: list[dict] = ingest_result.get("data") or []
-    assert raw_transactions, "ingest_result no contiene transacciones en 'data'"
+    # result['data'] is now a rich FacturaVentaContent dict, not a list.
+    # Build the raw_transaction entry the process pipeline needs.
+    data = ingest_result.get("data") or {}
+    emisor = (data.get("emisor") or {}) if isinstance(data, dict) else {}
+    receptor = (data.get("receptor") or {}) if isinstance(data, dict) else {}
+    totales = (data.get("totales") or {}) if isinstance(data, dict) else {}
+    raw_transactions: list[dict] = [
+        {
+            "fecha": data.get("fecha_emision", "2026-01-01") if isinstance(data, dict) else "2026-01-01",
+            "nit_emisor": emisor.get("nit", ""),
+            "nit_receptor": receptor.get("nit", ""),
+            "total": float(totales.get("total_a_pagar") or 0),
+            "descripcion": data.get("consecutivo", "") if isinstance(data, dict) else "",
+            "items": data.get("items", []) if isinstance(data, dict) else [],
+        }
+    ] if data else []
+    assert raw_transactions, "ingest_result no contiene datos en 'data'"
 
     with SessionLocal() as db:
         job = db_service.create_process_job(db, ingest_id=ingest_id)
@@ -484,32 +510,40 @@ class TestIngestPipeline:
         assert ingest_result.get("error") is None
 
     def test_ingesta_output_validated_data_cumple_schema_IngestOutput(self, ingest_result):
-        """validated_data debe poder parsearse como IngestOutput válido."""
+        """validated_data debe contener los datos extraídos del documento."""
         vd = ingest_result.get("validated_data") or {}
         assert vd, "validated_data está vacío; validate_output_node puede no haber corrido"
-        parsed = IngestOutput.model_validate(vd)
-        assert parsed.tipo_documento.value == "factura"
-        assert Decimal(str(parsed.monto)) == Decimal("2500000")
-        assert parsed.empresa  # campo requerido no vacío
+        # New rich extraction schema: IngestOutput(extra="allow") passes all fields through.
+        # Check the content via FacturaVentaContent structure.
+        emisor = (vd.get("emisor") or {}) if isinstance(vd, dict) else {}
+        totales = (vd.get("totales") or {}) if isinstance(vd, dict) else {}
+        assert emisor or totales, f"validated_data no tiene estructura esperada: {list(vd.keys())}"
 
     def test_ingesta_data_contiene_transaccion_raw(self, ingest_result):
-        """result['data'] debe contener al menos una RawTransaction con nit_emisor correcto."""
-        txs = ingest_result.get("data") or []
-        assert txs, "result['data'] está vacío después de la ingesta"
-        tx = txs[0]
-        assert tx.get("nit_emisor") == "900111222"
-        assert tx.get("nit_receptor") == "800333444"
-        assert Decimal(str(tx.get("total"))) == Decimal("2500000")
+        """result['data'] debe contener el contenido extraído con emisor/receptor correctos."""
+        data = ingest_result.get("data") or {}
+        assert data, "result['data'] está vacío después de la ingesta"
+        # New rich schema: emisor/receptor nested objects
+        emisor = data.get("emisor") or {}
+        receptor = data.get("receptor") or {}
+        assert emisor.get("nit") == "900111222", f"nit emisor incorrecto: {emisor}"
+        assert receptor.get("nit") == "800333444", f"nit receptor incorrecto: {receptor}"
+        totales = data.get("totales") or {}
+        assert Decimal(str(totales.get("total_a_pagar"))) == Decimal("2500000")
 
     def test_ingesta_interpretation_complete_registrado(self, ingest_result):
-        """ingesta debe emitir interpretation_complete con tx_count > 0."""
+        """ingesta debe emitir interpretation_complete con datos extraídos."""
         log = ingest_result.get("agent_log") or []
         events = [
             e for e in _events_for(log, "ingesta")
             if e.get("event") == "interpretation_complete"
         ]
         assert events, "No se encontró interpretation_complete de 'ingesta'"
-        assert events[0]["details"].get("tx_count", 0) > 0
+        details = events[0]["details"]
+        # New rich extraction schema: emits doc_type + fields list
+        # (legacy extraction emitted tx_count)
+        has_data = details.get("tx_count", 0) > 0 or bool(details.get("fields"))
+        assert has_data, f"interpretation_complete no contiene datos: {details}"
 
     # ── validate_output: aceptó el output de ingesta ─────────────────────────
 

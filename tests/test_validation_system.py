@@ -158,8 +158,8 @@ class TestIngestOutput:
         with pytest.raises(ValidationError):
             IngestOutput.model_validate({"transactions": "not-a-list"})
 
-    def test_empty_transactions_is_valid(self):
-        """An empty transactions list is allowed (default)."""
+    def test_empty_transactions_allowed(self):
+        """Empty transactions list is now allowed — new extraction methods return structured content."""
         output = IngestOutput.model_validate({"transactions": []})
         assert output.transactions == []
 

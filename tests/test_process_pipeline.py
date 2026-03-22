@@ -188,7 +188,7 @@ class TestProcessGraphStructure:
         node_names = [
             n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
         ]
-        assert len(node_names) == 9
+        assert len(node_names) == 10
 
 
 # ─── Test: Contador Node ──────────────────────────────────────────

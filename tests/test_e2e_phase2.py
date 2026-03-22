@@ -204,6 +204,7 @@ class TestGraphStructure:
             "tributario",
             "auditor",
             "reportero",
+            "import_existing",
         }
         assert expected == nodes
 

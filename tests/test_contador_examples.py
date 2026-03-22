@@ -158,6 +158,7 @@ def test_contador_prompt_includes_transaction_fields_and_rag_context() -> None:
     """Example: Gemini prompt should include tx details and provided RAG snippets."""
     client = GeminiClient.__new__(GeminiClient)
 
+    captured: list[str] = []
     mock_response = MagicMock()
     mock_response.model_dump.return_value = {
         "fecha_registro": "2026-03-01",
@@ -167,19 +168,19 @@ def test_contador_prompt_includes_transaction_fields_and_rag_context() -> None:
         "total_debitos": 0,
         "total_creditos": 0,
     }
-    mock_model = MagicMock()
-    mock_model.invoke.return_value = mock_response
-    client.contador_model = mock_model
+
+    def fake_invoke(schema_cls, prompt):  # noqa: ANN001
+        captured.append(prompt)
+        return mock_response
+
+    client._invoke = fake_invoke  # type: ignore[method-assign]
 
     tx = [{"fecha": "2026-03-01", "nit_emisor": "900123456", "total": 1190000, "descripcion": "Consultoria"}]
     rag = [{"content": "PUC 5135: Servicios profesionales."}]
 
     client.extract_contador_output(raw_transactions=tx, rag_context=rag)
 
-    # First positional arg passed to invoke is the messages list.
-    messages = mock_model.invoke.call_args.args[0]
-    prompt_text = messages[0].content
-
+    prompt_text = captured[0]
     assert "NIT emisor: 900123456" in prompt_text
     assert "Total: 1190000" in prompt_text
     assert "Contexto normativo/RAG" in prompt_text
@@ -190,6 +191,7 @@ def test_contador_prompt_uses_fallback_when_rag_context_is_empty() -> None:
     """Example: prompt should still be coherent if no RAG context is available."""
     client = GeminiClient.__new__(GeminiClient)
 
+    captured: list[str] = []
     mock_response = MagicMock()
     mock_response.model_dump.return_value = {
         "fecha_registro": "2026-03-01",
@@ -199,14 +201,16 @@ def test_contador_prompt_uses_fallback_when_rag_context_is_empty() -> None:
         "total_debitos": 0,
         "total_creditos": 0,
     }
-    mock_model = MagicMock()
-    mock_model.invoke.return_value = mock_response
-    client.contador_model = mock_model
+
+    def fake_invoke(schema_cls, prompt):  # noqa: ANN001
+        captured.append(prompt)
+        return mock_response
+
+    client._invoke = fake_invoke  # type: ignore[method-assign]
 
     tx = [{"fecha": "2026-03-01", "nit_emisor": "900123456", "total": 1190000, "descripcion": "Consultoria"}]
 
     client.extract_contador_output(raw_transactions=tx, rag_context=[])
-    messages = mock_model.invoke.call_args.args[0]
-    prompt_text = messages[0].content
+    prompt_text = captured[0]
 
     assert "Sin contexto normativo adicional." in prompt_text

@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field("", alias="GEMINI_API_KEY")
     gemini_model: str = Field("gemini-2.5-flash", alias="GEMINI_MODEL")
 
+    # --- OpenAI (first fallback when Gemini quota is exhausted) ------------
+    openai_api_key: str = Field("", alias="OPENAI_API_KEY")
+    openai_model: str = Field("gpt-4.1-nano", alias="OPENAI_MODEL")
+
+    # --- Groq (second fallback) --------------------------------------------
+    groq_api_key: str = Field("", alias="GROQ_API_KEY")
+    groq_model: str = Field("openai/gpt-oss-20b", alias="GROQ_MODEL")
+
     # --- HuggingFace API (embeddings + reranker) ---------------------------
     huggingface_api_key: str = Field("", alias="HUGGINGFACE_API_KEY")
 

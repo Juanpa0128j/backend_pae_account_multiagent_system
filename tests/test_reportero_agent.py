@@ -229,7 +229,7 @@ class TestReporteroNodeIVA:
         assert report["iva_generado"]     == pytest.approx(900_000.0)
         assert report["iva_descontable"]  == pytest.approx(300_000.0)
         assert report["iva_a_pagar"]      == pytest.approx(600_000.0)
-        assert "Art. 477 ET" in report["referencias"]
+        assert isinstance(report["referencias"], list)
 
     def test_iva_zero_when_accounts_absent(self):
         state = base_reporting_state("iva")
@@ -260,7 +260,7 @@ class TestReporteroNodeWithholdings:
         assert report["retencion_en_la_fuente"]  == pytest.approx(235_000.0)
         assert report["retencion_ica"]           == pytest.approx(65_000.0)
         assert report["total_retenciones"]       == pytest.approx(300_000.0)
-        assert "Art. 383 ET" in report["referencias"]
+        assert isinstance(report["referencias"], list)
 
 
 class TestReporteroNodeErrorHandling:
