@@ -21,6 +21,9 @@ storage/
 # Storage
 storage/
 *.db
+ejemplos_docs_ingesta/
+plans/
+
 
 # Alembic
 alembic/versions/__pycache__/

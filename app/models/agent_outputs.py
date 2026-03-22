@@ -120,42 +120,61 @@ class RawTransactionItem(BaseModel):
     def parse_fecha(cls, v):  # noqa: N805
         return _parse_date(v)
 
+    @field_validator("nit_emisor", "nit_receptor", mode="before")
+    @classmethod
+    def clean_nit(cls, v):  # noqa: N805
+        """Normalize Colombian NIT: strip dots, spaces, and validate non-empty."""
+        if not isinstance(v, str):
+            v = str(v)
+        cleaned = v.replace(".", "").replace(" ", "").strip()
+        if not cleaned:
+            raise ValueError("NIT cannot be empty")
+        return cleaned
+
 
 class IngestOutput(BaseModel):
     """
     Schema for the Ingesta (Ingest) agent output.
-    Represents structured data extracted from a single receipt/invoice PDF.
-    """
-    model_config = ConfigDict(str_strip_whitespace=True)
 
-    fecha: date = Field(
-        ..., description="Document date in YYYY-MM-DD format"
+    Each document type now returns its own rich structured dict via a dedicated
+    Gemini extraction method.  This wrapper validates only the common optional
+    fields that may appear across all document types; unknown fields are allowed
+    so that doc-type-specific fields pass through without errors.
+
+    The `transactions` field is kept for legacy compatibility but is no longer
+    required — new extraction methods return structured content objects instead
+    of transaction lists.
+    """
+    model_config = ConfigDict(str_strip_whitespace=True, extra="allow")
+
+    transactions: List[RawTransactionItem] = Field(
+        default_factory=list,
+        description="Legacy transaction list (empty for new structured extraction methods)"
     )
-    monto: Decimal = Field(
-        ..., ge=0, description="Total amount on the document"
+    fecha: Optional[date] = Field(
+        None, description="Document date in YYYY-MM-DD format"
     )
-    concepto: str = Field(
-        ..., min_length=3, max_length=500,
+    monto: Optional[Decimal] = Field(
+        None, ge=0, description="Total amount on the document"
+    )
+    concepto: Optional[str] = Field(
+        None, max_length=500,
         description="Concept or description of the transaction"
     )
-    beneficiario: str = Field(
-        ..., min_length=1, max_length=200,
+    beneficiario: Optional[str] = Field(
+        None, max_length=200,
         description="Name of the beneficiary / recipient"
     )
-    empresa: str = Field(
-        ..., min_length=1, max_length=200,
+    empresa: Optional[str] = Field(
+        None, max_length=200,
         description="Name of the issuing company"
     )
     referencia: Optional[str] = Field(
         None, max_length=100,
         description="Optional document reference number"
     )
-    tipo_documento: TipoDocumento = Field(
-        ..., description="Type of source document"
-    )
-    transactions: List[RawTransactionItem] = Field(
-        default_factory=list,
-        description="Extracted list of individual transaction items"
+    tipo_documento: Optional[TipoDocumento] = Field(
+        None, description="Type of source document"
     )
 
     @field_validator("fecha", mode="before")
