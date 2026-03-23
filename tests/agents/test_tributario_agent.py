@@ -529,3 +529,37 @@ def test_process_mode_uses_company_settings_when_present(
 
     assert result.get("error") is None
     assert result["tributario_output"] != {}
+
+
+@patch("app.services.db_service.get_company_settings")
+@patch("app.core.database.SessionLocal")
+@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_process_mode_without_taxes_does_not_crash(
+    mock_rag_cls,
+    mock_gemini_fn,
+    mock_session_local,
+    mock_get_settings,
+):
+    """When no tax applies, tributario must keep total_impuestos=0 without quantize errors."""
+    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_settings.return_value = SimpleNamespace(
+        tasa_retefuente_servicios=Decimal("0.000000"),
+        tasa_retefuente_bienes=Decimal("0.000000"),
+        tasa_retefuente_arrendamiento=Decimal("0.000000"),
+        tasa_reteica=Decimal("0.000000"),
+        tasa_iva_general=Decimal("0.000000"),
+        iva_responsable=False,
+    )
+
+    state = _make_state(VALID_CONTADOR_OUTPUT)
+    state["raw_transactions"] = [{"nit_receptor": "800999888"}]
+
+    result = tributario_node(state)
+
+    assert result.get("error") is None
+    assert result["tributario_output"].get("aplica_impuestos") is False
+    assert Decimal(str(result["tributario_output"].get("total_impuestos"))) == Decimal("0")

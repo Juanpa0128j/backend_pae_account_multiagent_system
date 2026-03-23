@@ -43,10 +43,13 @@ class LLMClient:
         self._gemini_key = settings.gemini_api_key
         self._groq_key = settings.groq_api_key
 
-        if not self._openai_key:
-            raise ValueError("OPENAI_API_KEY not set — OpenAI is the primary provider")
+        if not any([self._openai_key, self._gemini_key, self._groq_key]):
+            raise ValueError(
+                "No LLM provider API keys configured. Set at least one of: "
+                "OPENAI_API_KEY, GEMINI_API_KEY, GROQ_API_KEY"
+            )
 
-        self._openai = OpenAIProvider()
+        self._openai: Any = OpenAIProvider() if self._openai_key else None
 
         # Lazy-initialised on first fallback
         self._gemini: Any = None
@@ -70,32 +73,41 @@ class LLMClient:
 
     def _invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
         """Invoke with OpenAI → Gemini → Groq fallback chain."""
-        # 1. OpenAI (primary)
-        try:
-            return self._openai.invoke(schema_cls, prompt)
-        except Exception as exc:
-            if not _is_quota_error(exc):
-                raise
-            logger.warning(
-                "OpenAI quota exceeded — falling back to Gemini for %s", schema_cls.__name__
-            )
-
-        # 2. Gemini
+        providers: list[tuple[str, Any]] = []
+        if self._openai is not None:
+            providers.append(("OpenAI", self._openai))
         if self._gemini_key:
-            try:
-                return self._get_gemini().invoke(schema_cls, prompt)
-            except Exception as exc:
-                if not _is_quota_error(exc):
-                    raise
-                logger.warning(
-                    "Gemini quota exceeded — falling back to Groq for %s", schema_cls.__name__
-                )
-
-        # 3. Groq
+            providers.append(("Gemini", self._get_gemini()))
         if self._groq_key:
-            return self._get_groq().invoke(schema_cls, prompt)
+            providers.append(("Groq", self._get_groq()))
 
-        raise RuntimeError(f"All LLM providers exhausted for {schema_cls.__name__}")
+        last_exc: Exception | None = None
+        for idx, (name, provider) in enumerate(providers):
+            try:
+                return provider.invoke(schema_cls, prompt)
+            except Exception as exc:
+                last_exc = exc
+                has_next = idx < (len(providers) - 1)
+                if not has_next:
+                    break
+
+                if _is_quota_error(exc):
+                    logger.warning(
+                        "%s quota exceeded — falling back for %s",
+                        name,
+                        schema_cls.__name__,
+                    )
+                else:
+                    logger.warning(
+                        "%s invocation failed (%s) — falling back for %s",
+                        name,
+                        exc,
+                        schema_cls.__name__,
+                    )
+
+        raise RuntimeError(
+            f"All configured LLM providers failed for {schema_cls.__name__}: {last_exc}"
+        )
 
     # ------------------------------------------------------------------
     # Utilities

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.schemas import IngestResponse, IngestDetailResponse
 from app.agents.graph import invoke_ingest_pipeline
 from app.core.database import get_db
+from app.core.database import SessionLocal
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
 from app.models.database import IngestStatus
@@ -31,12 +32,53 @@ def process_ingest_background(temp_file_path: str, ingest_id: str, company_nit: 
     if company_nit:
         initial["company_nit"] = company_nit
     try:
-        invoke_ingest_pipeline(
+        result = invoke_ingest_pipeline(
             temp_file_path,
             initial_state=initial,
         )
+        pipeline_error = None
+        if isinstance(result, dict):
+            pipeline_error = result.get("error")
+
+        if pipeline_error:
+            db = SessionLocal()
+            try:
+                db_service.update_ingest_job(
+                    db,
+                    ingest_id,
+                    IngestStatus.FAILED,
+                    extraction_errors=[f"Background ingest pipeline error: {pipeline_error}"],
+                )
+            except Exception as status_err:
+                logger.error(
+                    "Failed to mark ingest %s as FAILED after pipeline error payload: %s",
+                    ingest_id,
+                    status_err,
+                    exc_info=True,
+                )
+            finally:
+                db.close()
     except Exception as e:
         logger.error(f"Error in background ingest {ingest_id}: {e}", exc_info=True)
+        # Prevent clients from waiting forever on pending_processing when the
+        # background task crashes before graph-level persistence can run.
+        db = SessionLocal()
+        try:
+            db_service.update_ingest_job(
+                db,
+                ingest_id,
+                IngestStatus.FAILED,
+                extraction_errors=[f"Background ingest error: {str(e)}"],
+            )
+        except Exception as status_err:
+            logger.error(
+                "Failed to mark ingest %s as FAILED after background exception: %s",
+                ingest_id,
+                status_err,
+                exc_info=True,
+            )
+        finally:
+            db.close()
     finally:
         Path(temp_file_path).unlink(missing_ok=True)
 

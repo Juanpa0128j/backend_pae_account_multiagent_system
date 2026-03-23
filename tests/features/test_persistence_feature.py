@@ -94,6 +94,28 @@ def _build_state() -> dict:
     }
 
 
+def _build_ingest_state_missing_receptor() -> dict:
+    state = _build_state()
+    state["mode"] = "ingest"
+    state["process_id"] = None
+    state["pending_transaction_id"] = None
+    state["current_agent"] = "ingesta"
+    state["company_nit"] = "800999888"
+    state["contador_output"] = {}
+    state["tributario_output"] = {}
+    state["raw_transactions"] = [
+        {
+            "fecha": "2026-03-07",
+            "nit_emisor": "900123456",
+            "nit_receptor": "",
+            "total": 1500000.0,
+            "descripcion": "Servicios profesionales marzo 2026",
+            "items": [],
+        }
+    ]
+    return state
+
+
 @patch("app.agents.persist_node.db_service.update_process_job")
 @patch("app.agents.persist_node.db_service.create_journal_entry_lines")
 @patch("app.agents.persist_node.db_service.create_transaction_posted")
@@ -146,3 +168,31 @@ def test_db_persist_maps_tributario_taxes_to_posted_transaction(
     assert kwargs["retefuente"] == Decimal("165000.00")
     assert kwargs["reteica"] == Decimal("10350.00")
     assert kwargs["iva"] == Decimal("285000.00")
+
+
+@patch("app.agents.persist_node.db_service.create_transaction_pending")
+@patch("app.agents.persist_node.db_service.check_duplicates", return_value=[])
+@patch("app.agents.persist_node.db_service.update_ingest_job")
+@patch("app.agents.persist_node.db_service.get_ingest_job")
+@patch("app.agents.persist_node.SessionLocal")
+def test_db_persist_falls_back_to_company_nit_when_nit_receptor_missing(
+    mock_session_local,
+    mock_get_ingest_job,
+    mock_update_ingest,
+    mock_check_duplicates,
+    mock_create_pending,
+):
+    _ = (mock_update_ingest, mock_check_duplicates)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_ingest_job.return_value = SimpleNamespace(id="ing_001")
+    mock_create_pending.return_value = SimpleNamespace(id="pending_001")
+
+    state = _build_ingest_state_missing_receptor()
+    out = db_persist_node(state)
+
+    assert out.get("error") is None
+    assert mock_create_pending.call_count == 1
+    kwargs = mock_create_pending.call_args.kwargs
+    assert kwargs["nit_receptor"] == "800999888"

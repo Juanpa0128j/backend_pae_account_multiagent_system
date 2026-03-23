@@ -147,7 +147,7 @@ def tributario_node(state: AgentState) -> AgentState:
         and not str(a.get("cuenta_puc", "")).startswith("2")
     ]
     base_gravable = (
-        sum(non_tax_debits).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        sum(non_tax_debits, Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         if non_tax_debits
         else Decimal(str(contador_output.get("total_debitos", 0)))
     )
@@ -377,7 +377,8 @@ def tributario_node(state: AgentState) -> AgentState:
             })
 
         total_impuestos = sum(
-            Decimal(i["valor_impuesto"]) for i in impuestos
+            (Decimal(i["valor_impuesto"]) for i in impuestos),
+            Decimal("0"),
         ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
         aplica_impuestos = len(impuestos) > 0

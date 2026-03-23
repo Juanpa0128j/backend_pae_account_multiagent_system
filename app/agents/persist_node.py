@@ -321,6 +321,12 @@ def _run_persist(state: AgentState) -> AgentState:
             nit_emisor = _as_str(tx_data.get("nit_emisor"), "").strip()
             nit_receptor = _as_str(tx_data.get("nit_receptor"), "").strip()
             company_nit = _resolve_company_nit(state, tx_data)
+            if not nit_receptor and company_nit:
+                nit_receptor = company_nit
+                logger.warning(
+                    "db_persist: nit_receptor missing in extracted transaction; using company_nit=%s",
+                    company_nit,
+                )
             descripcion = _as_str(tx_data.get("concepto") or tx_data.get("descripcion"), "")
             items = tx_data.get("items") or tx_data.get("detalle_items") or []
 
