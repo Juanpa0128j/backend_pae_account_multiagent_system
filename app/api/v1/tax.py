@@ -31,7 +31,7 @@ def _run_report(report_type: str, params: dict) -> dict:
     return result.get("report", {})
 
 
-@router.get("/iva")
+@router.get("/iva", response_model=IVAOutput)
 async def get_iva_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
@@ -46,7 +46,7 @@ async def get_iva_report(
     return _run_report("iva", _build_params(start_date, end_date, include_analysis))
 
 
-@router.get("/withholdings")
+@router.get("/withholdings", response_model=WithholdingsOutput)
 async def get_withholdings_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),

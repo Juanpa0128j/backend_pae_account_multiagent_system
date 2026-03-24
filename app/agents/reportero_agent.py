@@ -263,8 +263,8 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
     return {
         "razon_corriente": _safe_divide(activos_corrientes, pasivos_corrientes),
         "prueba_acida": _safe_divide(activos_corrientes - inventarios, pasivos_corrientes),
-        "margen_neto": _safe_divide(utilidad, ingresos) if ingresos else None,
-        "roa": _safe_divide(utilidad, activos) if activos else None,
+        "margen_neto": round(_safe_divide(utilidad, ingresos) * 100, 2) if ingresos and _safe_divide(utilidad, ingresos) is not None else None,
+        "roa": round(_safe_divide(utilidad, activos) * 100, 2) if activos and _safe_divide(utilidad, activos) is not None else None,
         "razon_endeudamiento": _safe_divide(pasivos, activos) if activos else None,
         "deuda_patrimonio": _safe_divide(pasivos, patrimonio) if patrimonio else None,
         "rotacion_activos": _safe_divide(ingresos, activos) if activos else None,
@@ -576,22 +576,27 @@ def _build_analysis(db, params: dict, svc) -> dict:
 
     # --- Phase 1: Deterministic calculations ---
 
-    # Balance sheet
-    balance = svc.get_balance_sheet(db, cutoff_date=end_date)
+    # Balance sheet — period-scoped when start_date is provided,
+    # cumulative (up to end_date) otherwise
+    if start_date is not None:
+        balance = svc.get_balance_sheet_for_period(db, start_date=start_date, end_date=end_date)
+    else:
+        balance = svc.get_balance_sheet(db, cutoff_date=end_date)
 
     # General ledger for current period
     ledger = svc.get_general_ledger(db, start_date=start_date, end_date=end_date)
 
-    # P&L summary
+    # P&L summary (period-scoped, computed from ledger for consistency)
     ingresos_rows = _ledger_by_prefix(ledger, _CLASS_INGRESOS)
     gastos_rows = _ledger_by_prefix(ledger, _CLASS_GASTOS)
     total_ingresos = sum(float(_credit_nature_balance(r)) for r in ingresos_rows)
     total_gastos = sum(float(_debit_nature_balance(r)) for r in gastos_rows)
+    utilidad_neta_periodo = total_ingresos - total_gastos
 
     pnl_summary = {
         "total_ingresos": total_ingresos,
         "total_gastos": total_gastos,
-        "utilidad_neta": balance["net_profit"],
+        "utilidad_neta": utilidad_neta_periodo,
     }
 
     # Financial ratios

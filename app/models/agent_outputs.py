@@ -503,6 +503,9 @@ class BalanceSheetOutput(BaseModel):
         default_factory=list,
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
     )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
+    )
 
 
 class PnLOutput(BaseModel):
@@ -525,6 +528,9 @@ class PnLOutput(BaseModel):
     notas_normativas: List[str] = Field(
         default_factory=list,
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
+    )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
     )
 
 
@@ -550,6 +556,9 @@ class CashFlowOutput(BaseModel):
         default_factory=list,
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
     )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
+    )
 
 
 class IVAOutput(BaseModel):
@@ -568,6 +577,9 @@ class IVAOutput(BaseModel):
         default_factory=lambda: ["Art. 477 ET", "Art. 24 ET"],
         description="Applicable legal references",
     )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
+    )
 
 
 class WithholdingsOutput(BaseModel):
@@ -585,6 +597,9 @@ class WithholdingsOutput(BaseModel):
     referencias: List[str] = Field(
         default_factory=lambda: ["Art. 383 ET", "Decreto 2048/1992"],
         description="Applicable legal references",
+    )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
     )
 
 
@@ -616,9 +631,10 @@ class PrediccionNumerica(BaseModel):
 
 
 class PeriodDelta(BaseModel):
-    """Change in a single metric between two periods."""
+    """Change in a single account between two periods."""
 
-    metric: str = Field(..., description="Metric or account name")
+    account: str = Field(..., description="PUC account code")
+    name: str = Field("", description="Account name")
     period1_value: float = Field(0)
     period2_value: float = Field(0)
     absolute_change: float = Field(0)

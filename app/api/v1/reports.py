@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.agents.graph import invoke_reporting_pipeline
+from app.core.database import get_db
+from app.services import db_service
 from app.models.agent_outputs import (
     BalanceSheetOutput,
     CashFlowOutput,
@@ -38,7 +40,7 @@ def _run_report(report_type: str, params: dict) -> dict:
     return result.get("report", {})
 
 
-@router.get("/balance")
+@router.get("/balance", response_model=BalanceSheetOutput)
 async def get_balance_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
@@ -53,7 +55,7 @@ async def get_balance_report(
     return _run_report("balance", _build_params(start_date, end_date, include_analysis))
 
 
-@router.get("/pnl")
+@router.get("/pnl", response_model=PnLOutput)
 async def get_pnl_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
@@ -67,7 +69,7 @@ async def get_pnl_report(
     return _run_report("pnl", _build_params(start_date, end_date, include_analysis))
 
 
-@router.get("/cashflow")
+@router.get("/cashflow", response_model=CashFlowOutput)
 async def get_cashflow_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
@@ -81,7 +83,7 @@ async def get_cashflow_report(
     return _run_report("cashflow", _build_params(start_date, end_date, include_analysis))
 
 
-@router.get("/analysis")
+@router.get("/analysis", response_model=FinancialAnalysisOutput)
 async def get_financial_analysis(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
@@ -113,6 +115,7 @@ async def get_comparative_report(
     period1_end: date = Query(..., description="Period 1 end date"),
     period2_start: date = Query(..., description="Period 2 start date"),
     period2_end: date = Query(..., description="Period 2 end date"),
+    db: Session = Depends(get_db),
 ):
     """
     Reporte Comparativo período vs período.
@@ -128,24 +131,12 @@ async def get_comparative_report(
             detail=f"report_type must be one of {sorted(valid_types)}",
         )
 
-    try:
-        from app.core.database import SessionLocal  # noqa: PLC0415
-        from app.services import db_service  # noqa: PLC0415
-    except ImportError as e:
-        raise HTTPException(status_code=500, detail=f"Database not available: {e}")
+    p1s = datetime.combine(period1_start, datetime.min.time()).replace(tzinfo=timezone.utc)
+    p1e = datetime.combine(period1_end, datetime.max.time()).replace(tzinfo=timezone.utc)
+    p2s = datetime.combine(period2_start, datetime.min.time()).replace(tzinfo=timezone.utc)
+    p2e = datetime.combine(period2_end, datetime.max.time()).replace(tzinfo=timezone.utc)
 
-    db = SessionLocal()
-    try:
-        p1s = datetime.combine(period1_start, datetime.min.time()).replace(tzinfo=timezone.utc)
-        p1e = datetime.combine(period1_end, datetime.max.time()).replace(tzinfo=timezone.utc)
-        p2s = datetime.combine(period2_start, datetime.min.time()).replace(tzinfo=timezone.utc)
-        p2e = datetime.combine(period2_end, datetime.max.time()).replace(tzinfo=timezone.utc)
-
-        comparison = db_service.get_period_comparison(db, p1s, p1e, p2s, p2e)
-        comparison["report_type"] = f"comparative_{report_type}"
-        comparison["generated_at"] = datetime.now(timezone.utc).isoformat()
-        return comparison
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating comparative report: {e}")
-    finally:
-        db.close()
+    comparison = db_service.get_period_comparison(db, p1s, p1e, p2s, p2e)
+    comparison["report_type"] = f"comparative_{report_type}"
+    comparison["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return comparison
