@@ -754,7 +754,9 @@ class TestReporteroAnalysis:
         assert "top_accounts_debit" in report
         # LLM analysis has error but didn't crash
         assert "analysis" in report
-        assert "error" in str(report["analysis"]).lower() or isinstance(report["analysis"], dict)
+        analysis = report["analysis"]
+        assert isinstance(analysis, dict)
+        assert "error" in analysis
 
     def test_analysis_report_has_top_accounts_and_terceros(self):
         """Analysis report must include top accounts and terceros."""
@@ -774,8 +776,10 @@ class TestReporteroAnalysis:
             result_state = reportero_node(state)
 
         report = result_state["result"]["report"]
-        assert len(report["top_accounts_debit"]) >= 0
-        assert len(report["top_terceros"]) >= 0
+        assert isinstance(report["top_accounts_debit"], list)
+        assert len(report["top_accounts_debit"]) >= 1  # mock returns 1 entry
+        assert isinstance(report["top_terceros"], list)
+        assert len(report["top_terceros"]) >= 1  # mock returns 1 entry
 
 
 class TestIncludeAnalysis:

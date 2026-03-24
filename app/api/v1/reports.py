@@ -106,7 +106,7 @@ async def get_financial_analysis(
     return _run_report("analysis", _build_params(start_date, end_date))
 
 
-@router.get("/comparative")
+@router.get("/comparative", response_model=ComparativeReportOutput)
 async def get_comparative_report(
     report_type: str = Query(
         ..., description="Report type to compare: balance, pnl, cashflow"

@@ -22,7 +22,7 @@ Filter params (state["report_params"]):
 
 import logging
 import statistics
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -589,12 +589,15 @@ def _build_analysis(db, params: dict, svc) -> dict:
     # P&L summary (period-scoped, computed from ledger for consistency)
     ingresos_rows = _ledger_by_prefix(ledger, _CLASS_INGRESOS)
     gastos_rows = _ledger_by_prefix(ledger, _CLASS_GASTOS)
+    costo_rows = _ledger_by_prefix(ledger, _CLASS_COSTO_VENTAS)
     total_ingresos = sum(float(_credit_nature_balance(r)) for r in ingresos_rows)
     total_gastos = sum(float(_debit_nature_balance(r)) for r in gastos_rows)
-    utilidad_neta_periodo = total_ingresos - total_gastos
+    total_costo_ventas = sum(float(_debit_nature_balance(r)) for r in costo_rows)
+    utilidad_neta_periodo = total_ingresos - total_costo_ventas - total_gastos
 
     pnl_summary = {
         "total_ingresos": total_ingresos,
+        "total_costo_ventas": total_costo_ventas,
         "total_gastos": total_gastos,
         "utilidad_neta": utilidad_neta_periodo,
     }
@@ -618,7 +621,7 @@ def _build_analysis(db, params: dict, svc) -> dict:
     if start_date and end_date:
         delta = end_date - start_date
         prev_start = start_date - delta
-        prev_end = start_date
+        prev_end = start_date - timedelta(microseconds=1)
         prev_ledger = svc.get_general_ledger(db, start_date=prev_start, end_date=prev_end)
 
     anomalies = _detect_anomalies(ledger, prev_ledger) if prev_ledger else []
