@@ -425,6 +425,7 @@ class TestProcessSupervisorNode:
         assert result.get("error") is None
         assert result.get("current_agent") == "ingesta"
         assert result.get("pathway") == IngestPathway.BUILD_FROM_SCRATCH.value
+        assert result.get("document_classification", {}).get("doc_type") == DocumentType.EXTRACTO_BANCARIO.value
 
 
 class TestPucNormalizationHelpers:

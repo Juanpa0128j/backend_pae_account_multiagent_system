@@ -294,6 +294,8 @@ def supervisor_node(state: AgentState) -> AgentState:
                         file_path,
                     )
                     state["pathway"] = IngestPathway.BUILD_FROM_SCRATCH.value
+                    classification_dict["doc_type"] = DocumentType.EXTRACTO_BANCARIO.value
+                    state["document_classification"] = classification_dict
                 else:
                     via_b_doc_types = {
                         DocumentType.BALANCE_GENERAL,

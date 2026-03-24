@@ -27,6 +27,14 @@ def _is_quota_error(exc: Exception) -> bool:
     return any(s.lower() in err.lower() for s in _QUOTA_SIGNALS)
 
 
+def _compact_error_message(exc: Exception, max_len: int = 240) -> str:
+    """Return a compact single-line error message for fallback traces."""
+    msg = " ".join(str(exc).split())
+    if len(msg) <= max_len:
+        return msg
+    return f"{msg[: max_len - 3]}..."
+
+
 class LLMClient:
     """
     Multi-provider LLM client.
@@ -82,11 +90,15 @@ class LLMClient:
             providers.append(("Groq", self._get_groq()))
 
         last_exc: Exception | None = None
+        failure_trace: list[str] = []
         for idx, (name, provider) in enumerate(providers):
             try:
                 return provider.invoke(schema_cls, prompt)
             except Exception as exc:
                 last_exc = exc
+                failure_trace.append(
+                    f"{name}: {exc.__class__.__name__}: {_compact_error_message(exc)}"
+                )
                 has_next = idx < (len(providers) - 1)
                 if not has_next:
                     break
@@ -105,8 +117,10 @@ class LLMClient:
                         schema_cls.__name__,
                     )
 
+        trace_summary = " | ".join(failure_trace) if failure_trace else str(last_exc)
         raise RuntimeError(
-            f"All configured LLM providers failed for {schema_cls.__name__}: {last_exc}"
+            f"All configured LLM providers failed for {schema_cls.__name__}. "
+            f"Attempts: {trace_summary}"
         )
 
     # ------------------------------------------------------------------
