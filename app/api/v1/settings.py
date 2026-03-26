@@ -137,5 +137,7 @@ def setup_company_tax_profile(
         "tasa_retefuente_arrendamiento": _TASA_RETEFUENTE_ARRENDAMIENTO,
         "tasa_reteica":     tasa_reteica,
         "tasa_iva_general": tasa_iva,
+        "tasa_ica":         tasa_reteica,  # ICA rate == ReteICA rate for declaration (Art. 88 Acuerdo 018/2025)
+        "tasa_renta":       0.35,          # Fixed — Art. 240 ET, Ley 2277/2022. Never inferred.
     }
     return db_service.upsert_company_settings(db, nit, settings_data)

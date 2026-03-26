@@ -49,6 +49,8 @@ class TipoImpuesto(str, Enum):
     RETEFUENTE = "retefuente"
     RETEIVA = "reteiva"
     RETEICA = "reteica"
+    ICA = "ica"    # Impuesto de Industria y Comercio — Ley 14/1983
+    RENTA = "renta"  # Provisión Impuesto de Renta — Art. 240 ET, Ley 2277/2022
     TIMBRE = "timbre"
     OTRO = "otro"
 
