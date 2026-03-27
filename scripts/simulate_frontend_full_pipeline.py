@@ -42,6 +42,8 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = ROOT / "storage" / "uploads" / "frontend_sim"
+REAL_EXAMPLES_DIR = ROOT / "storage" / "uploads" / "RealExamples"
+SUPPORTED_INPUT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".xlsx", ".xml"}
 
 
 @dataclass
@@ -174,7 +176,38 @@ def build_demo_documents() -> list[UploadRun]:
     ]
 
 
-def wait_ingest(client: httpx.Client, base_url: str, ingest_id: str, timeout_s: int, poll_s: float) -> dict[str, Any]:
+def build_runs_from_existing_inputs(input_path: Path) -> list[UploadRun]:
+    """Build upload runs from an existing file or directory of files."""
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input path does not exist: {input_path}")
+
+    files: list[Path] = []
+    if input_path.is_file():
+        files = [input_path]
+    elif input_path.is_dir():
+        files = sorted(
+            [
+                p
+                for p in input_path.iterdir()
+                if p.is_file() and p.suffix.lower() in SUPPORTED_INPUT_EXTENSIONS
+            ]
+        )
+
+    if not files:
+        raise FileNotFoundError(
+            f"No supported input files found in: {input_path} "
+            f"(supported: {sorted(SUPPORTED_INPUT_EXTENSIONS)})"
+        )
+
+    runs: list[UploadRun] = []
+    for file_path in files:
+        runs.append(UploadRun(label=file_path.stem, file_path=file_path))
+    return runs
+
+
+def wait_ingest(
+    client: httpx.Client, base_url: str, ingest_id: str, timeout_s: int, poll_s: float
+) -> dict[str, Any]:
     deadline = time.time() + timeout_s
     url = f"{base_url}/api/v1/ingest/{ingest_id}"
 
@@ -190,7 +223,9 @@ def wait_ingest(client: httpx.Client, base_url: str, ingest_id: str, timeout_s: 
     raise TimeoutError(f"Timeout waiting ingest_id={ingest_id}")
 
 
-def ensure_company_settings(client: httpx.Client, base_url: str, nit: str, city: str, ciiu: str) -> None:
+def ensure_company_settings(
+    client: httpx.Client, base_url: str, nit: str, city: str, ciiu: str
+) -> None:
     setup_url = f"{base_url}/api/v1/settings/company/{nit}/setup"
     payload = {
         "nombre": "Empresa Frontend Simulator",
@@ -202,7 +237,9 @@ def ensure_company_settings(client: httpx.Client, base_url: str, nit: str, city:
     resp.raise_for_status()
 
 
-def wait_process(client: httpx.Client, base_url: str, process_id: str, timeout_s: int, poll_s: float) -> dict[str, Any]:
+def wait_process(
+    client: httpx.Client, base_url: str, process_id: str, timeout_s: int, poll_s: float
+) -> dict[str, Any]:
     deadline = time.time() + timeout_s
     url = f"{base_url}/api/v1/process/status/{process_id}"
 
@@ -232,7 +269,9 @@ def run_one_document(
         with run.file_path.open("rb") as f:
             files = {"file": (run.file_path.name, f, "application/octet-stream")}
             data = {"company_nit": company_nit}
-            up = client.post(f"{base_url}/api/v1/ingest/upload", files=files, data=data, timeout=120)
+            up = client.post(
+                f"{base_url}/api/v1/ingest/upload", files=files, data=data, timeout=120
+            )
         up.raise_for_status()
         up_data = up.json()
         run.ingest_id = up_data.get("ingest_id")
@@ -257,9 +296,15 @@ def run_one_document(
 
         ensure_company_settings(client, base_url, nit_receptor, city, ciiu)
 
-        pr = client.post(f"{base_url}/api/v1/process/accounting/{run.ingest_id}", timeout=120)
+        pr = client.post(
+            f"{base_url}/api/v1/process/accounting/{run.ingest_id}", timeout=120
+        )
         if pr.status_code == 409:
-            detail = pr.json().get("detail") if pr.headers.get("content-type", "").startswith("application/json") else None
+            detail = (
+                pr.json().get("detail")
+                if pr.headers.get("content-type", "").startswith("application/json")
+                else None
+            )
             if isinstance(detail, dict):
                 error_code = detail.get("error_code")
                 message = detail.get("message") or "Business precondition failed"
@@ -293,10 +338,14 @@ def run_one_document(
         if not run.process_id:
             raise RuntimeError(f"No process_id returned for {run.label}")
 
-        process_status = wait_process(client, base_url, run.process_id, timeout_s, poll_s)
+        process_status = wait_process(
+            client, base_url, run.process_id, timeout_s, poll_s
+        )
         run.process_status = process_status.get("status")
 
-        rr = client.get(f"{base_url}/api/v1/process/result/{run.process_id}", timeout=120)
+        rr = client.get(
+            f"{base_url}/api/v1/process/result/{run.process_id}", timeout=120
+        )
         if rr.status_code in (200, 202, 409, 500):
             run.process_result = rr.json()
         else:
@@ -326,13 +375,19 @@ def print_run_summary(runs: list[UploadRun]) -> None:
             print(f"  error: {r.error}")
 
 
-def fetch_and_print_reports(client: httpx.Client, base_url: str, company_nit: str, cuenta_auxiliar: str) -> None:
+def fetch_and_print_reports(
+    client: httpx.Client,
+    base_url: str,
+    company_nit: str,
+    cuenta_auxiliar: str,
+    report_timeout_s: int,
+) -> None:
     _print_header("Reportes finales (fuente: BD)")
 
     rb = client.get(
         f"{base_url}/api/v1/reports/balance",
         params={"company_nit": company_nit},
-        timeout=120,
+        timeout=report_timeout_s,
     )
     rb.raise_for_status()
     balance = rb.json()
@@ -340,45 +395,53 @@ def fetch_and_print_reports(client: httpx.Client, base_url: str, company_nit: st
     rp = client.get(
         f"{base_url}/api/v1/reports/pnl",
         params={"company_nit": company_nit},
-        timeout=120,
+        timeout=report_timeout_s,
     )
     rp.raise_for_status()
     pnl = rp.json()
 
     ra = client.get(
         f"{base_url}/api/v1/books/",
-        params={"tipo": "auxiliar", "cuenta_puc": cuenta_auxiliar, "company_nit": company_nit},
-        timeout=120,
+        params={
+            "tipo": "auxiliar",
+            "cuenta_puc": cuenta_auxiliar,
+            "company_nit": company_nit,
+        },
+        timeout=report_timeout_s,
     )
     ra.raise_for_status()
     auxiliar = ra.json()
 
     print("Balance general:")
-    print(json.dumps(
-        {
-            "activos": balance.get("activos"),
-            "pasivos": balance.get("pasivos"),
-            "patrimonio_total": balance.get("patrimonio_total"),
-            "utilidad_neta": balance.get("utilidad_neta"),
-            "cuadre": balance.get("cuadre"),
-            "mensaje_cuadre": balance.get("mensaje_cuadre"),
-        },
-        ensure_ascii=True,
-        indent=2,
-    ))
+    print(
+        json.dumps(
+            {
+                "activos": balance.get("activos"),
+                "pasivos": balance.get("pasivos"),
+                "patrimonio_total": balance.get("patrimonio_total"),
+                "utilidad_neta": balance.get("utilidad_neta"),
+                "cuadre": balance.get("cuadre"),
+                "mensaje_cuadre": balance.get("mensaje_cuadre"),
+            },
+            ensure_ascii=True,
+            indent=2,
+        )
+    )
 
     print("\nEstado de resultados:")
-    print(json.dumps(
-        {
-            "total_ingresos": pnl.get("total_ingresos"),
-            "total_costo_ventas": pnl.get("total_costo_ventas"),
-            "total_gastos": pnl.get("total_gastos"),
-            "utilidad_bruta": pnl.get("utilidad_bruta"),
-            "utilidad_neta": pnl.get("utilidad_neta"),
-        },
-        ensure_ascii=True,
-        indent=2,
-    ))
+    print(
+        json.dumps(
+            {
+                "total_ingresos": pnl.get("total_ingresos"),
+                "total_costo_ventas": pnl.get("total_costo_ventas"),
+                "total_gastos": pnl.get("total_gastos"),
+                "utilidad_bruta": pnl.get("utilidad_bruta"),
+                "utilidad_neta": pnl.get("utilidad_neta"),
+            },
+            ensure_ascii=True,
+            indent=2,
+        )
+    )
 
     print(f"\nLibro auxiliar (cuenta {cuenta_auxiliar}):")
     preview = auxiliar[:10] if isinstance(auxiliar, list) else auxiliar
@@ -386,20 +449,77 @@ def fetch_and_print_reports(client: httpx.Client, base_url: str, company_nit: st
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Frontend simulator for full accounting pipeline")
-    parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="Backend base URL")
-    parser.add_argument("--city", default="Bogota", help="City for /settings/company/{nit}/setup")
-    parser.add_argument("--ciiu", default="6920", help="CIIU code for /settings/company/{nit}/setup")
-    parser.add_argument("--company-nit", default="800999888-2", help="Company NIT fallback and ingest override")
-    parser.add_argument("--timeout-seconds", type=int, default=240, help="Polling timeout per ingest/process")
-    parser.add_argument("--poll-seconds", type=float, default=2.0, help="Polling interval")
+    parser = argparse.ArgumentParser(
+        description="Frontend simulator for full accounting pipeline"
+    )
+    parser.add_argument(
+        "--base-url", default="http://127.0.0.1:8000", help="Backend base URL"
+    )
+    parser.add_argument(
+        "--city", default="Bogota", help="City for /settings/company/{nit}/setup"
+    )
+    parser.add_argument(
+        "--ciiu", default="6920", help="CIIU code for /settings/company/{nit}/setup"
+    )
+    parser.add_argument(
+        "--company-nit",
+        default="800999888-2",
+        help="Company NIT fallback and ingest override",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=240,
+        help="Polling timeout per ingest/process",
+    )
+    parser.add_argument(
+        "--poll-seconds", type=float, default=2.0, help="Polling interval"
+    )
+    parser.add_argument(
+        "--source-mode",
+        choices=["auto", "demo", "existing"],
+        default="auto",
+        help=(
+            "Input source mode. auto=use existing path if it has files, otherwise demos; "
+            "demo=always generate demo docs; existing=use --source-path"
+        ),
+    )
+    parser.add_argument(
+        "--source-path",
+        default=str(REAL_EXAMPLES_DIR),
+        help="Path to a real input file or folder of files when using source-mode existing/auto",
+    )
+    parser.add_argument(
+        "--report-timeout-seconds",
+        type=int,
+        default=420,
+        help="Timeout for final report endpoints (balance/pnl/books)",
+    )
     args = parser.parse_args()
 
-    runs = build_demo_documents()
+    input_path = Path(args.source_path).expanduser().resolve()
+    if args.source_mode == "demo":
+        runs = build_demo_documents()
+        source_desc = "demo documents generated by script"
+    elif args.source_mode == "existing":
+        runs = build_runs_from_existing_inputs(input_path)
+        source_desc = f"existing inputs from: {input_path}"
+    else:
+        # auto mode
+        try:
+            runs = build_runs_from_existing_inputs(input_path)
+            source_desc = f"existing inputs from: {input_path}"
+        except FileNotFoundError:
+            runs = build_demo_documents()
+            source_desc = "demo documents generated by script (existing source not available)"
 
     _print_header("Frontend simulator: carga de documentos y pipeline")
     print(f"Base URL: {args.base_url}")
-    print(f"Documentos generados en: {DOCS_DIR}")
+    print(f"Fuente de entrada: {source_desc}")
+    if args.source_mode == "demo" or (
+        args.source_mode == "auto" and "demo" in source_desc
+    ):
+        print(f"Documentos generados en: {DOCS_DIR}")
 
     with httpx.Client() as client:
         completed_with_transactions: list[UploadRun] = []
@@ -433,11 +553,19 @@ def main() -> int:
 
         if txs:
             company_nit = txs[0].get("company_nit") or txs[0].get("nit_receptor")
-            cuenta_aux = txs[0].get("puc_account") or txs[0].get("cuenta_puc") or cuenta_aux
+            cuenta_aux = (
+                txs[0].get("puc_account") or txs[0].get("cuenta_puc") or cuenta_aux
+            )
 
         # If process result does not include company_nit, recover from ingest detail.
         if not company_nit and chosen.ingest_id:
-            ingest_detail = wait_ingest(client, args.base_url, chosen.ingest_id, args.timeout_seconds, args.poll_seconds)
+            ingest_detail = wait_ingest(
+                client,
+                args.base_url,
+                chosen.ingest_id,
+                args.timeout_seconds,
+                args.poll_seconds,
+            )
             raw = ingest_detail.get("raw_transactions") or []
             if raw:
                 company_nit = raw[0].get("nit_receptor")
@@ -446,7 +574,13 @@ def main() -> int:
             print("\nNo fue posible determinar company_nit para consultar reportes.")
             return 1
 
-        fetch_and_print_reports(client, args.base_url, company_nit, cuenta_aux)
+        fetch_and_print_reports(
+            client,
+            args.base_url,
+            company_nit,
+            cuenta_aux,
+            args.report_timeout_seconds,
+        )
 
     print("\nSimulacion completada.")
     return 0

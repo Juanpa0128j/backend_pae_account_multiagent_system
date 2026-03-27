@@ -2,18 +2,26 @@
 Document classifier service.
 
 Classifies uploaded documents by type and ingestion pathway using LLM
-analysis of document content. Always uses Gemini for classification —
-no filename-based heuristics.
+analysis of document content. Uses Groq for classification to avoid
+Gemini quota issues, with no filename-based heuristics.
 """
 
+import copy
 import logging
-from typing import Literal, Optional
+from functools import lru_cache
+from typing import Literal, Optional, cast
 
-from pydantic import BaseModel, Field
+from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_groq import ChatGroq
+from pydantic import BaseModel, Field, SecretStr
 
+from app.core.config import get_settings
 from app.models.document_types import DocumentType, IngestPathway, get_pathway
 
 logger = logging.getLogger(__name__)
+
+SourceFormat = Literal["pdf", "xlsx", "xml", "jpg", "jpeg", "png"]
 
 
 class DocumentClassification(BaseModel):
@@ -22,20 +30,18 @@ class DocumentClassification(BaseModel):
     doc_type: DocumentType = Field(description="Type of document detected")
     pathway: IngestPathway = Field(description="Ingestion pathway for this document")
     confidence: float = Field(ge=0, le=1, description="Classification confidence 0-1")
-    source_format: Literal["pdf", "xlsx", "xml", "jpg", "jpeg", "png"] = Field(
-        description="Source file format"
-    )
+    source_format: SourceFormat = Field(description="Source file format")
     period_start: Optional[str] = Field(
-        None, description="Period start date YYYY-MM-DD if detected"
+        default=None, description="Period start date YYYY-MM-DD if detected"
     )
     period_end: Optional[str] = Field(
-        None, description="Period end date YYYY-MM-DD if detected"
+        default=None, description="Period end date YYYY-MM-DD if detected"
     )
     entity_nit: Optional[str] = Field(
-        None, description="Entity NIT if detected in document"
+        default=None, description="Entity NIT if detected in document"
     )
     entity_name: Optional[str] = Field(
-        None, description="Entity name if detected in document"
+        default=None, description="Entity name if detected in document"
     )
 
 
@@ -95,20 +101,73 @@ Extrae también el NIT de la entidad, el nombre, y el período si están present
 
 
 class _ClassificationResponse(BaseModel):
-    """Schema for Gemini structured output during classification."""
+    """Schema for Groq structured output during classification."""
 
     doc_type: str = Field(description="One of the document type values listed")
     confidence: float = Field(
         ge=0, le=1, description="How confident you are in this classification"
     )
     period_start: Optional[str] = Field(
-        None, description="Start of the period covered, YYYY-MM-DD"
+        default=None, description="Start of the period covered, YYYY-MM-DD"
     )
     period_end: Optional[str] = Field(
-        None, description="End of the period covered, YYYY-MM-DD"
+        default=None, description="End of the period covered, YYYY-MM-DD"
     )
-    entity_nit: Optional[str] = Field(None, description="NIT of the entity")
-    entity_name: Optional[str] = Field(None, description="Name of the entity")
+    entity_nit: Optional[str] = Field(default=None, description="NIT of the entity")
+    entity_name: Optional[str] = Field(default=None, description="Name of the entity")
+
+
+def _clean_schema_patterns(schema: dict) -> dict:
+    """Recursively remove unsupported lookahead regex patterns for Groq."""
+    cleaned = copy.deepcopy(schema)
+
+    def _walk(obj):
+        if isinstance(obj, dict):
+            if (
+                "pattern" in obj
+                and isinstance(obj["pattern"], str)
+                and "(?!" in obj["pattern"]
+            ):
+                del obj["pattern"]
+            for value in obj.values():
+                _walk(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+
+    _walk(cleaned)
+    return cleaned
+
+
+@lru_cache(maxsize=1)
+def _get_groq_classifier_chain():
+    settings = get_settings()
+    if not settings.groq_api_key:
+        raise ValueError("GROQ_API_KEY not set")
+
+    model = ChatGroq(
+        model="openai/gpt-oss-120b",
+        api_key=SecretStr(settings.groq_api_key),
+        temperature=0,
+    )
+
+    cleaned_schema = _clean_schema_patterns(_ClassificationResponse.model_json_schema())
+    bound = model.bind(
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": _ClassificationResponse.__name__,
+                "schema": cleaned_schema,
+                "strict": False,
+            },
+        }
+    )
+
+    return (
+        bound
+        | JsonOutputParser()
+        | (lambda payload: _ClassificationResponse.model_validate(payload))
+    )
 
 
 def classify_document(
@@ -116,7 +175,7 @@ def classify_document(
     source_format: str,
 ) -> DocumentClassification:
     """
-    Classify a document using Gemini LLM based on its content.
+    Classify a document using Groq LLM based on its content.
 
     Args:
         text_preview: First ~3000 chars of extracted text.
@@ -125,20 +184,33 @@ def classify_document(
     Returns:
         DocumentClassification with type, pathway, and metadata.
     """
+    normalized_source_format = source_format.lower().strip()
+    if normalized_source_format not in {"pdf", "xlsx", "xml", "jpg", "jpeg", "png"}:
+        logger.warning(
+            "doc_classifier: unsupported source_format '%s' — coercing to 'pdf'",
+            source_format,
+        )
+        normalized_source_format = "pdf"
+    source_format_literal = cast(SourceFormat, normalized_source_format)
+
     if not text_preview or not text_preview.strip():
         logger.warning("doc_classifier: empty text preview — defaulting to 'otro'")
         return DocumentClassification(
             doc_type=DocumentType.OTRO,
             pathway=IngestPathway.BUILD_FROM_SCRATCH,
             confidence=0.0,
-            source_format=source_format,
+            source_format=source_format_literal,
         )
 
     try:
-        from app.core.gemini_client import get_gemini_client
-
-        client = get_gemini_client()
-        response = client.classify_document(text_preview)
+        chain = _get_groq_classifier_chain()
+        response = chain.invoke(
+            [
+                HumanMessage(
+                    content=CLASSIFICATION_PROMPT.format(text_preview=text_preview)
+                )
+            ]
+        )
 
         # Parse the doc_type string into the enum
         try:
@@ -156,7 +228,7 @@ def classify_document(
             doc_type=doc_type,
             pathway=pathway,
             confidence=response.confidence,
-            source_format=source_format,
+            source_format=source_format_literal,
             period_start=response.period_start,
             period_end=response.period_end,
             entity_nit=response.entity_nit,
@@ -177,5 +249,5 @@ def classify_document(
             doc_type=DocumentType.OTRO,
             pathway=IngestPathway.BUILD_FROM_SCRATCH,
             confidence=0.0,
-            source_format=source_format,
+            source_format=source_format_literal,
         )

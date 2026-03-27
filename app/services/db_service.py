@@ -6,31 +6,31 @@ All DB operations used by agents, APIs, and the seed script go through here.
 # SQLAlchemy Column assignments are safe at runtime; Pylance flags them incorrectly.
 
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func, and_, cast, Integer
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.logger import get_logger
 from app.models.database import (
+    AuditLog,
     CompanySettings,
-    ReteicaTarifa,
+    CuentaPUC,
+    FinancialStatement,
+    FinancialStatementLineage,
     IngestJob,
     IngestStatus,
-    TransactionPending,
-    TransactionPosted,
-    TransactionStatus,
     JournalEntryLine,
     ProcessJob,
     ProcessStatus,
-    AuditLog,
-    CuentaPUC,
+    ReteicaTarifa,
     Tercero,
-    FinancialStatement,
-    FinancialStatementLineage,
+    TransactionPending,
+    TransactionPosted,
+    TransactionStatus,
 )
-from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -56,6 +56,7 @@ def _commit_or_flush(db: Session, commit: bool) -> None:
 
 # ─── IngestJob ───────────────────────────────────────────────────
 
+
 def create_ingest_job(
     db: Session, file_name: str, file_path: str = None, commit: bool = True
 ) -> IngestJob:
@@ -68,7 +69,9 @@ def create_ingest_job(
     )
     db.add(job)
     # Stage audit log before the single commit/flush so job + log are atomic
-    create_audit_log(db, "ingest_created", job.id, "ingest", {"file_name": file_name}, commit=False)
+    create_audit_log(
+        db, "ingest_created", job.id, "ingest", {"file_name": file_name}, commit=False
+    )
     _commit_or_flush(db, commit)
     db.refresh(job)
     logger.info(f"Created IngestJob: {job.id}")
@@ -81,6 +84,8 @@ def update_ingest_job(
     status: IngestStatus,
     raw_preview: Dict = None,
     extraction_errors: List[str] = None,
+    document_type: str = None,
+    pathway: str = None,
     commit: bool = True,
 ) -> Optional[IngestJob]:
     """Update an ingest job's status and preview data."""
@@ -93,6 +98,10 @@ def update_ingest_job(
         job.raw_preview = raw_preview
     if extraction_errors is not None:
         job.extraction_errors = extraction_errors
+    if document_type is not None:
+        job.document_type = document_type
+    if pathway is not None:
+        job.pathway = pathway
     if status in (IngestStatus.COMPLETED, IngestStatus.FAILED):
         job.completed_at = datetime.now(timezone.utc)
 
@@ -107,6 +116,7 @@ def get_ingest_job(db: Session, ingest_id: str) -> Optional[IngestJob]:
 
 
 # ─── TransactionPending ─────────────────────────────────────────
+
 
 def create_transaction_pending(
     db: Session,
@@ -137,10 +147,17 @@ def create_transaction_pending(
     )
     db.add(txn)
     # Stage audit log before the single commit/flush so txn + log are atomic
-    create_audit_log(db, "transaction_pending_created", txn.id, "transaction", {
-        "ingest_id": ingest_id,
-        "total": str(total) if total else None,
-    }, commit=False)
+    create_audit_log(
+        db,
+        "transaction_pending_created",
+        txn.id,
+        "transaction",
+        {
+            "ingest_id": ingest_id,
+            "total": str(total) if total else None,
+        },
+        commit=False,
+    )
     _commit_or_flush(db, commit)
     db.refresh(txn)
     return txn
@@ -148,9 +165,11 @@ def create_transaction_pending(
 
 def get_transactions_by_ingest(db: Session, ingest_id: str) -> List[TransactionPending]:
     """Get all pending transactions for an ingest job."""
-    return db.query(TransactionPending).filter(
-        TransactionPending.ingest_id == ingest_id
-    ).all()
+    return (
+        db.query(TransactionPending)
+        .filter(TransactionPending.ingest_id == ingest_id)
+        .all()
+    )
 
 
 def get_transactions_by_status(
@@ -163,10 +182,17 @@ def get_transactions_by_status(
     query = db.query(TransactionPending)
     if status:
         query = query.filter(TransactionPending.status == status)
-    return query.order_by(TransactionPending.created_at.desc()).offset(offset).limit(limit).all()
+    return (
+        query.order_by(TransactionPending.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
-def get_transactions_by_nit(db: Session, nit: str, limit: int = 10) -> List[TransactionPosted]:
+def get_transactions_by_nit(
+    db: Session, nit: str, limit: int = 10
+) -> List[TransactionPosted]:
     """Get posted transactions by NIT emisor (for agent historical lookup)."""
     return (
         db.query(TransactionPosted)
@@ -191,6 +217,7 @@ def update_transaction_status(
 
 
 # ─── TransactionPosted ──────────────────────────────────────────
+
 
 def create_transaction_posted(
     db: Session,
@@ -226,23 +253,33 @@ def create_transaction_posted(
     db.add(posted)
 
     # Also update the pending transaction status
-    pending = db.query(TransactionPending).filter(
-        TransactionPending.id == transaction_pending_id
-    ).first()
+    pending = (
+        db.query(TransactionPending)
+        .filter(TransactionPending.id == transaction_pending_id)
+        .first()
+    )
     if pending:
         pending.status = TransactionStatus.POSTED
 
     # Stage audit log before the single commit/flush so posted + log are atomic
-    create_audit_log(db, "transaction_posted", posted.id, "transaction", {
-        "cuenta_puc": cuenta_puc,
-        "pending_id": transaction_pending_id,
-    }, commit=False)
+    create_audit_log(
+        db,
+        "transaction_posted",
+        posted.id,
+        "transaction",
+        {
+            "cuenta_puc": cuenta_puc,
+            "pending_id": transaction_pending_id,
+        },
+        commit=False,
+    )
     _commit_or_flush(db, commit)
     db.refresh(posted)
     return posted
 
 
 # ─── JournalEntryLine ───────────────────────────────────────────
+
 
 def _parse_fecha(value) -> datetime:
     """Ensure fecha is a timezone-aware datetime, parsing strings if needed."""
@@ -296,6 +333,7 @@ def create_journal_entry_lines(
 
 
 # ─── Accounting Books ───────────────────────────────────────────
+
 
 def get_daily_journal(
     db: Session,
@@ -373,7 +411,9 @@ def get_subsidiary_journal(
     return query.order_by(JournalEntryLine.fecha).all()
 
 
-def get_balance_sheet(db: Session, cutoff_date: datetime = None, company_nit: str = None) -> Dict:
+def get_balance_sheet(
+    db: Session, cutoff_date: datetime = None, company_nit: str = None
+) -> Dict:
     """
     Balance Sheet (Statement of Financial Position).
     Assets (class 1) = Liabilities (class 2) + Equity (class 3)
@@ -389,7 +429,14 @@ def get_balance_sheet(db: Session, cutoff_date: datetime = None, company_nit: st
     # Group by first digit of cuenta_puc (clase)
     lines = query.all()
 
-    totals = {1: Decimal("0"), 2: Decimal("0"), 3: Decimal("0"), 4: Decimal("0"), 5: Decimal("0"), 6: Decimal("0")}
+    totals = {
+        1: Decimal("0"),
+        2: Decimal("0"),
+        3: Decimal("0"),
+        4: Decimal("0"),
+        5: Decimal("0"),
+        6: Decimal("0"),
+    }
 
     for line in lines:
         if not line.cuenta_puc:
@@ -398,9 +445,13 @@ def get_balance_sheet(db: Session, cutoff_date: datetime = None, company_nit: st
         if clase in totals:
             # Natural balance: Assets/Expenses are debit-nature, Liabilities/Equity/Revenue are credit-nature
             if clase in (1, 5, 6):  # Debit nature
-                totals[clase] += (line.debito or Decimal("0")) - (line.credito or Decimal("0"))
+                totals[clase] += (line.debito or Decimal("0")) - (
+                    line.credito or Decimal("0")
+                )
             else:  # Credit nature (2, 3, 4)
-                totals[clase] += (line.credito or Decimal("0")) - (line.debito or Decimal("0"))
+                totals[clase] += (line.credito or Decimal("0")) - (
+                    line.debito or Decimal("0")
+                )
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
     net_profit = totals[4] - totals[5] - totals[6]
@@ -420,6 +471,7 @@ def get_balance_sheet(db: Session, cutoff_date: datetime = None, company_nit: st
 
 # ─── Search & Duplicate Detection ───────────────────────────────
 
+
 def search_transactions(
     db: Session,
     nit: str = None,
@@ -432,7 +484,8 @@ def search_transactions(
     query = db.query(TransactionPending)
     if nit:
         query = query.filter(
-            (TransactionPending.nit_emisor == nit) | (TransactionPending.nit_receptor == nit)
+            (TransactionPending.nit_emisor == nit)
+            | (TransactionPending.nit_receptor == nit)
         )
     if fecha_inicio:
         query = query.filter(TransactionPending.fecha >= fecha_inicio)
@@ -468,6 +521,7 @@ def check_duplicates(
 
 # ─── PUC ─────────────────────────────────────────────────────────
 
+
 def validate_puc_exists(db: Session, codigo: str) -> Optional[CuentaPUC]:
     """Validate a PUC code exists and is active."""
     return (
@@ -479,7 +533,12 @@ def validate_puc_exists(db: Session, codigo: str) -> Optional[CuentaPUC]:
 
 def get_all_puc(db: Session) -> List[CuentaPUC]:
     """Get all active PUC accounts."""
-    return db.query(CuentaPUC).filter(CuentaPUC.activa == True).order_by(CuentaPUC.codigo).all()
+    return (
+        db.query(CuentaPUC)
+        .filter(CuentaPUC.activa == True)
+        .order_by(CuentaPUC.codigo)
+        .all()
+    )
 
 
 def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC]:
@@ -489,7 +548,7 @@ def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC
         .filter(
             CuentaPUC.activa == True,
             (CuentaPUC.codigo.ilike(f"%{search_term}%"))
-            | (CuentaPUC.nombre.ilike(f"%{search_term}%"))
+            | (CuentaPUC.nombre.ilike(f"%{search_term}%")),
         )
         .limit(limit)
         .all()
@@ -497,6 +556,7 @@ def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC
 
 
 # ─── ProcessJob ──────────────────────────────────────────────────
+
 
 def create_process_job(db: Session, ingest_id: str, commit: bool = True) -> ProcessJob:
     """Create a new processing job."""
@@ -570,7 +630,7 @@ def get_active_process_job_for_ingest(
 ) -> Optional[ProcessJob]:
     """
     Get an active (non-failed) ProcessJob for the given ingest_id.
-    
+
     Returns the latest ProcessJob that is not FAILED or CANCELLED.
     This prevents duplicate processing of the same ingest job.
     """
@@ -578,14 +638,18 @@ def get_active_process_job_for_ingest(
         db.query(ProcessJob)
         .filter(
             ProcessJob.ingest_id == ingest_id,
-            ProcessJob.status.in_([ProcessStatus.QUEUED, ProcessStatus.RUNNING, ProcessStatus.COMPLETED]),
+            ProcessJob.status.in_(
+                [ProcessStatus.QUEUED, ProcessStatus.RUNNING, ProcessStatus.COMPLETED]
+            ),
         )
         .order_by(ProcessJob.created_at.desc())
         .first()
     )
 
 
-def get_process_result_transactions(db: Session, ingest_id: str) -> List[Dict[str, Any]]:
+def get_process_result_transactions(
+    db: Session, ingest_id: str
+) -> List[Dict[str, Any]]:
     """Get final posted transaction payload for a given ingest job."""
     rows = (
         db.query(TransactionPending, TransactionPosted)
@@ -626,6 +690,7 @@ def get_process_result_transactions(db: Session, ingest_id: str) -> List[Dict[st
 
 # ─── AuditLog ────────────────────────────────────────────────────
 
+
 def create_audit_log(
     db: Session,
     action: str,
@@ -647,6 +712,7 @@ def create_audit_log(
 
 
 # ─── Financial Statements (Vía B + derived) ───────────────────────────────
+
 
 def create_financial_statement(
     db: Session,
@@ -705,7 +771,9 @@ def get_financial_statements(
     period_end: datetime | None = None,
     source_mode: str | None = None,
 ) -> List[FinancialStatement]:
-    query = db.query(FinancialStatement).filter(FinancialStatement.entity_nit == company_nit)
+    query = db.query(FinancialStatement).filter(
+        FinancialStatement.entity_nit == company_nit
+    )
 
     if statement_type:
         query = query.filter(FinancialStatement.statement_type == statement_type)
@@ -716,10 +784,13 @@ def get_financial_statements(
     if period_end:
         query = query.filter(FinancialStatement.period_end <= period_end)
 
-    return query.order_by(FinancialStatement.period_end.desc(), FinancialStatement.created_at.desc()).all()
+    return query.order_by(
+        FinancialStatement.period_end.desc(), FinancialStatement.created_at.desc()
+    ).all()
 
 
 # ─── Terceros ────────────────────────────────────────────────────
+
 
 def get_or_create_third_party(
     db: Session,
@@ -732,6 +803,7 @@ def get_or_create_third_party(
     tercero = db.query(Tercero).filter(Tercero.nit == nit).first()
     if not tercero:
         from app.models.database import TerceroTipo
+
         tercero = Tercero(
             nit=nit,
             razon_social=business_name,
@@ -745,12 +817,15 @@ def get_or_create_third_party(
 
 # ─── Company Settings ─────────────────────────────────────────────────────────
 
+
 def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
     """Return the CompanySettings row for the given NIT, or None if not found."""
     return db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
 
 
-def upsert_company_settings(db: Session, nit: str, data: dict, commit: bool = True) -> CompanySettings:
+def upsert_company_settings(
+    db: Session, nit: str, data: dict, commit: bool = True
+) -> CompanySettings:
     """Create or fully replace the CompanySettings row for the given NIT."""
     row = db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
     if row:
@@ -769,41 +844,98 @@ def upsert_company_settings(db: Session, nit: str, data: dict, commit: bool = Tr
 # Maps CIIU code prefixes to ISIC/CIIU section letters.
 # This covers the most common sections used in Colombia.
 _CIIU_SECTION_MAP: dict[str, str] = {
-    "01": "A", "02": "A", "03": "A",               # Agricultura, ganadería
-    "05": "B", "06": "B", "07": "B", "08": "B",    # Minería
-    "10": "C", "11": "C", "12": "C", "13": "C",    # Industria manufacturera
-    "14": "C", "15": "C", "16": "C", "17": "C",
-    "18": "C", "19": "C", "20": "C", "21": "C",
-    "22": "C", "23": "C", "24": "C", "25": "C",
-    "26": "C", "27": "C", "28": "C", "29": "C",
-    "30": "C", "31": "C", "32": "C", "33": "C",
-    "35": "D",                                       # Electricidad, gas
-    "36": "E", "37": "E", "38": "E", "39": "E",    # Agua y saneamiento
-    "41": "F", "42": "F", "43": "F",               # Construcción
-    "45": "G", "46": "G", "47": "G",               # Comercio
-    "49": "H", "50": "H", "51": "H", "52": "H",   # Transporte
+    "01": "A",
+    "02": "A",
+    "03": "A",  # Agricultura, ganadería
+    "05": "B",
+    "06": "B",
+    "07": "B",
+    "08": "B",  # Minería
+    "10": "C",
+    "11": "C",
+    "12": "C",
+    "13": "C",  # Industria manufacturera
+    "14": "C",
+    "15": "C",
+    "16": "C",
+    "17": "C",
+    "18": "C",
+    "19": "C",
+    "20": "C",
+    "21": "C",
+    "22": "C",
+    "23": "C",
+    "24": "C",
+    "25": "C",
+    "26": "C",
+    "27": "C",
+    "28": "C",
+    "29": "C",
+    "30": "C",
+    "31": "C",
+    "32": "C",
+    "33": "C",
+    "35": "D",  # Electricidad, gas
+    "36": "E",
+    "37": "E",
+    "38": "E",
+    "39": "E",  # Agua y saneamiento
+    "41": "F",
+    "42": "F",
+    "43": "F",  # Construcción
+    "45": "G",
+    "46": "G",
+    "47": "G",  # Comercio
+    "49": "H",
+    "50": "H",
+    "51": "H",
+    "52": "H",  # Transporte
     "53": "H",
-    "55": "I", "56": "I",                           # Alojamiento, restaurantes
-    "58": "J", "59": "J", "60": "J", "61": "J",   # Información, tecnología
-    "62": "J", "63": "J",
-    "64": "K", "65": "K", "66": "K",               # Financiero, seguros
-    "68": "L",                                       # Inmobiliario
-    "69": "M", "70": "M", "71": "M", "72": "M",   # Profesional, científico
-    "73": "M", "74": "M", "75": "M",
-    "77": "N", "78": "N", "79": "N", "80": "N",   # Servicios administrativos
-    "81": "N", "82": "N",
-    "84": "O",                                       # Administración pública
-    "85": "P",                                       # Educación
-    "86": "Q", "87": "Q", "88": "Q",               # Salud
-    "90": "R", "91": "R", "92": "R", "93": "R",   # Entretenimiento
-    "94": "S", "95": "S", "96": "S",               # Otras actividades de servicios
-    "97": "T",                                       # Hogares
+    "55": "I",
+    "56": "I",  # Alojamiento, restaurantes
+    "58": "J",
+    "59": "J",
+    "60": "J",
+    "61": "J",  # Información, tecnología
+    "62": "J",
+    "63": "J",
+    "64": "K",
+    "65": "K",
+    "66": "K",  # Financiero, seguros
+    "68": "L",  # Inmobiliario
+    "69": "M",
+    "70": "M",
+    "71": "M",
+    "72": "M",  # Profesional, científico
+    "73": "M",
+    "74": "M",
+    "75": "M",
+    "77": "N",
+    "78": "N",
+    "79": "N",
+    "80": "N",  # Servicios administrativos
+    "81": "N",
+    "82": "N",
+    "84": "O",  # Administración pública
+    "85": "P",  # Educación
+    "86": "Q",
+    "87": "Q",
+    "88": "Q",  # Salud
+    "90": "R",
+    "91": "R",
+    "92": "R",
+    "93": "R",  # Entretenimiento
+    "94": "S",
+    "95": "S",
+    "96": "S",  # Otras actividades de servicios
+    "97": "T",  # Hogares
 }
 
 
 def _normalize_municipio(ciudad: str) -> str:
     """Normalize a city name for DB lookup (lowercase, remove accents)."""
     import unicodedata
+
     normalized = unicodedata.normalize("NFD", ciudad.lower().strip())
     return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
 
@@ -870,12 +1002,13 @@ def get_reteica_tarifa(db: Session, ciudad: str, ciiu: str) -> Optional[float]:
 
 # ─── VectorDocument ───────────────────────────────────────────────────────────
 
+
 def count_vector_documents(db: Session, collection_name: str) -> int:
     """Return document count for a collection (health/readiness check)."""
     from sqlalchemy import text as _text  # noqa: PLC0415
+
     result = db.execute(
         _text("SELECT COUNT(*) FROM vector_documents WHERE collection_name = :c"),
         {"c": collection_name},
     ).scalar()
     return int(result or 0)
-

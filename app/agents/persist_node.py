@@ -10,7 +10,6 @@ IngestJob -> TransactionPending -> TransactionPosted -> JournalEntryLines.
 # SQLAlchemy model attributes are runtime values on instances; static typing
 # can mis-infer them as Column[...] in service/pipeline code.
 
-import logging
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
@@ -25,15 +24,12 @@ from app.models.database import IngestStatus, ProcessStatus, TransactionPending
 from app.services import db_service
 from app.services.nit_utils import normalize_optional_nit
 
-
-
 logger = get_logger("app.agents.persist")
 
 MAX_NODE_RETRIES = 3
 
 
 def _as_str(value: Any, default: str = "") -> str:
-
     """Normalize possibly-ORM values to plain strings."""
 
     if value is None:
@@ -52,7 +48,6 @@ def _sanitize_for_json(value: Any) -> Any:
     if isinstance(value, list):
         return [_sanitize_for_json(v) for v in value]
     return value
-
 
 
 def _safe_decimal(value: Any) -> Optional[Decimal]:
@@ -78,7 +73,44 @@ def _safe_datetime(value: Any) -> Optional[datetime]:
     return None
 
 
-def _resolve_company_nit(state: AgentState, tx_data: dict[str, Any] | None = None) -> Optional[str]:
+def _infer_total_from_items(items: Any) -> Optional[Decimal]:
+    """Best-effort total inference from extracted line items."""
+    if not isinstance(items, list) or not items:
+        return None
+
+    inferred = Decimal("0")
+    used_any = False
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        # Prefer explicit per-line totals when present.
+        for key in ("valor_total_sin_impuesto", "valor_total", "total", "subtotal"):
+            line_total = _safe_decimal(item.get(key))
+            if line_total is not None:
+                inferred += line_total
+                used_any = True
+                break
+        else:
+            # Fallback to unit value if line total is absent.
+            unit_value = _safe_decimal(item.get("valor_unitario"))
+            if unit_value is not None:
+                qty = _safe_decimal(item.get("cantidad"))
+                if qty is not None and qty > 0 and qty <= Decimal("10000"):
+                    inferred += unit_value * qty
+                else:
+                    inferred += unit_value
+                used_any = True
+
+    if not used_any:
+        return None
+    return inferred
+
+
+def _resolve_company_nit(
+    state: AgentState, tx_data: dict[str, Any] | None = None
+) -> Optional[str]:
     """Resolve tenant company NIT with explicit override precedence."""
     if state.get("company_nit"):
         return normalize_optional_nit(state.get("company_nit"))
@@ -97,13 +129,11 @@ def _resolve_company_nit(state: AgentState, tx_data: dict[str, Any] | None = Non
 
 
 def db_persist_node(state: AgentState) -> AgentState:
-
     """Persist current state output to DB for ingest/process mode."""
 
     if state.get("error"):
         logger.warning("db_persist: Skipping due to upstream error: %s", state["error"])
         return state
-
 
     append_log(state, "db_persist", "node_start", {"mode": state.get("mode", "ingest")})
 
@@ -113,16 +143,23 @@ def db_persist_node(state: AgentState) -> AgentState:
             if state.get("error"):
                 append_log(state, "db_persist", "node_error", {"error": state["error"]})
                 return state
-            append_log(state, "db_persist", "node_complete", {
-                "ingest_id": state.get("ingest_id"),
-            })
+            append_log(
+                state,
+                "db_persist",
+                "node_complete",
+                {
+                    "ingest_id": state.get("ingest_id"),
+                },
+            )
             return state
         except SAOperationalError as e:
             logger.warning(
                 f"db_persist: transient DB error attempt {_attempt}/{MAX_NODE_RETRIES}: {e}"
             )
             if _attempt == MAX_NODE_RETRIES:
-                state["error"] = f"DB persist failed after {MAX_NODE_RETRIES} attempts: {e}"
+                state["error"] = (
+                    f"DB persist failed after {MAX_NODE_RETRIES} attempts: {e}"
+                )
                 append_log(state, "db_persist", "node_error", {"error": str(e)})
                 return state
         except Exception:
@@ -135,11 +172,18 @@ def db_persist_node(state: AgentState) -> AgentState:
         if state.get("error"):
             append_log(state, "db_persist", "node_error", {"error": state["error"]})
         else:
-            append_log(state, "db_persist", "node_complete", {
-                "ingest_id": state.get("ingest_id"),
-            })
+            append_log(
+                state,
+                "db_persist",
+                "node_complete",
+                {
+                    "ingest_id": state.get("ingest_id"),
+                },
+            )
     except Exception as e:
-        logger.error(f"db_persist: Non-transient exception in cleanup path: {e}", exc_info=True)
+        logger.error(
+            f"db_persist: Non-transient exception in cleanup path: {e}", exc_info=True
+        )
         state["error"] = f"DB persist error: {str(e)}"
         append_log(state, "db_persist", "node_error", {"error": str(e)})
 
@@ -170,7 +214,11 @@ def _run_persist(state: AgentState) -> AgentState:
 
     if mode == "process":
         contador_output = state.get("contador_output") or interpreted
-        asientos = contador_output.get("asientos", []) if isinstance(contador_output, dict) else []
+        asientos = (
+            contador_output.get("asientos", [])
+            if isinstance(contador_output, dict)
+            else []
+        )
         if not asientos:
             msg = "db_persist: No contador asientos to persist"
             logger.error(msg)
@@ -182,16 +230,26 @@ def _run_persist(state: AgentState) -> AgentState:
 
         total = base_tx.get("total")
         if total is None:
-            total = contador_output.get("total_debitos") or contador_output.get("total_creditos") or 0
+            total = (
+                contador_output.get("total_debitos")
+                or contador_output.get("total_creditos")
+                or 0
+            )
 
         fecha = base_tx.get("fecha") or contador_output.get("fecha_registro")
         nit_emisor = base_tx.get("nit_emisor", "")
         nit_receptor = base_tx.get("nit_receptor", "")
-        descripcion = base_tx.get("descripcion") or contador_output.get("descripcion_general", "")
+        descripcion = base_tx.get("descripcion") or contador_output.get(
+            "descripcion_general", ""
+        )
         items = base_tx.get("items", [])
 
         debit_line = next(
-            (a for a in asientos if str(a.get("tipo_movimiento", "")).lower() == "debito"),
+            (
+                a
+                for a in asientos
+                if str(a.get("tipo_movimiento", "")).lower() == "debito"
+            ),
             None,
         )
 
@@ -201,7 +259,11 @@ def _run_persist(state: AgentState) -> AgentState:
 
         def _get_trib_tax(tipo: str) -> Optional[str]:
             val = next(
-                (i.get("valor_impuesto") for i in trib_impuestos if i.get("tipo_impuesto") == tipo),
+                (
+                    i.get("valor_impuesto")
+                    for i in trib_impuestos
+                    if i.get("tipo_impuesto") == tipo
+                ),
                 None,
             )
             return str(val) if val is not None else None
@@ -231,6 +293,31 @@ def _run_persist(state: AgentState) -> AgentState:
             emisor = interpreted.get("emisor") or {}
             receptor = interpreted.get("receptor") or {}
             totales = interpreted.get("totales") or {}
+            items_payload = (
+                interpreted.get("items") or interpreted.get("detalle_items") or []
+            )
+            raw_total = (
+                # Invoice-like schemas
+                totales.get("total_a_pagar")
+                or totales.get("total")
+                # Voucher-like schemas (e.g. comprobante_egreso)
+                or interpreted.get("valor_neto")
+                or interpreted.get("valor_bruto")
+                # Generic fallbacks
+                or interpreted.get("total")
+                or interpreted.get("valor_total")
+                or interpreted.get("valor")
+                or interpreted.get("monto")
+            )
+            parsed_total = _safe_decimal(raw_total)
+            if parsed_total is None or parsed_total == Decimal("0"):
+                inferred_total = _infer_total_from_items(items_payload)
+                if inferred_total is not None and inferred_total > Decimal("0"):
+                    logger.info(
+                        "db_persist: inferred total=%s from line items for structured ingest",
+                        inferred_total,
+                    )
+                    parsed_total = inferred_total
             tx_data = {
                 "fecha": (
                     interpreted.get("fecha_emision")
@@ -244,11 +331,7 @@ def _run_persist(state: AgentState) -> AgentState:
                     receptor.get("nit") or interpreted.get("nit_receptor"), ""
                 ),
                 "total": str(
-                    totales.get("total_a_pagar")
-                    or totales.get("total")
-                    or interpreted.get("total")
-                    or interpreted.get("valor_total")
-                    or 0
+                    parsed_total if parsed_total is not None else Decimal("0")
                 ),
                 "concepto": _as_str(
                     interpreted.get("descripcion_general")
@@ -262,30 +345,31 @@ def _run_persist(state: AgentState) -> AgentState:
                     or interpreted.get("tipo_documento", ""),
                     "",
                 ),
-                "items": _sanitize_for_json(interpreted.get("items") or interpreted.get("detalle_items") or []),
+                "items": _sanitize_for_json(items_payload),
             }
             transactions = [tx_data]
         else:
-            transactions = interpreted.get("transactions", []) if isinstance(interpreted, dict) else []
+            transactions = (
+                interpreted.get("transactions", [])
+                if isinstance(interpreted, dict)
+                else []
+            )
         if not transactions:
             msg = "db_persist: No transactions to persist"
             logger.warning(msg)
             state["error"] = msg
             raise RuntimeError(msg)
 
-
     ingest_id = _as_str(state.get("ingest_id"), "")
     db = SessionLocal()
 
     try:
-
         # ── 1. Create or update IngestJob ──
 
         if ingest_id:
             ingest_job = db_service.get_ingest_job(db, ingest_id)
             if ingest_job:
                 db_service.update_ingest_job(
-
                     db,
                     ingest_id,
                     IngestStatus.PROCESSING,
@@ -293,7 +377,9 @@ def _run_persist(state: AgentState) -> AgentState:
                 )
         else:
             file_name = state.get("file_path", "unknown.pdf").split("/")[-1]
-            ingest_job = db_service.create_ingest_job(db, file_name, state.get("file_path"))
+            ingest_job = db_service.create_ingest_job(
+                db, file_name, state.get("file_path")
+            )
             ingest_id = _as_str(getattr(ingest_job, "id", ""), "")
             state["ingest_id"] = ingest_id
 
@@ -312,12 +398,18 @@ def _run_persist(state: AgentState) -> AgentState:
                     current_stage="persisting",
                     current_agent="db_persist",
                     progress=85,
-                    agent_log_entry={"agent": "db_persist", "stage": "persisting", "status": "running"},
+                    agent_log_entry={
+                        "agent": "db_persist",
+                        "stage": "persisting",
+                        "status": "running",
+                    },
                 )
 
         for tx_data in transactions:
             fecha = _safe_datetime(tx_data.get("fecha")) or datetime.now(timezone.utc)
-            total = _safe_decimal(tx_data.get("total") or tx_data.get("valor_total")) or Decimal("0")
+            total = _safe_decimal(
+                tx_data.get("total") or tx_data.get("valor_total")
+            ) or Decimal("0")
             nit_emisor = _as_str(tx_data.get("nit_emisor"), "").strip()
             nit_receptor = _as_str(tx_data.get("nit_receptor"), "").strip()
             company_nit = _resolve_company_nit(state, tx_data)
@@ -327,12 +419,18 @@ def _run_persist(state: AgentState) -> AgentState:
                     "db_persist: nit_receptor missing in extracted transaction; using company_nit=%s",
                     company_nit,
                 )
-            descripcion = _as_str(tx_data.get("concepto") or tx_data.get("descripcion"), "")
+            descripcion = _as_str(
+                tx_data.get("concepto") or tx_data.get("descripcion"), ""
+            )
             items = tx_data.get("items") or tx_data.get("detalle_items") or []
 
             if mode == "process" and state.get("pending_transaction_id"):
                 pending_id = _as_str(state.get("pending_transaction_id"), "")
-                txn_pending = db.query(TransactionPending).filter(TransactionPending.id == pending_id).first()
+                txn_pending = (
+                    db.query(TransactionPending)
+                    .filter(TransactionPending.id == pending_id)
+                    .first()
+                )
                 if not txn_pending:
                     msg = "DB persist error: pending transaction not found for process mode"
                     logger.error(msg)
@@ -359,7 +457,11 @@ def _run_persist(state: AgentState) -> AgentState:
             if nit_emisor and total and fecha:
                 duplicates = db_service.check_duplicates(db, nit_emisor, total, fecha)
                 txn_pending_id = _as_str(getattr(txn_pending, "id", ""), "")
-                duplicates = [d for d in duplicates if _as_str(getattr(d, "id", ""), "") != txn_pending_id]
+                duplicates = [
+                    d
+                    for d in duplicates
+                    if _as_str(getattr(d, "id", ""), "") != txn_pending_id
+                ]
                 if duplicates:
                     total_duplicates += len(duplicates)
                     logger.warning(
@@ -370,7 +472,11 @@ def _run_persist(state: AgentState) -> AgentState:
             if mode == "process":
                 asientos = tx_data.get("_contador_asientos", [])
                 debit_line = next(
-                    (a for a in asientos if str(a.get("tipo_movimiento", "")).lower() == "debito"),
+                    (
+                        a
+                        for a in asientos
+                        if str(a.get("tipo_movimiento", "")).lower() == "debito"
+                    ),
                     None,
                 )
                 cuenta_puc = _as_str((debit_line or {}).get("cuenta_puc"), "")
@@ -404,7 +510,9 @@ def _run_persist(state: AgentState) -> AgentState:
 
             retefuente = _safe_decimal(tx_data.get("retefuente")) or Decimal("0")
             reteica = _safe_decimal(tx_data.get("reteica")) or Decimal("0")
-            iva = _safe_decimal(tx_data.get("iva") or tx_data.get("iva_valor")) or Decimal("0")
+            iva = _safe_decimal(
+                tx_data.get("iva") or tx_data.get("iva_valor")
+            ) or Decimal("0")
             neto = _safe_decimal(tx_data.get("neto_a_pagar")) or total
 
             if mode == "process":
@@ -435,7 +543,9 @@ def _run_persist(state: AgentState) -> AgentState:
                 )
                 tax_references = interpreted.get("referencias_legales", [])
                 raw_reasoning = tx_data.get("agent_reasoning")
-                agent_reasoning = raw_reasoning if isinstance(raw_reasoning, dict) else {}
+                agent_reasoning = (
+                    raw_reasoning if isinstance(raw_reasoning, dict) else {}
+                )
 
             txn_posted = db_service.create_transaction_posted(
                 db,
@@ -464,9 +574,18 @@ def _run_persist(state: AgentState) -> AgentState:
             logger.info("db_persist: Created %d journal entry lines", len(lines))
 
         auditor_out = state.get("auditor_output") or {}
+        classification = state.get("document_classification") or {}
+        doc_type = classification.get("doc_type")
+        pathway_value = state.get("pathway")
 
         if mode == "ingest":
-            db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
+            db_service.update_ingest_job(
+                db,
+                ingest_id,
+                IngestStatus.COMPLETED,
+                document_type=doc_type,
+                pathway=pathway_value,
+            )
         else:
             process_id = _as_str(state.get("process_id"), "")
             if process_id:
@@ -477,7 +596,11 @@ def _run_persist(state: AgentState) -> AgentState:
                     current_stage="completed",
                     current_agent="db_persist",
                     progress=100,
-                    agent_log_entry={"agent": "db_persist", "stage": "completed", "status": "completed"},
+                    agent_log_entry={
+                        "agent": "db_persist",
+                        "stage": "completed",
+                        "status": "completed",
+                    },
                 )
 
         state["db_result"] = {
@@ -488,9 +611,15 @@ def _run_persist(state: AgentState) -> AgentState:
             "transaction_pending_id": pending_ids[0] if pending_ids else "",
             "transaction_posted_id": posted_ids[0] if posted_ids else "",
             "audit_approved": state.get("audit_approved"),
-            "audit_nivel_riesgo": auditor_out.get("nivel_riesgo") if mode == "process" else None,
-            "audit_puntaje_calidad": auditor_out.get("puntaje_calidad") if mode == "process" else None,
-            "audit_hallazgos_count": len(auditor_out.get("hallazgos", [])) if mode == "process" else 0,
+            "audit_nivel_riesgo": auditor_out.get("nivel_riesgo")
+            if mode == "process"
+            else None,
+            "audit_puntaje_calidad": auditor_out.get("puntaje_calidad")
+            if mode == "process"
+            else None,
+            "audit_hallazgos_count": len(auditor_out.get("hallazgos", []))
+            if mode == "process"
+            else 0,
         }
 
         if state.get("result") is not None:
@@ -503,11 +632,9 @@ def _run_persist(state: AgentState) -> AgentState:
                 state["result"]["audit_approved"] = state.get("audit_approved")
                 state["result"]["audit_nivel_riesgo"] = auditor_out.get("nivel_riesgo")
 
-
         logger.info(
             "db_persist: Successfully persisted all data for ingest %s", ingest_id
         )
-
 
     except SAOperationalError:
         # Re-raise so the retry loop in db_persist_node can catch and retry
@@ -524,7 +651,6 @@ def _run_persist(state: AgentState) -> AgentState:
                     ingest_id,
                     IngestStatus.FAILED,
                     extraction_errors=[str(e)],
-
                 )
             except Exception:
                 pass
@@ -541,7 +667,11 @@ def _run_persist(state: AgentState) -> AgentState:
                         current_agent="db_persist",
                         error_message=str(e),
                         progress=100,
-                        agent_log_entry={"agent": "db_persist", "stage": "failed", "status": "failed"},
+                        agent_log_entry={
+                            "agent": "db_persist",
+                            "stage": "failed",
+                            "status": "failed",
+                        },
                     )
                 except Exception:
                     pass
@@ -551,12 +681,14 @@ def _run_persist(state: AgentState) -> AgentState:
     return state
 
 
-
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
 
-def _journal_entries_from_contador(*, fecha: datetime, asientos: list, nit: str, descripcion: str) -> list:
+
+def _journal_entries_from_contador(
+    *, fecha: datetime, asientos: list, nit: str, descripcion: str
+) -> list:
 
     fecha_iso = fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
     entries = []
@@ -581,7 +713,9 @@ def _persist_financial_statement(state: AgentState) -> None:
     """Persist a Vía B financial statement (balance, PnL, or libro auxiliar)."""
     from app.models.database import IngestStatus
 
-    interpreted = state.get("interpreted_data") or state.get("result", {}).get("data", {})
+    interpreted = state.get("interpreted_data") or state.get("result", {}).get(
+        "data", {}
+    )
     classification = state.get("document_classification") or {}
     doc_type = classification.get("doc_type", "unknown")
 
@@ -613,7 +747,9 @@ def _persist_financial_statement(state: AgentState) -> None:
 
         company_nit = _resolve_company_nit(state)
         if company_nit is None:
-            raise ValueError("Vía B persistence requires a company NIT (provided or detected)")
+            raise ValueError(
+                "Vía B persistence requires a company NIT (provided or detected)"
+            )
 
         period_start = _safe_datetime(
             classification.get("period_start") or interpreted.get("periodo_inicio")
@@ -643,7 +779,9 @@ def _persist_financial_statement(state: AgentState) -> None:
         )
 
         # Mark ingest as completed and commit everything in one transaction
-        db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED, commit=False)
+        db_service.update_ingest_job(
+            db, ingest_id, IngestStatus.COMPLETED, commit=False
+        )
         db.commit()
 
         state["db_result"] = {
@@ -660,7 +798,8 @@ def _persist_financial_statement(state: AgentState) -> None:
 
         logger.info(
             "db_persist: Vía B financial statement persisted (ingest=%s, stmt=%s)",
-            ingest_id, stmt.id,
+            ingest_id,
+            stmt.id,
         )
 
     except Exception as e:
@@ -670,7 +809,9 @@ def _persist_financial_statement(state: AgentState) -> None:
         if ingest_id:
             try:
                 db_service.update_ingest_job(
-                    db, ingest_id, IngestStatus.FAILED,
+                    db,
+                    ingest_id,
+                    IngestStatus.FAILED,
                     extraction_errors=[str(e)],
                 )
             except Exception:
@@ -699,7 +840,6 @@ def _build_journal_entries(
     nit: str,
     descripcion: str,
 ) -> list:
-
     """
     Build double-entry (partida doble) journal entries for the ingest path.
 
@@ -788,7 +928,8 @@ def _build_journal_entries(
         logger.error(
             "Double-entry violation in _build_journal_entries: "
             "debits (%s) != credits (%s)",
-            total_debitos, total_creditos,
+            total_debitos,
+            total_creditos,
         )
         raise RuntimeError(
             f"Unbalanced journal entries: D={total_debitos} C={total_creditos}"
