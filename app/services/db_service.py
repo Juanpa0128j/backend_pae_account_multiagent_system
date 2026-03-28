@@ -1012,3 +1012,50 @@ def count_vector_documents(db: Session, collection_name: str) -> int:
         {"c": collection_name},
     ).scalar()
     return int(result or 0)
+
+
+# ─── Financial Statement Helpers ──────────────────────────────────────────────
+
+
+def financial_statements_exist(
+    db: Session,
+    *,
+    company_nit: str,
+    period_start: datetime,
+    period_end: datetime,
+    types: list[str],
+) -> bool:
+    """Return True if all requested statement types exist for this company and period window."""
+    from app.models.database import FinancialStatement
+
+    count = (
+        db.query(FinancialStatement)
+        .filter(FinancialStatement.entity_nit == company_nit)
+        .filter(FinancialStatement.period_end >= period_start)
+        .filter(FinancialStatement.period_end <= period_end + timedelta(days=1))
+        .filter(FinancialStatement.statement_type.in_(types))
+        .count()
+    )
+    return count >= len(types)
+
+
+def get_journal_entry_period(
+    db: Session,
+    *,
+    company_nit: str,
+) -> tuple[datetime, datetime] | None:
+    """Return (min_fecha, max_fecha) from JournalEntryLine for the company, or None."""
+    from app.models.database import JournalEntryLine
+    from sqlalchemy import func as sqlfunc
+
+    row = (
+        db.query(
+            sqlfunc.min(JournalEntryLine.fecha).label("min_fecha"),
+            sqlfunc.max(JournalEntryLine.fecha).label("max_fecha"),
+        )
+        .filter(JournalEntryLine.company_nit == company_nit)
+        .first()
+    )
+    if row is None or row.min_fecha is None:
+        return None
+    return (row.min_fecha, row.max_fecha)
