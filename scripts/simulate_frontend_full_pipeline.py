@@ -646,6 +646,77 @@ def fetch_and_print_reports(
     print(json.dumps(preview, ensure_ascii=True, indent=2))
 
 
+def _print_second_level_detail(statements: list) -> None:
+    """Print a human-readable summary of each second-level financial document."""
+    SECOND_LEVEL = {"flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros", "libro_diario"}
+
+    # Pick the most-recent record per type (avoid duplicates)
+    by_type: dict = {}
+    for s in statements:
+        stype = s.get("statement_type", "")
+        if stype in SECOND_LEVEL:
+            # prefer derived > derived_from_journal > direct; break ties by created_at
+            existing = by_type.get(stype)
+            if existing is None or (s.get("created_at", "") > existing.get("created_at", "")):
+                by_type[stype] = s
+
+    if not by_type:
+        return
+
+    print("\n" + "=" * 60)
+    print("DETALLE DOCUMENTOS DE SEGUNDO NIVEL")
+    print("=" * 60)
+
+    for stype in ("flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros", "libro_diario"):
+        stmt = by_type.get(stype)
+        if not stmt:
+            continue
+
+        d = stmt.get("data", {})
+        period = f"{(stmt.get('period_start') or '')[:10]} → {(stmt.get('period_end') or '')[:10]}"
+        print(f"\n--- {stype.upper().replace('_', ' ')} [{stmt.get('source_mode')}] ---")
+        print(f"Periodo: {period}")
+
+        if stype == "flujo_de_caja":
+            print(json.dumps({
+                "metodo": d.get("metodo"),
+                "flujo_neto_operacion": d.get("flujo_neto_operacion"),
+                "flujo_neto_inversion": d.get("flujo_neto_inversion"),
+                "flujo_neto_financiacion": d.get("flujo_neto_financiacion"),
+                "efectivo_inicio_periodo": d.get("efectivo_inicio_periodo"),
+                "efectivo_fin_periodo": d.get("efectivo_fin_periodo"),
+                "verificacion": d.get("verificacion"),
+            }, indent=2, ensure_ascii=False))
+
+        elif stype == "cambios_patrimonio":
+            print(json.dumps({
+                "total_patrimonio_inicio": d.get("total_patrimonio_inicio"),
+                "total_patrimonio_fin": d.get("total_patrimonio_fin"),
+                "componentes": d.get("componentes"),
+            }, indent=2, ensure_ascii=False))
+
+        elif stype == "notas_estados_financieros":
+            notas = d.get("notas", [])
+            print(f"Base presentacion: {d.get('base_presentacion')}")
+            for nota in notas:
+                print(f"  Nota {nota.get('numero_nota')}: {nota.get('titulo')}")
+                print(f"    Categoria: {nota.get('categoria')}")
+                print(f"    {nota.get('contenido_resumido', '')[:120]}")
+                for cifra in nota.get("cifras_relevantes", []):
+                    print(f"    {cifra.get('concepto')}: {cifra.get('valor'):,.2f}")
+
+        elif stype == "libro_diario":
+            asientos = d.get("asientos", [])
+            print(f"Total asientos: {len(asientos)}")
+            for entry in asientos[:5]:
+                print(f"  {entry.get('fecha','')[:10]}  {entry.get('cuenta_puc',''):10s}  "
+                      f"D:{float(entry.get('debito') or 0):>14,.2f}  "
+                      f"C:{float(entry.get('credito') or 0):>14,.2f}  "
+                      f"{(entry.get('descripcion') or '')[:40]}")
+            if len(asientos) > 5:
+                print(f"  ... ({len(asientos) - 5} asientos más)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Frontend simulator for full accounting pipeline"
@@ -804,6 +875,8 @@ def main() -> int:
         else:
             missing = second_level_types - found_second
             print(f"\n[WARN] Missing second-level documents: {missing}")
+
+        _print_second_level_detail(all_stmts)
 
     print("\nSimulacion completada.")
     return 0
