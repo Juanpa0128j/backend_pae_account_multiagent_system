@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.agents.graph import invoke_reporting_pipeline
 from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutput
+from app.services.financial_statement_service import list_financial_statements
 from app.services.nit_utils import normalize_nit
 
 router = APIRouter()
@@ -78,3 +79,55 @@ async def get_cashflow_report(
     Returns net balances of cash and bank accounts (class 11XX) for the period.
     """
     return _run_report("cashflow", _build_params(start_date, end_date), company_nit)
+
+
+@router.get("/statements")
+async def get_financial_statements(
+    company_nit: str = Query(..., description="Company NIT"),
+    statement_type: Optional[str] = Query(None, description="Filter by type (e.g. flujo_de_caja)"),
+    start_date: Optional[date] = Query(None, description="Period start YYYY-MM-DD"),
+    end_date: Optional[date] = Query(None, description="Period end YYYY-MM-DD"),
+    source_mode: Optional[str] = Query(None, description="Filter: direct | derived | derived_from_journal"),
+):
+    """List stored FinancialStatement records for a company."""
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    from datetime import datetime, timezone
+    period_start = datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc) if start_date else None
+    period_end = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc) if end_date else None
+
+    return list_financial_statements(
+        company_nit=normalized_nit,
+        period_start=period_start,
+        period_end=period_end,
+        statement_type=statement_type,
+        source_mode=source_mode,
+    )
+
+
+@router.get("/statements/{statement_id}")
+async def get_financial_statement_by_id(statement_id: str):
+    """Get a specific FinancialStatement by ID."""
+    from app.core.database import SessionLocal
+    from app.models.database import FinancialStatement
+    db = SessionLocal()
+    try:
+        stmt = db.query(FinancialStatement).filter(FinancialStatement.id == statement_id).first()
+        if stmt is None:
+            raise HTTPException(status_code=404, detail=f"Statement {statement_id} not found")
+        return {
+            "id": stmt.id,
+            "ingest_id": stmt.ingest_id,
+            "statement_type": stmt.statement_type,
+            "period_start": stmt.period_start.isoformat() if stmt.period_start else None,
+            "period_end": stmt.period_end.isoformat() if stmt.period_end else None,
+            "entity_nit": stmt.entity_nit,
+            "source_mode": stmt.source_mode,
+            "data": stmt.data,
+            "created_at": stmt.created_at.isoformat() if stmt.created_at else None,
+        }
+    finally:
+        db.close()
