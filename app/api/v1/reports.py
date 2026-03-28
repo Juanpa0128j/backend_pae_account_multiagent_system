@@ -1,10 +1,12 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app.agents.graph import invoke_reporting_pipeline
+from app.core.database import SessionLocal
 from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutput
+from app.models.database import FinancialStatement
 from app.services.financial_statement_service import list_financial_statements
 from app.services.nit_utils import normalize_nit
 
@@ -95,7 +97,6 @@ async def get_financial_statements(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
 
-    from datetime import datetime, timezone
     period_start = datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc) if start_date else None
     period_end = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc) if end_date else None
 
@@ -111,8 +112,6 @@ async def get_financial_statements(
 @router.get("/statements/{statement_id}")
 async def get_financial_statement_by_id(statement_id: str):
     """Get a specific FinancialStatement by ID."""
-    from app.core.database import SessionLocal
-    from app.models.database import FinancialStatement
     db = SessionLocal()
     try:
         stmt = db.query(FinancialStatement).filter(FinancialStatement.id == statement_id).first()
