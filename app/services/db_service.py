@@ -1133,8 +1133,8 @@ def get_journal_entry_lines(
             "cuenta_puc": r.cuenta_puc,
             "tercero_nit": r.tercero_nit,
             "descripcion": r.descripcion,
-            "debito": str(r.debito),
-            "credito": str(r.credito),
+            "debito": str(r.debito) if r.debito is not None else "0",
+            "credito": str(r.credito) if r.credito is not None else "0",
         }
         for r in rows
     ]

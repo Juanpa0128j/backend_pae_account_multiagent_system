@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -10,6 +11,8 @@ from app.core.database import SessionLocal
 from app.models.database import IngestStatus
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
+
+_log = logging.getLogger(__name__)
 
 
 _REQUIRED_DERIVATION_INPUTS = ("balance_general", "estado_resultados", "libro_auxiliar")
@@ -68,106 +71,122 @@ def build_first_level_from_journal_entries(
     # --- Balance General ---
     if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="balance_general",
                                     period_start=period_start, period_end=period_end):
-        # get_balance_sheet uses cutoff_date (not start_date/end_date); use period_end as cutoff
-        bg_raw = db_service.get_balance_sheet(db, cutoff_date=period_end, company_nit=normalized_nit)
-        bg_data = {
-            "tipo": "balance_general",
-            "entidad": {"nit": normalized_nit},
-            "periodo_inicio": period_start.date().isoformat(),
-            "periodo_fin": period_end.date().isoformat(),
-            "total_activos": bg_raw.get("assets", 0),
-            "total_pasivos": bg_raw.get("liabilities", 0),
-            "total_patrimonio": bg_raw.get("total_equity", 0),
-            "activos": bg_raw.get("activos", []),
-            "pasivos": bg_raw.get("pasivos", []),
-            "patrimonio": bg_raw.get("patrimonio", []),
-            "moneda": "COP",
-            "source": "derived_from_journal",
-        }
-        ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "balance_general")
-        stmt = db_service.create_financial_statement(
-            db, ingest_id=ingest_job.id, statement_type="balance_general",
-            entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
-            source_mode="derived_from_journal", data=bg_data, commit=True,
-        )
-        created["balance_general"] = stmt.id
+        try:
+            # get_balance_sheet uses cutoff_date (not start_date/end_date); use period_end as cutoff
+            bg_raw = db_service.get_balance_sheet(db, cutoff_date=period_end, company_nit=normalized_nit)
+            bg_data = {
+                "tipo": "balance_general",
+                "entidad": {"nit": normalized_nit},
+                "periodo_inicio": period_start.date().isoformat(),
+                "periodo_fin": period_end.date().isoformat(),
+                "total_activos": bg_raw.get("assets", 0),
+                "total_pasivos": bg_raw.get("liabilities", 0),
+                "total_patrimonio": bg_raw.get("total_equity", 0),
+                "activos": bg_raw.get("assets", 0),
+                "pasivos": bg_raw.get("liabilities", 0),
+                "patrimonio": bg_raw.get("equity", 0),
+                "moneda": "COP",
+                "source": "derived_from_journal",
+            }
+            ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "balance_general")
+            stmt = db_service.create_financial_statement(
+                db, ingest_id=ingest_job.id, statement_type="balance_general",
+                entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
+                source_mode="derived_from_journal", data=bg_data, commit=True,
+            )
+            created["balance_general"] = stmt.id
+        except Exception as exc:
+            _log.warning("build_first_level: failed to create balance_general: %s", exc)
+            skipped.append("balance_general")
     else:
         skipped.append("balance_general")
 
     # --- Estado de Resultados ---
     if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="estado_resultados",
                                     period_start=period_start, period_end=period_end):
-        er_raw = db_service.get_pnl(db, company_nit=normalized_nit,
-                                    start_date=period_start, end_date=period_end)
-        er_data = {
-            "tipo": "estado_resultados",
-            "entidad": {"nit": normalized_nit},
-            "periodo_inicio": period_start.date().isoformat(),
-            "periodo_fin": period_end.date().isoformat(),
-            "ingresos": er_raw.get("ingresos", []),
-            "gastos": er_raw.get("gastos", []),
-            "costo_ventas": er_raw.get("costo_ventas", []),
-            "utilidad_bruta": er_raw.get("utilidad_bruta", 0),
-            "utilidad_neta": er_raw.get("utilidad_neta", 0),
-            "moneda": "COP",
-            "source": "derived_from_journal",
-        }
-        ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "estado_resultados")
-        stmt = db_service.create_financial_statement(
-            db, ingest_id=ingest_job.id, statement_type="estado_resultados",
-            entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
-            source_mode="derived_from_journal", data=er_data, commit=True,
-        )
-        created["estado_resultados"] = stmt.id
+        try:
+            er_raw = db_service.get_pnl(db, company_nit=normalized_nit,
+                                        start_date=period_start, end_date=period_end)
+            er_data = {
+                "tipo": "estado_resultados",
+                "entidad": {"nit": normalized_nit},
+                "periodo_inicio": period_start.date().isoformat(),
+                "periodo_fin": period_end.date().isoformat(),
+                "ingresos": er_raw.get("ingresos", []),
+                "gastos": er_raw.get("gastos", []),
+                "costo_ventas": er_raw.get("costo_ventas", []),
+                "utilidad_bruta": er_raw.get("utilidad_bruta", 0),
+                "utilidad_neta": er_raw.get("utilidad_neta", 0),
+                "moneda": "COP",
+                "source": "derived_from_journal",
+            }
+            ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "estado_resultados")
+            stmt = db_service.create_financial_statement(
+                db, ingest_id=ingest_job.id, statement_type="estado_resultados",
+                entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
+                source_mode="derived_from_journal", data=er_data, commit=True,
+            )
+            created["estado_resultados"] = stmt.id
+        except Exception as exc:
+            _log.warning("build_first_level: failed to create estado_resultados: %s", exc)
+            skipped.append("estado_resultados")
     else:
         skipped.append("estado_resultados")
 
     # --- Libro Auxiliar ---
     if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="libro_auxiliar",
                                     period_start=period_start, period_end=period_end):
-        # get_general_ledger uses positional args (db, start_date, end_date, company_nit)
-        ledger = db_service.get_general_ledger(db, period_start, period_end, normalized_nit)
-        la_data = {
-            "tipo": "libro_auxiliar",
-            "entidad": {"nit": normalized_nit},
-            "periodo_inicio": period_start.date().isoformat(),
-            "periodo_fin": period_end.date().isoformat(),
-            "accounts": ledger if isinstance(ledger, list) else ledger.get("entries", []),
-            "moneda": "COP",
-            "source": "derived_from_journal",
-        }
-        ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "libro_auxiliar")
-        stmt = db_service.create_financial_statement(
-            db, ingest_id=ingest_job.id, statement_type="libro_auxiliar",
-            entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
-            source_mode="derived_from_journal", data=la_data, commit=True,
-        )
-        created["libro_auxiliar"] = stmt.id
+        try:
+            # get_general_ledger returns a List[Dict] directly
+            ledger = db_service.get_general_ledger(db, period_start, period_end, normalized_nit)
+            la_data = {
+                "tipo": "libro_auxiliar",
+                "entidad": {"nit": normalized_nit},
+                "periodo_inicio": period_start.date().isoformat(),
+                "periodo_fin": period_end.date().isoformat(),
+                "accounts": ledger if isinstance(ledger, list) else [],
+                "moneda": "COP",
+                "source": "derived_from_journal",
+            }
+            ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "libro_auxiliar")
+            stmt = db_service.create_financial_statement(
+                db, ingest_id=ingest_job.id, statement_type="libro_auxiliar",
+                entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
+                source_mode="derived_from_journal", data=la_data, commit=True,
+            )
+            created["libro_auxiliar"] = stmt.id
+        except Exception as exc:
+            _log.warning("build_first_level: failed to create libro_auxiliar: %s", exc)
+            skipped.append("libro_auxiliar")
     else:
         skipped.append("libro_auxiliar")
 
     # --- Libro Diario ---
     if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="libro_diario",
                                     period_start=period_start, period_end=period_end):
-        journal_lines = db_service.get_journal_entry_lines(
-            db, company_nit=normalized_nit, start_date=period_start, end_date=period_end
-        )
-        ld_data = {
-            "tipo": "libro_diario",
-            "entidad": {"nit": normalized_nit},
-            "periodo_inicio": period_start.date().isoformat(),
-            "periodo_fin": period_end.date().isoformat(),
-            "asientos": journal_lines if isinstance(journal_lines, list) else [],
-            "moneda": "COP",
-            "source": "derived_from_journal",
-        }
-        ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "libro_diario")
-        stmt = db_service.create_financial_statement(
-            db, ingest_id=ingest_job.id, statement_type="libro_diario",
-            entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
-            source_mode="derived_from_journal", data=ld_data, commit=True,
-        )
-        created["libro_diario"] = stmt.id
+        try:
+            journal_lines = db_service.get_journal_entry_lines(
+                db, company_nit=normalized_nit, start_date=period_start, end_date=period_end
+            )
+            ld_data = {
+                "tipo": "libro_diario",
+                "entidad": {"nit": normalized_nit},
+                "periodo_inicio": period_start.date().isoformat(),
+                "periodo_fin": period_end.date().isoformat(),
+                "asientos": journal_lines if isinstance(journal_lines, list) else [],
+                "moneda": "COP",
+                "source": "derived_from_journal",
+            }
+            ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "libro_diario")
+            stmt = db_service.create_financial_statement(
+                db, ingest_id=ingest_job.id, statement_type="libro_diario",
+                entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
+                source_mode="derived_from_journal", data=ld_data, commit=True,
+            )
+            created["libro_diario"] = stmt.id
+        except Exception as exc:
+            _log.warning("build_first_level: failed to create libro_diario: %s", exc)
+            skipped.append("libro_diario")
     else:
         skipped.append("libro_diario")
 
@@ -416,7 +435,7 @@ def derive_financial_statements(
             "created_statement_ids": {k: v.id for k, v in created_rows.items()},
             "source_statement_ids": {k: v.id for k, v in source_rows.items()},
             "derived_count": len(created_rows),
-            "lineage_links": len(_DERIVED_TARGETS) * len(_REQUIRED_DERIVATION_INPUTS),
+            "lineage_links": len(created_rows) * len(_REQUIRED_DERIVATION_INPUTS),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception:
