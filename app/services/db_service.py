@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
@@ -1026,15 +1026,13 @@ def financial_statements_exist(
     types: list[str],
 ) -> bool:
     """Return True if all requested statement types exist for this company and period window."""
-    from app.models.database import FinancialStatement
-
     count = (
-        db.query(FinancialStatement)
+        db.query(func.count(distinct(FinancialStatement.statement_type)))
         .filter(FinancialStatement.entity_nit == company_nit)
         .filter(FinancialStatement.period_end >= period_start)
         .filter(FinancialStatement.period_end <= period_end + timedelta(days=1))
         .filter(FinancialStatement.statement_type.in_(types))
-        .count()
+        .scalar()
     )
     return count >= len(types)
 
@@ -1045,13 +1043,10 @@ def get_journal_entry_period(
     company_nit: str,
 ) -> tuple[datetime, datetime] | None:
     """Return (min_fecha, max_fecha) from JournalEntryLine for the company, or None."""
-    from app.models.database import JournalEntryLine
-    from sqlalchemy import func as sqlfunc
-
     row = (
         db.query(
-            sqlfunc.min(JournalEntryLine.fecha).label("min_fecha"),
-            sqlfunc.max(JournalEntryLine.fecha).label("max_fecha"),
+            func.min(JournalEntryLine.fecha).label("min_fecha"),
+            func.max(JournalEntryLine.fecha).label("max_fecha"),
         )
         .filter(JournalEntryLine.company_nit == company_nit)
         .first()
