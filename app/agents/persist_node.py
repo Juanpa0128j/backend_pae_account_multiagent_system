@@ -22,6 +22,12 @@ from app.core.database import SessionLocal
 from app.core.logger import get_logger
 from app.models.database import IngestStatus, ProcessStatus, TransactionPending
 from app.services import db_service
+from app.services.db_service import financial_statements_exist, get_journal_entry_period
+from app.services.financial_statement_service import (
+    BusinessRuleError,
+    build_first_level_from_journal_entries,
+    derive_financial_statements as _derive_financial_statements,
+)
 from app.services.nit_utils import normalize_optional_nit
 
 logger = get_logger("app.agents.persist")
@@ -199,6 +205,91 @@ def _db_persist_inner_with_cleanup(state: AgentState) -> AgentState:
     """Run persistence with full error cleanup; used when retry loop is exhausted/skipped."""
     _run_persist(state)
     return state
+
+
+def _auto_derive_statements(db, company_nit: str) -> None:
+    """Build first-level statements from JournalEntryLines then derive second-level.
+
+    Non-fatal: logs warnings on failure but never raises.
+    """
+    if not company_nit:
+        return
+
+    period = get_journal_entry_period(db, company_nit=company_nit)
+    if period is None:
+        logger.warning(
+            "[persist] No JournalEntryLines for %s — skipping statement derivation",
+            company_nit,
+        )
+        return
+
+    period_start, period_end = period
+    logger.info(
+        "[persist] Building first-level statements for %s (%s → %s)",
+        company_nit,
+        period_start.date(),
+        period_end.date(),
+    )
+
+    try:
+        build_first_level_from_journal_entries(
+            db,
+            company_nit=company_nit,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except Exception as exc:
+        logger.warning("[persist] build_first_level failed (non-fatal): %s", exc)
+        return
+
+    try:
+        _derive_financial_statements(
+            company_nit=company_nit,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except BusinessRuleError as exc:
+        logger.warning("[persist] derive skipped (missing source inputs): %s", exc)
+    except Exception as exc:
+        logger.warning("[persist] derive failed (non-fatal): %s", exc)
+
+
+def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) -> None:
+    """After a Via B upload, check if all 3 source docs are present and derive if so.
+
+    Non-fatal: logs but never raises.
+    """
+    if not company_nit or period_start is None or period_end is None:
+        return
+
+    required = ["balance_general", "estado_resultados", "libro_auxiliar"]
+    if not financial_statements_exist(
+        db,
+        company_nit=company_nit,
+        period_start=period_start,
+        period_end=period_end,
+        types=required,
+    ):
+        logger.info(
+            "[persist] Via B: not all 3 source docs present yet for %s — skipping auto-derive",
+            company_nit,
+        )
+        return
+
+    logger.info(
+        "[persist] Via B: all 3 source docs present for %s — triggering derivation",
+        company_nit,
+    )
+    try:
+        _derive_financial_statements(
+            company_nit=company_nit,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except BusinessRuleError as exc:
+        logger.warning("[persist] Via B derive skipped: %s", exc)
+    except Exception as exc:
+        logger.warning("[persist] Via B derive failed (non-fatal): %s", exc)
 
 
 def _run_persist(state: AgentState) -> AgentState:
@@ -603,6 +694,10 @@ def _run_persist(state: AgentState) -> AgentState:
                     },
                 )
 
+        # Auto-derive financial statements after process completes (non-fatal)
+        if mode == "process" and company_nit:
+            _auto_derive_statements(db, company_nit)
+
         state["db_result"] = {
             "ingest_id": ingest_id,
             "processed_transactions": len(transactions),
@@ -783,6 +878,15 @@ def _persist_financial_statement(state: AgentState) -> None:
             db, ingest_id, IngestStatus.COMPLETED, commit=False
         )
         db.commit()
+
+        # Via B auto-derivation: if all 3 source statements present, derive second-level
+        if doc_type in ("balance_general", "estado_resultados", "libro_auxiliar") and company_nit:
+            _try_via_b_auto_derive(
+                db,
+                company_nit=company_nit,
+                period_start=period_start,
+                period_end=period_end,
+            )
 
         state["db_result"] = {
             "ingest_id": ingest_id,
