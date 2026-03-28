@@ -98,7 +98,10 @@ def test_derive_financial_statements_persists_outputs_and_lineage(monkeypatch):
             return [bg]
         if t == "estado_resultados":
             return [er]
-        return [la]
+        if t == "libro_auxiliar":
+            return [la]
+        # Derived targets (flujo_de_caja, etc.) don't exist yet — return empty
+        return []
 
     def _create_ingest_job(_db, **kwargs):
         return SimpleNamespace(id="ing_der")

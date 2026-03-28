@@ -14,6 +14,170 @@ from app.services.nit_utils import normalize_nit
 
 _REQUIRED_DERIVATION_INPUTS = ("balance_general", "estado_resultados", "libro_auxiliar")
 _DERIVED_TARGETS = ("flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros")
+_FIRST_LEVEL_TYPES = ("balance_general", "estado_resultados", "libro_auxiliar", "libro_diario")
+
+
+def _first_level_type_exists(
+    db,
+    *,
+    company_nit: str,
+    statement_type: str,
+    period_start: datetime | None,
+    period_end: datetime | None,
+) -> bool:
+    rows = db_service.get_financial_statements(
+        db,
+        company_nit=company_nit,
+        statement_type=statement_type,
+        period_start=period_start,
+        period_end=period_end,
+    )
+    return len(rows) > 0
+
+
+def _create_derivation_ingest_job(db, company_nit: str, period_end: datetime, doc_type: str):
+    """Create a synthetic IngestJob to satisfy the FK constraint on FinancialStatement."""
+    ingest_job = db_service.create_ingest_job(
+        db,
+        file_name=f"journal_derived_{company_nit}_{period_end.date().isoformat()}_{doc_type}",
+        file_path="internal://journal_derived",
+        commit=False,
+    )
+    ingest_job.status = IngestStatus.COMPLETED
+    ingest_job.document_type = doc_type
+    ingest_job.pathway = "build_from_scratch"
+    return ingest_job
+
+
+def build_first_level_from_journal_entries(
+    db,
+    *,
+    company_nit: str,
+    period_start: datetime,
+    period_end: datetime,
+) -> dict[str, Any]:
+    """Build and persist first-level FinancialStatement records from JournalEntryLines.
+
+    Creates balance_general, estado_resultados, libro_auxiliar, libro_diario records
+    with source_mode='derived_from_journal'. Idempotent: skips any type already present.
+    """
+    normalized_nit = normalize_nit(company_nit)
+    created: dict[str, str] = {}
+    skipped: list[str] = []
+
+    # --- Balance General ---
+    if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="balance_general",
+                                    period_start=period_start, period_end=period_end):
+        # get_balance_sheet uses cutoff_date (not start_date/end_date); use period_end as cutoff
+        bg_raw = db_service.get_balance_sheet(db, cutoff_date=period_end, company_nit=normalized_nit)
+        bg_data = {
+            "tipo": "balance_general",
+            "entidad": {"nit": normalized_nit},
+            "periodo_inicio": period_start.date().isoformat(),
+            "periodo_fin": period_end.date().isoformat(),
+            "total_activos": bg_raw.get("assets", 0),
+            "total_pasivos": bg_raw.get("liabilities", 0),
+            "total_patrimonio": bg_raw.get("total_equity", 0),
+            "activos": bg_raw.get("activos", []),
+            "pasivos": bg_raw.get("pasivos", []),
+            "patrimonio": bg_raw.get("patrimonio", []),
+            "moneda": "COP",
+            "source": "derived_from_journal",
+        }
+        ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "balance_general")
+        stmt = db_service.create_financial_statement(
+            db, ingest_id=ingest_job.id, statement_type="balance_general",
+            entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
+            source_mode="derived_from_journal", data=bg_data, commit=True,
+        )
+        created["balance_general"] = stmt.id
+    else:
+        skipped.append("balance_general")
+
+    # --- Estado de Resultados ---
+    if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="estado_resultados",
+                                    period_start=period_start, period_end=period_end):
+        er_raw = db_service.get_pnl(db, company_nit=normalized_nit,
+                                    start_date=period_start, end_date=period_end)
+        er_data = {
+            "tipo": "estado_resultados",
+            "entidad": {"nit": normalized_nit},
+            "periodo_inicio": period_start.date().isoformat(),
+            "periodo_fin": period_end.date().isoformat(),
+            "ingresos": er_raw.get("ingresos", []),
+            "gastos": er_raw.get("gastos", []),
+            "costo_ventas": er_raw.get("costo_ventas", []),
+            "utilidad_bruta": er_raw.get("utilidad_bruta", 0),
+            "utilidad_neta": er_raw.get("utilidad_neta", 0),
+            "moneda": "COP",
+            "source": "derived_from_journal",
+        }
+        ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "estado_resultados")
+        stmt = db_service.create_financial_statement(
+            db, ingest_id=ingest_job.id, statement_type="estado_resultados",
+            entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
+            source_mode="derived_from_journal", data=er_data, commit=True,
+        )
+        created["estado_resultados"] = stmt.id
+    else:
+        skipped.append("estado_resultados")
+
+    # --- Libro Auxiliar ---
+    if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="libro_auxiliar",
+                                    period_start=period_start, period_end=period_end):
+        # get_general_ledger uses positional args (db, start_date, end_date, company_nit)
+        ledger = db_service.get_general_ledger(db, period_start, period_end, normalized_nit)
+        la_data = {
+            "tipo": "libro_auxiliar",
+            "entidad": {"nit": normalized_nit},
+            "periodo_inicio": period_start.date().isoformat(),
+            "periodo_fin": period_end.date().isoformat(),
+            "accounts": ledger if isinstance(ledger, list) else ledger.get("entries", []),
+            "moneda": "COP",
+            "source": "derived_from_journal",
+        }
+        ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "libro_auxiliar")
+        stmt = db_service.create_financial_statement(
+            db, ingest_id=ingest_job.id, statement_type="libro_auxiliar",
+            entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
+            source_mode="derived_from_journal", data=la_data, commit=True,
+        )
+        created["libro_auxiliar"] = stmt.id
+    else:
+        skipped.append("libro_auxiliar")
+
+    # --- Libro Diario ---
+    if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="libro_diario",
+                                    period_start=period_start, period_end=period_end):
+        journal_lines = db_service.get_journal_entry_lines(
+            db, company_nit=normalized_nit, start_date=period_start, end_date=period_end
+        )
+        ld_data = {
+            "tipo": "libro_diario",
+            "entidad": {"nit": normalized_nit},
+            "periodo_inicio": period_start.date().isoformat(),
+            "periodo_fin": period_end.date().isoformat(),
+            "asientos": journal_lines if isinstance(journal_lines, list) else [],
+            "moneda": "COP",
+            "source": "derived_from_journal",
+        }
+        ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "libro_diario")
+        stmt = db_service.create_financial_statement(
+            db, ingest_id=ingest_job.id, statement_type="libro_diario",
+            entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
+            source_mode="derived_from_journal", data=ld_data, commit=True,
+        )
+        created["libro_diario"] = stmt.id
+    else:
+        skipped.append("libro_diario")
+
+    return {
+        "status": "built",
+        "company_nit": normalized_nit,
+        "created": created,
+        "skipped": len(skipped),
+        "skipped_types": skipped,
+    }
 
 
 class BusinessRuleError(RuntimeError):
@@ -89,6 +253,19 @@ def derive_financial_statements(
                     f"{stmt_type}. Required set: {', '.join(_REQUIRED_DERIVATION_INPUTS)}"
                 )
             source_rows[stmt_type] = rows[0]
+
+        # Dedup guard: skip derived types that already exist
+        existing_derived = {
+            stmt_type
+            for stmt_type in _DERIVED_TARGETS
+            if _first_level_type_exists(db, company_nit=normalized_nit,
+                                        statement_type=stmt_type,
+                                        period_start=period_start,
+                                        period_end=period_end)
+        }
+        targets_to_create = [t for t in _DERIVED_TARGETS if t not in existing_derived]
+        if not targets_to_create:
+            return {"status": "already_derived", "skipped": list(existing_derived)}
 
         bg = source_rows["balance_general"].data or {}
         er = source_rows["estado_resultados"].data or {}
@@ -196,12 +373,15 @@ def derive_financial_statements(
         ingest_job.document_type = "derived_financial_statements"
         ingest_job.pathway = "work_with_existing"
 
+        all_payloads = {
+            "flujo_de_caja": flujo_data,
+            "cambios_patrimonio": cambios_data,
+            "notas_estados_financieros": notas_data,
+        }
         created_rows = {}
-        for statement_type, payload in (
-            ("flujo_de_caja", flujo_data),
-            ("cambios_patrimonio", cambios_data),
-            ("notas_estados_financieros", notas_data),
-        ):
+        for statement_type, payload in [
+            (t, all_payloads[t]) for t in targets_to_create
+        ]:
             created_rows[statement_type] = db_service.create_financial_statement(
                 db,
                 ingest_id=ingest_job.id,
@@ -214,7 +394,7 @@ def derive_financial_statements(
                 commit=False,
             )
 
-        for target_type in _DERIVED_TARGETS:
+        for target_type in targets_to_create:
             target = created_rows[target_type]
             for source_type in _REQUIRED_DERIVATION_INPUTS:
                 source = source_rows[source_type]

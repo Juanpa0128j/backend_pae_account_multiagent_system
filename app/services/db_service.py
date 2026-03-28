@@ -1054,3 +1054,87 @@ def get_journal_entry_period(
     if row is None or row.min_fecha is None:
         return None
     return (row.min_fecha, row.max_fecha)
+
+
+def get_pnl(
+    db: Session,
+    *,
+    company_nit: str,
+    start_date: datetime = None,
+    end_date: datetime = None,
+) -> Dict[str, Any]:
+    """Income Statement (Estado de Resultados) for a company and period.
+
+    Aggregates revenue (class 4), expenses (class 5), and cost of sales (class 6)
+    from JournalEntryLine rows. Returns a dict with ingresos, gastos, costo_ventas,
+    utilidad_bruta, and utilidad_neta.
+    """
+    query = db.query(JournalEntryLine).filter(
+        JournalEntryLine.company_nit == company_nit
+    )
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
+
+    lines = query.all()
+
+    totals: dict[int, Decimal] = {4: Decimal("0"), 5: Decimal("0"), 6: Decimal("0")}
+    detail: dict[int, dict[str, Decimal]] = {4: {}, 5: {}, 6: {}}
+
+    for line in lines:
+        if not line.cuenta_puc:
+            continue
+        clase = int(line.cuenta_puc[0]) if line.cuenta_puc[0].isdigit() else None
+        if clase not in totals:
+            continue
+        # Revenue (4) is credit-nature; expenses (5,6) are debit-nature
+        if clase == 4:
+            amount = (line.credito or Decimal("0")) - (line.debito or Decimal("0"))
+        else:
+            amount = (line.debito or Decimal("0")) - (line.credito or Decimal("0"))
+        totals[clase] += amount
+        cuenta = line.cuenta_puc
+        detail[clase][cuenta] = detail[clase].get(cuenta, Decimal("0")) + amount
+
+    utilidad_bruta = totals[4] - totals[6]
+    utilidad_neta = utilidad_bruta - totals[5]
+
+    return {
+        "ingresos": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[4].items())],
+        "gastos": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[5].items())],
+        "costo_ventas": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[6].items())],
+        "total_ingresos": float(totals[4]),
+        "total_gastos": float(totals[5]),
+        "total_costo_ventas": float(totals[6]),
+        "utilidad_bruta": float(utilidad_bruta),
+        "utilidad_neta": float(utilidad_neta),
+    }
+
+
+def get_journal_entry_lines(
+    db: Session,
+    *,
+    company_nit: str,
+    start_date: datetime = None,
+    end_date: datetime = None,
+) -> List[Dict[str, Any]]:
+    """Return JournalEntryLine rows for a company as list of dicts."""
+    q = db.query(JournalEntryLine).filter(JournalEntryLine.company_nit == company_nit)
+    if start_date:
+        q = q.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        q = q.filter(JournalEntryLine.fecha <= end_date)
+    rows = q.order_by(JournalEntryLine.fecha).all()
+    return [
+        {
+            "fecha": r.fecha.isoformat() if r.fecha else None,
+            "comprobante": r.comprobante,
+            "cuenta_puc": r.cuenta_puc,
+            "tercero_nit": r.tercero_nit,
+            "descripcion": r.descripcion,
+            "debito": str(r.debito),
+            "credito": str(r.credito),
+        }
+        for r in rows
+    ]
