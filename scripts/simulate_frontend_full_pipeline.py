@@ -205,6 +205,169 @@ def build_runs_from_existing_inputs(input_path: Path) -> list[UploadRun]:
     return runs
 
 
+def build_via_b_documents(output_dir: Path) -> list[UploadRun]:
+    """Generate synthetic first-level financial statement PDFs for Via B testing."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    runs: list[UploadRun] = []
+
+    # Balance General
+    bg_path = output_dir / "balance_general_2024.pdf"
+    _write_pdf(
+        bg_path,
+        "BALANCE GENERAL",
+        [
+            "Empresa: Test S.A.S.",
+            "NIT: 800999888-2",
+            "Periodo: 01/01/2024 - 31/12/2024",
+            "ACTIVOS",
+            "  1105 Caja: $5,000,000",
+            "  1110 Bancos: $45,000,000",
+            "  1305 Clientes: $30,000,000",
+            "TOTAL ACTIVOS: $80,000,000",
+            "PASIVOS",
+            "  2205 Proveedores: $20,000,000",
+            "TOTAL PASIVOS: $20,000,000",
+            "PATRIMONIO",
+            "  3105 Capital: $40,000,000",
+            "  3605 Utilidad ejercicio: $20,000,000",
+            "TOTAL PATRIMONIO: $60,000,000",
+        ],
+    )
+    runs.append(UploadRun("balance_general", bg_path))
+
+    # Estado de Resultados
+    er_path = output_dir / "estado_resultados_2024.pdf"
+    _write_pdf(
+        er_path,
+        "ESTADO DE RESULTADOS",
+        [
+            "Empresa: Test S.A.S.",
+            "NIT: 800999888-2",
+            "Periodo: 01/01/2024 - 31/12/2024",
+            "INGRESOS OPERACIONALES",
+            "  4135 Comercio al por mayor: $100,000,000",
+            "TOTAL INGRESOS: $100,000,000",
+            "GASTOS OPERACIONALES",
+            "  5105 Gastos de personal: $50,000,000",
+            "  5195 Otros gastos: $30,000,000",
+            "TOTAL GASTOS: $80,000,000",
+            "UTILIDAD NETA: $20,000,000",
+        ],
+    )
+    runs.append(UploadRun("estado_resultados", er_path))
+
+    # Libro Auxiliar
+    la_path = output_dir / "libro_auxiliar_2024.pdf"
+    _write_pdf(
+        la_path,
+        "LIBRO AUXILIAR",
+        [
+            "Empresa: Test S.A.S.",
+            "NIT: 800999888-2",
+            "Periodo: 01/01/2024 - 31/12/2024",
+            "Cuenta 1105 - Caja",
+            "2024-01-15  Ingreso ventas           Deb: 5,000,000   Saldo: 5,000,000",
+            "2024-03-01  Pago servicios           Cre: 2,000,000   Saldo: 3,000,000",
+            "Cuenta 1110 - Bancos",
+            "2024-01-20  Deposito                 Deb: 45,000,000  Saldo: 45,000,000",
+        ],
+    )
+    runs.append(UploadRun("libro_auxiliar", la_path))
+
+    return runs
+
+
+def run_via_b_pipeline(
+    client: httpx.Client,
+    args: argparse.Namespace,
+) -> int:
+    """Upload 3 first-level documents and wait for auto-derivation of second-level docs."""
+    output_dir = ROOT / "storage" / "uploads" / "frontend_sim" / "via_b"
+    _print_header("VIA B: Uploading first-level financial statements")
+
+    runs = build_via_b_documents(output_dir)
+    company_nit = args.company_nit
+    base_url = args.base_url
+
+    ensure_company_settings(client, base_url, company_nit, args.city, args.ciiu)
+
+    for run in runs:
+        print(f"\n-> Uploading {run.label} from {run.file_path.name}")
+        try:
+            with run.file_path.open("rb") as f:
+                files = {"file": (run.file_path.name, f, "application/pdf")}
+                data = {"company_nit": company_nit}
+                resp = client.post(
+                    f"{base_url}/api/v1/ingest/upload",
+                    files=files,
+                    data=data,
+                    timeout=120,
+                )
+        except Exception as exc:
+            print(f"  [ERR] Upload failed: {exc}")
+            run.error = str(exc)
+            continue
+
+        if resp.status_code not in (200, 201, 202):
+            print(f"  [ERR] Upload failed: {resp.status_code} {resp.text[:200]}")
+            run.error = f"HTTP {resp.status_code}"
+            continue
+
+        run.ingest_id = resp.json().get("ingest_id", "")
+        print(f"  Ingest ID: {run.ingest_id}")
+
+        # Poll until completed
+        deadline = time.time() + args.timeout_seconds
+        while time.time() < deadline:
+            try:
+                status_resp = client.get(
+                    f"{base_url}/api/v1/ingest/{run.ingest_id}", timeout=10
+                )
+                if status_resp.status_code == 200:
+                    status_data = status_resp.json()
+                    status = (status_data.get("status") or "").lower()
+                    if status == "completed":
+                        print(
+                            f"  [OK] Ingested as {status_data.get('document_type', '?')}"
+                        )
+                        run.ingest_status = status
+                        break
+                    elif status in ("failed", "error"):
+                        errors = status_data.get("extraction_errors", "")
+                        print(f"  [ERR] Ingest failed: {errors}")
+                        run.ingest_status = status
+                        run.error = f"ingest status={status}"
+                        break
+            except Exception:
+                pass
+            time.sleep(args.poll_seconds)
+        else:
+            print(f"  [WARN] Ingest timed out")
+            run.ingest_status = "timeout"
+
+    print_run_summary(runs)
+
+    # Wait for auto-derivation of second-level documents
+    print("\nWaiting for auto-derivation of second-level documents...")
+    all_stmts = fetch_all_statements(client, base_url, company_nit, timeout=120)
+
+    print(f"\nTotal stored statements: {len(all_stmts)}")
+    for stmt in sorted(all_stmts, key=lambda s: s["statement_type"]):
+        mode = stmt.get("source_mode", "?")
+        stype = stmt.get("statement_type", "?")
+        print(f"  [{mode:30s}] {stype}")
+
+    second_level_types = {"flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros"}
+    found_second = {s["statement_type"] for s in all_stmts} & second_level_types
+    if len(found_second) == 3:
+        print("\n[OK] Via B: All 3 second-level documents derived successfully")
+        return 0
+    else:
+        missing = second_level_types - found_second
+        print(f"\n[WARN] Via B: Missing second-level documents: {missing}")
+        return 1
+
+
 def wait_ingest(
     client: httpx.Client, base_url: str, ingest_id: str, timeout_s: int, poll_s: float
 ) -> dict[str, Any]:
@@ -375,6 +538,41 @@ def print_run_summary(runs: list[UploadRun]) -> None:
             print(f"  error: {r.error}")
 
 
+def fetch_all_statements(
+    client: httpx.Client, base_url: str, company_nit: str, timeout: float = 60.0
+) -> list:
+    """Fetch all stored FinancialStatements for the company, waiting for second-level docs."""
+    deadline = time.time() + timeout
+    second_level = {"flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros"}
+
+    while time.time() < deadline:
+        try:
+            resp = client.get(
+                f"{base_url}/api/v1/reports/statements",
+                params={"company_nit": company_nit},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                stmts = resp.json()
+                found_second = {s["statement_type"] for s in stmts} & second_level
+                if len(found_second) >= 3:
+                    return stmts
+        except Exception:
+            pass
+        time.sleep(2)
+
+    # Return whatever exists even if incomplete
+    try:
+        resp = client.get(
+            f"{base_url}/api/v1/reports/statements",
+            params={"company_nit": company_nit},
+            timeout=30,
+        )
+        return resp.json() if resp.status_code == 200 else []
+    except Exception:
+        return []
+
+
 def fetch_and_print_reports(
     client: httpx.Client,
     base_url: str,
@@ -477,11 +675,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--source-mode",
-        choices=["auto", "demo", "existing"],
+        choices=["auto", "demo", "existing", "via-b"],
         default="auto",
         help=(
             "Input source mode. auto=use existing path if it has files, otherwise demos; "
-            "demo=always generate demo docs; existing=use --source-path"
+            "demo=always generate demo docs; existing=use --source-path; "
+            "via-b=upload 3 first-level PDFs and wait for auto-derivation"
         ),
     )
     parser.add_argument(
@@ -496,6 +695,10 @@ def main() -> int:
         help="Timeout for final report endpoints (balance/pnl/books)",
     )
     args = parser.parse_args()
+
+    if args.source_mode == "via-b":
+        with httpx.Client() as client:
+            return run_via_b_pipeline(client, args)
 
     input_path = Path(args.source_path).expanduser().resolve()
     if args.source_mode == "demo":
@@ -583,6 +786,24 @@ def main() -> int:
             cuenta_aux,
             args.report_timeout_seconds,
         )
+
+        # Display all stored financial statements including second-level
+        print("\n" + "=" * 60)
+        print("SECOND-LEVEL FINANCIAL DOCUMENTS")
+        print("=" * 60)
+        all_stmts = fetch_all_statements(client, args.base_url, company_nit, timeout=60)
+        print(f"Total stored statements: {len(all_stmts)}")
+        for stmt in sorted(all_stmts, key=lambda s: s["statement_type"]):
+            mode = stmt.get("source_mode", "?")
+            stype = stmt.get("statement_type", "?")
+            print(f"  [{mode:30s}] {stype}")
+        second_level_types = {"flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros"}
+        found_second = {s["statement_type"] for s in all_stmts} & second_level_types
+        if len(found_second) == 3:
+            print("\n[OK] All 3 second-level documents generated successfully")
+        else:
+            missing = second_level_types - found_second
+            print(f"\n[WARN] Missing second-level documents: {missing}")
 
     print("\nSimulacion completada.")
     return 0
