@@ -26,6 +26,8 @@ from app.services.db_service import financial_statements_exist, get_journal_entr
 from app.services.financial_statement_service import (
     BusinessRuleError,
     build_first_level_from_journal_entries,
+)
+from app.services.financial_statement_service import (
     derive_financial_statements as _derive_financial_statements,
 )
 from app.services.nit_utils import normalize_optional_nit
@@ -112,6 +114,236 @@ def _infer_total_from_items(items: Any) -> Optional[Decimal]:
     if not used_any:
         return None
     return inferred
+
+
+def _build_structured_transactions(
+    interpreted: dict[str, Any], doc_type: str
+) -> list[dict[str, Any]]:
+    """Map rich document schemas into one or more tx rows for persistence."""
+
+    emisor = interpreted.get("emisor") or {}
+    receptor = interpreted.get("receptor") or {}
+    totales = interpreted.get("totales") or {}
+    items_payload = interpreted.get("items") or interpreted.get("detalle_items") or []
+
+    # --- Doc-type specific mapping ---
+    if doc_type == "extracto_bancario":
+        titular = interpreted.get("titular") or {}
+        movements = interpreted.get("movements") or []
+        txs: list[dict[str, Any]] = []
+
+        if isinstance(movements, list):
+            for movement in movements:
+                if not isinstance(movement, dict):
+                    continue
+
+                debito = _safe_decimal(movement.get("debito")) or Decimal("0")
+                credito = _safe_decimal(movement.get("credito")) or Decimal("0")
+                valor = debito if debito > Decimal("0") else credito
+                if valor <= Decimal("0"):
+                    continue
+
+                descripcion = _as_str(
+                    movement.get("descripcion"), "Movimiento bancario"
+                )
+                referencia = _as_str(movement.get("referencia"), "").strip()
+                if referencia:
+                    descripcion = f"{descripcion} (ref: {referencia})"
+
+                txs.append(
+                    {
+                        "fecha": movement.get("fecha")
+                        or interpreted.get("periodo_fin")
+                        or interpreted.get("periodo_inicio"),
+                        "nit_emisor": _as_str(
+                            titular.get("nit") or interpreted.get("nit_emisor"), ""
+                        ),
+                        "nit_receptor": _as_str(
+                            interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                        ),
+                        "total": str(valor),
+                        "concepto": descripcion,
+                        "descripcion": descripcion,
+                        "items": [_sanitize_for_json(movement)],
+                    }
+                )
+
+        if txs:
+            return txs
+
+        resumen = interpreted.get("resumen") or {}
+        fallback_total = (
+            _safe_decimal((resumen or {}).get("total_debitos"))
+            or _safe_decimal((resumen or {}).get("total_creditos"))
+            or _safe_decimal(interpreted.get("saldo_final"))
+            or Decimal("0")
+        )
+        return [
+            {
+                "fecha": interpreted.get("periodo_fin")
+                or interpreted.get("periodo_inicio"),
+                "nit_emisor": _as_str(titular.get("nit"), ""),
+                "nit_receptor": _as_str(
+                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                ),
+                "total": str(fallback_total),
+                "concepto": "Extracto bancario",
+                "descripcion": "Extracto bancario",
+                "items": _sanitize_for_json(
+                    movements if isinstance(movements, list) else []
+                ),
+            }
+        ]
+
+    if doc_type == "nomina":
+        empresa = interpreted.get("empresa") or {}
+        periodo_inicio = _as_str(interpreted.get("periodo_inicio"), "")
+        periodo_fin = _as_str(interpreted.get("periodo_fin"), "")
+        periodo_txt = ""
+        if periodo_inicio and periodo_fin:
+            periodo_txt = f"Periodo {periodo_inicio} a {periodo_fin}"
+        elif periodo_inicio:
+            periodo_txt = f"Periodo desde {periodo_inicio}"
+        elif periodo_fin:
+            periodo_txt = f"Periodo hasta {periodo_fin}"
+
+        raw_total = (
+            interpreted.get("total_neto_pagar")
+            or interpreted.get("total_devengado")
+            or interpreted.get("total")
+        )
+        parsed_total = _safe_decimal(raw_total)
+        if parsed_total is None:
+            empleados = interpreted.get("empleados") or []
+            if isinstance(empleados, list):
+                parsed_total = sum(
+                    [
+                        _safe_decimal((e or {}).get("neto_pagar")) or Decimal("0")
+                        for e in empleados
+                        if isinstance(e, dict)
+                    ],
+                    Decimal("0"),
+                )
+            else:
+                parsed_total = Decimal("0")
+
+        concepto = "Nomina"
+        if periodo_txt:
+            concepto = f"Nomina - {periodo_txt}"
+
+        return [
+            {
+                "fecha": interpreted.get("periodo_fin")
+                or interpreted.get("periodo_inicio")
+                or interpreted.get("fecha"),
+                "nit_emisor": _as_str(
+                    empresa.get("nit") or interpreted.get("nit_emisor"), ""
+                ),
+                "nit_receptor": _as_str(
+                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                ),
+                "total": str(parsed_total),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "items": _sanitize_for_json(interpreted.get("empleados") or []),
+            }
+        ]
+
+    if doc_type == "recibo_pago_impuesto":
+        raw_total = (
+            interpreted.get("total_pagado")
+            or interpreted.get("valor_principal")
+            or interpreted.get("total")
+        )
+        parsed_total = _safe_decimal(raw_total) or Decimal("0")
+        tipo_impuesto = _as_str(interpreted.get("tipo_impuesto"), "")
+        periodo_gravable = _as_str(interpreted.get("periodo_gravable"), "")
+        concepto = "Pago de impuesto"
+        if tipo_impuesto:
+            concepto = f"Pago de impuesto {tipo_impuesto}"
+        if periodo_gravable:
+            concepto = f"{concepto} ({periodo_gravable})"
+
+        return [
+            {
+                "fecha": interpreted.get("fecha_pago") or interpreted.get("fecha"),
+                "nit_emisor": _as_str(
+                    interpreted.get("nit_declarante") or interpreted.get("nit_emisor"),
+                    "",
+                ),
+                "nit_receptor": _as_str(
+                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                ),
+                "total": str(parsed_total),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "items": _sanitize_for_json(
+                    [
+                        {
+                            "numero_recibo": interpreted.get("numero_recibo"),
+                            "entidad_fiscal": interpreted.get("entidad_fiscal"),
+                            "banco": interpreted.get("banco"),
+                            "referencia_pago": interpreted.get("referencia_pago"),
+                            "valor_principal": interpreted.get("valor_principal"),
+                            "sanciones": interpreted.get("sanciones"),
+                            "intereses": interpreted.get("intereses"),
+                            "total_pagado": interpreted.get("total_pagado"),
+                        }
+                    ]
+                ),
+            }
+        ]
+
+    # --- Generic fallback mapping ---
+    raw_total = (
+        # Invoice-like schemas
+        totales.get("total_a_pagar")
+        or totales.get("total")
+        # Voucher-like schemas
+        or interpreted.get("valor_neto")
+        or interpreted.get("valor_bruto")
+        # Generic fallbacks
+        or interpreted.get("total")
+        or interpreted.get("valor_total")
+        or interpreted.get("valor")
+        or interpreted.get("monto")
+    )
+    parsed_total = _safe_decimal(raw_total)
+    if parsed_total is None or parsed_total == Decimal("0"):
+        inferred_total = _infer_total_from_items(items_payload)
+        if inferred_total is not None and inferred_total > Decimal("0"):
+            logger.info(
+                "db_persist: inferred total=%s from line items for structured ingest",
+                inferred_total,
+            )
+            parsed_total = inferred_total
+
+    tx_data = {
+        "fecha": (
+            interpreted.get("fecha_emision")
+            or interpreted.get("fecha_registro")
+            or interpreted.get("fecha")
+        ),
+        "nit_emisor": _as_str(emisor.get("nit") or interpreted.get("nit_emisor"), ""),
+        "nit_receptor": _as_str(
+            receptor.get("nit") or interpreted.get("nit_receptor"), ""
+        ),
+        "total": str(parsed_total if parsed_total is not None else Decimal("0")),
+        "concepto": _as_str(
+            interpreted.get("descripcion_general")
+            or interpreted.get("concepto")
+            or interpreted.get("tipo_documento", ""),
+            "",
+        ),
+        "descripcion": _as_str(
+            interpreted.get("descripcion_general")
+            or interpreted.get("concepto")
+            or interpreted.get("tipo_documento", ""),
+            "",
+        ),
+        "items": _sanitize_for_json(items_payload),
+    }
+    return [tx_data]
 
 
 def _resolve_company_nit(
@@ -297,6 +529,8 @@ def _run_persist(state: AgentState) -> AgentState:
     mode = state.get("mode", "ingest")
     pathway = state.get("pathway", "build_from_scratch")
     interpreted = state.get("interpreted_data", {}) or {}
+    classification = state.get("document_classification") or {}
+    doc_type = _as_str(classification.get("doc_type"), "")
 
     # --- Vía B: persist existing financial statement directly ---
     if mode == "ingest" and pathway == "work_with_existing":
@@ -379,66 +613,9 @@ def _run_persist(state: AgentState) -> AgentState:
         transactions = [tx_data]
     else:
         # New rich-schema path: interpreted_data is a typed content dict (FacturaVentaContent, etc.)
-        # Build a single tx_data from the structured fields.
+        # Build one or multiple tx rows from structured fields.
         if isinstance(interpreted, dict) and "transactions" not in interpreted:
-            emisor = interpreted.get("emisor") or {}
-            receptor = interpreted.get("receptor") or {}
-            totales = interpreted.get("totales") or {}
-            items_payload = (
-                interpreted.get("items") or interpreted.get("detalle_items") or []
-            )
-            raw_total = (
-                # Invoice-like schemas
-                totales.get("total_a_pagar")
-                or totales.get("total")
-                # Voucher-like schemas (e.g. comprobante_egreso)
-                or interpreted.get("valor_neto")
-                or interpreted.get("valor_bruto")
-                # Generic fallbacks
-                or interpreted.get("total")
-                or interpreted.get("valor_total")
-                or interpreted.get("valor")
-                or interpreted.get("monto")
-            )
-            parsed_total = _safe_decimal(raw_total)
-            if parsed_total is None or parsed_total == Decimal("0"):
-                inferred_total = _infer_total_from_items(items_payload)
-                if inferred_total is not None and inferred_total > Decimal("0"):
-                    logger.info(
-                        "db_persist: inferred total=%s from line items for structured ingest",
-                        inferred_total,
-                    )
-                    parsed_total = inferred_total
-            tx_data = {
-                "fecha": (
-                    interpreted.get("fecha_emision")
-                    or interpreted.get("fecha_registro")
-                    or interpreted.get("fecha")
-                ),
-                "nit_emisor": _as_str(
-                    emisor.get("nit") or interpreted.get("nit_emisor"), ""
-                ),
-                "nit_receptor": _as_str(
-                    receptor.get("nit") or interpreted.get("nit_receptor"), ""
-                ),
-                "total": str(
-                    parsed_total if parsed_total is not None else Decimal("0")
-                ),
-                "concepto": _as_str(
-                    interpreted.get("descripcion_general")
-                    or interpreted.get("concepto")
-                    or interpreted.get("tipo_documento", ""),
-                    "",
-                ),
-                "descripcion": _as_str(
-                    interpreted.get("descripcion_general")
-                    or interpreted.get("concepto")
-                    or interpreted.get("tipo_documento", ""),
-                    "",
-                ),
-                "items": _sanitize_for_json(items_payload),
-            }
-            transactions = [tx_data]
+            transactions = _build_structured_transactions(interpreted, doc_type)
         else:
             transactions = (
                 interpreted.get("transactions", [])
@@ -464,7 +641,7 @@ def _run_persist(state: AgentState) -> AgentState:
                     db,
                     ingest_id,
                     IngestStatus.PROCESSING,
-                    raw_preview=_build_preview(transactions[0]),
+                    raw_preview=_build_preview(transactions[0], doc_type),
                 )
         else:
             file_name = state.get("file_path", "unknown.pdf").split("/")[-1]
@@ -880,7 +1057,10 @@ def _persist_financial_statement(state: AgentState) -> None:
         db.commit()
 
         # Via B auto-derivation: if all 3 source statements present, derive second-level
-        if doc_type in ("balance_general", "estado_resultados", "libro_auxiliar") and company_nit:
+        if (
+            doc_type in ("balance_general", "estado_resultados", "libro_auxiliar")
+            and company_nit
+        ):
             _try_via_b_auto_derive(
                 db,
                 company_nit=company_nit,
@@ -924,12 +1104,25 @@ def _persist_financial_statement(state: AgentState) -> None:
         db.close()
 
 
-def _build_preview(interpreted: dict) -> dict:
+def _build_preview(interpreted: dict, doc_type: str = "") -> dict:
+    concepto = _as_str(interpreted.get("concepto"), "").strip()
+    if not concepto:
+        default_by_type = {
+            "extracto_bancario": "Extracto bancario",
+            "nomina": "Nomina",
+            "recibo_pago_impuesto": "Pago de impuesto",
+        }
+        concepto = default_by_type.get(doc_type, "")
+
+    items = interpreted.get("items")
+    items_count = len(items) if isinstance(items, list) else 0
+
     return {
         "nit_emisor": interpreted.get("nit_emisor"),
         "total": str(interpreted.get("total", "")),
         "fecha": str(interpreted.get("fecha", "")),
-        "concepto": str(interpreted.get("concepto") or "")[:100],
+        "concepto": concepto[:100],
+        "items_count": items_count,
     }
 
 
