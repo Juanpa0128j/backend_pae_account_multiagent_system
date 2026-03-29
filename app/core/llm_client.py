@@ -756,6 +756,87 @@ Documento:
         return self._as_dict(self._invoke(ReciboPagoImpuestoContent, prompt))
 
 
+    # ------------------------------------------------------------------
+    # Reportero: Financial analysis methods
+    # ------------------------------------------------------------------
+
+    def generate_financial_analysis(
+        self,
+        financial_data: dict,
+        rag_context: str,
+        system_prompt: str,
+    ) -> dict:
+        """Generate a comprehensive financial analysis.
+
+        Args:
+            financial_data: Dict with balance_summary, pnl_summary, ratios,
+                            monthly_trends, predicciones_numericas, top_accounts, etc.
+            rag_context: Normative RAG context string.
+            system_prompt: The reportero system prompt constant.
+
+        Returns:
+            Dict from ReporteroAnalysisGemini structured output.
+        """
+        import json
+        from app.core.gemini_client import ReporteroAnalysisGemini
+
+        prompt = f"""{system_prompt}
+
+=== DATOS FINANCIEROS A ANALIZAR ===
+{json.dumps(financial_data, ensure_ascii=False, indent=2, default=str)}
+
+=== CONTEXTO NORMATIVO (RAG) ===
+{rag_context if rag_context else "Sin contexto normativo adicional disponible."}
+
+Genera el análisis financiero completo siguiendo la estructura requerida.
+Todas las respuestas deben ser en español."""
+
+        try:
+            result = self._invoke(ReporteroAnalysisGemini, prompt)
+            data = self._as_dict(result)
+            logger.info("Reportero financial analysis generated successfully")
+            return data
+        except Exception as e:
+            logger.error("LLM error in generate_financial_analysis: %s", e)
+            raise
+
+    def generate_brief_report_analysis(
+        self,
+        report_type: str,
+        report_data: dict,
+        rag_context: str,
+    ) -> dict:
+        """Generate a brief LLM analysis for a specific report type.
+
+        Used when include_analysis=true on individual report endpoints.
+        """
+        import json
+        from app.core.gemini_client import ReporteroBriefAnalysisGemini
+
+        prompt = f"""Eres un Director Financiero experto en contabilidad colombiana (NIIF, PUC, Estatuto Tributario).
+
+Analiza el siguiente reporte de tipo '{report_type}' y proporciona:
+1. Un resumen ejecutivo breve (1-2 párrafos)
+2. Los 3-5 puntos clave más importantes
+3. Alertas de riesgo si las hay
+4. 1-3 recomendaciones accionables
+
+=== DATOS DEL REPORTE ===
+{json.dumps(report_data, ensure_ascii=False, indent=2, default=str)}
+
+=== CONTEXTO NORMATIVO ===
+{rag_context if rag_context else "Sin contexto normativo adicional."}
+
+Responde en español."""
+
+        try:
+            result = self._invoke(ReporteroBriefAnalysisGemini, prompt)
+            return self._as_dict(result)
+        except Exception as e:
+            logger.warning("Brief report analysis failed (non-fatal): %s", e)
+            return {"error": f"Análisis LLM no disponible: {e}"}
+
+
 @lru_cache(maxsize=1)
 def get_llm_client() -> LLMClient:
     """Return the singleton LLMClient instance."""

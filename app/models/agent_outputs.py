@@ -503,6 +503,9 @@ class BalanceSheetOutput(BaseModel):
         default_factory=list,
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
     )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
+    )
 
 
 class PnLOutput(BaseModel):
@@ -525,6 +528,9 @@ class PnLOutput(BaseModel):
     notas_normativas: List[str] = Field(
         default_factory=list,
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
+    )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
     )
 
 
@@ -550,6 +556,9 @@ class CashFlowOutput(BaseModel):
         default_factory=list,
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
     )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
+    )
 
 
 class IVAOutput(BaseModel):
@@ -567,6 +576,9 @@ class IVAOutput(BaseModel):
     referencias: List[str] = Field(
         default_factory=lambda: ["Art. 477 ET", "Art. 24 ET"],
         description="Applicable legal references",
+    )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
     )
 
 
@@ -586,6 +598,105 @@ class WithholdingsOutput(BaseModel):
         default_factory=lambda: ["Art. 383 ET", "Decreto 2048/1992"],
         description="Applicable legal references",
     )
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative analysis (present when include_analysis=true)",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. REPORTERO Analysis Output — financial analysis with predictions
+# ---------------------------------------------------------------------------
+
+class FinancialRatios(BaseModel):
+    """Key financial ratios computed deterministically."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    razon_corriente: Optional[float] = Field(None, description="Current ratio: current assets / current liabilities")
+    prueba_acida: Optional[float] = Field(None, description="Acid test: (current assets - inventories) / current liabilities")
+    margen_neto: Optional[float] = Field(None, description="Net margin %: net profit / revenue")
+    roa: Optional[float] = Field(None, description="Return on assets %: net profit / total assets")
+    razon_endeudamiento: Optional[float] = Field(None, description="Debt ratio: liabilities / assets")
+    deuda_patrimonio: Optional[float] = Field(None, description="Debt-to-equity: liabilities / equity")
+    rotacion_activos: Optional[float] = Field(None, description="Asset turnover: revenue / assets")
+
+
+class PrediccionNumerica(BaseModel):
+    """Single month prediction from linear regression."""
+
+    periodo: str = Field(..., description="Month as YYYY-MM")
+    ingresos_estimados: float = Field(0, description="Projected revenue")
+    gastos_estimados: float = Field(0, description="Projected expenses")
+    utilidad_estimada: float = Field(0, description="Projected net profit")
+
+
+class PeriodDelta(BaseModel):
+    """Change in a single account between two periods."""
+
+    account: str = Field(..., description="PUC account code")
+    name: str = Field("", description="Account name")
+    period1_value: float = Field(0)
+    period2_value: float = Field(0)
+    absolute_change: float = Field(0)
+    percentage_change: Optional[float] = Field(None, description="% change, null if base is zero")
+
+
+class ComparativeReportOutput(BaseModel):
+    """Side-by-side comparison of two periods."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    report_type: str = Field(default="comparative")
+    period1: Dict[str, str] = Field(..., description="{start, end}")
+    period2: Dict[str, str] = Field(..., description="{start, end}")
+    deltas: List[PeriodDelta] = Field(default_factory=list)
+    generated_at: str = Field(..., description="ISO UTC timestamp")
+
+
+class FinancialAnalysisOutput(BaseModel):
+    """Full financial analysis report with deterministic data + LLM narrative."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    report_type: str = Field(default="financial_analysis")
+    period_start: Optional[str] = Field(None)
+    period_end: str = Field(...)
+    generated_at: str = Field(...)
+    # Deterministic section
+    balance_summary: Dict[str, Any] = Field(default_factory=dict, description="Balance sheet summary")
+    pnl_summary: Dict[str, Any] = Field(default_factory=dict, description="P&L summary")
+    ratios: FinancialRatios = Field(default_factory=FinancialRatios)
+    top_accounts_debit: List[CuentaResumen] = Field(default_factory=list)
+    top_accounts_credit: List[CuentaResumen] = Field(default_factory=list)
+    top_terceros: List[Dict[str, Any]] = Field(default_factory=list)
+    anomalies: List[Dict[str, Any]] = Field(default_factory=list)
+    monthly_trends: Dict[str, Any] = Field(default_factory=dict, description="Monthly trend data by class")
+    predicciones_numericas: List[PrediccionNumerica] = Field(
+        default_factory=list, description="3-month linear regression projections"
+    )
+    # LLM-generated section (non-fatal: may be absent if Gemini fails)
+    analysis: Optional[Dict[str, Any]] = Field(
+        None, description="LLM narrative: resumen, explicaciones, predicciones, recomendaciones"
+    )
+    notas_normativas: List[str] = Field(default_factory=list)
+
+
+class DashboardFinancialSummary(BaseModel):
+    """Complete financial summary for dashboard view."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    total_activos: float = Field(0)
+    total_pasivos: float = Field(0)
+    patrimonio: float = Field(0)
+    utilidad_neta: float = Field(0)
+    efectivo_disponible: float = Field(0, description="Cash position (class 11)")
+    iva_por_pagar: float = Field(0)
+    total_retenciones: float = Field(0)
+    ingresos_periodo: float = Field(0)
+    gastos_periodo: float = Field(0)
+    transacciones_por_estado: Dict[str, int] = Field(default_factory=dict)
+    actividad_reciente: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

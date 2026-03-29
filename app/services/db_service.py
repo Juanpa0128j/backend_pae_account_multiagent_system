@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
 
-from sqlalchemy import func, and_, cast, Integer
+from sqlalchemy import func, and_, cast, Integer, extract
 from sqlalchemy.orm import Session
 
 from app.models.database import (
@@ -785,4 +785,242 @@ def count_vector_documents(db: Session, collection_name: str) -> int:
         {"c": collection_name},
     ).scalar()
     return int(result or 0)
+
+
+# ─── Reportero: Analytics & Dashboard Queries ─────────────────────────────────
+
+def get_balance_sheet_for_period(
+    db: Session,
+    start_date: datetime = None,
+    end_date: datetime = None,
+) -> Dict:
+    """Balance sheet scoped to a date range (not just cutoff).
+
+    Same logic as get_balance_sheet but filters by both start and end date.
+    """
+    query = db.query(JournalEntryLine)
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
+
+    lines = query.all()
+    totals = {1: Decimal("0"), 2: Decimal("0"), 3: Decimal("0"),
+              4: Decimal("0"), 5: Decimal("0"), 6: Decimal("0")}
+
+    for line in lines:
+        if not line.cuenta_puc:
+            continue
+        clase = int(line.cuenta_puc[0])
+        if clase in totals:
+            if clase in (1, 5, 6):
+                totals[clase] += (line.debito or Decimal("0")) - (line.credito or Decimal("0"))
+            else:
+                totals[clase] += (line.credito or Decimal("0")) - (line.debito or Decimal("0"))
+
+    net_profit = totals[4] - totals[5] - totals[6]
+    return {
+        "assets": float(totals[1]),
+        "liabilities": float(totals[2]),
+        "equity": float(totals[3]),
+        "revenue": float(totals[4]),
+        "expenses": float(totals[5]),
+        "cost_of_sales": float(totals[6]),
+        "net_profit": float(net_profit),
+        "total_equity": float(totals[3] + net_profit),
+        "is_balanced": totals[1] == totals[2] + totals[3] + net_profit,
+    }
+
+
+def get_period_comparison(
+    db: Session,
+    p1_start: datetime,
+    p1_end: datetime,
+    p2_start: datetime,
+    p2_end: datetime,
+) -> Dict[str, Any]:
+    """Return two ledger snapshots plus computed deltas per account."""
+    ledger1 = get_general_ledger(db, start_date=p1_start, end_date=p1_end)
+    ledger2 = get_general_ledger(db, start_date=p2_start, end_date=p2_end)
+
+    map1 = {r["account"]: r for r in ledger1}
+    map2 = {r["account"]: r for r in ledger2}
+    all_accounts = sorted(set(map1.keys()) | set(map2.keys()))
+
+    deltas: List[Dict[str, Any]] = []
+    for acc in all_accounts:
+        r1 = map1.get(acc, {"net_balance": 0.0, "name": ""})
+        r2 = map2.get(acc, {"net_balance": 0.0, "name": ""})
+        v1 = r1["net_balance"]
+        v2 = r2["net_balance"]
+        abs_change = v2 - v1
+        pct_change = (abs_change / abs(v1) * 100) if v1 != 0 else None
+        deltas.append({
+            "account": acc,
+            "name": r1.get("name") or r2.get("name", ""),
+            "period1_value": v1,
+            "period2_value": v2,
+            "absolute_change": abs_change,
+            "percentage_change": round(pct_change, 2) if pct_change is not None else None,
+        })
+
+    return {
+        "period1": {"start": p1_start.isoformat(), "end": p1_end.isoformat()},
+        "period2": {"start": p2_start.isoformat(), "end": p2_end.isoformat()},
+        "deltas": deltas,
+    }
+
+
+def get_top_accounts(
+    db: Session,
+    start_date: datetime = None,
+    end_date: datetime = None,
+    by: str = "debit",
+    limit: int = 5,
+) -> List[Dict[str, Any]]:
+    """Return top N accounts ranked by total debit or credit volume."""
+    order_col = func.sum(JournalEntryLine.debito) if by == "debit" else func.sum(JournalEntryLine.credito)
+
+    query = db.query(
+        JournalEntryLine.cuenta_puc,
+        JournalEntryLine.cuenta_nombre,
+        func.sum(JournalEntryLine.debito).label("total_debit"),
+        func.sum(JournalEntryLine.credito).label("total_credit"),
+    ).group_by(JournalEntryLine.cuenta_puc, JournalEntryLine.cuenta_nombre)
+
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
+
+    results = query.order_by(order_col.desc()).limit(limit).all()
+    return [
+        {
+            "codigo": r.cuenta_puc,
+            "nombre": r.cuenta_nombre,
+            "total_debito": float(r.total_debit or 0),
+            "total_credito": float(r.total_credit or 0),
+        }
+        for r in results
+    ]
+
+
+def get_top_terceros(
+    db: Session,
+    start_date: datetime = None,
+    end_date: datetime = None,
+    limit: int = 5,
+) -> List[Dict[str, Any]]:
+    """Return top N terceros by transaction volume (count + total amount)."""
+    query = db.query(
+        JournalEntryLine.tercero_nit,
+        func.count(JournalEntryLine.id).label("num_entries"),
+        func.sum(JournalEntryLine.debito).label("total_debit"),
+        func.sum(JournalEntryLine.credito).label("total_credit"),
+    ).filter(
+        JournalEntryLine.tercero_nit.isnot(None),
+        JournalEntryLine.tercero_nit != "",
+    ).group_by(JournalEntryLine.tercero_nit)
+
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
+
+    results = query.order_by(func.count(JournalEntryLine.id).desc()).limit(limit).all()
+    return [
+        {
+            "nit": r.tercero_nit,
+            "num_movimientos": r.num_entries,
+            "total_debito": float(r.total_debit or 0),
+            "total_credito": float(r.total_credit or 0),
+        }
+        for r in results
+    ]
+
+
+def get_monthly_trend(
+    db: Session,
+    account_prefix: str,
+    months: int = 6,
+) -> List[Dict[str, Any]]:
+    """Return monthly aggregated balances for a given account prefix.
+
+    Groups by year-month and returns totals for debit, credit, and net.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=months * 31)
+
+    query = db.query(
+        extract("year", JournalEntryLine.fecha).label("yr"),
+        extract("month", JournalEntryLine.fecha).label("mo"),
+        func.sum(JournalEntryLine.debito).label("total_debit"),
+        func.sum(JournalEntryLine.credito).label("total_credit"),
+    ).filter(
+        JournalEntryLine.cuenta_puc.startswith(account_prefix),
+        JournalEntryLine.fecha >= cutoff,
+    ).group_by("yr", "mo").order_by("yr", "mo")
+
+    results = query.all()
+    return [
+        {
+            "month": f"{int(r.yr)}-{int(r.mo):02d}",
+            "total_debit": float(r.total_debit or 0),
+            "total_credit": float(r.total_credit or 0),
+            "net": float((r.total_debit or 0) - (r.total_credit or 0)),
+        }
+        for r in results
+    ]
+
+
+def get_monthly_totals_by_class(
+    db: Session,
+    months: int = 6,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Return monthly totals for each PUC class (1-6). Used for predictions.
+
+    Returns a dict keyed by class name with monthly data lists.
+    """
+    class_map = {
+        "4": "ingresos",
+        "5": "gastos",
+        "6": "costo_ventas",
+        "1": "activos",
+        "2": "pasivos",
+        "3": "patrimonio",
+    }
+    result = {}
+    for prefix, name in class_map.items():
+        result[name] = get_monthly_trend(db, prefix, months)
+    return result
+
+
+def get_transaction_counts_by_status(db: Session) -> Dict[str, int]:
+    """Return a dict mapping each TransactionStatus to its count."""
+    rows = (
+        db.query(TransactionPending.status, func.count(TransactionPending.id))
+        .group_by(TransactionPending.status)
+        .all()
+    )
+    return {str(status.value): count for status, count in rows}
+
+
+def get_recent_activity(db: Session, limit: int = 10) -> List[Dict[str, Any]]:
+    """Return the N most recent audit log entries."""
+    logs = (
+        db.query(AuditLog)
+        .order_by(AuditLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": log.id,
+            "action": log.action,
+            "entity_id": log.entity_id,
+            "entity_type": log.entity_type,
+            "details": log.details,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in logs
+    ]
 
