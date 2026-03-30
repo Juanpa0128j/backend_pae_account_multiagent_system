@@ -402,9 +402,12 @@ def supervisor_node(state: AgentState) -> AgentState:
 
                     if classification.doc_type in via_b_doc_types:
                         state["mode"] = "ingest"
-                        state["current_agent"] = "import_existing"
+                        # Vía B still needs typed extraction before persistence.
+                        # Route through ingesta so interpreted_data is populated,
+                        # then db_persist stores it as financial_statement.
+                        state["current_agent"] = "ingesta"
                         logger.info(
-                            "Supervisor: Vía B — routing to import_existing for %s (%s)",
+                            "Supervisor: Vía B — routing to ingesta for %s (%s)",
                             file_path,
                             classification.doc_type.value,
                         )
@@ -413,7 +416,7 @@ def supervisor_node(state: AgentState) -> AgentState:
                             "supervisor",
                             "routing_complete",
                             {
-                                "next_agent": "import_existing",
+                                "next_agent": "ingesta",
                                 "mode": "ingest",
                                 "pathway": "work_with_existing",
                             },
