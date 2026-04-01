@@ -642,3 +642,183 @@ class TestReporteroNodeRAGEnrichment:
         assert result_state.get("error") is None, \
             f"RAG failure set error for report_type={report_type!r}"
         assert result_state["result"]["status"] == "ok"
+
+
+# ─── Tests for analysis report type and include_analysis ───────────────────
+
+_MONTHLY_TREND_DATA = {
+    "ingresos": [
+        {"month": "2025-10", "total_debit": 0, "total_credit": 1000, "net": -1000},
+        {"month": "2025-11", "total_debit": 0, "total_credit": 1200, "net": -1200},
+        {"month": "2025-12", "total_debit": 0, "total_credit": 1400, "net": -1400},
+    ],
+    "gastos": [
+        {"month": "2025-10", "total_debit": 500, "total_credit": 0, "net": 500},
+        {"month": "2025-11", "total_debit": 550, "total_credit": 0, "net": 550},
+        {"month": "2025-12", "total_debit": 600, "total_credit": 0, "net": 600},
+    ],
+    "costo_ventas": [],
+    "activos": [],
+    "pasivos": [],
+    "patrimonio": [],
+}
+
+
+class TestReporteroAnalysis:
+    """Tests for the new 'analysis' report type."""
+
+    def _setup_analysis_mocks(self, svc):
+        """Configure all mocks needed for _build_analysis."""
+        svc.get_balance_sheet.return_value = _BALANCE_DATA
+        svc.get_balance_sheet_for_period.return_value = _BALANCE_DATA
+        svc.get_general_ledger.return_value = _LEDGER
+        svc.get_top_accounts.return_value = [
+            {"codigo": "4135", "nombre": "Servicios", "total_debito": 0, "total_credito": 8_000_000},
+        ]
+        svc.get_top_terceros.return_value = [
+            {"nit": "900123456", "num_movimientos": 10, "total_debito": 5_000_000, "total_credito": 0},
+        ]
+        svc.get_monthly_totals_by_class.return_value = _MONTHLY_TREND_DATA
+
+    def test_analysis_report_returns_ratios(self):
+        """Analysis report must include financial ratios."""
+        state = base_reporting_state("analysis", start_date=_START, end_date=_END)
+        svc = MagicMock()
+        self._setup_analysis_mocks(svc)
+
+        # Mock out LLM (non-fatal, will fail gracefully)
+        mock_gemini_module = MagicMock()
+        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("no LLM")
+
+        all_mocks = {
+            **_mock_db_modules(svc),
+            **_mock_rag_modules([]),
+            "app.core.gemini_client": mock_gemini_module,
+        }
+        with patch.dict(sys.modules, all_mocks):
+            result_state = reportero_node(state)
+
+        assert result_state.get("error") is None
+        report = result_state["result"]["report"]
+        assert report["report_type"] == "financial_analysis"
+        assert "ratios" in report
+        assert "razon_corriente" in report["ratios"]
+        assert "margen_neto" in report["ratios"]
+        assert "roa" in report["ratios"]
+
+    def test_analysis_report_returns_predictions(self):
+        """Analysis report must include numeric predictions."""
+        state = base_reporting_state("analysis", start_date=_START, end_date=_END)
+        svc = MagicMock()
+        self._setup_analysis_mocks(svc)
+
+        mock_gemini_module = MagicMock()
+        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("no LLM")
+
+        all_mocks = {
+            **_mock_db_modules(svc),
+            **_mock_rag_modules([]),
+            "app.core.gemini_client": mock_gemini_module,
+        }
+        with patch.dict(sys.modules, all_mocks):
+            result_state = reportero_node(state)
+
+        report = result_state["result"]["report"]
+        assert "predicciones_numericas" in report
+        preds = report["predicciones_numericas"]
+        assert len(preds) == 3
+        assert preds[0]["periodo"] == "2026-01"
+
+    def test_analysis_llm_failure_returns_deterministic_data(self):
+        """When LLM fails, analysis report still returns all deterministic data."""
+        state = base_reporting_state("analysis", end_date=_END)
+        svc = MagicMock()
+        self._setup_analysis_mocks(svc)
+
+        mock_gemini_module = MagicMock()
+        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("quota exhausted")
+
+        all_mocks = {
+            **_mock_db_modules(svc),
+            **_mock_rag_modules([]),
+            "app.core.gemini_client": mock_gemini_module,
+        }
+        with patch.dict(sys.modules, all_mocks):
+            result_state = reportero_node(state)
+
+        assert result_state.get("error") is None
+        report = result_state["result"]["report"]
+        # Deterministic data present
+        assert report["balance_summary"]["assets"] == pytest.approx(17_000_000)
+        assert "ratios" in report
+        assert "top_accounts_debit" in report
+        # LLM analysis has error but didn't crash
+        assert "analysis" in report
+        analysis = report["analysis"]
+        assert isinstance(analysis, dict)
+        assert "error" in analysis
+
+    def test_analysis_report_has_top_accounts_and_terceros(self):
+        """Analysis report must include top accounts and terceros."""
+        state = base_reporting_state("analysis", end_date=_END)
+        svc = MagicMock()
+        self._setup_analysis_mocks(svc)
+
+        mock_gemini_module = MagicMock()
+        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("no LLM")
+
+        all_mocks = {
+            **_mock_db_modules(svc),
+            **_mock_rag_modules([]),
+            "app.core.gemini_client": mock_gemini_module,
+        }
+        with patch.dict(sys.modules, all_mocks):
+            result_state = reportero_node(state)
+
+        report = result_state["result"]["report"]
+        assert isinstance(report["top_accounts_debit"], list)
+        assert len(report["top_accounts_debit"]) >= 1  # mock returns 1 entry
+        assert isinstance(report["top_terceros"], list)
+        assert len(report["top_terceros"]) >= 1  # mock returns 1 entry
+
+
+class TestIncludeAnalysis:
+    """Tests for include_analysis=true on standard reports."""
+
+    def test_balance_with_include_analysis_adds_field(self):
+        """Balance report with include_analysis=true should have an analysis field."""
+        state = base_reporting_state("balance", end_date=_END)
+        state["report_params"]["include_analysis"] = True
+        svc = MagicMock()
+        svc.get_balance_sheet.return_value = _BALANCE_DATA
+
+        mock_gemini_module = MagicMock()
+        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("no LLM")
+
+        all_mocks = {
+            **_mock_db_modules(svc),
+            **_mock_rag_modules([]),
+            "app.core.gemini_client": mock_gemini_module,
+        }
+        with patch.dict(sys.modules, all_mocks):
+            result_state = reportero_node(state)
+
+        assert result_state.get("error") is None
+        report = result_state["result"]["report"]
+        assert report["report_type"] == "balance_sheet"
+        # analysis field should exist (even if LLM failed)
+        assert "analysis" in report
+
+    def test_pnl_without_include_analysis_has_no_analysis_field(self):
+        """PnL report without include_analysis should NOT have analysis field."""
+        state = base_reporting_state("pnl", start_date=_START, end_date=_END)
+        svc = MagicMock()
+        svc.get_general_ledger.return_value = _LEDGER
+
+        all_mocks = {**_mock_db_modules(svc), **_mock_rag_modules([])}
+        with patch.dict(sys.modules, all_mocks):
+            result_state = reportero_node(state)
+
+        assert result_state.get("error") is None
+        report = result_state["result"]["report"]
+        assert "analysis" not in report
