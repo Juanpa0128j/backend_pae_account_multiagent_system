@@ -150,7 +150,7 @@ def _calc_provision_renta(utilidad_neta: Decimal, tasa: Decimal = TASA_RENTA) ->
     return (utilidad_neta * tasa).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def _calc_period_renta_provision(
+def calc_period_renta_provision(
     db_session,
     nit_receptor: str,
     period_start,

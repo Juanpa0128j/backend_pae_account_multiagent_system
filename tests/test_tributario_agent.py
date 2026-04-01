@@ -28,7 +28,10 @@ from app.agents.tributario_agent import (
     _calc_retefuente,
     _calc_reteica,
     _calc_iva,
+    _calc_ica,
+    _calc_provision_renta,
     _has_iva_in_asientos,
+    _has_income_accounts,
 )
 from app.agents.state import AgentState
 from app.core.gemini_client import TaxJustification
@@ -534,14 +537,6 @@ def test_process_mode_uses_company_settings_when_present(
 
 
 # ─── ICA and Renta tests ──────────────────────────────────────────────────────
-
-from app.agents.tributario_agent import (
-    _calc_ica,
-    _calc_provision_renta,
-    _has_income_accounts,
-    TASA_ICA_DEFAULT,
-    TASA_RENTA,
-)
 
 
 def test_calc_ica_deterministic():

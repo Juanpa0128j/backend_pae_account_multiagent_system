@@ -265,16 +265,33 @@ def upgrade() -> None:
 
     # ── vector_documents ──
     # Final state (absorbing c3f8a2d91b5e + d4e5f6a7b8c9 + b232aff042b8):
-    # embedding and content_tsv were added then dropped — created here in final form.
+    # embedding and content_tsv columns included here in their final form.
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.execute("""
         CREATE TABLE IF NOT EXISTS vector_documents (
             id              VARCHAR NOT NULL,
             collection_name VARCHAR(255) NOT NULL,
             content         TEXT NOT NULL,
             metadata        JSONB DEFAULT '{}',
+            embedding       vector(1024),
+            content_tsv     tsvector GENERATED ALWAYS AS (
+                                to_tsvector('simple', coalesce(content, ''))
+                            ) STORED,
             created_at      TIMESTAMPTZ DEFAULT NOW(),
             PRIMARY KEY (collection_name, id)
         )
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS ix_vector_documents_collection_name
+            ON vector_documents (collection_name)
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS ix_vector_documents_content_tsv_gin
+            ON vector_documents USING GIN (content_tsv)
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS ix_vector_documents_embedding_hnsw
+            ON vector_documents USING hnsw (embedding vector_cosine_ops)
     """)
 
     # ── financial_statements ── (absorbed from b232aff042b8)
