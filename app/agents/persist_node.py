@@ -200,6 +200,8 @@ def _run_persist(state: AgentState) -> AgentState:
             "retefuente": _get_trib_tax("retefuente"),
             "reteica": _get_trib_tax("reteica"),
             "iva": _get_trib_tax("IVA"),
+            "ica": _get_trib_tax("ica"),
+            "renta": _get_trib_tax("renta"),
             "referencias_legales": tributario_output.get("referencias_legales", []),
             "agent_reasoning": (state.get("result") or {}).get("agent_reasoning"),
             "_contador_asientos": asientos,
@@ -378,6 +380,8 @@ def _run_persist(state: AgentState) -> AgentState:
             retefuente = _safe_decimal(tx_data.get("retefuente")) or Decimal("0")
             reteica = _safe_decimal(tx_data.get("reteica")) or Decimal("0")
             iva = _safe_decimal(tx_data.get("iva") or tx_data.get("iva_valor")) or Decimal("0")
+            ica = _safe_decimal(tx_data.get("ica")) or Decimal("0")
+            provision_renta = _safe_decimal(tx_data.get("renta")) or Decimal("0")
             neto = _safe_decimal(tx_data.get("neto_a_pagar")) or total
 
             if mode == "process":
@@ -418,6 +422,8 @@ def _run_persist(state: AgentState) -> AgentState:
                 retefuente=retefuente,
                 reteica=reteica,
                 iva=iva,
+                ica=ica,
+                provision_renta=provision_renta,
                 neto_a_pagar=neto,
                 journal_entries_json=journal_json,
                 tax_references=tax_references,

@@ -74,8 +74,14 @@ def setup_company_tax_profile(
     Retefuente rates are always taken from national law (Art. 383/401 ET) — they
     do not vary by municipality.
     """
-    # ── Step 1: ReteICA — relational DB lookup (primary source) ──────────────
+    # ── Step 1: ReteICA and ICA — relational DB lookup (primary source) ─────────
+    # Both tasa_reteica and tasa_ica are sourced from reteica_tarifas, which stores
+    # the ICA tariff per municipality/CIIU. They are stored as separate fields because
+    # municipalities can set different retention rates (ReteICA) from the actual tax
+    # rate (ICA) — e.g. Bogotá historically uses a flat 2‰ ReteICA regardless of the
+    # per-activity ICA rate (4.14‰–13.8‰). Never conflate them.
     tasa_reteica = db_service.get_reteica_tarifa(db, body.ciudad, body.codigo_ciiu)
+    tasa_ica = db_service.get_reteica_tarifa(db, body.ciudad, body.codigo_ciiu)
     reteica_source = "db"
 
     if tasa_reteica is None:
@@ -112,9 +118,11 @@ def setup_company_tax_profile(
                 rag_context=rag_context,
             )
             tasa_reteica = rate_lookup.tasa_reteica
+            tasa_ica = rate_lookup.tasa_reteica
         except Exception as gemini_err:
             logger.warning(f"Tax profile setup: Gemini failed ({gemini_err}), using national default")
             tasa_reteica = 0.0069  # national reference rate
+            tasa_ica = 0.0069
             reteica_source = "default"
 
     tasa_iva = 0.19 if body.iva_responsable else 0.0
@@ -137,5 +145,7 @@ def setup_company_tax_profile(
         "tasa_retefuente_arrendamiento": _TASA_RETEFUENTE_ARRENDAMIENTO,
         "tasa_reteica":     tasa_reteica,
         "tasa_iva_general": tasa_iva,
+        "tasa_ica":         tasa_ica,
+        "tasa_renta":       0.35,          # Fixed — Art. 240 ET, Ley 2277/2022. Never inferred.
     }
     return db_service.upsert_company_settings(db, nit, settings_data)

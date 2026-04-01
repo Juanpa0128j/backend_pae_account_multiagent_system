@@ -42,9 +42,21 @@ TASA_IVA: dict[str, Decimal] = {
     "exento":   Decimal("0.00"),   # Bienes/servicios exentos
 }
 
-# PUC 5xxx = gastos/servicios; 1xxx = activos; 4xxx = ingresos
+# ICA — Impuesto de Industria y Comercio (Ley 14/1983, Decreto 1333/1986)
+TASA_ICA_DEFAULT  = Decimal("0.00690")   # 6.9‰ — conservative national reference
+CUENTA_ICA_GASTO  = "540101"             # Gasto ICA
+CUENTA_ICA_PASIVO = "240808"             # ICA por Pagar
+
+# Renta — Art. 240 ET (Ley 2277/2022, vigente año fiscal 2023+)
+TASA_RENTA          = Decimal("0.35")    # 35% tarifa general sociedades
+CUENTA_RENTA_GASTO  = "540502"           # Provisión Impuesto de Renta
+CUENTA_RENTA_PASIVO = "240405"           # Impuesto de Renta por Pagar
+
+# PUC ranges
 PUC_SERVICIOS_START = 5000
 PUC_SERVICIOS_END   = 5999
+PUC_INGRESOS_START  = 4000
+PUC_INGRESOS_END    = 4999
 
 # Tax liability PUC sub-accounts — aligned with persist_node._build_journal_entries
 CUENTA_RETEFUENTE = "240815"  # Retención en la Fuente - Servicios
@@ -96,6 +108,22 @@ def _has_iva_in_asientos(asientos: list[dict]) -> tuple[bool, Decimal]:
 # Deterministic tax calculators
 # ---------------------------------------------------------------------------
 
+def _has_income_accounts(asientos: list[dict]) -> tuple[bool, Decimal]:
+    """
+    Returns (True, total_ingresos_brutos) if any CREDIT entry has a PUC 4xxx code.
+    Income accounts (ingresos) are credits in the Colombian PUC. Triggers ICA calculation.
+    """
+    total = Decimal("0")
+    found = False
+    for a in asientos:
+        if (a.get("tipo_movimiento") or "").lower() == "credito":
+            puc = str(a.get("cuenta_puc", "")).strip()
+            if puc.isdigit() and PUC_INGRESOS_START <= int(puc) <= PUC_INGRESOS_END:
+                found = True
+                total += Decimal(str(a.get("valor", 0)))
+    return found, total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 def _calc_retefuente(base: Decimal, tipo: str) -> Decimal:
     tasa = TASA_RETEFUENTE.get(tipo, TASA_RETEFUENTE["servicios"])
     return (base * tasa).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -108,6 +136,81 @@ def _calc_reteica(base: Decimal) -> Decimal:
 def _calc_iva(base: Decimal, tarifa: str = "general") -> Decimal:
     tasa = TASA_IVA.get(tarifa, TASA_IVA["general"])
     return (base * tasa).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _calc_ica(ingresos_brutos: Decimal, tasa: Decimal = TASA_ICA_DEFAULT) -> Decimal:
+    """ICA = ingresos_brutos × tasa. Ley 14/1983 Art. 33, Decreto 1333/1986."""
+    return (ingresos_brutos * tasa).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _calc_provision_renta(utilidad_neta: Decimal, tasa: Decimal = TASA_RENTA) -> Decimal:
+    """Provisión renta = utilidad_antes_impuestos × 35%. Art. 240 ET. Returns 0 on losses."""
+    if utilidad_neta <= Decimal("0"):
+        return Decimal("0.00")
+    return (utilidad_neta * tasa).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def calc_period_renta_provision(
+    db_session,
+    nit_receptor: str,
+    period_start,
+    period_end,
+    tasa_renta: Decimal = TASA_RENTA,
+) -> dict:
+    """
+    Aggregates journal_entry_lines for the period to compute income tax provision.
+
+      ingresos = SUM(credito) WHERE cuenta_puc LIKE '4%'
+      gastos   = SUM(debito)  WHERE cuenta_puc LIKE '5%'
+      costos   = SUM(debito)  WHERE cuenta_puc LIKE '6%'
+      utilidad = ingresos - gastos - costos
+
+    Returns a dict matching RentaProvisionOutput shape.
+    """
+    from datetime import datetime
+    from sqlalchemy import text as sql_text
+
+    period_end_dt = period_end if isinstance(period_end, date) else date.today()
+    period_start_dt = period_start
+
+    where_nit = "AND tercero_nit = :nit" if nit_receptor else ""
+    params: dict = {"period_end": period_end_dt, "nit": nit_receptor or ""}
+    if period_start_dt:
+        date_filter = "AND fecha >= :period_start AND fecha <= :period_end"
+        params["period_start"] = period_start_dt
+    else:
+        date_filter = "AND fecha <= :period_end"
+
+    query = sql_text(f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN cuenta_puc LIKE '4%' THEN credito ELSE 0 END), 0) AS ingresos,
+            COALESCE(SUM(CASE WHEN cuenta_puc LIKE '5%' THEN debito  ELSE 0 END), 0) AS gastos,
+            COALESCE(SUM(CASE WHEN cuenta_puc LIKE '6%' THEN debito  ELSE 0 END), 0) AS costos
+        FROM journal_entry_lines
+        WHERE 1=1 {where_nit} {date_filter}
+    """)
+    row = db_session.execute(query, params).fetchone()
+    ingresos = Decimal(str(row.ingresos if row else 0))
+    gastos   = Decimal(str(row.gastos   if row else 0))
+    costos   = Decimal(str(row.costos   if row else 0))
+    utilidad = ingresos - gastos - costos
+    provision = _calc_provision_renta(utilidad, tasa_renta)
+
+    return {
+        "report_type":              "renta_provision",
+        "period_start":             period_start_dt.isoformat() if period_start_dt else None,
+        "period_end":               period_end_dt.isoformat(),
+        "generated_at":             datetime.utcnow().isoformat(),
+        "utilidad_antes_impuestos": float(utilidad),
+        "tasa_renta":               float(tasa_renta),
+        "provision_renta":          float(provision),
+        "cuenta_gasto_puc":         CUENTA_RENTA_GASTO,
+        "cuenta_pasivo_puc":        CUENTA_RENTA_PASIVO,
+        "referencias": [
+            "Art. 240 Estatuto Tributario colombiano",
+            "Ley 2277 de 2022 — tarifa general sociedades 35%",
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +291,8 @@ def tributario_node(state: AgentState) -> AgentState:
                                 "tasa_reteica":                  float(row.tasa_reteica),
                                 "tasa_iva_general":              float(row.tasa_iva_general),
                                 "iva_responsable":               row.iva_responsable,
+                                "tasa_ica":                      float(row.tasa_ica),
+                                "tasa_renta":                    float(row.tasa_renta),
                             }
                             logger.info(
                                 f"Tributario: loaded company settings for NIT {nit_receptor}"
@@ -256,6 +361,10 @@ def tributario_node(state: AgentState) -> AgentState:
             Decimal(str(company_config["tasa_iva_general"])) if company_config
             else TASA_IVA["general"]
         )
+        tasa_ica_efectiva = (
+            Decimal(str(company_config["tasa_ica"])) if company_config
+            else TASA_ICA_DEFAULT
+        )
 
         # ------------------------------------------------------------------
         # Step 2 — Determine transaction type from PUC codes
@@ -288,8 +397,18 @@ def tributario_node(state: AgentState) -> AgentState:
             )
             logger.info(f"Tributario: IVA calculated = {iva_val}")
 
+        # ICA — applies when transaction contains income credits (PUC 4xxx)
+        has_income, ingresos_brutos = _has_income_accounts(asientos)
+        ica_val = Decimal("0.00")
+        if has_income:
+            ica_val = _calc_ica(ingresos_brutos, tasa_ica_efectiva)
+            logger.info(f"Tributario: ICA calculated = {ica_val} on ingresos {ingresos_brutos}")
+        else:
+            logger.info("Tributario: ICA skipped — no PUC 4xxx credit entries detected")
+
         logger.info(
-            f"Tributario: retefuente={retefuente_val}, reteica={reteica_val}, iva={iva_val}"
+            f"Tributario: retefuente={retefuente_val}, reteica={reteica_val}, "
+            f"iva={iva_val}, ica={ica_val}"
         )
 
         # ------------------------------------------------------------------
@@ -313,9 +432,11 @@ def tributario_node(state: AgentState) -> AgentState:
             "retefuente":      float(retefuente_val),
             "reteica":         float(reteica_val),
             "iva":             float(iva_val),
+            "ica":             float(ica_val),
             "tasa_retefuente": f"{float(tasa_retefuente) * 100:.1f}%",
             "tasa_reteica":    f"{float(tasa_reteica_efectiva) * 100:.2f}%",
             "tasa_iva":        f"{float(tasa_iva_efectiva) * 100:.0f}%",
+            "tasa_ica":        f"{float(tasa_ica_efectiva) * 1000:.2f}‰",
             "tipo_transaccion": tipo_transaccion,
         }
 
@@ -374,6 +495,15 @@ def tributario_node(state: AgentState) -> AgentState:
                 "tarifa_porcentaje": str(tasa_iva_efectiva * 100),
                 "valor_impuesto":    str(iva_val),
                 "cuenta_puc":        CUENTA_IVA,
+            })
+
+        if ica_val > Decimal("0"):
+            impuestos.append({
+                "tipo_impuesto":     "ica",
+                "base_gravable":     str(ingresos_brutos),
+                "tarifa_porcentaje": str(tasa_ica_efectiva * 100),
+                "valor_impuesto":    str(ica_val),
+                "cuenta_puc":        CUENTA_ICA_PASIVO,
             })
 
         total_impuestos = sum(
@@ -453,6 +583,23 @@ def tributario_node(state: AgentState) -> AgentState:
                 "descripcion":      "Retención ICA por pagar — Decreto 2048/1992",
                 "tipo_movimiento":  "credito",
                 "valor":            str(reteica_val),
+            })
+
+        # ICA — Impuesto de Industria y Comercio (Ley 14/1983)
+        if ica_val > Decimal("0"):
+            asientos_enriquecidos.append({
+                "cuenta_puc":      CUENTA_ICA_GASTO,
+                "nombre_cuenta":   "Gasto ICA",
+                "descripcion":     "Gasto ICA — Ley 14/1983, Art. 342 Ley 1955/2019",
+                "tipo_movimiento": "debito",
+                "valor":           str(ica_val),
+            })
+            asientos_enriquecidos.append({
+                "cuenta_puc":      CUENTA_ICA_PASIVO,
+                "nombre_cuenta":   "ICA por Pagar",
+                "descripcion":     "ICA por Pagar — Decreto 1333/1986",
+                "tipo_movimiento": "credito",
+                "valor":           str(ica_val),
             })
 
         # ------------------------------------------------------------------
