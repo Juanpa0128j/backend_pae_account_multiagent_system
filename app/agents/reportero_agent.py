@@ -782,6 +782,7 @@ def reportero_node(state: AgentState) -> AgentState:
     params: dict = state.get("report_params") or {}
     if state.get("company_nit") and not params.get("company_nit"):
         params["company_nit"] = state.get("company_nit")
+    include_analysis = params.get("include_analysis", False)
     state["current_agent"] = "reportero"
     state["current_stage"] = "reportero"
 

@@ -783,6 +783,8 @@ def _run_persist(state: AgentState) -> AgentState:
             iva = _safe_decimal(
                 tx_data.get("iva") or tx_data.get("iva_valor")
             ) or Decimal("0")
+            ica = _safe_decimal(tx_data.get("ica")) or Decimal("0")
+            provision_renta = _safe_decimal(tx_data.get("renta")) or Decimal("0")
             neto = _safe_decimal(tx_data.get("neto_a_pagar")) or total
 
             if mode == "process":
