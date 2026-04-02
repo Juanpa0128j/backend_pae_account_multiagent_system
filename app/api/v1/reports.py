@@ -13,13 +13,19 @@ from app.services.nit_utils import normalize_nit
 router = APIRouter()
 
 
-def _build_params(start_date: Optional[date], end_date: Optional[date]) -> dict:
+def _build_params(
+    start_date: Optional[date],
+    end_date: Optional[date],
+    include_analysis: bool = False,
+) -> dict:
     params = {}
     if start_date:
         params["start_date"] = start_date.isoformat()
     # Always include end_date so the query has an upper bound matching the
     # documented "default: today" behaviour.
     params["end_date"] = (end_date or date.today()).isoformat()
+    if include_analysis:
+        params["include_analysis"] = True
     return params
 
 
@@ -47,13 +53,18 @@ async def get_balance_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
     Balance General (Balance Sheet).
     Aggregates posted journal entries up to *end_date* grouped by PUC class.
     Returns assets, liabilities, equity, net profit and a balance-validation flag.
     """
-    return _run_report("balance", _build_params(start_date, end_date), company_nit)
+    return _run_report(
+        "balance",
+        _build_params(start_date, end_date, include_analysis),
+        company_nit,
+    )
 
 
 @router.get("/pnl", response_model=PnLOutput)
@@ -61,13 +72,18 @@ async def get_pnl_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
     Estado de Resultados (Profit & Loss).
     Aggregates revenue (class 4), COGS (class 6) and expenses (class 5)
     for the specified period.
     """
-    return _run_report("pnl", _build_params(start_date, end_date), company_nit)
+    return _run_report(
+        "pnl",
+        _build_params(start_date, end_date, include_analysis),
+        company_nit,
+    )
 
 
 @router.get("/cashflow", response_model=CashFlowOutput)
@@ -75,12 +91,17 @@ async def get_cashflow_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
     Flujo de Caja (Cash Flow — direct method).
     Returns net balances of cash and bank accounts (class 11XX) for the period.
     """
-    return _run_report("cashflow", _build_params(start_date, end_date), company_nit)
+    return _run_report(
+        "cashflow",
+        _build_params(start_date, end_date, include_analysis),
+        company_nit,
+    )
 
 
 @router.get("/statements")

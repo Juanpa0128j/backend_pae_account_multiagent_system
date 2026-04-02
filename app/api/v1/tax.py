@@ -10,13 +10,19 @@ from app.services.nit_utils import normalize_nit
 router = APIRouter()
 
 
-def _build_params(start_date: Optional[date], end_date: Optional[date]) -> dict:
+def _build_params(
+    start_date: Optional[date],
+    end_date: Optional[date],
+    include_analysis: bool = False,
+) -> dict:
     params = {}
     if start_date:
         params["start_date"] = start_date.isoformat()
     # Always include end_date so the query has an upper bound matching the
     # documented "default: today" behaviour.
     params["end_date"] = (end_date or date.today()).isoformat()
+    if include_analysis:
+        params["include_analysis"] = True
     return params
 
 
@@ -44,13 +50,18 @@ async def get_iva_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
     Reporte IVA.
     Computes IVA generated (account 240808) vs. IVA deductible (account 240802)
     and returns the net IVA payable with applicable legal references.
     """
-    return _run_report("iva", _build_params(start_date, end_date), company_nit)
+    return _run_report(
+        "iva",
+        _build_params(start_date, end_date, include_analysis),
+        company_nit,
+    )
 
 
 @router.get("/withholdings", response_model=WithholdingsOutput)
@@ -58,10 +69,15 @@ async def get_withholdings_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
     Reporte Retenciones.
     Returns Retefuente (account 240815) and ReteICA (account 236540) balances
     with applicable legal references.
     """
-    return _run_report("withholdings", _build_params(start_date, end_date), company_nit)
+    return _run_report(
+        "withholdings",
+        _build_params(start_date, end_date, include_analysis),
+        company_nit,
+    )
