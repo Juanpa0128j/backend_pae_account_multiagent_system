@@ -1,10 +1,9 @@
 """
-Agente Reportero (Reporter)
+Agente Reportero (Reporter / Financial Analyst)
 
 Role (docs/Diseño de arquitectura de agente):
   - Triggered by GET /reports/* and GET /tax/* API endpoints via mode="reporting".
   - Queries SQL Libro Mayor (JournalEntryLine) and returns structured reports.
-  - NO LLM calls — pure deterministic SQL aggregation via db_service.
   - Read-only database access (never modifies data).
 
 Supported report types (state["report_type"]):
@@ -13,27 +12,31 @@ Supported report types (state["report_type"]):
   - "cashflow"     → Flujo de Caja (Cash Flow — direct method, class 11 accounts)
   - "iva"          → Reporte IVA (accounts 240808 / 240802)
   - "withholdings" → Retenciones (accounts 240815 / 236540)
+  - "analysis"     → Análisis Financiero Integral (ratios, predicciones, LLM narrative)
 
 Filter params (state["report_params"]):
   - start_date: ISO date string "YYYY-MM-DD" (optional)
   - end_date:   ISO date string "YYYY-MM-DD" (optional)
+  - include_analysis: bool (optional, adds LLM narrative to standard reports)
 """
 
 import logging
-from datetime import datetime, timezone
+import statistics
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 
 # db_service and SessionLocal are imported lazily inside reportero_node to
 # avoid loading psycopg2 / SQLAlchemy engine at module import time.
-# This mirrors the pattern used in tributario_agent.py.
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
 # PUC account prefixes / codes used for report aggregation
+# ---------------------------------------------------------------------------
 _CLASS_ACTIVOS = "1"
 _CLASS_PASIVOS = "2"
 _CLASS_PATRIMONIO = "3"
@@ -41,6 +44,9 @@ _CLASS_INGRESOS = "4"
 _CLASS_GASTOS = "5"
 _CLASS_COSTO_VENTAS = "6"
 _PREFIX_EFECTIVO = "11"          # Bancos, Caja, equivalentes de efectivo
+_PREFIX_ACTIVOS_CORRIENTES = ("11", "12", "13")  # Efectivo, Inversiones, Deudores
+_PREFIX_PASIVOS_CORRIENTES = ("21", "22", "23")  # Obligaciones, Proveedores, Cuentas por pagar
+_PREFIX_INVENTARIOS = "14"       # Inventarios (excluded from acid test)
 
 # Specific tax retention accounts
 _CUENTA_IVA_GENERADO = "240808"
@@ -48,25 +54,90 @@ _CUENTA_IVA_DESCONTABLE = "240802"
 _CUENTA_RETEFUENTE = "240815"
 _CUENTA_RETEICA = "236540"
 
-_VALID_REPORT_TYPES = frozenset({"balance", "pnl", "cashflow", "iva", "withholdings"})
+_VALID_REPORT_TYPES = frozenset({
+    "balance", "pnl", "cashflow", "iva", "withholdings", "analysis"
+})
+
+# ---------------------------------------------------------------------------
+# System Prompt for LLM Financial Analysis
+# ---------------------------------------------------------------------------
+_SYSTEM_PROMPT_ANALISIS = """Eres un Director Financiero y Analista Contable Senior experto en contabilidad colombiana.
+
+## TU ROL
+Analizas datos financieros de empresas colombianas y generas informes ejecutivos con explicaciones claras,
+interpretaciones profundas, predicciones fundamentadas y recomendaciones accionables.
+
+## MARCO NORMATIVO QUE CONOCES
+- **NIIF** (Normas Internacionales de Información Financiera) adoptadas en Colombia
+- **PUC** (Plan Único de Cuentas - Decreto 2650 de 1993): estructura de 6 clases
+- **Estatuto Tributario** colombiano (IVA Art. 468, Retefuente Art. 383/392/401, ReteICA municipal)
+- **Ley 43 de 1990**: régimen de la profesión contable
+- **PCGA**: Principios de Contabilidad Generalmente Aceptados
+
+## ESTRUCTURA PUC QUE MANEJAS
+- **Clase 1 - Activos** (naturaleza débito): Efectivo (11), Inversiones (12), Deudores (13), Inventarios (14), Propiedad (15)
+- **Clase 2 - Pasivos** (naturaleza crédito): Obligaciones financieras (21), Proveedores (22), Cuentas por pagar (23), Impuestos (24)
+- **Clase 3 - Patrimonio** (naturaleza crédito): Capital (31), Reservas (32), Resultados (36)
+- **Clase 4 - Ingresos** (naturaleza crédito): Operacionales (41), No operacionales (42)
+- **Clase 5 - Gastos** (naturaleza débito): Operacionales (51-52), No operacionales (53)
+- **Clase 6 - Costo de Ventas** (naturaleza débito): Costo mercancía (61), Costo servicios (62)
+
+## CUENTAS FISCALES ESPECÍFICAS
+- 240808: IVA Generado (pasivo, crédito) — IVA cobrado en ventas
+- 240802: IVA Descontable (activo, débito) — IVA pagado en compras
+- 240815: Retención en la Fuente por pagar (pasivo, crédito)
+- 236540: Retención ICA por pagar (pasivo, crédito)
+
+## TABLAS DE LA BASE DE DATOS (contexto de los datos que recibes)
+- **journal_entry_lines**: fecha, comprobante, cuenta_puc, cuenta_nombre, tercero_nit, descripcion, debito, credito
+- **transactions_posted**: cuenta_puc, retefuente, reteica, iva, neto_a_pagar, tax_references, agent_reasoning
+- **transactions_pending**: fecha, nit_emisor, nit_receptor, total, descripcion, items, status
+- **company_settings**: nit, nombre, ciudad, codigo_ciiu, tasas de impuestos configuradas
+- **terceros**: nit, razon_social, tipo (proveedor/cliente), actividad_economica
+- **cuentas_puc**: codigo, nombre, clase, naturaleza (debito/credito)
+
+## RATIOS FINANCIEROS QUE CALCULAS E INTERPRETAS
+- **Razón Corriente** = Activos Corrientes (11+12+13) / Pasivos Corrientes (21+22+23). Ideal > 1.5
+- **Prueba Ácida** = (Activos Corrientes - Inventarios 14) / Pasivos Corrientes. Ideal > 1.0
+- **Margen Neto** = Utilidad Neta / Ingresos Totales × 100. Varía por sector
+- **ROA** = Utilidad Neta / Activos Totales × 100. Mide eficiencia de activos
+- **Razón de Endeudamiento** = Pasivos / Activos. Alerta si > 0.7
+- **Deuda/Patrimonio** = Pasivos / Patrimonio. Alerta si > 2.0
+- **Rotación de Activos** = Ingresos / Activos. Mayor = más eficiente
+
+## INSTRUCCIONES DE OUTPUT
+1. **resumen_ejecutivo**: Visión general de la salud financiera. Menciona las cifras más relevantes.
+2. **explicaciones**: Para CADA métrica importante, explica el PORQUÉ del valor:
+   - ¿Qué cuentas o terceros contribuyen más?
+   - ¿Qué significa esto para la operación del negocio?
+   - ¿Es positivo, neutral o negativo? ¿Por qué?
+3. **interpretacion_ratios**: Para cada ratio, explica qué indica sobre la empresa en términos simples.
+4. **tendencias**: Describe cómo evolucionaron ingresos, gastos y utilidad mes a mes.
+5. **predicciones**: Basándote en la tendencia mensual y las predicciones numéricas (regresión lineal)
+   que recibes, proyecta 3 meses futuros con:
+   - Ingresos, gastos y utilidad estimados por mes
+   - Nivel de confianza (alta si hay 4+ meses de datos consistentes, media si hay 2-3, baja si hay menos)
+6. **predicciones_narrativa**: Explica en lenguaje natural hacia dónde va la empresa,
+   cuándo podría haber problemas, y qué inflexiones se observan en los datos.
+7. **alertas**: Señales de alerta temprana (liquidez baja, endeudamiento excesivo, caída de ingresos, etc.)
+8. **recomendaciones**: 3-5 acciones concretas que la empresa debería tomar.
+9. **nivel_salud_financiera**: "bueno", "aceptable", "preocupante" o "critico" basado en el análisis global.
+
+## REGLAS
+- Todas las respuestas en ESPAÑOL
+- Usa cifras concretas, no generalidades vagas
+- Cita artículos normativos cuando sea relevante (ej: "según Art. 383 del ET")
+- Si los datos son insuficientes para una predicción confiable, dilo explícitamente
+- Nunca inventes datos — si un valor es 0 o null, explica que no hay suficiente información
+"""
 
 
 # ---------------------------------------------------------------------------
-# RAG enrichment helper (non-fatal — follows the same pattern as contador /
-# tributario agents: lazy import, warning on failure, empty list fallback)
+# RAG enrichment helper (non-fatal)
 # ---------------------------------------------------------------------------
 
 def _fetch_rag_referencias(query: str, n_results: int = 3) -> list[str]:
-    """
-    Query the normativa RAG collection and return human-readable citation strings.
-
-    Each citation is built from RAGResult.metadata['articulo'] + ['fuente']
-    when available, otherwise falls back to the first 80 characters of content.
-
-    Returns an empty list on any error so callers can use hardcoded fallbacks.
-    RAG is strictly non-fatal for the reportero: a missing or unreachable
-    vector DB must never prevent a financial report from being generated.
-    """
+    """Query the normativa RAG collection and return human-readable citation strings."""
     try:
         from app.services.rag_service import get_rag_service  # noqa: PLC0415
         rag_svc = get_rag_service()
@@ -90,6 +161,23 @@ def _fetch_rag_referencias(query: str, n_results: int = 3) -> list[str]:
         return []
 
 
+def _fetch_rag_context_text(query: str, n_results: int = 5) -> str:
+    """Return RAG results as a single text block for LLM context."""
+    try:
+        from app.services.rag_service import get_rag_service  # noqa: PLC0415
+        rag_svc = get_rag_service()
+        results = rag_svc.search_normativo(query, n_results=n_results)
+        parts = []
+        for r in results:
+            articulo = r.metadata.get("articulo", "")
+            fuente = r.metadata.get("fuente", "")
+            header = f"[{articulo} - {fuente}]" if articulo else ""
+            parts.append(f"{header}\n{r.content[:500]}")
+        return "\n\n".join(parts)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
@@ -99,13 +187,7 @@ def _now_iso() -> str:
 
 
 def _parse_date_param(value: Optional[str], end_of_day: bool = False) -> Optional[datetime]:
-    """Convert an ISO date string to UTC datetime.
-
-    start_date → midnight 00:00:00 UTC (default).
-    end_date   → end of day 23:59:59.999999 UTC (pass end_of_day=True) so that
-                 inclusive upper-bound filters (fecha <= end_date) include all
-                 transactions that occurred on that calendar date.
-    """
+    """Convert an ISO date string to UTC datetime."""
     if not value:
         return None
     try:
@@ -121,6 +203,11 @@ def _parse_date_param(value: Optional[str], end_of_day: bool = False) -> Optiona
 def _ledger_by_prefix(ledger: list[dict], prefix: str) -> list[dict]:
     """Filter general ledger rows whose account code starts with *prefix*."""
     return [row for row in ledger if row["account"].startswith(prefix)]
+
+
+def _ledger_by_prefixes(ledger: list[dict], prefixes: tuple) -> list[dict]:
+    """Filter ledger rows starting with any of the given prefixes."""
+    return [row for row in ledger if any(row["account"].startswith(p) for p in prefixes)]
 
 
 def _ledger_by_exact(ledger: list[dict], code: str) -> Optional[dict]:
@@ -139,6 +226,161 @@ def _credit_nature_balance(row: dict) -> Decimal:
 def _debit_nature_balance(row: dict) -> Decimal:
     """Net balance for debit-nature accounts: debits - credits."""
     return Decimal(str(row["total_debit"])) - Decimal(str(row["total_credit"]))
+
+
+def _safe_divide(numerator: float, denominator: float) -> Optional[float]:
+    """Return numerator / denominator, or None if denominator is zero."""
+    if denominator == 0:
+        return None
+    return round(numerator / denominator, 4)
+
+
+# ---------------------------------------------------------------------------
+# Financial ratio calculations (deterministic)
+# ---------------------------------------------------------------------------
+
+def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
+    """Compute key financial ratios from ledger data and balance summary."""
+    # Current assets: classes 11, 12, 13
+    activos_corrientes = sum(
+        float(_debit_nature_balance(r)) for r in _ledger_by_prefixes(ledger, _PREFIX_ACTIVOS_CORRIENTES)
+    )
+    # Inventories: class 14
+    inventarios = sum(
+        float(_debit_nature_balance(r)) for r in _ledger_by_prefix(ledger, _PREFIX_INVENTARIOS)
+    )
+    # Current liabilities: classes 21, 22, 23
+    pasivos_corrientes = sum(
+        float(_credit_nature_balance(r)) for r in _ledger_by_prefixes(ledger, _PREFIX_PASIVOS_CORRIENTES)
+    )
+
+    activos = balance["assets"]
+    pasivos = balance["liabilities"]
+    patrimonio = balance["equity"]
+    ingresos = balance["revenue"]
+    utilidad = balance["net_profit"]
+
+    return {
+        "razon_corriente": _safe_divide(activos_corrientes, pasivos_corrientes),
+        "prueba_acida": _safe_divide(activos_corrientes - inventarios, pasivos_corrientes),
+        "margen_neto": round(_safe_divide(utilidad, ingresos) * 100, 2) if ingresos and _safe_divide(utilidad, ingresos) is not None else None,
+        "roa": round(_safe_divide(utilidad, activos) * 100, 2) if activos and _safe_divide(utilidad, activos) is not None else None,
+        "razon_endeudamiento": _safe_divide(pasivos, activos) if activos else None,
+        "deuda_patrimonio": _safe_divide(pasivos, patrimonio) if patrimonio else None,
+        "rotacion_activos": _safe_divide(ingresos, activos) if activos else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Simple linear regression for predictions
+# ---------------------------------------------------------------------------
+
+def _linear_regression_predict(data_points: list[float], n_predict: int = 3) -> list[float]:
+    """Simple linear regression on data_points, predict next n_predict values.
+
+    Returns empty list if fewer than 2 data points.
+    """
+    n = len(data_points)
+    if n < 2:
+        return []
+    x = list(range(n))
+    x_mean = sum(x) / n
+    y_mean = sum(data_points) / n
+    numerator = sum((x[i] - x_mean) * (data_points[i] - y_mean) for i in range(n))
+    denominator = sum((x[i] - x_mean) ** 2 for i in range(n))
+    if denominator == 0:
+        return [y_mean] * n_predict
+    slope = numerator / denominator
+    intercept = y_mean - slope * x_mean
+    return [max(0, round(slope * (n + i) + intercept, 2)) for i in range(n_predict)]
+
+
+def _compute_predictions(monthly_data: dict) -> list[dict]:
+    """Compute 3-month predictions from monthly trend data.
+
+    monthly_data: dict with keys like 'ingresos', 'gastos' containing
+    lists of {month, net, ...} dicts.
+    """
+    ingresos_trend = monthly_data.get("ingresos", [])
+    gastos_trend = monthly_data.get("gastos", [])
+
+    # Extract net values (for ingresos, credit nature: use total_credit - total_debit)
+    ingresos_vals = [abs(m.get("net", 0)) for m in ingresos_trend]
+    gastos_vals = [abs(m.get("net", 0)) for m in gastos_trend]
+
+    pred_ingresos = _linear_regression_predict(ingresos_vals, 3)
+    pred_gastos = _linear_regression_predict(gastos_vals, 3)
+
+    if not pred_ingresos and not pred_gastos:
+        return []
+
+    # Determine next months from last data point
+    last_month = None
+    for data in [ingresos_trend, gastos_trend]:
+        if data:
+            last_month = data[-1].get("month")
+            break
+
+    if not last_month:
+        return []
+
+    year, month = int(last_month.split("-")[0]), int(last_month.split("-")[1])
+    predictions = []
+    for i in range(3):
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+        ing = pred_ingresos[i] if i < len(pred_ingresos) else 0
+        gas = pred_gastos[i] if i < len(pred_gastos) else 0
+        predictions.append({
+            "periodo": f"{year}-{month:02d}",
+            "ingresos_estimados": ing,
+            "gastos_estimados": gas,
+            "utilidad_estimada": round(ing - gas, 2),
+        })
+
+    return predictions
+
+
+# ---------------------------------------------------------------------------
+# Anomaly detection
+# ---------------------------------------------------------------------------
+
+def _detect_anomalies(
+    ledger_current: list[dict],
+    ledger_previous: list[dict],
+    threshold_std: float = 2.0,
+) -> list[dict]:
+    """Detect accounts whose balance changed more than threshold_std from mean change."""
+    prev_map = {r["account"]: r["net_balance"] for r in ledger_previous}
+    changes = []
+    for row in ledger_current:
+        prev_val = prev_map.get(row["account"], 0.0)
+        change = row["net_balance"] - prev_val
+        changes.append({"account": row["account"], "name": row["name"], "change": change})
+
+    if len(changes) < 3:
+        return []
+
+    change_vals = [c["change"] for c in changes]
+    mean_change = statistics.mean(change_vals)
+    std_change = statistics.stdev(change_vals) if len(change_vals) > 1 else 0
+
+    if std_change == 0:
+        return []
+
+    anomalies = []
+    for c in changes:
+        if abs(c["change"] - mean_change) > threshold_std * std_change:
+            anomalies.append({
+                "cuenta": c["account"],
+                "nombre": c["name"],
+                "cambio": round(c["change"], 2),
+                "desviaciones": round(abs(c["change"] - mean_change) / std_change, 2),
+            })
+
+    return anomalies
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +411,6 @@ def _build_balance(db, params: dict, svc) -> dict:
             f"(PASIVOS + PATRIMONIO TOTAL) = {diferencia:,.0f}"
         )
 
-    # RAG enrichment — NIIF/PCGA notes (non-fatal; empty list if RAG unavailable)
     notas_normativas = _fetch_rag_referencias(
         "NIIF balance general activos pasivos patrimonio principios contabilidad PCGA",
         n_results=2,
@@ -217,7 +458,6 @@ def _build_pnl(db, params: dict, svc) -> dict:
     utilidad_bruta = total_ingresos - total_costo
     utilidad_neta = utilidad_bruta - total_gastos
 
-    # RAG enrichment — NIIF/PCGA income statement notes (non-fatal)
     notas_normativas = _fetch_rag_referencias(
         "estado resultados ingresos gastos costo ventas principio realización NIIF PCGA",
         n_results=2,
@@ -260,7 +500,6 @@ def _build_cashflow(db, params: dict, svc) -> dict:
     ]
     total_efectivo = sum(Decimal(str(c["saldo"])) for c in cuentas_efectivo)
 
-    # RAG enrichment — NIIF/NIC 7 cash flow notes (non-fatal)
     notas_normativas = _fetch_rag_referencias(
         "flujo caja efectivo bancos método directo NIIF NIC 7 PCGA",
         n_results=2,
@@ -293,13 +532,10 @@ def _build_iva(db, params: dict, svc) -> dict:
     generado_row = _ledger_by_exact(ledger, _CUENTA_IVA_GENERADO)
     descontable_row = _ledger_by_exact(ledger, _CUENTA_IVA_DESCONTABLE)
 
-    # 240808 is credit-nature (IVA generado = liability)
     iva_generado = _credit_nature_balance(generado_row) if generado_row else Decimal("0")
-    # 240802 is debit-nature (IVA descontable = asset)
     iva_descontable = _debit_nature_balance(descontable_row) if descontable_row else Decimal("0")
     iva_a_pagar = iva_generado - iva_descontable
 
-    # RAG enrichment — IVA legal references from normativa (non-fatal)
     rag_refs = _fetch_rag_referencias(
         "IVA impuesto ventas tarifa general artículo 468 477 Estatuto Tributario"
     )
@@ -329,12 +565,10 @@ def _build_withholdings(db, params: dict, svc) -> dict:
     retefuente_row = _ledger_by_exact(ledger, _CUENTA_RETEFUENTE)
     reteica_row = _ledger_by_exact(ledger, _CUENTA_RETEICA)
 
-    # Both are credit-nature liability accounts
     retefuente = _credit_nature_balance(retefuente_row) if retefuente_row else Decimal("0")
     reteica = _credit_nature_balance(reteica_row) if reteica_row else Decimal("0")
     total = retefuente + reteica
 
-    # RAG enrichment — retenciones legal references from normativa (non-fatal)
     rag_refs = _fetch_rag_referencias(
         "retención en la fuente servicios honorarios artículo 383 392 Decreto 2048 Estatuto Tributario"
     )
@@ -353,13 +587,162 @@ def _build_withholdings(db, params: dict, svc) -> dict:
     }
 
 
+def _build_analysis(db, params: dict, svc) -> dict:
+    """Build comprehensive financial analysis with ratios, predictions, and LLM narrative."""
+    start_date = _parse_date_param(params.get("start_date"))
+    end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
+
+    # --- Phase 1: Deterministic calculations ---
+
+    # Balance sheet — period-scoped when start_date is provided,
+    # cumulative (up to end_date) otherwise
+    if start_date is not None:
+        balance = svc.get_balance_sheet_for_period(db, start_date=start_date, end_date=end_date)
+    else:
+        balance = svc.get_balance_sheet(db, cutoff_date=end_date)
+
+    # General ledger for current period
+    ledger = svc.get_general_ledger(db, start_date=start_date, end_date=end_date)
+
+    # P&L summary (period-scoped, computed from ledger for consistency)
+    ingresos_rows = _ledger_by_prefix(ledger, _CLASS_INGRESOS)
+    gastos_rows = _ledger_by_prefix(ledger, _CLASS_GASTOS)
+    costo_rows = _ledger_by_prefix(ledger, _CLASS_COSTO_VENTAS)
+    total_ingresos = sum(float(_credit_nature_balance(r)) for r in ingresos_rows)
+    total_gastos = sum(float(_debit_nature_balance(r)) for r in gastos_rows)
+    total_costo_ventas = sum(float(_debit_nature_balance(r)) for r in costo_rows)
+    utilidad_neta_periodo = total_ingresos - total_costo_ventas - total_gastos
+
+    pnl_summary = {
+        "total_ingresos": total_ingresos,
+        "total_costo_ventas": total_costo_ventas,
+        "total_gastos": total_gastos,
+        "utilidad_neta": utilidad_neta_periodo,
+    }
+
+    # Financial ratios
+    ratios = _compute_ratios(ledger, balance)
+
+    # Top accounts
+    top_debit = svc.get_top_accounts(db, start_date, end_date, by="debit", limit=5)
+    top_credit = svc.get_top_accounts(db, start_date, end_date, by="credit", limit=5)
+
+    # Top terceros
+    top_terceros = svc.get_top_terceros(db, start_date, end_date, limit=5)
+
+    # Monthly trends (last 6 months)
+    monthly_data = svc.get_monthly_totals_by_class(db, months=6)
+
+    # Anomaly detection — compare current period ledger with previous period
+    # Calculate a previous period of same length
+    prev_ledger: list[dict] = []
+    if start_date and end_date:
+        delta = end_date - start_date
+        prev_start = start_date - delta
+        prev_end = start_date - timedelta(microseconds=1)
+        prev_ledger = svc.get_general_ledger(db, start_date=prev_start, end_date=prev_end)
+
+    anomalies = _detect_anomalies(ledger, prev_ledger) if prev_ledger else []
+
+    # Predictions (linear regression)
+    predicciones_num = _compute_predictions(monthly_data)
+
+    # RAG normative context
+    notas_normativas = _fetch_rag_referencias(
+        "análisis financiero NIIF indicadores liquidez rentabilidad endeudamiento Colombia PCGA",
+        n_results=3,
+    )
+
+    report_data: Dict[str, Any] = {
+        "report_type": "financial_analysis",
+        "period_start": params.get("start_date"),
+        "period_end": params.get("end_date") or _today_iso(),
+        "generated_at": _now_iso(),
+        "balance_summary": balance,
+        "pnl_summary": pnl_summary,
+        "ratios": ratios,
+        "top_accounts_debit": [
+            {"codigo": a["codigo"], "nombre": a["nombre"], "saldo": a["total_debito"]}
+            for a in top_debit
+        ],
+        "top_accounts_credit": [
+            {"codigo": a["codigo"], "nombre": a["nombre"], "saldo": a["total_credito"]}
+            for a in top_credit
+        ],
+        "top_terceros": top_terceros,
+        "anomalies": anomalies,
+        "monthly_trends": monthly_data,
+        "predicciones_numericas": predicciones_num,
+        "notas_normativas": notas_normativas,
+    }
+
+    # --- Phase 2: LLM Analysis (non-fatal) ---
+    try:
+        from app.core.gemini_client import get_gemini_client  # noqa: PLC0415
+        gemini = get_gemini_client()
+
+        rag_text = _fetch_rag_context_text(
+            "análisis financiero indicadores NIIF Colombia ratios liquidez rentabilidad"
+        )
+
+        llm_input = {
+            "balance_summary": balance,
+            "pnl_summary": pnl_summary,
+            "ratios": ratios,
+            "monthly_trends": monthly_data,
+            "predicciones_numericas": predicciones_num,
+            "top_accounts_debit": top_debit,
+            "top_accounts_credit": top_credit,
+            "top_terceros": top_terceros,
+            "anomalies": anomalies,
+        }
+
+        analysis = gemini.generate_financial_analysis(
+            financial_data=llm_input,
+            rag_context=rag_text,
+            system_prompt=_SYSTEM_PROMPT_ANALISIS,
+        )
+        report_data["analysis"] = analysis
+        logger.info("reportero: LLM analysis generated successfully")
+    except Exception as llm_err:  # noqa: BLE001
+        logger.warning("reportero: LLM analysis failed (non-fatal): %s", llm_err)
+        report_data["analysis"] = {"error": f"Análisis LLM no disponible: {llm_err}"}
+
+    return report_data
+
+
 _BUILDERS = {
     "balance": _build_balance,
     "pnl": _build_pnl,
     "cashflow": _build_cashflow,
     "iva": _build_iva,
     "withholdings": _build_withholdings,
+    "analysis": _build_analysis,
 }
+
+
+# ---------------------------------------------------------------------------
+# Brief analysis helper (for include_analysis=true on standard reports)
+# ---------------------------------------------------------------------------
+
+def _enrich_with_brief_analysis(report_data: dict, report_type: str) -> dict:
+    """Append a brief LLM analysis to a standard report (non-fatal)."""
+    try:
+        from app.core.gemini_client import get_gemini_client  # noqa: PLC0415
+        gemini = get_gemini_client()
+        rag_text = _fetch_rag_context_text(
+            f"{report_type} análisis financiero NIIF Colombia"
+        )
+        analysis = gemini.generate_brief_report_analysis(
+            report_type=report_type,
+            report_data=report_data,
+            rag_context=rag_text,
+        )
+        report_data["analysis"] = analysis
+    except Exception as err:  # noqa: BLE001
+        logger.warning("reportero: brief analysis failed (non-fatal): %s", err)
+        report_data["analysis"] = {"error": f"Análisis LLM no disponible: {err}"}
+    return report_data
 
 
 # ---------------------------------------------------------------------------
@@ -371,14 +754,12 @@ def reportero_node(state: AgentState) -> AgentState:
     Reportero node: queries Libro Mayor and formats financial reports.
 
     Reads:
-        state["report_type"]   – one of "balance" | "pnl" | "cashflow" | "iva" | "withholdings"
-        state["report_params"] – filter dict: {"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}
+        state["report_type"]   – one of the valid report types
+        state["report_params"] – filter dict with start_date, end_date, include_analysis
     Writes:
         state["result"]["report"] – structured report data dict
         state["current_stage"]    – "reporting_complete"
         state["current_agent"]    – "reportero"
-
-    No LLM calls — pure SQL aggregation via db_service.
     """
     if state.get("error"):
         logger.warning("reportero: skipping due to upstream error: %s", state["error"])
@@ -407,6 +788,7 @@ def reportero_node(state: AgentState) -> AgentState:
     append_log(state, "reportero", "node_start", {
         "report_type": report_type,
         "params": params,
+        "include_analysis": include_analysis,
     })
 
     try:
@@ -421,6 +803,11 @@ def reportero_node(state: AgentState) -> AgentState:
     try:
         builder = _BUILDERS[report_type]
         report_data = builder(db, params, db_service)
+
+        # Add brief LLM analysis to standard reports if requested
+        if include_analysis and report_type != "analysis":
+            report_data = _enrich_with_brief_analysis(report_data, report_type)
+
     except Exception as exc:
         state["error"] = f"reportero: failed to generate '{report_type}' report: {exc}"
         logger.error(state["error"], exc_info=True)
@@ -442,6 +829,7 @@ def reportero_node(state: AgentState) -> AgentState:
     append_log(state, "reportero", "node_complete", {
         "report_type": report_type,
         "generated_at": report_data.get("generated_at"),
+        "has_analysis": "analysis" in report_data,
     })
     logger.info("reportero: '%s' report generated successfully", report_type)
     return state

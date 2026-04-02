@@ -15,6 +15,7 @@ Tables:
 
 import enum
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import (
     Column,
@@ -99,6 +100,10 @@ class CompanySettings(Base):
     tasa_reteica                  = Column(Numeric(8, 6), nullable=False, default=0.006900,
                                            comment="Municipal ICA retention rate")
     tasa_iva_general              = Column(Numeric(8, 6), nullable=False, default=0.190000)
+    tasa_ica                      = Column(Numeric(10, 8), nullable=False, default=Decimal("0.00690000"),
+                                           comment="Tarifa ICA sobre ingresos brutos (Ley 14/1983). Varía por municipio/CIIU.")
+    tasa_renta                    = Column(Numeric(8, 6), nullable=False, default=Decimal("0.350000"),
+                                           comment="Tarifa impuesto de renta societario — Art. 240 ET, 35% (Ley 2277/2022).")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -265,6 +270,8 @@ class TransactionPosted(Base):
     retefuente = Column(Numeric(15, 2), default=0)
     reteica = Column(Numeric(15, 2), default=0)
     iva = Column(Numeric(15, 2), default=0)
+    ica = Column(Numeric(15, 2), default=0)
+    provision_renta = Column(Numeric(15, 2), default=0)
     neto_a_pagar = Column(Numeric(15, 2), default=0)
 
     # Journal entries as JSONB (denormalized for quick reads)

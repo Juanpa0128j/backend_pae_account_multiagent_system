@@ -1,7 +1,8 @@
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 
 from app.agents.graph import invoke_reporting_pipeline
 from app.core.database import SessionLocal
@@ -13,13 +14,17 @@ from app.services.nit_utils import normalize_nit
 router = APIRouter()
 
 
-def _build_params(start_date: Optional[date], end_date: Optional[date]) -> dict:
-    params = {}
+def _build_params(
+    start_date: Optional[date],
+    end_date: Optional[date],
+    include_analysis: bool = False,
+) -> dict:
+    params: dict = {}
     if start_date:
         params["start_date"] = start_date.isoformat()
-    # Always include end_date so the query has an upper bound matching the
-    # documented "default: today" behaviour.
     params["end_date"] = (end_date or date.today()).isoformat()
+    if include_analysis:
+        params["include_analysis"] = True
     return params
 
 
@@ -52,6 +57,7 @@ async def get_balance_report(
     Balance General (Balance Sheet).
     Aggregates posted journal entries up to *end_date* grouped by PUC class.
     Returns assets, liabilities, equity, net profit and a balance-validation flag.
+    Optionally includes LLM-powered analysis when include_analysis=true.
     """
     return _run_report("balance", _build_params(start_date, end_date), company_nit)
 
@@ -65,7 +71,7 @@ async def get_pnl_report(
     """
     Estado de Resultados (Profit & Loss).
     Aggregates revenue (class 4), COGS (class 6) and expenses (class 5)
-    for the specified period.
+    for the specified period. Optionally includes LLM-powered analysis.
     """
     return _run_report("pnl", _build_params(start_date, end_date), company_nit)
 
@@ -79,6 +85,7 @@ async def get_cashflow_report(
     """
     Flujo de Caja (Cash Flow — direct method).
     Returns net balances of cash and bank accounts (class 11XX) for the period.
+    Optionally includes LLM-powered analysis.
     """
     return _run_report("cashflow", _build_params(start_date, end_date), company_nit)
 

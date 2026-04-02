@@ -28,7 +28,10 @@ from app.agents.tributario_agent import (
     _calc_retefuente,
     _calc_reteica,
     _calc_iva,
+    _calc_ica,
+    _calc_provision_renta,
     _has_iva_in_asientos,
+    _has_income_accounts,
 )
 from app.agents.state import AgentState
 from app.core.gemini_client import TaxJustification
@@ -520,6 +523,8 @@ def test_process_mode_uses_company_settings_when_present(
         tasa_reteica=Decimal("0.006900"),
         tasa_iva_general=Decimal("0.190000"),
         iva_responsable=True,
+        tasa_ica=Decimal("0.00690000"),
+        tasa_renta=Decimal("0.350000"),
     )
 
     state = _make_state(VALID_CONTADOR_OUTPUT)

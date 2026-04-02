@@ -54,8 +54,8 @@ class AgentState(TypedDict):
     - audit_rejection_reason: Reason for rejection if not approved
     - audit_decision: Decision from Auditor agent: "approved" | "rejected" | None
     - audit_feedback: Rejection reason from Auditor, fed back to Contador for retry
-    - report_type: Reporting pipeline — one of "balance" | "pnl" | "cashflow" | "iva" | "withholdings"
-    - report_params: Reporting pipeline — filter params, e.g. {"start_date": "2026-01-01", "end_date": "2026-01-31"}
+    - report_type: Reporting pipeline — one of "balance" | "pnl" | "cashflow" | "iva" | "withholdings" | "analysis"
+    - report_params: Reporting pipeline — filter params, e.g. {"start_date": "2026-01-01", "end_date": "2026-01-31", "include_analysis": true}
     - company_nit: Explicitly set company NIT from the API caller; overrides auto-detected entity_nit from document
     """
 

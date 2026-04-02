@@ -1,22 +1,36 @@
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import text as sql_text
+from sqlalchemy.orm import Session
 
 from app.agents.graph import invoke_reporting_pipeline
+from app.agents.tributario_agent import (
+    TASA_ICA_DEFAULT,
+    TASA_RENTA,
+    _calc_ica,
+    calc_period_renta_provision,
+)
+from app.core.database import get_db
 from app.models.agent_outputs import IVAOutput, WithholdingsOutput
 from app.services.nit_utils import normalize_nit
 
 router = APIRouter()
 
 
-def _build_params(start_date: Optional[date], end_date: Optional[date]) -> dict:
-    params = {}
+def _build_params(
+    start_date: Optional[date],
+    end_date: Optional[date],
+    include_analysis: bool = False,
+) -> dict:
+    params: dict = {}
     if start_date:
         params["start_date"] = start_date.isoformat()
-    # Always include end_date so the query has an upper bound matching the
-    # documented "default: today" behaviour.
     params["end_date"] = (end_date or date.today()).isoformat()
+    if include_analysis:
+        params["include_analysis"] = True
     return params
 
 
@@ -49,6 +63,7 @@ async def get_iva_report(
     Reporte IVA.
     Computes IVA generated (account 240808) vs. IVA deductible (account 240802)
     and returns the net IVA payable with applicable legal references.
+    Optionally includes LLM-powered analysis when include_analysis=true.
     """
     return _run_report("iva", _build_params(start_date, end_date), company_nit)
 
@@ -63,5 +78,6 @@ async def get_withholdings_report(
     Reporte Retenciones.
     Returns Retefuente (account 240815) and ReteICA (account 236540) balances
     with applicable legal references.
+    Optionally includes LLM-powered analysis when include_analysis=true.
     """
     return _run_report("withholdings", _build_params(start_date, end_date), company_nit)
