@@ -140,6 +140,7 @@ class FacturaVentaContent(ContentBase):
     """Factura de venta emitida — DIAN electronic invoice."""
     consecutivo: Optional[str] = Field(None, description="Invoice number with DIAN prefix and authorized range")
     cufe: Optional[str] = Field(None, description="Código Único de Facturación Electrónica")
+    qr_code: Optional[str] = Field(None, description="QR code URL or content from DIAN electronic invoice")
     fecha_emision: Optional[str] = Field(None, description="YYYY-MM-DD")
     fecha_vencimiento: Optional[str] = Field(None, description="YYYY-MM-DD")
     forma_pago: Optional[str] = Field(None, description="contado | credito")
@@ -166,11 +167,13 @@ class FacturaCompraContent(ContentBase):
     """Factura de compra recibida — support document for costs/deductions."""
     consecutivo: Optional[str] = Field(None)
     cufe: Optional[str] = Field(None)
+    qr_code: Optional[str] = Field(None, description="QR code URL or content from DIAN electronic invoice")
     fecha_emision: Optional[str] = Field(None, description="YYYY-MM-DD")
     fecha_vencimiento: Optional[str] = Field(None, description="YYYY-MM-DD")
     forma_pago: Optional[str] = Field(None, description="contado | credito")
     medio_pago: Optional[str] = Field(None)
     plazo_dias: Optional[int] = Field(None)
+    condiciones_pago: Optional[str] = Field(None, description="Payment terms, e.g. '30 days net' or 'immediate'")
     proveedor: Optional[EmisorFactura] = Field(None, description="Supplier")
     empresa_receptora: Optional[ReceptorFactura] = Field(None, description="Receiving company")
     items: Optional[List[FacturaItem]] = Field(None)

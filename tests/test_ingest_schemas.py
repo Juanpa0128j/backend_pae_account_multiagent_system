@@ -300,3 +300,31 @@ class TestSchemaRegistry:
         assert "conciliacion_bancaria" in INGEST_CONTENT_SCHEMAS
         assert "flujo_de_caja" in INGEST_CONTENT_SCHEMAS
         assert "notas_estados_financieros" in INGEST_CONTENT_SCHEMAS
+
+
+# ---------------------------------------------------------------------------
+# qr_code and condiciones_pago fields
+# ---------------------------------------------------------------------------
+
+class TestFacturaVentaQrCode:
+    def test_qr_code_field_exists(self):
+        schema = FacturaVentaContent.model_fields
+        assert "qr_code" in schema
+
+    def test_qr_code_is_optional_string(self):
+        obj = FacturaVentaContent()
+        assert obj.qr_code is None
+
+    def test_qr_code_accepts_value(self):
+        obj = FacturaVentaContent(qr_code="https://dian.gov.co/qr/abc123")
+        assert obj.qr_code == "https://dian.gov.co/qr/abc123"
+
+
+class TestFacturaCompraQrCodeAndCondicionesPago:
+    def test_qr_code_field_exists(self):
+        schema = FacturaCompraContent.model_fields
+        assert "qr_code" in schema
+
+    def test_condiciones_pago_field_exists(self):
+        schema = FacturaCompraContent.model_fields
+        assert "condiciones_pago" in schema
