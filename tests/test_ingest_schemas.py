@@ -334,3 +334,26 @@ def test_factura_compra_condiciones_pago_optional():
 def test_factura_compra_qr_code_optional():
     content = FacturaCompraContent(consecutivo="FC-999")
     assert content.qr_code is None
+
+
+def test_tax_declaration_has_periodicidad():
+    content = TaxDeclarationContent(
+        formulario="300",
+        periodicidad="bimestral",
+        total_a_pagar=Decimal("500000"),
+    )
+    assert content.periodicidad == "bimestral"
+
+
+def test_tax_declaration_has_impuestos_descontables():
+    content = TaxDeclarationContent(
+        formulario="300",
+        impuestos_descontables={"compras_nacionales": Decimal("200000"), "importaciones": Decimal("50000")},
+    )
+    assert content.impuestos_descontables["compras_nacionales"] == Decimal("200000")
+
+
+def test_tax_declaration_periodicidad_optional():
+    content = TaxDeclarationContent(formulario="350")
+    assert content.periodicidad is None
+    assert content.impuestos_descontables is None

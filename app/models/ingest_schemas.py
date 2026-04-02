@@ -314,16 +314,22 @@ class BankStatementContent(ContentBase):
 # ---------------------------------------------------------------------------
 
 class TaxDeclarationContent(ContentBase):
-    """Content schema for DIAN IVA tax declarations (Formulario 300)."""
-    formulario: Optional[str] = Field(None, description="DIAN form number (e.g. '300' for IVA)")
+    """Content schema for DIAN tax declarations (Formulario 300 IVA, 350 Retefuente, etc.)."""
+    formulario: Optional[str] = Field(None, description="DIAN form number (e.g. '300' for IVA, '350' for retefuente)")
     periodo: Optional[str] = Field(None, description="Tax period (e.g. '2026-01' bimestral)")
+    periodicidad: Optional[str] = Field(None, description="Frequency: anual | bimestral | cuatrimestral | mensual")
     nit_declarante: Optional[str] = Field(None)
+    base_gravable: Optional[Decimal] = Field(None, description="Total taxable base declared")
     renglones: Optional[Dict[str, Decimal]] = Field(None, description="DIAN form row values keyed by row number")
+    impuestos_descontables: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Discountable taxes detail by concept (compras_nacionales, importaciones, servicios, honorarios, etc.)"
+    )
     total_a_pagar: Optional[Decimal] = Field(None)
     saldo_a_favor: Optional[Decimal] = Field(None)
     informacion_adicional: Optional[Dict[str, Any]] = Field(None, description="Any other data relevant for downstream accounting.")
 
-    @field_validator("total_a_pagar", "saldo_a_favor", mode="before")
+    @field_validator("total_a_pagar", "saldo_a_favor", "base_gravable", mode="before")
     @classmethod
     def parse_total(cls, v):
         return _parse_decimal(v)
