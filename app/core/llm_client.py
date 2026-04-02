@@ -130,7 +130,7 @@ class LLMClient:
 
 Eres un experto contable colombiano. Extrae la información de esta FACTURA DE VENTA electrónica.
 
-Extrae obligatoriamente: número de factura (consecutivo con prefijo), CUFE, URL del código QR (campo qr_code), fecha de emisión, fecha de vencimiento (para cartera), datos del emisor (NIT con DV, razón social, régimen, resolución de facturación), datos del receptor (NIT, razón social), forma de pago, medio de pago, ítems con descripción/cantidad/valor unitario/impuestos, totales desglosados (subtotal, IVA, retenciones, total a pagar), y retenciones aplicadas (retefuente, reteIVA, reteICA).
+Extrae obligatoriamente: número de factura (consecutivo con prefijo), CUFE, URL del código QR (campo qr_code), fecha de emisión, fecha de vencimiento (para cartera), datos del emisor (NIT con DV, razón social, régimen, resolución de facturación), datos del receptor (NIT, razón social), forma de pago, medio de pago, plazo en días, ítems con descripción/cantidad/valor unitario/impuestos, totales desglosados (subtotal, IVA, retenciones, total a pagar), y retenciones aplicadas (retefuente, reteIVA, reteICA).
 
 Documento:
 ---
@@ -411,7 +411,7 @@ Y cita fuentes legales."""
 
 Eres un experto contable colombiano. Extrae la información de este EXTRACTO BANCARIO.
 
-Extrae obligatoriamente: entidad financiera, número y tipo de cuenta, titular (NIT y razón social), período (inicio y fin), saldo anterior (saldo_inicial) al comienzo del extracto, saldo actual (saldo_final) al final del extracto, todos los movimientos con fecha/descripción/referencia/tipo(débito o crédito)/valor/saldo corriente, resumen con total de cargos (total_debitos) y total de abonos (total_creditos) — estos totales son necesarios para verificar que estén registradas todas las partidas del mes —, GMF cobrado, intereses generados, y retención en la fuente sobre rendimientos.
+Extrae obligatoriamente: entidad financiera, número y tipo de cuenta, titular (NIT y razón social), período (inicio y fin), saldo anterior (saldo_inicial) al comienzo del extracto, saldo actual (saldo_final) al final del extracto, todos los movimientos con fecha/descripción/referencia/tipo(débito o crédito), importe en campo `debito` si es cargo o en campo `credito` si es abono/saldo, resumen con total de cargos (total_debitos) y total de abonos (total_creditos) — estos totales son necesarios para verificar que estén registradas todas las partidas del mes —, GMF cobrado, intereses generados, y retención en la fuente sobre rendimientos.
 
 Documento:
 ---
@@ -427,7 +427,7 @@ Documento:
 
 Eres un experto tributario colombiano. Extrae la información de esta DECLARACIÓN TRIBUTARIA (IVA Formulario 300 o ReteICA).
 
-Extrae obligatoriamente: número de formulario DIAN, período de la declaración, periodicidad (anual/bimestral/cuatrimestral/mensual), NIT del declarante, base gravable total, todos los renglones del formulario como dict {número_renglón: valor}, impuestos descontables detallados por concepto (compras_nacionales, importaciones, servicios, honorarios, etc.) en campo impuestos_descontables, saldo a favor (si aplica), total a pagar (si aplica), y cualquier sanción o interés de mora.
+Extrae obligatoriamente: número de formulario DIAN, período de la declaración, periodicidad (anual/bimestral/cuatrimestral/mensual), NIT del declarante, base gravable total, todos los renglones del formulario como dict {{número_renglón: valor}}, impuestos descontables detallados por concepto (compras_nacionales, importaciones, servicios, honorarios, etc.) en campo impuestos_descontables, saldo a favor (si aplica), total a pagar (si aplica), y cualquier sanción o interés de mora (incluir en informacion_adicional).
 
 Documento:
 ---
