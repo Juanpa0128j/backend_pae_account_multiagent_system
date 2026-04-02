@@ -30,11 +30,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.agents.graph import invoke_ingest_pipeline, invoke_accounting_pipeline
-from app.core.config import settings
-from app.core.database import SessionLocal, check_db_connection
-from app.models.database import CuentaPUC, JournalEntryLine, NaturalezaCuenta, TransactionPosted
-from app.services import db_service
+from app.agents.graph import invoke_ingest_pipeline, invoke_accounting_pipeline  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.core.database import SessionLocal, check_db_connection  # noqa: E402
+from app.models.database import (  # noqa: E402
+    CuentaPUC,
+    JournalEntryLine,
+    NaturalezaCuenta,
+    TransactionPosted,
+)
+from app.services import db_service  # noqa: E402
 
 
 @dataclass
@@ -54,7 +59,12 @@ class _FakeParsedDocument:
 class FakeLlamaParse:
     """Deterministic LlamaParse replacement for demo runs."""
 
-    def __init__(self, api_key: str | None = None, result_type: str = "markdown", verbose: bool = False):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        result_type: str = "markdown",
+        verbose: bool = False,
+    ):
         self.api_key = api_key
         self.result_type = result_type
         self.verbose = verbose
@@ -75,7 +85,9 @@ class FakeGeminiClient:
     """Deterministic Gemini replacement for ingest + process demo runs."""
 
     class _Justification:
-        def __init__(self, referencias: list[str], justificacion: str, confirma_tasas: bool):
+        def __init__(
+            self, referencias: list[str], justificacion: str, confirma_tasas: bool
+        ):
             self.referencias = referencias
             self.justificacion = justificacion
             self.confirma_tasas = confirma_tasas
@@ -91,7 +103,9 @@ class FakeGeminiClient:
             "nit_receptor": "800999888",
             "total": 1250000,
             "descripcion": "Servicios profesionales marzo 2026",
-            "items": [{"descripcion": "Servicio contable", "cantidad": 1, "valor": 1250000}],
+            "items": [
+                {"descripcion": "Servicio contable", "cantidad": 1, "valor": 1250000}
+            ],
         }
         # Keep both contracts: IngestOutput schema + legacy fields consumed by db_persist.
         return {
@@ -144,10 +158,17 @@ class FakeGeminiClient:
             "total_creditos": float(total),
         }
 
-    def justify_tax_analysis(self, tax_amounts: dict[str, Any], rag_context: str) -> _Justification:
+    def justify_tax_analysis(
+        self, tax_amounts: dict[str, Any], rag_context: str
+    ) -> _Justification:
         _ = rag_context
         return self._Justification(
-            referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],
+            referencias=[
+                "Art. 383 ET",
+                "Art. 401 ET",
+                "Art. 477 ET",
+                "Decreto 2048/1992",
+            ],
             justificacion=(
                 "Analisis tributario validado para demo con tasas estandar de Colombia "
                 "y referencias normativas base."
@@ -211,7 +232,9 @@ def _validate_supabase_configuration() -> None:
         )
 
     if not check_db_connection():
-        raise RuntimeError("No se pudo conectar a la base de datos. Revisa DATABASE_URL.")
+        raise RuntimeError(
+            "No se pudo conectar a la base de datos. Revisa DATABASE_URL."
+        )
 
     with SessionLocal() as db:
         # Validate both connectivity and migrated schema.
@@ -262,15 +285,19 @@ def _ensure_demo_puc_accounts() -> None:
 
 
 def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
-    with patch("app.agents.ingest_agent.LlamaCloud", FakeLlamaParse, create=True), patch(
-        "app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True
-    ), patch(
-        "app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()
+    with (
+        patch("app.agents.ingest_agent.LlamaCloud", FakeLlamaParse, create=True),
+        patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
+        patch(
+            "app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()
+        ),
     ):
         return invoke_ingest_pipeline(pdf_path)
 
 
-def _create_process_context(ingest_result: dict[str, Any], pdf_path: str) -> DemoContext:
+def _create_process_context(
+    ingest_result: dict[str, Any], pdf_path: str
+) -> DemoContext:
     ingest_id = str(ingest_result.get("ingest_id") or "")
     if not ingest_id:
         raise RuntimeError("Ingest pipeline no devolvio ingest_id.")
@@ -282,7 +309,9 @@ def _create_process_context(ingest_result: dict[str, Any], pdf_path: str) -> Dem
         or ""
     )
 
-    raw_transactions = ingest_result.get("data") or ingest_result.get("raw_transactions") or []
+    raw_transactions = (
+        ingest_result.get("data") or ingest_result.get("raw_transactions") or []
+    )
     if isinstance(raw_transactions, dict):
         raw_transactions = raw_transactions.get("transactions") or []
 
@@ -290,12 +319,17 @@ def _create_process_context(ingest_result: dict[str, Any], pdf_path: str) -> Dem
         if not pending_id:
             staged = db_service.get_transactions_by_ingest(db, ingest_id)
             if not staged:
-                raise RuntimeError("Ingest pipeline no persistio transacciones en staging.")
+                raise RuntimeError(
+                    "Ingest pipeline no persistio transacciones en staging."
+                )
 
             # Prefer latest pending by creation timestamp if available.
             latest = sorted(
                 staged,
-                key=lambda t: getattr(t, "created_at", None) or datetime.min.replace(tzinfo=timezone.utc),
+                key=lambda t: (
+                    getattr(t, "created_at", None)
+                    or datetime.min.replace(tzinfo=timezone.utc)
+                ),
             )[-1]
             pending_id = str(getattr(latest, "id", "") or "")
 
@@ -309,7 +343,9 @@ def _create_process_context(ingest_result: dict[str, Any], pdf_path: str) -> Dem
             raise RuntimeError("Ingest pipeline no persistio transaction_pending_id.")
 
         if not raw_transactions:
-            raise RuntimeError("Ingest pipeline no devolvio transacciones para process.")
+            raise RuntimeError(
+                "Ingest pipeline no devolvio transacciones para process."
+            )
 
         process_job = db_service.create_process_job(db, ingest_id=ingest_id)
 
@@ -324,9 +360,13 @@ def _create_process_context(ingest_result: dict[str, Any], pdf_path: str) -> Dem
 
 def _run_process_pipeline(ctx: DemoContext) -> dict[str, Any]:
     fake_client = FakeGeminiClient()
-    with patch("app.agents.contador_agent.get_gemini_client", return_value=fake_client), patch(
-        "app.agents.tributario_agent.get_gemini_client", return_value=fake_client
-    ), patch("app.agents.auditor_agent.get_gemini_client", return_value=fake_client):
+    with (
+        patch("app.agents.contador_agent.get_gemini_client", return_value=fake_client),
+        patch(
+            "app.agents.tributario_agent.get_gemini_client", return_value=fake_client
+        ),
+        patch("app.agents.auditor_agent.get_gemini_client", return_value=fake_client),
+    ):
         return invoke_accounting_pipeline(
             ingest_id=ctx.ingest_id,
             raw_transactions=ctx.raw_transactions,
@@ -335,7 +375,9 @@ def _run_process_pipeline(ctx: DemoContext) -> dict[str, Any]:
         )
 
 
-def _verify_persistence(ctx: DemoContext, process_result: dict[str, Any]) -> dict[str, Any]:
+def _verify_persistence(
+    ctx: DemoContext, process_result: dict[str, Any]
+) -> dict[str, Any]:
     with SessionLocal() as db:
         tx_ids = process_result.get("transaction_ids") or []
         posted = None
@@ -386,7 +428,9 @@ def main() -> int:
         pdf_path = _create_demo_pdf()
         print(f"[demo] pdf_path={pdf_path}")
 
-        _print_step("Ejecutando pipeline de INGESTA completo (supervisor -> ingesta -> validate -> db_persist)")
+        _print_step(
+            "Ejecutando pipeline de INGESTA completo (supervisor -> ingesta -> validate -> db_persist)"
+        )
         ingest_result = _run_ingest_pipeline(pdf_path)
         if ingest_result.get("status") != "completed":
             raise RuntimeError(f"Ingest fallo: {ingest_result.get('error')}")
@@ -395,17 +439,25 @@ def main() -> int:
         print(f"[demo] ingest_id={ctx.ingest_id}")
         print(f"[demo] pending_id={ctx.pending_id}")
         print(f"[demo] process_id={ctx.process_id}")
-        print(f"[demo] ingest_validation_steps={len(ingest_result.get('validation_history', []))}")
+        print(
+            f"[demo] ingest_validation_steps={len(ingest_result.get('validation_history', []))}"
+        )
 
-        _print_step("Ejecutando pipeline de PROCESS completo (process_supervisor -> contador -> validate -> db_persist)")
+        _print_step(
+            "Ejecutando pipeline de PROCESS completo (process_supervisor -> contador -> validate -> db_persist)"
+        )
         result = _run_process_pipeline(ctx)
         print(f"[demo] result.error={result.get('error')}")
-        print(f"[demo] process_validation_steps={len(result.get('validation_history', []))}")
+        print(
+            f"[demo] process_validation_steps={len(result.get('validation_history', []))}"
+        )
 
         _print_step("Verificando persistencia final en Supabase")
         summary = _verify_persistence(ctx, result)
         if not summary.get("posted_found"):
-            raise RuntimeError("No se encontro TransactionPosted para el process ejecutado.")
+            raise RuntimeError(
+                "No se encontro TransactionPosted para el process ejecutado."
+            )
         if summary.get("process_status") != "completed":
             raise RuntimeError(
                 f"ProcessJob no finalizo en completed (status={summary.get('process_status')})."
@@ -421,7 +473,9 @@ def main() -> int:
     except Exception as exc:
         print("\n[demo] FAILED")
         print(f"[demo] {exc}")
-        print("[demo] Sugerencia: revisa DATABASE_URL de Supabase y ejecuta `uv run alembic upgrade head`.")
+        print(
+            "[demo] Sugerencia: revisa DATABASE_URL de Supabase y ejecuta `uv run alembic upgrade head`."
+        )
         return 1
 
 

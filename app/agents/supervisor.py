@@ -11,7 +11,6 @@ architecture agents based on state['mode'] and state['current_agent']:
 All routing decisions and validation outcomes are recorded in agent_log.
 """
 
-import logging
 from pathlib import Path
 
 from app.agents.agent_utils import append_log
@@ -22,13 +21,13 @@ from app.core.logger import get_logger
 from app.services import db_service
 from app.services.validation_engine import ValidationResult, get_validator
 
-
 logger = get_logger("app.agents.supervisor")
 
 
 # ---------------------------------------------------------------------------
 # Pipeline 1 supervisor — ingest graph entry point
 # ---------------------------------------------------------------------------
+
 
 def supervisor_node(state: AgentState) -> AgentState:
     """
@@ -52,10 +51,15 @@ def supervisor_node(state: AgentState) -> AgentState:
     mode = state.get("mode", "ingest")
     current = state.get("current_agent", "")
 
-    append_log(state, "supervisor", "routing_start", {
-        "mode": mode,
-        "current_agent": current,
-    })
+    append_log(
+        state,
+        "supervisor",
+        "routing_start",
+        {
+            "mode": mode,
+            "current_agent": current,
+        },
+    )
 
     # ------------------------------------------------------------------
     # Ingest pipeline: file upload → ingesta → validate → db_persist
@@ -66,9 +70,15 @@ def supervisor_node(state: AgentState) -> AgentState:
         if not Path(file_path).exists():
             state["error"] = f"File not found: {file_path}"
             logger.error(state["error"])
-            append_log(state, "supervisor", "routing_error", {
-                "reason": "file_not_found", "file_path": file_path,
-            })
+            append_log(
+                state,
+                "supervisor",
+                "routing_error",
+                {
+                    "reason": "file_not_found",
+                    "file_path": file_path,
+                },
+            )
             return state
 
         _SUPPORTED_EXTENSIONS = (".pdf", ".xlsx", ".xml", ".jpg", ".jpeg", ".png")
@@ -77,9 +87,15 @@ def supervisor_node(state: AgentState) -> AgentState:
                 f"Unsupported file type. Accepted: PDF, Excel, XML, JPG, PNG. Got: {file_path}"
             )
             logger.error(state["error"])
-            append_log(state, "supervisor", "routing_error", {
-                "reason": "unsupported_format", "file_path": file_path,
-            })
+            append_log(
+                state,
+                "supervisor",
+                "routing_error",
+                {
+                    "reason": "unsupported_format",
+                    "file_path": file_path,
+                },
+            )
             return state
 
         # --- Extract text preview and classify document ---
@@ -88,17 +104,20 @@ def supervisor_node(state: AgentState) -> AgentState:
         try:
             if ext == ".xlsx":
                 from app.services.excel_parser import parse_excel
+
                 markdown_text, tabular_data = parse_excel(file_path)
                 state["raw_text"] = markdown_text
                 state["parsed_content"] = tabular_data
                 text_preview = markdown_text[:3000]
             elif ext == ".xml":
                 from app.services.xml_parser import parse_xml
+
                 xml_text = parse_xml(file_path)
                 state["raw_text"] = xml_text
                 text_preview = xml_text[:3000]
             elif ext == ".pdf":
                 from app.services.pdf_processor import extract_text_from_pdf
+
                 text_preview = extract_text_from_pdf(file_path)[:3000]
         except Exception as preview_err:
             logger.warning(
@@ -121,28 +140,41 @@ def supervisor_node(state: AgentState) -> AgentState:
                 classification_dict["entity_nit"] = state["company_nit"]
                 logger.info(
                     "Supervisor: company_nit override applied — using %s instead of auto-detected %s",
-                    state["company_nit"], classification.entity_nit,
+                    state["company_nit"],
+                    classification.entity_nit,
                 )
             state["document_classification"] = classification_dict
             state["pathway"] = classification.pathway.value
 
-            append_log(state, "supervisor", "document_classified", {
-                "doc_type": classification.doc_type.value,
-                "pathway": classification.pathway.value,
-                "confidence": classification.confidence,
-            })
+            append_log(
+                state,
+                "supervisor",
+                "document_classified",
+                {
+                    "doc_type": classification.doc_type.value,
+                    "pathway": classification.pathway.value,
+                    "confidence": classification.confidence,
+                },
+            )
 
             if classification.pathway == IngestPathway.WORK_WITH_EXISTING:
                 state["mode"] = "ingest"
                 state["current_agent"] = "import_existing"
                 logger.info(
                     "Supervisor: Vía B — routing to import_existing for %s (%s)",
-                    file_path, classification.doc_type.value,
+                    file_path,
+                    classification.doc_type.value,
                 )
-                append_log(state, "supervisor", "routing_complete", {
-                    "next_agent": "import_existing", "mode": "ingest",
-                    "pathway": "work_with_existing",
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "import_existing",
+                        "mode": "ingest",
+                        "pathway": "work_with_existing",
+                    },
+                )
                 return state
         except Exception as classify_err:
             logger.warning(
@@ -155,9 +187,15 @@ def supervisor_node(state: AgentState) -> AgentState:
         state["mode"] = "ingest"
         state["current_agent"] = "ingesta"
         logger.info(f"Supervisor: routing to ingesta for {file_path}")
-        append_log(state, "supervisor", "routing_complete", {
-            "next_agent": "ingesta", "mode": "ingest",
-        })
+        append_log(
+            state,
+            "supervisor",
+            "routing_complete",
+            {
+                "next_agent": "ingesta",
+                "mode": "ingest",
+            },
+        )
         return state
 
     # ------------------------------------------------------------------
@@ -172,15 +210,26 @@ def supervisor_node(state: AgentState) -> AgentState:
             if not raw_txs:
                 state["error"] = "Process supervisor: no staged transactions to process"
                 logger.error(state["error"])
-                append_log(state, "supervisor", "routing_error", {
-                    "reason": "no_transactions",
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_error",
+                    {
+                        "reason": "no_transactions",
+                    },
+                )
                 return state
             state["current_agent"] = "contador"
             state["current_stage"] = "routing"
-            append_log(state, "supervisor", "routing_complete", {
-                "next_agent": "contador", "mode": "process",
-            })
+            append_log(
+                state,
+                "supervisor",
+                "routing_complete",
+                {
+                    "next_agent": "contador",
+                    "mode": "process",
+                },
+            )
             return state
 
         if current == "contador":
@@ -189,20 +238,36 @@ def supervisor_node(state: AgentState) -> AgentState:
             if state.get("correction_feedback"):
                 # Validation failed — retry contador
                 state["current_agent"] = "contador"
-                append_log(state, "supervisor", "routing_complete", {
-                    "next_agent": "contador", "reason": "validation_failed",
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "contador",
+                        "reason": "validation_failed",
+                    },
+                )
             elif state.get("error"):
                 # Validation exhausted or non-retriable error — terminal
                 state["current_agent"] = ""
-                append_log(state, "supervisor", "routing_error", {
-                    "reason": "contador_validation_exhausted",
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_error",
+                    {
+                        "reason": "contador_validation_exhausted",
+                    },
+                )
             else:
                 state["current_agent"] = "tributario"
-                append_log(state, "supervisor", "routing_complete", {
-                    "next_agent": "tributario",
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "tributario",
+                    },
+                )
             return state
 
         if current == "tributario":
@@ -219,23 +284,32 @@ def supervisor_node(state: AgentState) -> AgentState:
                         mode="json"
                     )
                 state["current_agent"] = "auditor"
-                append_log(state, "supervisor", "routing_complete", {
-                    "next_agent": "auditor",
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "auditor",
+                    },
+                )
             else:
                 logger.error(
-                    f"Supervisor: tributario output INVALID — "
-                    f"{result.error_summary()}"
+                    f"Supervisor: tributario output INVALID — {result.error_summary()}"
                 )
                 state["error"] = (
                     f"Tributario output schema validation failed: "
                     f"{result.error_summary()}"
                 )
                 state["current_agent"] = ""
-                append_log(state, "supervisor", "routing_error", {
-                    "reason": "tributario_validation_failed",
-                    "errors": result.errors[:3],
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_error",
+                    {
+                        "reason": "tributario_validation_failed",
+                        "errors": result.errors[:3],
+                    },
+                )
             return state
 
         if current == "auditor":
@@ -243,14 +317,25 @@ def supervisor_node(state: AgentState) -> AgentState:
             state = validate_auditor_output_node(state)
             if state.get("correction_feedback"):
                 state["current_agent"] = "auditor"
-                append_log(state, "supervisor", "routing_complete", {
-                    "next_agent": "auditor", "reason": "validation_failed",
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "auditor",
+                        "reason": "validation_failed",
+                    },
+                )
             elif state.get("error"):
                 state["current_agent"] = ""
-                append_log(state, "supervisor", "routing_error", {
-                    "reason": "auditor_validation_exhausted",
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_error",
+                    {
+                        "reason": "auditor_validation_exhausted",
+                    },
+                )
             elif state.get("audit_approved") is False:
                 rejection_count = state.get("audit_rejection_count", 0) + 1
                 state["audit_rejection_count"] = rejection_count
@@ -260,9 +345,15 @@ def supervisor_node(state: AgentState) -> AgentState:
                     logger.warning(
                         "Supervisor: Audit rejection retry limit reached — persisting with rejection"
                     )
-                    append_log(state, "supervisor", "routing_complete", {
-                        "next_agent": "db_persist", "reason": "audit_rejected_max_retries",
-                    })
+                    append_log(
+                        state,
+                        "supervisor",
+                        "routing_complete",
+                        {
+                            "next_agent": "db_persist",
+                            "reason": "audit_rejected_max_retries",
+                        },
+                    )
                 else:
                     state["current_agent"] = "contador"
                     state["correction_feedback"] = (
@@ -274,14 +365,26 @@ def supervisor_node(state: AgentState) -> AgentState:
                         "Supervisor: Auditor rejected — re-routing to Contador (rejection %d/2)",
                         rejection_count,
                     )
-                    append_log(state, "supervisor", "routing_complete", {
-                        "next_agent": "contador", "reason": "audit_rejected",
-                    })
+                    append_log(
+                        state,
+                        "supervisor",
+                        "routing_complete",
+                        {
+                            "next_agent": "contador",
+                            "reason": "audit_rejected",
+                        },
+                    )
             else:
                 state["current_agent"] = "db_persist"
-                append_log(state, "supervisor", "routing_complete", {
-                    "next_agent": "db_persist", "decision": "approved",
-                })
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "db_persist",
+                        "decision": "approved",
+                    },
+                )
             return state
 
     # ------------------------------------------------------------------
@@ -289,27 +392,39 @@ def supervisor_node(state: AgentState) -> AgentState:
     # ------------------------------------------------------------------
     if mode == "reporting":
         state["current_agent"] = "reportero"
-        append_log(state, "supervisor", "routing_complete", {
-            "next_agent": "reportero", "mode": "reporting",
-        })
+        append_log(
+            state,
+            "supervisor",
+            "routing_complete",
+            {
+                "next_agent": "reportero",
+                "mode": "reporting",
+            },
+        )
         return state
 
     # ------------------------------------------------------------------
     # Unknown state — fail gracefully
     # ------------------------------------------------------------------
-    state["error"] = (
-        f"Supervisor: unknown mode '{mode}' / current_agent '{current}'"
-    )
+    state["error"] = f"Supervisor: unknown mode '{mode}' / current_agent '{current}'"
     logger.error(state["error"])
-    append_log(state, "supervisor", "routing_error", {
-        "reason": "unknown_state", "mode": mode, "current_agent": current,
-    })
+    append_log(
+        state,
+        "supervisor",
+        "routing_error",
+        {
+            "reason": "unknown_state",
+            "mode": mode,
+            "current_agent": current,
+        },
+    )
     return state
 
 
 # ---------------------------------------------------------------------------
 # Process pipeline supervisor — kept for backward-compat with create_process_graph
 # ---------------------------------------------------------------------------
+
 
 def process_supervisor_node(state: AgentState) -> AgentState:
     """Process supervisor: validates staged input and routes to contador worker."""
@@ -338,6 +453,7 @@ def process_supervisor_node(state: AgentState) -> AgentState:
 # ---------------------------------------------------------------------------
 # Validation nodes
 # ---------------------------------------------------------------------------
+
 
 def validate_output_node(state: AgentState) -> AgentState:
     """Generic schema validation node (used by ingest graph)."""
@@ -383,11 +499,16 @@ def validate_output_node(state: AgentState) -> AgentState:
         )
         state["correction_feedback"] = validator.build_correction_prompt(result)
         state["retry_count"] = attempt
-        append_log(state, agent_name, "validation_failure", {
-            "attempt": attempt,
-            "error_count": len(result.errors),
-            "will_retry": True,
-        })
+        append_log(
+            state,
+            agent_name,
+            "validation_failure",
+            {
+                "attempt": attempt,
+                "error_count": len(result.errors),
+                "will_retry": True,
+            },
+        )
         return state
 
     logger.error(
@@ -400,10 +521,15 @@ def validate_output_node(state: AgentState) -> AgentState:
     state["correction_feedback"] = None
     state["result"]["status"] = "validation_error"
     state["result"]["validation_errors"] = result.errors
-    append_log(state, agent_name, "validation_exhausted", {
-        "attempt": attempt,
-        "errors": result.errors[:3],
-    })
+    append_log(
+        state,
+        agent_name,
+        "validation_exhausted",
+        {
+            "attempt": attempt,
+            "errors": result.errors[:3],
+        },
+    )
     return state
 
 
@@ -411,11 +537,7 @@ def _missing_puc_codes(contador_output: dict) -> list[str]:
     """Return missing PUC codes from DB for a contador output payload."""
     asientos = contador_output.get("asientos", [])
     codes = sorted(
-        {
-            str(a.get("cuenta_puc", "")).strip()
-            for a in asientos
-            if a.get("cuenta_puc")
-        }
+        {str(a.get("cuenta_puc", "")).strip() for a in asientos if a.get("cuenta_puc")}
     )
     if not codes:
         return []
@@ -461,11 +583,16 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         if validator.should_retry(result):
             state["correction_feedback"] = validator.build_correction_prompt(result)
             state["retry_count"] = attempt
-            append_log(state, agent_name, "validation_failure", {
-                "attempt": attempt,
-                "error_count": len(result.errors),
-                "will_retry": True,
-            })
+            append_log(
+                state,
+                agent_name,
+                "validation_failure",
+                {
+                    "attempt": attempt,
+                    "error_count": len(result.errors),
+                    "will_retry": True,
+                },
+            )
             return state
 
         state["error"] = (
@@ -475,9 +602,15 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         state["result"]["status"] = "validation_error"
         state["result"]["validation_errors"] = result.errors
         state["correction_feedback"] = None
-        append_log(state, agent_name, "validation_exhausted", {
-            "attempt": attempt, "errors": result.errors[:3],
-        })
+        append_log(
+            state,
+            agent_name,
+            "validation_exhausted",
+            {
+                "attempt": attempt,
+                "errors": result.errors[:3],
+            },
+        )
         return state
 
     validated = (
@@ -504,11 +637,16 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         if attempt < validator.MAX_RETRIES:
             state["correction_feedback"] = missing_msg
             state["retry_count"] = attempt
-            append_log(state, agent_name, "validation_failure", {
-                "attempt": attempt,
-                "reason": "missing_puc",
-                "missing": missing,
-            })
+            append_log(
+                state,
+                agent_name,
+                "validation_failure",
+                {
+                    "attempt": attempt,
+                    "reason": "missing_puc",
+                    "missing": missing,
+                },
+            )
             return state
 
         state["error"] = (
@@ -520,9 +658,16 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             {"loc": ["asientos"], "msg": missing_msg, "type": "puc_not_found"}
         ]
         state["correction_feedback"] = None
-        append_log(state, agent_name, "validation_exhausted", {
-            "attempt": attempt, "reason": "puc_not_found", "missing": missing,
-        })
+        append_log(
+            state,
+            agent_name,
+            "validation_exhausted",
+            {
+                "attempt": attempt,
+                "reason": "puc_not_found",
+                "missing": missing,
+            },
+        )
         return state
 
     state["correction_feedback"] = None
@@ -539,6 +684,7 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
 # Conditional edge functions
 # ---------------------------------------------------------------------------
 
+
 def should_retry_agent(state: AgentState) -> str:
     """Conditional edge for ingest graph: retry, error bypass, or proceed."""
     if state.get("error"):
@@ -547,12 +693,16 @@ def should_retry_agent(state: AgentState) -> str:
         return "retry"
     return "end"
 
+
 MAX_CONTADOR_RETRIES = 3
 
 
 def should_retry_contador(state: AgentState) -> str:
     """Conditional edge for contador retries in the process graph."""
-    if state.get("correction_feedback") and state.get("retry_count", 0) < MAX_CONTADOR_RETRIES:
+    if (
+        state.get("correction_feedback")
+        and state.get("retry_count", 0) < MAX_CONTADOR_RETRIES
+    ):
         return "retry"
     return "end"
 
@@ -567,7 +717,9 @@ def validate_auditor_output_node(state: AgentState) -> AgentState:
     attempt = state.get("retry_count", 0) + 1
 
     validator = get_validator()
-    result: ValidationResult = validator.validate(agent_name, raw_output, attempt=attempt)
+    result: ValidationResult = validator.validate(
+        agent_name, raw_output, attempt=attempt
+    )
 
     state["validation_history"].append(
         {
@@ -623,13 +775,18 @@ MAX_AUDITOR_RETRIES = 3
 
 def should_retry_auditor(state: AgentState) -> str:
     """Conditional edge for auditor retries in the process graph."""
-    if state.get("correction_feedback") and state.get("retry_count", 0) < MAX_AUDITOR_RETRIES:
+    if (
+        state.get("correction_feedback")
+        and state.get("retry_count", 0) < MAX_AUDITOR_RETRIES
+    ):
         return "retry"
     return "end"
+
 
 # ---------------------------------------------------------------------------
 # Error terminal — unified graph
 # ---------------------------------------------------------------------------
+
 
 def error_terminal_node(state: AgentState) -> AgentState:
     """
@@ -640,9 +797,14 @@ def error_terminal_node(state: AgentState) -> AgentState:
         state["result"] = {}
     state["result"]["status"] = "error"
     state["result"]["error"] = state.get("error", "Unknown error")
-    append_log(state, "supervisor", "pipeline_aborted", {
-        "reason": state.get("error"),
-    })
+    append_log(
+        state,
+        "supervisor",
+        "pipeline_aborted",
+        {
+            "reason": state.get("error"),
+        },
+    )
     logger.error(f"Pipeline aborted: {state.get('error')}")
     return state
 
@@ -650,6 +812,7 @@ def error_terminal_node(state: AgentState) -> AgentState:
 # ---------------------------------------------------------------------------
 # Routing function for unified graph
 # ---------------------------------------------------------------------------
+
 
 def route_after_supervisor(state: AgentState) -> str:
     """
@@ -669,4 +832,3 @@ def route_after_supervisor(state: AgentState) -> str:
         "reportero": "reportero",
     }
     return routing_map.get(agent, "error_terminal")
-

@@ -37,17 +37,27 @@ def import_existing_node(state: AgentState) -> AgentState:
     interpreted = state.get("interpreted_data") or {}
     doc_type = classification.get("doc_type", "unknown")
 
-    append_log(state, "import_existing", "node_start", {
-        "doc_type": doc_type,
-        "pathway": "work_with_existing",
-    })
+    append_log(
+        state,
+        "import_existing",
+        "node_start",
+        {
+            "doc_type": doc_type,
+            "pathway": "work_with_existing",
+        },
+    )
 
     if not interpreted:
         state["error"] = "import_existing: no interpreted data to import"
         logger.error(state["error"])
-        append_log(state, "import_existing", "node_error", {
-            "error": state["error"],
-        })
+        append_log(
+            state,
+            "import_existing",
+            "node_error",
+            {
+                "error": state["error"],
+            },
+        )
         return state
 
     state["result"] = {
@@ -60,8 +70,13 @@ def import_existing_node(state: AgentState) -> AgentState:
     state["current_stage"] = "import_complete"
     state["current_agent"] = "import_existing"
 
-    append_log(state, "import_existing", "node_complete", {
-        "doc_type": doc_type,
-    })
+    append_log(
+        state,
+        "import_existing",
+        "node_complete",
+        {
+            "doc_type": doc_type,
+        },
+    )
     logger.info("import_existing: %s imported successfully", doc_type)
     return state

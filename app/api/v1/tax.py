@@ -46,7 +46,9 @@ def _run_report(report_type: str, params: dict) -> dict:
 @router.get("/iva", response_model=IVAOutput)
 async def get_iva_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
@@ -61,7 +63,9 @@ async def get_iva_report(
 @router.get("/withholdings", response_model=WithholdingsOutput)
 async def get_withholdings_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
@@ -70,14 +74,20 @@ async def get_withholdings_report(
     with applicable legal references.
     Optionally includes LLM-powered analysis when include_analysis=true.
     """
-    return _run_report("withholdings", _build_params(start_date, end_date, include_analysis))
+    return _run_report(
+        "withholdings", _build_params(start_date, end_date, include_analysis)
+    )
 
 
 @router.get("/ica", response_model=ICADeclaracionOutput)
 async def get_ica_declaration(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
-    nit: Optional[str] = Query(None, description="Company NIT (nit_receptor) to filter by"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
+    nit: Optional[str] = Query(
+        None, description="Company NIT (nit_receptor) to filter by"
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -97,14 +107,17 @@ async def get_ica_declaration(
     if start_date:
         query_params["period_start"] = start_date
 
-    row = db.execute(sql_text(f"""
+    row = db.execute(
+        sql_text(f"""
         SELECT COALESCE(SUM(j.credito), 0) AS ingresos
         FROM journal_entry_lines j
         JOIN transactions_posted tp ON j.transaction_posted_id = tp.id
         WHERE j.cuenta_puc >= '4000' AND j.cuenta_puc < '5000'
         {where_nit} {where_start}
         AND j.fecha <= :period_end
-    """), query_params).fetchone()
+    """),
+        query_params,
+    ).fetchone()
 
     ingresos_brutos = Decimal(str(row.ingresos if row else 0))
 
@@ -134,7 +147,9 @@ async def get_ica_declaration(
 @router.get("/renta-provision", response_model=RentaProvisionOutput)
 async def get_renta_provision(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     nit: Optional[str] = Query(None, description="Company NIT to filter by"),
     db: Session = Depends(get_db),
 ):

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Data types
 # ---------------------------------------------------------------------------
 
+
 class ValidationStatus(str, Enum):
     VALID = "valid"
     INVALID = "invalid"
@@ -53,9 +54,11 @@ class ValidationResult:
         """Human-readable error summary for re-routing feedback."""
         if not self.errors:
             return ""
-        lines = [f"Validation failed for agent '{self.agent_name}' (attempt {self.attempt}):"]
+        lines = [
+            f"Validation failed for agent '{self.agent_name}' (attempt {self.attempt}):"
+        ]
         for err in self.errors:
-            loc = " → ".join(str(l) for l in err.get("loc", []))
+            loc = " → ".join(str(loc_part) for loc_part in err.get("loc", []))
             msg = err.get("msg", "unknown error")
             lines.append(f"  - [{loc}] {msg}")
         return "\n".join(lines)
@@ -75,6 +78,7 @@ class ComplianceRecord:
 # ---------------------------------------------------------------------------
 # Validation Engine
 # ---------------------------------------------------------------------------
+
 
 class OutputValidator:
     """
@@ -127,11 +131,13 @@ class OutputValidator:
                 status=ValidationStatus.ERROR,
                 raw_output=raw_output,
                 attempt=attempt,
-                errors=[{
-                    "loc": ["__root__"],
-                    "msg": f"No schema registered for agent '{agent_name}'",
-                    "type": "configuration_error",
-                }],
+                errors=[
+                    {
+                        "loc": ["__root__"],
+                        "msg": f"No schema registered for agent '{agent_name}'",
+                        "type": "configuration_error",
+                    }
+                ],
             )
             self._record(result)
             return result
@@ -188,15 +194,16 @@ class OutputValidator:
                 raw_output=raw_output,
                 attempt=attempt,
                 duration_ms=round(duration, 2),
-                errors=[{
-                    "loc": ["__root__"],
-                    "msg": str(exc),
-                    "type": "unexpected_error",
-                }],
+                errors=[
+                    {
+                        "loc": ["__root__"],
+                        "msg": str(exc),
+                        "type": "unexpected_error",
+                    }
+                ],
             )
             logger.error(
-                f"Validation ERROR for '{agent_name}' "
-                f"(attempt {attempt}): {exc}",
+                f"Validation ERROR for '{agent_name}' (attempt {attempt}): {exc}",
                 exc_info=True,
             )
 
@@ -207,10 +214,7 @@ class OutputValidator:
 
     def should_retry(self, result: ValidationResult) -> bool:
         """Check whether the failed output should be retried."""
-        return (
-            not result.is_valid
-            and result.attempt < self.MAX_RETRIES
-        )
+        return not result.is_valid and result.attempt < self.MAX_RETRIES
 
     def build_correction_prompt(self, result: ValidationResult) -> str:
         """
@@ -218,9 +222,7 @@ class OutputValidator:
         explaining exactly what failed and what is expected.
         """
         schema_cls = AGENT_OUTPUT_SCHEMAS.get(result.agent_name)
-        schema_json = (
-            schema_cls.model_json_schema() if schema_cls else {}
-        )
+        schema_json = schema_cls.model_json_schema() if schema_cls else {}
 
         prompt_lines = [
             "Tu salida anterior NO cumplió el esquema requerido.",
@@ -238,9 +240,7 @@ class OutputValidator:
 
     # -- metrics -----------------------------------------------------------
 
-    def schema_compliance_rate(
-        self, agent_name: Optional[str] = None
-    ) -> float:
+    def schema_compliance_rate(self, agent_name: Optional[str] = None) -> float:
         """
         Calculate Schema Compliance Rate.
 
@@ -302,9 +302,7 @@ class OutputValidator:
 
         return {
             "overall_compliance_rate": round(total_passed / total, 4),
-            "per_agent_compliance_rate": {
-                a: d["rate"] for a, d in per_agent.items()
-            },
+            "per_agent_compliance_rate": {a: d["rate"] for a, d in per_agent.items()},
             "total_validations": total,
             "total_passed": total_passed,
             "total_failed": total - total_passed,

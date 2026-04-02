@@ -69,6 +69,7 @@ def base_reporting_state(report_type: str, **params) -> dict:
 # Pytest fixtures (available to all test files without explicit import)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def reporting_state():
     """Returns the base_reporting_state builder so tests can call it inline."""

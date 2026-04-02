@@ -5,6 +5,7 @@ Provider priority: OpenAI (primary) → Gemini (fallback) → Groq (last resort)
 All extraction methods live here. `gemini_client.py` re-exports this for
 backward compatibility.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,6 +38,7 @@ class LLMClient:
 
     def __init__(self) -> None:
         from app.core.config import get_settings
+
         settings = get_settings()
 
         self._openai_key = settings.openai_api_key
@@ -59,12 +61,14 @@ class LLMClient:
     def _get_gemini(self):
         if self._gemini is None:
             from app.core.providers.gemini_provider import GeminiProvider
+
             self._gemini = GeminiProvider()
         return self._gemini
 
     def _get_groq(self):
         if self._groq is None:
             from app.core.providers.groq_provider import GroqProvider
+
             self._groq = GroqProvider()
         return self._groq
 
@@ -77,7 +81,8 @@ class LLMClient:
             if not _is_quota_error(exc):
                 raise
             logger.warning(
-                "OpenAI quota exceeded — falling back to Gemini for %s", schema_cls.__name__
+                "OpenAI quota exceeded — falling back to Gemini for %s",
+                schema_cls.__name__,
             )
 
         # 2. Gemini
@@ -88,7 +93,8 @@ class LLMClient:
                 if not _is_quota_error(exc):
                     raise
                 logger.warning(
-                    "Gemini quota exceeded — falling back to Groq for %s", schema_cls.__name__
+                    "Gemini quota exceeded — falling back to Groq for %s",
+                    schema_cls.__name__,
                 )
 
         # 3. Groq
@@ -108,7 +114,9 @@ class LLMClient:
         return dict(response)
 
     @staticmethod
-    def _as_model(model_cls: type[ModelT], response: BaseModel | dict[str, Any]) -> ModelT:
+    def _as_model(
+        model_cls: type[ModelT], response: BaseModel | dict[str, Any]
+    ) -> ModelT:
         if isinstance(response, model_cls):
             return response
         if isinstance(response, BaseModel):
@@ -119,13 +127,21 @@ class LLMClient:
     # Extraction methods
     # ------------------------------------------------------------------
 
-    def extract_transactions(self, text: str, *, correction_feedback: str | None = None) -> dict:
+    def extract_transactions(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """Legacy method — kept for backward compatibility. Routes to extract_factura_venta."""
         return self.extract_factura_venta(text, correction_feedback=correction_feedback)
 
-    def extract_factura_venta(self, text: str, *, correction_feedback: str | None = None) -> dict:
+    def extract_factura_venta(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """Extract factura de venta (electronic sales invoice, DIAN Res. 000165/2023)."""
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, FacturaVentaContent
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            FacturaVentaContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de esta FACTURA DE VENTA electrónica.
@@ -140,9 +156,15 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(FacturaVentaContent, prompt))
 
-    def extract_factura_compra(self, text: str, *, correction_feedback: str | None = None) -> dict:
+    def extract_factura_compra(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """Extract factura de compra (purchase invoice)."""
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, FacturaCompraContent
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            FacturaCompraContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de esta FACTURA DE COMPRA.
@@ -157,9 +179,15 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(FacturaCompraContent, prompt))
 
-    def extract_nota_credito(self, text: str, *, correction_feedback: str | None = None) -> dict:
+    def extract_nota_credito(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """Extract nota crédito (credit note)."""
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, NotaCreditoContent
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            NotaCreditoContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de esta NOTA CRÉDITO electrónica.
@@ -174,9 +202,15 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(NotaCreditoContent, prompt))
 
-    def extract_nota_debito(self, text: str, *, correction_feedback: str | None = None) -> dict:
+    def extract_nota_debito(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """Extract nota débito (debit note)."""
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, NotaDebitoContent
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            NotaDebitoContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de esta NOTA DÉBITO electrónica.
@@ -199,6 +233,7 @@ Documento:
         correction_feedback: str | None = None,
     ) -> dict:
         from app.core.gemini_client import ContadorOutputGemini
+
         txns_text = "\n".join(
             f"- Fecha: {t.get('fecha', 'N/A')}, NIT emisor: {t.get('nit_emisor', 'N/A')}, "
             f"Total: {t.get('total', 0)}, Descripcion: {t.get('descripcion', 'N/A')}"
@@ -210,7 +245,12 @@ Documento:
         for item in rag_context[:5]:
             if isinstance(item, dict):
                 rag_lines.append(
-                    str(item.get("content") or item.get("text") or item.get("document") or item)
+                    str(
+                        item.get("content")
+                        or item.get("text")
+                        or item.get("document")
+                        or item
+                    )
                 )
             else:
                 rag_lines.append(str(getattr(item, "content", item)))
@@ -257,7 +297,12 @@ Corrige los errores indicados y regenera el asiento contable."""
         correction_feedback: str | None = None,
     ) -> dict:
         from app.core.gemini_client import AuditorOutputGemini
-        asientos = contador_output.get("asientos", []) if isinstance(contador_output, dict) else []
+
+        asientos = (
+            contador_output.get("asientos", [])
+            if isinstance(contador_output, dict)
+            else []
+        )
         asientos_text = "\n".join(
             f"- cuenta={a.get('cuenta_puc', 'N/A')} "
             f"tipo={a.get('tipo_movimiento', 'N/A')} valor={a.get('valor', 0)} "
@@ -273,15 +318,15 @@ Corrige los errores indicados y regenera el asiento contable."""
         prompt = f"""Eres un auditor contable colombiano (NIIF/DIAN).
 
 Transacciones origen:
-{tx_text or '- Sin transacciones en entrada'}
+{tx_text or "- Sin transacciones en entrada"}
 
 Salida del contador:
-- fecha_registro: {contador_output.get('fecha_registro')}
-- tipo_documento: {contador_output.get('tipo_documento')}
-- total_debitos: {contador_output.get('total_debitos')}
-- total_creditos: {contador_output.get('total_creditos')}
+- fecha_registro: {contador_output.get("fecha_registro")}
+- tipo_documento: {contador_output.get("tipo_documento")}
+- total_debitos: {contador_output.get("total_debitos")}
+- total_creditos: {contador_output.get("total_creditos")}
 - asientos:
-{asientos_text or '- Sin asientos'}
+{asientos_text or "- Sin asientos"}
 
 Evalua coherencia semantica, soporte documental, riesgo fiscal y calidad de la descripcion.
 Devuelve una salida estructurada que incluya obligatoriamente:
@@ -313,6 +358,7 @@ Corrige los errores de esquema y regenera la auditoria."""
 
     def justify_tax_analysis(self, tax_amounts: dict, rag_context: str) -> Any:
         from app.core.gemini_client import TaxJustification
+
         retefuente = tax_amounts.get("retefuente", 0)
         reteica = tax_amounts.get("reteica", 0)
         iva = tax_amounts.get("iva", 0)
@@ -321,7 +367,11 @@ Corrige los errores de esquema y regenera la auditoria."""
         tasa_iva = tax_amounts.get("tasa_iva", "19%")
         tipo_transaccion = tax_amounts.get("tipo_transaccion", "servicios")
 
-        normativa_section = rag_context.strip() if rag_context else "No se encontro normativa en la base vectorial."
+        normativa_section = (
+            rag_context.strip()
+            if rag_context
+            else "No se encontro normativa en la base vectorial."
+        )
 
         prompt = f"""Eres un experto tributario colombiano.
 
@@ -341,9 +391,16 @@ Confirma si las tasas son correctas, cita articulos y da justificacion breve."""
             response = self._invoke(TaxJustification, prompt)
             return self._as_model(TaxJustification, response)
         except Exception as e:
-            logger.warning("LLMClient.justify_tax_analysis failed (%s) - returning fallback", e)
+            logger.warning(
+                "LLMClient.justify_tax_analysis failed (%s) - returning fallback", e
+            )
             return TaxJustification(
-                referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],
+                referencias=[
+                    "Art. 383 ET",
+                    "Art. 401 ET",
+                    "Art. 477 ET",
+                    "Decreto 2048/1992",
+                ],
                 justificacion=(
                     "Retenciones aplicadas segun tasas vigentes del Estatuto Tributario "
                     "colombiano. Retefuente segun Art. 383 ET para servicios; ReteICA segun "
@@ -360,6 +417,7 @@ Confirma si las tasas son correctas, cita articulos y da justificacion breve."""
         rag_context: str,
     ) -> Any:
         from app.core.gemini_client import TaxRateLookup
+
         regimen_desc = (
             "regimen comun (responsable de IVA)"
             if iva_responsable
@@ -392,12 +450,21 @@ Devuelve tasas como fracciones decimales para:
 Y cita fuentes legales."""
 
         response = self._as_model(TaxRateLookup, self._invoke(TaxRateLookup, prompt))
-        logger.info("Tax rate lookup: ciudad=%s ciiu=%s reteica=%s", ciudad, codigo_ciiu, response.tasa_reteica)
+        logger.info(
+            "Tax rate lookup: ciudad=%s ciiu=%s reteica=%s",
+            ciudad,
+            codigo_ciiu,
+            response.tasa_reteica,
+        )
         return response
 
     def classify_document(self, text_preview: str) -> Any:
         """Classify a document based on its content using LLM."""
-        from app.services.doc_classifier import CLASSIFICATION_PROMPT, _ClassificationResponse
+        from app.services.doc_classifier import (
+            CLASSIFICATION_PROMPT,
+            _ClassificationResponse,
+        )
+
         prompt = CLASSIFICATION_PROMPT.format(text_preview=text_preview)
         try:
             return self._invoke(_ClassificationResponse, prompt)
@@ -405,8 +472,14 @@ Y cita fuentes legales."""
             logger.error("LLMClient.classify_document failed: %s", e)
             raise
 
-    def extract_bank_statement(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, BankStatementContent
+    def extract_bank_statement(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            BankStatementContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de este EXTRACTO BANCARIO.
@@ -421,8 +494,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(BankStatementContent, prompt))
 
-    def extract_tax_declaration(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, TaxDeclarationContent
+    def extract_tax_declaration(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            TaxDeclarationContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto tributario colombiano. Extrae la información de esta DECLARACIÓN TRIBUTARIA (IVA Formulario 300 o ReteICA).
@@ -437,12 +516,20 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(TaxDeclarationContent, prompt))
 
-    def extract_tax_annex(self, text: str, *, correction_feedback: str | None = None) -> dict:
+    def extract_tax_annex(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """Delegates to extract_anexo_iva for backward compatibility."""
         return self.extract_anexo_iva(text, correction_feedback=correction_feedback)
 
-    def extract_auxiliary_ledger(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, AuxiliaryLedgerContent
+    def extract_auxiliary_ledger(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            AuxiliaryLedgerContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano (PUC/NIIF). Extrae la información de este LIBRO AUXILIAR CONTABLE.
@@ -457,17 +544,32 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(AuxiliaryLedgerContent, prompt))
 
-    def extract_financial_statement(self, text: str, *, correction_feedback: str | None = None) -> dict:
+    def extract_financial_statement(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """Legacy dispatcher — routes to the dedicated method based on content."""
         # Try to detect which type it is from a keyword scan before invoking LLM
         lower = text[:2000].lower()
-        if any(k in lower for k in ("utilidad", "ingresos", "gastos", "costo de venta", "resultado")):
-            return self.extract_estado_resultados(text, correction_feedback=correction_feedback)
-        return self.extract_balance_general(text, correction_feedback=correction_feedback)
+        if any(
+            k in lower
+            for k in ("utilidad", "ingresos", "gastos", "costo de venta", "resultado")
+        ):
+            return self.extract_estado_resultados(
+                text, correction_feedback=correction_feedback
+            )
+        return self.extract_balance_general(
+            text, correction_feedback=correction_feedback
+        )
 
-    def extract_balance_general(self, text: str, *, correction_feedback: str | None = None) -> dict:
+    def extract_balance_general(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """Extract balance general / estado de situación financiera."""
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, BalanceGeneralContent
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            BalanceGeneralContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano (NIIF/PUC). Extrae la información de este BALANCE GENERAL (Estado de Situación Financiera).
@@ -482,9 +584,15 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(BalanceGeneralContent, prompt))
 
-    def extract_estado_resultados(self, text: str, *, correction_feedback: str | None = None) -> dict:
+    def extract_estado_resultados(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
         """Extract estado de resultados / P&L."""
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, EstadoResultadosContent
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            EstadoResultadosContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano (NIIF/PUC). Extrae la información de este ESTADO DE RESULTADOS (Estado de Pérdidas y Ganancias).
@@ -499,8 +607,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(EstadoResultadosContent, prompt))
 
-    def extract_declaracion_ica(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, DeclaracionICAContent
+    def extract_declaracion_ica(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            DeclaracionICAContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto tributario colombiano especializado en impuestos municipales. Extrae la información de esta DECLARACIÓN DE ICA (Impuesto de Industria y Comercio).
@@ -515,8 +629,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(DeclaracionICAContent, prompt))
 
-    def extract_autorretencion_ica(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, AutoretencionICAContent
+    def extract_autorretencion_ica(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            AutoretencionICAContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto tributario colombiano. Extrae la información de esta DECLARACIÓN DE AUTORRETENCIÓN DE ICA.
@@ -531,8 +651,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(AutoretencionICAContent, prompt))
 
-    def extract_anexo_iva(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, AnexoIVAContent
+    def extract_anexo_iva(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            AnexoIVAContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto tributario colombiano. Extrae la información de este ANEXO DE IVA.
@@ -547,8 +673,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(AnexoIVAContent, prompt))
 
-    def extract_auxiliar_iva(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, AuxiliarIVAContent
+    def extract_auxiliar_iva(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            AuxiliarIVAContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de este AUXILIAR DE IVA (libro auxiliar de cuentas de IVA).
@@ -563,8 +695,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(AuxiliarIVAContent, prompt))
 
-    def extract_libro_diario(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, LibroDiarioContent
+    def extract_libro_diario(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            LibroDiarioContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de este LIBRO DIARIO OFICIAL.
@@ -579,8 +717,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(LibroDiarioContent, prompt))
 
-    def extract_flujo_caja(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, FlujoDeCajaContent
+    def extract_flujo_caja(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            FlujoDeCajaContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano (NIIF). Extrae la información de este ESTADO DE FLUJOS DE EFECTIVO.
@@ -595,8 +739,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(FlujoDeCajaContent, prompt))
 
-    def extract_cambios_patrimonio(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, CambiosPatrimonioContent
+    def extract_cambios_patrimonio(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            CambiosPatrimonioContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano (NIIF). Extrae la información de este ESTADO DE CAMBIOS EN EL PATRIMONIO.
@@ -611,8 +761,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(CambiosPatrimonioContent, prompt))
 
-    def extract_notas_financieras(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, NotasEstadosFinancierosContent
+    def extract_notas_financieras(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            NotasEstadosFinancierosContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano (NIIF). Extrae la información de estas NOTAS A LOS ESTADOS FINANCIEROS.
@@ -627,8 +783,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(NotasEstadosFinancierosContent, prompt))
 
-    def extract_comprobante_egreso(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, ComprobanteEgresoContent
+    def extract_comprobante_egreso(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            ComprobanteEgresoContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de este COMPROBANTE DE EGRESO.
@@ -643,8 +805,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(ComprobanteEgresoContent, prompt))
 
-    def extract_documento_soporte(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, DocumentoSoporteContent
+    def extract_documento_soporte(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            DocumentoSoporteContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de este DOCUMENTO SOPORTE EN ADQUISICIONES A NO OBLIGADOS A FACTURAR (art. 1.6.1.4.12 DUR 1625/2016).
@@ -659,8 +827,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(DocumentoSoporteContent, prompt))
 
-    def extract_recibo_caja(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, ReciboCajaContent
+    def extract_recibo_caja(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            ReciboCajaContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de este RECIBO DE CAJA.
@@ -675,8 +849,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(ReciboCajaContent, prompt))
 
-    def extract_nomina(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, NominaContent
+    def extract_nomina(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            NominaContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano especializado en nómina. Extrae la información de esta NÓMINA.
@@ -691,8 +871,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(NominaContent, prompt))
 
-    def extract_conciliacion_bancaria(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, ConciliacionBancariaContent
+    def extract_conciliacion_bancaria(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            ConciliacionBancariaContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de esta CONCILIACIÓN BANCARIA.
@@ -707,8 +893,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(ConciliacionBancariaContent, prompt))
 
-    def extract_cuenta_cobro(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, CuentaCobroContent
+    def extract_cuenta_cobro(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            CuentaCobroContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano. Extrae la información de esta CUENTA DE COBRO.
@@ -723,8 +915,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(CuentaCobroContent, prompt))
 
-    def extract_planilla_seg_social(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, PlanillaSegSocialContent
+    def extract_planilla_seg_social(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            PlanillaSegSocialContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto contable colombiano especializado en seguridad social. Extrae la información de esta PLANILLA DE APORTES A SEGURIDAD SOCIAL (PILA).
@@ -739,8 +937,14 @@ Documento:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(PlanillaSegSocialContent, prompt))
 
-    def extract_recibo_pago_impuesto(self, text: str, *, correction_feedback: str | None = None) -> dict:
-        from app.core.gemini_client import GENERAL_EXTRACTION_INSTRUCTIONS, ReciboPagoImpuestoContent
+    def extract_recibo_pago_impuesto(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        from app.core.gemini_client import (
+            GENERAL_EXTRACTION_INSTRUCTIONS,
+            ReciboPagoImpuestoContent,
+        )
+
         prompt = f"""{GENERAL_EXTRACTION_INSTRUCTIONS}
 
 Eres un experto tributario colombiano. Extrae la información de este RECIBO DE PAGO DE IMPUESTO.
@@ -754,7 +958,6 @@ Documento:
         if correction_feedback:
             prompt += f"\n\n=== CORRECCIÓN REQUERIDA ===\n{correction_feedback}\nCorrige los errores y vuelve a extraer."
         return self._as_dict(self._invoke(ReciboPagoImpuestoContent, prompt))
-
 
     # ------------------------------------------------------------------
     # Reportero: Financial analysis methods

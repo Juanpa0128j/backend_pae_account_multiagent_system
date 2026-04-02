@@ -1,4 +1,4 @@
-﻿"""
+"""
 Seed / populate the normativa pgvector collection in Supabase.
 
 Run once before starting the API server (or whenever the source data changes):

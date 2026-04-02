@@ -12,6 +12,7 @@ class IngestResponse(BaseModel):
     raw_preview: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
 
+
 class RawTransaction(BaseModel):
     fecha: str
     nit_emisor: str
@@ -19,6 +20,7 @@ class RawTransaction(BaseModel):
     total: float
     descripcion: Optional[str] = None
     items: Optional[List[Dict[str, Any]]] = None
+
 
 class IngestDetailResponse(BaseModel):
     ingest_id: str
@@ -38,6 +40,7 @@ class ProcessResponse(BaseModel):
 
 class ProcessStatusResponse(BaseModel):
     """Response for GET /process/status/{process_id}"""
+
     process_id: str
     status: str
     current_stage: Optional[str] = None
@@ -55,6 +58,7 @@ class ProcessStatusResponse(BaseModel):
 
 class ProcessResultResponse(BaseModel):
     """Response for GET /process/result/{process_id}"""
+
     process_id: str
     ingest_id: str
     status: str
@@ -72,14 +76,27 @@ class CompanyProfileSetupRequest(BaseModel):
     The user provides what they know (city, CIIU, régimen) and the agent
     determines the correct tax rates from the normative RAG.
     """
+
     nombre: Optional[str] = None
-    ciudad: str = Field(..., min_length=2, description="City where the company operates, e.g. 'Bogotá', 'Medellín', 'Cali'")
-    codigo_ciiu: str = Field(..., min_length=1, description="CIIU economic activity code from the company's RUT")
-    iva_responsable: bool = Field(..., description="True if régimen común (IVA applies), False if régimen simplificado")
+    ciudad: str = Field(
+        ...,
+        min_length=2,
+        description="City where the company operates, e.g. 'Bogotá', 'Medellín', 'Cali'",
+    )
+    codigo_ciiu: str = Field(
+        ...,
+        min_length=1,
+        description="CIIU economic activity code from the company's RUT",
+    )
+    iva_responsable: bool = Field(
+        ...,
+        description="True if régimen común (IVA applies), False if régimen simplificado",
+    )
 
 
 class CompanySettingsRequest(BaseModel):
     """Request body for creating or updating company tax settings."""
+
     nombre: Optional[str] = None
     ciudad: Optional[str] = None
     codigo_ciiu: Optional[str] = None
@@ -89,12 +106,13 @@ class CompanySettingsRequest(BaseModel):
     tasa_retefuente_arrendamiento: float = 0.10
     tasa_reteica: float = 0.0069
     tasa_iva_general: float = 0.19
-    tasa_ica: float = 0.00690      # ICA on gross income — Ley 14/1983
-    tasa_renta: float = 0.35       # Renta societaria — Art. 240 ET, Ley 2277/2022
+    tasa_ica: float = 0.00690  # ICA on gross income — Ley 14/1983
+    tasa_renta: float = 0.35  # Renta societaria — Art. 240 ET, Ley 2277/2022
 
 
 class CompanySettingsResponse(CompanySettingsRequest):
     """Response body for company tax settings endpoints."""
+
     nit: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -159,6 +177,7 @@ class CuentaPUCResponse(BaseModel):
 
 class ICADeclaracionOutput(BaseModel):
     """Response for GET /api/v1/tax/ica — período ICA declaration."""
+
     report_type: Literal["ica_declaracion"] = "ica_declaracion"
     period_start: Optional[str] = None
     period_end: str
@@ -173,6 +192,7 @@ class ICADeclaracionOutput(BaseModel):
 
 class RentaProvisionOutput(BaseModel):
     """Response for GET /api/v1/tax/renta-provision — periodic income tax provision."""
+
     report_type: Literal["renta_provision"] = "renta_provision"
     period_start: Optional[str] = None
     period_end: str

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Supabase pgvector client — manages vector document storage using PostgreSQL + pgvector.
 
 Collections are implemented as a virtual partition on the `vector_documents` table,

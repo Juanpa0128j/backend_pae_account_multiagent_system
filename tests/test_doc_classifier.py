@@ -4,19 +4,23 @@ Tests for the document classifier service.
 
 import pytest
 from unittest.mock import MagicMock, patch
-from decimal import Decimal
 
-from app.models.document_types import DocumentType, IngestPathway, get_pathway, PATHWAY_MAP
+from app.models.document_types import (
+    DocumentType,
+    IngestPathway,
+    get_pathway,
+    PATHWAY_MAP,
+)
 from app.services.doc_classifier import (
     DocumentClassification,
     classify_document,
     _ClassificationResponse,
 )
 
-
 # ---------------------------------------------------------------------------
 # DocumentType and Pathway tests
 # ---------------------------------------------------------------------------
+
 
 class TestDocumentTypes:
     def test_all_types_have_pathway(self):
@@ -55,6 +59,7 @@ class TestDocumentTypes:
 # DocumentClassification schema tests
 # ---------------------------------------------------------------------------
 
+
 class TestDocumentClassification:
     def test_valid_classification(self):
         c = DocumentClassification(
@@ -92,6 +97,7 @@ class TestDocumentClassification:
 # ---------------------------------------------------------------------------
 # classify_document function tests (with mocked LLM)
 # ---------------------------------------------------------------------------
+
 
 class TestClassifyDocument:
     def test_empty_text_returns_otro(self):

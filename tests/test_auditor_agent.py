@@ -120,7 +120,7 @@ REJECTED_AUDITOR_OUTPUT: dict = {
 
 # Schematically invalid auditor output (missing required fields)
 INVALID_AUDITOR_OUTPUT: dict = {
-    "aprobado": None,           # must be bool
+    "aprobado": None,  # must be bool
     "nivel_riesgo": "bajo",
     # missing: fecha_auditoria, documento_referencia, puntaje_calidad, resumen
 }
@@ -129,6 +129,7 @@ INVALID_AUDITOR_OUTPUT: dict = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _base_state(**overrides: Any) -> AgentState:
     """Build a minimal AgentState for process-pipeline unit tests."""
@@ -163,11 +164,13 @@ def _base_state(**overrides: Any) -> AgentState:
 # 1. Unit: auditor_node
 # ===========================================================================
 
-class TestAuditorNode:
 
+class TestAuditorNode:
     def test_skips_on_upstream_error(self):
         """auditor_node should be a no-op when state["error"] is set."""
-        state = _base_state(error="upstream failure", contador_output=dict(VALID_CONTADOR_OUTPUT))
+        state = _base_state(
+            error="upstream failure", contador_output=dict(VALID_CONTADOR_OUTPUT)
+        )
         result = auditor_node(state)
         assert result["error"] == "upstream failure"
         assert result["auditor_output"] == {}
@@ -206,7 +209,9 @@ class TestAuditorNode:
 
         assert result["error"] is None
         assert result["auditor_output"]["aprobado"] is False
-        assert any(h["codigo"] == "AUD-001" for h in result["auditor_output"]["hallazgos"])
+        assert any(
+            h["codigo"] == "AUD-001" for h in result["auditor_output"]["hallazgos"]
+        )
 
     @patch("app.agents.auditor_agent.get_gemini_client")
     def test_retry_clears_correction_feedback(self, mock_factory):
@@ -246,7 +251,9 @@ class TestAuditorNode:
     @patch("app.agents.auditor_agent.get_gemini_client")
     def test_gemini_exception_captures_error(self, mock_factory):
         mock_gemini = MagicMock()
-        mock_gemini.extract_auditor_output.side_effect = RuntimeError("Gemini quota exceeded")
+        mock_gemini.extract_auditor_output.side_effect = RuntimeError(
+            "Gemini quota exceeded"
+        )
         mock_factory.return_value = mock_gemini
 
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT))
@@ -260,8 +267,8 @@ class TestAuditorNode:
 # 2. Unit: contador_node
 # ===========================================================================
 
-class TestContadorNode:
 
+class TestContadorNode:
     def test_skips_on_upstream_error(self):
         state = _base_state(error="upstream failure")
         result = contador_node(state)
@@ -280,7 +287,10 @@ class TestContadorNode:
         mock_factory.return_value = mock_gemini
 
         state = _base_state()
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("RAG down")):
+        with patch(
+            "app.services.rag_service.get_rag_service",
+            side_effect=Exception("RAG down"),
+        ):
             result = contador_node(state)
 
         assert result["error"] is None
@@ -297,7 +307,10 @@ class TestContadorNode:
         mock_factory.return_value = mock_gemini
 
         state = _base_state()
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("RAG down")):
+        with patch(
+            "app.services.rag_service.get_rag_service",
+            side_effect=Exception("RAG down"),
+        ):
             result = contador_node(state)
 
         assert result["error"] is None
@@ -313,7 +326,10 @@ class TestContadorNode:
 
         feedback = "PUC 5135 no existe. Usa un código válido."
         state = _base_state(correction_feedback=feedback, retry_count=1)
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("RAG down")):
+        with patch(
+            "app.services.rag_service.get_rag_service",
+            side_effect=Exception("RAG down"),
+        ):
             result = contador_node(state)
 
         call_kwargs = mock_gemini.extract_contador_output.call_args.kwargs
@@ -327,7 +343,10 @@ class TestContadorNode:
         mock_factory.return_value = mock_gemini
 
         state = _base_state()
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("RAG down")):
+        with patch(
+            "app.services.rag_service.get_rag_service",
+            side_effect=Exception("RAG down"),
+        ):
             result = contador_node(state)
 
         assert result["error"] is not None
@@ -338,8 +357,8 @@ class TestContadorNode:
 # 3. Unit: process_supervisor_node
 # ===========================================================================
 
-class TestProcessSupervisorNode:
 
+class TestProcessSupervisorNode:
     def test_sets_mode_and_routes_to_contador(self):
         state = _base_state()
         result = process_supervisor_node(state)
@@ -351,7 +370,10 @@ class TestProcessSupervisorNode:
         state = _base_state(raw_transactions=[])
         result = process_supervisor_node(state)
         assert result["error"] is not None
-        assert "staged" in result["error"].lower() or "transactions" in result["error"].lower()
+        assert (
+            "staged" in result["error"].lower()
+            or "transactions" in result["error"].lower()
+        )
 
     def test_initialises_missing_validation_history(self):
         state = _base_state()
@@ -370,8 +392,8 @@ class TestProcessSupervisorNode:
 # 4. Unit: validate_auditor_output_node
 # ===========================================================================
 
-class TestValidateAuditorOutputNode:
 
+class TestValidateAuditorOutputNode:
     def test_skips_on_upstream_error(self):
         state = _base_state(error="something broke")
         result = validate_auditor_output_node(state)
@@ -421,8 +443,8 @@ class TestValidateAuditorOutputNode:
 # 5. Unit: validate_contador_output_node
 # ===========================================================================
 
-class TestValidateContadorOutputNode:
 
+class TestValidateContadorOutputNode:
     def test_valid_output_advances_stage(self):
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT))
         with patch("app.agents.supervisor._missing_puc_codes", return_value=[]):
@@ -432,7 +454,9 @@ class TestValidateContadorOutputNode:
         assert result["current_stage"] == "validated"
 
     def test_unbalanced_asientos_triggers_retry(self):
-        state = _base_state(contador_output=dict(INVALID_CONTADOR_OUTPUT), retry_count=0)
+        state = _base_state(
+            contador_output=dict(INVALID_CONTADOR_OUTPUT), retry_count=0
+        )
         result = validate_contador_output_node(state)
         assert result["correction_feedback"] is not None or result["error"] is not None
 
@@ -466,16 +490,21 @@ class TestValidateContadorOutputNode:
 # 6. Unit: conditional edge functions
 # ===========================================================================
 
-class TestConditionalEdges:
 
+class TestConditionalEdges:
     def test_should_retry_contador_with_feedback(self):
-        assert should_retry_contador(_base_state(correction_feedback="fix this")) == "retry"
+        assert (
+            should_retry_contador(_base_state(correction_feedback="fix this"))
+            == "retry"
+        )
 
     def test_should_not_retry_contador_without_feedback(self):
         assert should_retry_contador(_base_state(correction_feedback=None)) == "end"
 
     def test_should_retry_auditor_with_feedback(self):
-        assert should_retry_auditor(_base_state(correction_feedback="fix this")) == "retry"
+        assert (
+            should_retry_auditor(_base_state(correction_feedback="fix this")) == "retry"
+        )
 
     def test_should_not_retry_auditor_without_feedback(self):
         assert should_retry_auditor(_base_state(correction_feedback=None)) == "end"
@@ -485,30 +514,42 @@ class TestConditionalEdges:
 # 7. Process graph structure
 # ===========================================================================
 
-class TestProcessGraphStructure:
 
+class TestProcessGraphStructure:
     def test_graph_compiles(self):
         graph = create_agent_graph()
         assert graph is not None
 
     def test_expected_nodes_present(self):
         graph = create_agent_graph()
-        nodes = {n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")}
+        nodes = {
+            n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
+        }
         for expected in (
-            "supervisor", "ingesta", "validate_output", "db_persist",
-            "contador", "tributario", "auditor", "reportero", "error_terminal",
+            "supervisor",
+            "ingesta",
+            "validate_output",
+            "db_persist",
+            "contador",
+            "tributario",
+            "auditor",
+            "reportero",
+            "error_terminal",
         ):
             assert expected in nodes, f"Node '{expected}' missing from process graph"
 
     def test_node_count(self):
         graph = create_agent_graph()
-        nodes = [n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")]
+        nodes = [
+            n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
+        ]
         assert len(nodes) == 10
 
 
 # ===========================================================================
 # 8–11. E2E: process graph with mocked Gemini + mocked DB persist
 # ===========================================================================
+
 
 def _mock_persist(state: AgentState) -> AgentState:
     """Replace db_persist_node with a lightweight stub."""
@@ -522,8 +563,12 @@ def _mock_persist(state: AgentState) -> AgentState:
         "puc_descripcion": "Servicios",
         "audit_approved": state.get("audit_approved"),
         "audit_nivel_riesgo": (state.get("auditor_output") or {}).get("nivel_riesgo"),
-        "audit_puntaje_calidad": (state.get("auditor_output") or {}).get("puntaje_calidad"),
-        "audit_hallazgos_count": len((state.get("auditor_output") or {}).get("hallazgos", [])),
+        "audit_puntaje_calidad": (state.get("auditor_output") or {}).get(
+            "puntaje_calidad"
+        ),
+        "audit_hallazgos_count": len(
+            (state.get("auditor_output") or {}).get("hallazgos", [])
+        ),
     }
     if not state.get("result"):
         state["result"] = {}
@@ -544,7 +589,9 @@ class TestProcessGraphE2E:
     @patch("app.agents.contador_agent.get_gemini_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
-    def test_happy_path_approved(self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory):
+    def test_happy_path_approved(
+        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
+    ):
         """Successful pipeline: contador → validate → auditor → validate → persist."""
         mock_cnt = MagicMock()
         mock_cnt.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
@@ -555,7 +602,9 @@ class TestProcessGraphE2E:
         mock_aud_factory.return_value = mock_aud
 
         # RAG service not needed in this test
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
+        with patch(
+            "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
+        ):
             graph = create_agent_graph()
             state = _base_state()
             final = graph.invoke(state)
@@ -585,6 +634,7 @@ class TestProcessGraphE2E:
 
         # Reject on first call, approve on second (after self-correction)
         audit_calls = {"n": 0}
+
         def auditor_side_effect(*args, **kwargs):
             audit_calls["n"] += 1
             if audit_calls["n"] == 1:
@@ -601,20 +651,26 @@ class TestProcessGraphE2E:
         )
         mock_trib_factory.return_value = mock_trib
 
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
+        with patch(
+            "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
+        ):
             graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
         assert final.get("error") is None, final.get("error")
         assert final["audit_approved"] is True
         assert final["db_result"] is not None
-        assert audit_calls["n"] == 2, "Auditor should have been called twice (reject + approve)"
+        assert (
+            audit_calls["n"] == 2
+        ), "Auditor should have been called twice (reject + approve)"
 
     @patch("app.agents.auditor_agent.get_gemini_client")
     @patch("app.agents.contador_agent.get_gemini_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
-    def test_contador_retry_then_success(self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory):
+    def test_contador_retry_then_success(
+        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
+    ):
         """
         First contador call returns an unbalanced output → validate triggers retry.
         Second call returns valid output → pipeline continues to auditor.
@@ -635,14 +691,18 @@ class TestProcessGraphE2E:
         mock_aud.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
         mock_aud_factory.return_value = mock_aud
 
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
+        with patch(
+            "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
+        ):
             graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
         assert final.get("error") is None
         assert call_count["n"] >= 2, "Expected at least one retry of contador"
         # Validation history has at least one failed + one passed for contador
-        contador_history = [h for h in final["validation_history"] if h["agent_name"] == "contador"]
+        contador_history = [
+            h for h in final["validation_history"] if h["agent_name"] == "contador"
+        ]
         assert any(not h["is_valid"] for h in contador_history)
         assert any(h["is_valid"] for h in contador_history)
 
@@ -650,7 +710,9 @@ class TestProcessGraphE2E:
     @patch("app.agents.contador_agent.get_gemini_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
-    def test_auditor_retry_then_success(self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory):
+    def test_auditor_retry_then_success(
+        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
+    ):
         """
         First auditor call returns invalid schema → validate triggers retry.
         Second call returns valid output → pipeline persists.
@@ -671,7 +733,9 @@ class TestProcessGraphE2E:
         mock_aud.extract_auditor_output.side_effect = side_effect_auditor
         mock_aud_factory.return_value = mock_aud
 
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
+        with patch(
+            "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
+        ):
             graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
@@ -686,7 +750,9 @@ class TestProcessGraphE2E:
         mock_cnt.extract_contador_output.return_value = dict(INVALID_CONTADOR_OUTPUT)
         mock_cnt_factory.return_value = mock_cnt
 
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
+        with patch(
+            "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
+        ):
             graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
@@ -708,7 +774,9 @@ class TestProcessGraphE2E:
         mock_aud.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
         mock_aud_factory.return_value = mock_aud
 
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
+        with patch(
+            "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
+        ):
             graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
@@ -726,10 +794,14 @@ class TestProcessGraphE2E:
 
 
 def _check_postgres_available() -> bool:
-    """Return True when PostgreSQL is reachable."""
+    """Return True when PostgreSQL is reachable (2-second connect timeout)."""
     from sqlalchemy import create_engine
 
-    eng = create_engine(DATABASE_URL, echo=False)
+    eng = create_engine(
+        DATABASE_URL,
+        echo=False,
+        connect_args={"connect_timeout": 2},
+    )
     try:
         conn = eng.connect()
         conn.close()
@@ -764,7 +836,7 @@ class TestProcessGraphDBIntegration:
         from datetime import datetime, timezone
 
         from app.core.database import SessionLocal
-        from app.models.database import CuentaPUC, NaturalezaCuenta, TransactionPending
+        from app.models.database import CuentaPUC, NaturalezaCuenta
         from app.services import db_service
 
         db = SessionLocal()
@@ -787,7 +859,9 @@ class TestProcessGraphDBIntegration:
                     )
 
             # Create an IngestJob + TransactionPending to link the process run to
-            ingest_job = db_service.create_ingest_job(db, "test_e2e_auditor.pdf", "/tmp/test.pdf")
+            ingest_job = db_service.create_ingest_job(
+                db, "test_e2e_auditor.pdf", "/tmp/test.pdf"
+            )
             pending = db_service.create_transaction_pending(
                 db,
                 ingest_id=str(ingest_job.id),
@@ -812,7 +886,9 @@ class TestProcessGraphDBIntegration:
     @patch("app.agents.auditor_agent.get_gemini_client")
     @patch("app.agents.contador_agent.get_gemini_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
-    def test_full_pipeline_persists_records(self, _mock_puc, mock_cnt_factory, mock_aud_factory):
+    def test_full_pipeline_persists_records(
+        self, _mock_puc, mock_cnt_factory, mock_aud_factory
+    ):
         """End-to-end pipeline writes TransactionPosted + JournalEntryLines to DB."""
         from app.core.database import SessionLocal
         from app.models.database import JournalEntryLine, TransactionPosted
@@ -825,7 +901,9 @@ class TestProcessGraphDBIntegration:
         mock_aud.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
         mock_aud_factory.return_value = mock_aud
 
-        with patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")):
+        with patch(
+            "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
+        ):
             result = invoke_accounting_pipeline(
                 ingest_id=self._ingest_id,
                 raw_transactions=list(VALID_RAW_TRANSACTIONS),
@@ -844,22 +922,29 @@ class TestProcessGraphDBIntegration:
         # Verify records exist in DB
         db = SessionLocal()
         try:
-            posted = db.query(TransactionPosted).filter(
-                TransactionPosted.id == db_res["transaction_posted_id"]
-            ).first()
+            posted = (
+                db.query(TransactionPosted)
+                .filter(TransactionPosted.id == db_res["transaction_posted_id"])
+                .first()
+            )
             assert posted is not None
             assert posted.cuenta_puc == "5135"
 
-            lines = db.query(JournalEntryLine).filter(
-                JournalEntryLine.transaction_posted_id == db_res["transaction_posted_id"]
-            ).all()
+            lines = (
+                db.query(JournalEntryLine)
+                .filter(
+                    JournalEntryLine.transaction_posted_id
+                    == db_res["transaction_posted_id"]
+                )
+                .all()
+            )
             assert len(lines) >= 2
 
             total_debito = sum(ln.debito for ln in lines)
             total_credito = sum(ln.credito for ln in lines)
-            assert total_debito == total_credito, (
-                f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
-            )
+            assert (
+                total_debito == total_credito
+            ), f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
 
             # Auditor output stored in agent_reasoning
             assert posted.agent_reasoning is not None
@@ -871,7 +956,9 @@ class TestProcessGraphDBIntegration:
     @patch("app.agents.auditor_agent.get_gemini_client")
     @patch("app.agents.contador_agent.get_gemini_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
-    def test_rejected_audit_stored_with_findings(self, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory):
+    def test_rejected_audit_stored_with_findings(
+        self, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory
+    ):
         """A rejected audit must persist with aprobado=False recorded in agent_reasoning."""
         from app.core.database import SessionLocal
         from app.models.database import TransactionPosted
@@ -899,9 +986,20 @@ class TestProcessGraphDBIntegration:
         mock_company_row.tasa_iva_general = 0.19
         mock_company_row.iva_responsable = True
 
-        with patch("app.agents.tributario_agent.get_rag_service", side_effect=Exception("no RAG")), \
-             patch("app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")), \
-             patch("app.services.db_service.get_company_settings", return_value=mock_company_row):
+        with (
+            patch(
+                "app.agents.tributario_agent.get_rag_service",
+                side_effect=Exception("no RAG"),
+            ),
+            patch(
+                "app.services.rag_service.get_rag_service",
+                side_effect=Exception("no RAG"),
+            ),
+            patch(
+                "app.services.db_service.get_company_settings",
+                return_value=mock_company_row,
+            ),
+        ):
             result = invoke_accounting_pipeline(
                 ingest_id=self._ingest_id,
                 raw_transactions=list(VALID_RAW_TRANSACTIONS),
@@ -915,9 +1013,11 @@ class TestProcessGraphDBIntegration:
         if db_res.get("transaction_posted_id"):
             db = SessionLocal()
             try:
-                posted = db.query(TransactionPosted).filter(
-                    TransactionPosted.id == db_res["transaction_posted_id"]
-                ).first()
+                posted = (
+                    db.query(TransactionPosted)
+                    .filter(TransactionPosted.id == db_res["transaction_posted_id"])
+                    .first()
+                )
                 if posted and posted.agent_reasoning:
                     auditor_rec = posted.agent_reasoning.get("auditor", {})
                     assert auditor_rec.get("aprobado") is False

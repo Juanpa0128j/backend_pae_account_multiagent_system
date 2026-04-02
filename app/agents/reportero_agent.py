@@ -24,7 +24,7 @@ import logging
 import statistics
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
@@ -43,10 +43,14 @@ _CLASS_PATRIMONIO = "3"
 _CLASS_INGRESOS = "4"
 _CLASS_GASTOS = "5"
 _CLASS_COSTO_VENTAS = "6"
-_PREFIX_EFECTIVO = "11"          # Bancos, Caja, equivalentes de efectivo
+_PREFIX_EFECTIVO = "11"  # Bancos, Caja, equivalentes de efectivo
 _PREFIX_ACTIVOS_CORRIENTES = ("11", "12", "13")  # Efectivo, Inversiones, Deudores
-_PREFIX_PASIVOS_CORRIENTES = ("21", "22", "23")  # Obligaciones, Proveedores, Cuentas por pagar
-_PREFIX_INVENTARIOS = "14"       # Inventarios (excluded from acid test)
+_PREFIX_PASIVOS_CORRIENTES = (
+    "21",
+    "22",
+    "23",
+)  # Obligaciones, Proveedores, Cuentas por pagar
+_PREFIX_INVENTARIOS = "14"  # Inventarios (excluded from acid test)
 
 # Specific tax retention accounts
 _CUENTA_IVA_GENERADO = "240808"
@@ -54,9 +58,9 @@ _CUENTA_IVA_DESCONTABLE = "240802"
 _CUENTA_RETEFUENTE = "240815"
 _CUENTA_RETEICA = "236540"
 
-_VALID_REPORT_TYPES = frozenset({
-    "balance", "pnl", "cashflow", "iva", "withholdings", "analysis"
-})
+_VALID_REPORT_TYPES = frozenset(
+    {"balance", "pnl", "cashflow", "iva", "withholdings", "analysis"}
+)
 
 # ---------------------------------------------------------------------------
 # System Prompt for LLM Financial Analysis
@@ -136,10 +140,12 @@ interpretaciones profundas, predicciones fundamentadas y recomendaciones acciona
 # RAG enrichment helper (non-fatal)
 # ---------------------------------------------------------------------------
 
+
 def _fetch_rag_referencias(query: str, n_results: int = 3) -> list[str]:
     """Query the normativa RAG collection and return human-readable citation strings."""
     try:
         from app.services.rag_service import get_rag_service  # noqa: PLC0415
+
         rag_svc = get_rag_service()
         results = rag_svc.search_normativo(query, n_results=n_results)
         citations: list[str] = []
@@ -165,6 +171,7 @@ def _fetch_rag_context_text(query: str, n_results: int = 5) -> str:
     """Return RAG results as a single text block for LLM context."""
     try:
         from app.services.rag_service import get_rag_service  # noqa: PLC0415
+
         rag_svc = get_rag_service()
         results = rag_svc.search_normativo(query, n_results=n_results)
         parts = []
@@ -186,7 +193,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_date_param(value: Optional[str], end_of_day: bool = False) -> Optional[datetime]:
+def _parse_date_param(
+    value: Optional[str], end_of_day: bool = False
+) -> Optional[datetime]:
     """Convert an ISO date string to UTC datetime."""
     if not value:
         return None
@@ -207,7 +216,9 @@ def _ledger_by_prefix(ledger: list[dict], prefix: str) -> list[dict]:
 
 def _ledger_by_prefixes(ledger: list[dict], prefixes: tuple) -> list[dict]:
     """Filter ledger rows starting with any of the given prefixes."""
-    return [row for row in ledger if any(row["account"].startswith(p) for p in prefixes)]
+    return [
+        row for row in ledger if any(row["account"].startswith(p) for p in prefixes)
+    ]
 
 
 def _ledger_by_exact(ledger: list[dict], code: str) -> Optional[dict]:
@@ -239,19 +250,23 @@ def _safe_divide(numerator: float, denominator: float) -> Optional[float]:
 # Financial ratio calculations (deterministic)
 # ---------------------------------------------------------------------------
 
+
 def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
     """Compute key financial ratios from ledger data and balance summary."""
     # Current assets: classes 11, 12, 13
     activos_corrientes = sum(
-        float(_debit_nature_balance(r)) for r in _ledger_by_prefixes(ledger, _PREFIX_ACTIVOS_CORRIENTES)
+        float(_debit_nature_balance(r))
+        for r in _ledger_by_prefixes(ledger, _PREFIX_ACTIVOS_CORRIENTES)
     )
     # Inventories: class 14
     inventarios = sum(
-        float(_debit_nature_balance(r)) for r in _ledger_by_prefix(ledger, _PREFIX_INVENTARIOS)
+        float(_debit_nature_balance(r))
+        for r in _ledger_by_prefix(ledger, _PREFIX_INVENTARIOS)
     )
     # Current liabilities: classes 21, 22, 23
     pasivos_corrientes = sum(
-        float(_credit_nature_balance(r)) for r in _ledger_by_prefixes(ledger, _PREFIX_PASIVOS_CORRIENTES)
+        float(_credit_nature_balance(r))
+        for r in _ledger_by_prefixes(ledger, _PREFIX_PASIVOS_CORRIENTES)
     )
 
     activos = balance["assets"]
@@ -262,9 +277,19 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
 
     return {
         "razon_corriente": _safe_divide(activos_corrientes, pasivos_corrientes),
-        "prueba_acida": _safe_divide(activos_corrientes - inventarios, pasivos_corrientes),
-        "margen_neto": round(_safe_divide(utilidad, ingresos) * 100, 2) if ingresos and _safe_divide(utilidad, ingresos) is not None else None,
-        "roa": round(_safe_divide(utilidad, activos) * 100, 2) if activos and _safe_divide(utilidad, activos) is not None else None,
+        "prueba_acida": _safe_divide(
+            activos_corrientes - inventarios, pasivos_corrientes
+        ),
+        "margen_neto": (
+            round(_safe_divide(utilidad, ingresos) * 100, 2)
+            if ingresos and _safe_divide(utilidad, ingresos) is not None
+            else None
+        ),
+        "roa": (
+            round(_safe_divide(utilidad, activos) * 100, 2)
+            if activos and _safe_divide(utilidad, activos) is not None
+            else None
+        ),
         "razon_endeudamiento": _safe_divide(pasivos, activos) if activos else None,
         "deuda_patrimonio": _safe_divide(pasivos, patrimonio) if patrimonio else None,
         "rotacion_activos": _safe_divide(ingresos, activos) if activos else None,
@@ -275,7 +300,10 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
 # Simple linear regression for predictions
 # ---------------------------------------------------------------------------
 
-def _linear_regression_predict(data_points: list[float], n_predict: int = 3) -> list[float]:
+
+def _linear_regression_predict(
+    data_points: list[float], n_predict: int = 3
+) -> list[float]:
     """Simple linear regression on data_points, predict next n_predict values.
 
     Returns empty list if fewer than 2 data points.
@@ -333,12 +361,14 @@ def _compute_predictions(monthly_data: dict) -> list[dict]:
             year += 1
         ing = pred_ingresos[i] if i < len(pred_ingresos) else 0
         gas = pred_gastos[i] if i < len(pred_gastos) else 0
-        predictions.append({
-            "periodo": f"{year}-{month:02d}",
-            "ingresos_estimados": ing,
-            "gastos_estimados": gas,
-            "utilidad_estimada": round(ing - gas, 2),
-        })
+        predictions.append(
+            {
+                "periodo": f"{year}-{month:02d}",
+                "ingresos_estimados": ing,
+                "gastos_estimados": gas,
+                "utilidad_estimada": round(ing - gas, 2),
+            }
+        )
 
     return predictions
 
@@ -346,6 +376,7 @@ def _compute_predictions(monthly_data: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Anomaly detection
 # ---------------------------------------------------------------------------
+
 
 def _detect_anomalies(
     ledger_current: list[dict],
@@ -358,7 +389,9 @@ def _detect_anomalies(
     for row in ledger_current:
         prev_val = prev_map.get(row["account"], 0.0)
         change = row["net_balance"] - prev_val
-        changes.append({"account": row["account"], "name": row["name"], "change": change})
+        changes.append(
+            {"account": row["account"], "name": row["name"], "change": change}
+        )
 
     if len(changes) < 3:
         return []
@@ -373,12 +406,16 @@ def _detect_anomalies(
     anomalies = []
     for c in changes:
         if abs(c["change"] - mean_change) > threshold_std * std_change:
-            anomalies.append({
-                "cuenta": c["account"],
-                "nombre": c["name"],
-                "cambio": round(c["change"], 2),
-                "desviaciones": round(abs(c["change"] - mean_change) / std_change, 2),
-            })
+            anomalies.append(
+                {
+                    "cuenta": c["account"],
+                    "nombre": c["name"],
+                    "cambio": round(c["change"], 2),
+                    "desviaciones": round(
+                        abs(c["change"] - mean_change) / std_change, 2
+                    ),
+                }
+            )
 
     return anomalies
 
@@ -386,6 +423,7 @@ def _detect_anomalies(
 # ---------------------------------------------------------------------------
 # Report builders
 # ---------------------------------------------------------------------------
+
 
 def _build_balance(db, params: dict, svc) -> dict:
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
@@ -441,7 +479,11 @@ def _build_pnl(db, params: dict, svc) -> dict:
     costo_rows = _ledger_by_prefix(ledger, _CLASS_COSTO_VENTAS)
 
     def to_cuenta(row: dict, balance: Decimal) -> dict:
-        return {"codigo": row["account"], "nombre": row["name"], "saldo": float(balance)}
+        return {
+            "codigo": row["account"],
+            "nombre": row["name"],
+            "saldo": float(balance),
+        }
 
     ingresos = [to_cuenta(r, _credit_nature_balance(r)) for r in ingresos_rows]
     gastos = [to_cuenta(r, _debit_nature_balance(r)) for r in gastos_rows]
@@ -519,8 +561,12 @@ def _build_iva(db, params: dict, svc) -> dict:
     generado_row = _ledger_by_exact(ledger, _CUENTA_IVA_GENERADO)
     descontable_row = _ledger_by_exact(ledger, _CUENTA_IVA_DESCONTABLE)
 
-    iva_generado = _credit_nature_balance(generado_row) if generado_row else Decimal("0")
-    iva_descontable = _debit_nature_balance(descontable_row) if descontable_row else Decimal("0")
+    iva_generado = (
+        _credit_nature_balance(generado_row) if generado_row else Decimal("0")
+    )
+    iva_descontable = (
+        _debit_nature_balance(descontable_row) if descontable_row else Decimal("0")
+    )
     iva_a_pagar = iva_generado - iva_descontable
 
     rag_refs = _fetch_rag_referencias(
@@ -548,7 +594,9 @@ def _build_withholdings(db, params: dict, svc) -> dict:
     retefuente_row = _ledger_by_exact(ledger, _CUENTA_RETEFUENTE)
     reteica_row = _ledger_by_exact(ledger, _CUENTA_RETEICA)
 
-    retefuente = _credit_nature_balance(retefuente_row) if retefuente_row else Decimal("0")
+    retefuente = (
+        _credit_nature_balance(retefuente_row) if retefuente_row else Decimal("0")
+    )
     reteica = _credit_nature_balance(reteica_row) if reteica_row else Decimal("0")
     total = retefuente + reteica
 
@@ -579,7 +627,9 @@ def _build_analysis(db, params: dict, svc) -> dict:
     # Balance sheet — period-scoped when start_date is provided,
     # cumulative (up to end_date) otherwise
     if start_date is not None:
-        balance = svc.get_balance_sheet_for_period(db, start_date=start_date, end_date=end_date)
+        balance = svc.get_balance_sheet_for_period(
+            db, start_date=start_date, end_date=end_date
+        )
     else:
         balance = svc.get_balance_sheet(db, cutoff_date=end_date)
 
@@ -622,7 +672,9 @@ def _build_analysis(db, params: dict, svc) -> dict:
         delta = end_date - start_date
         prev_start = start_date - delta
         prev_end = start_date - timedelta(microseconds=1)
-        prev_ledger = svc.get_general_ledger(db, start_date=prev_start, end_date=prev_end)
+        prev_ledger = svc.get_general_ledger(
+            db, start_date=prev_start, end_date=prev_end
+        )
 
     anomalies = _detect_anomalies(ledger, prev_ledger) if prev_ledger else []
 
@@ -661,6 +713,7 @@ def _build_analysis(db, params: dict, svc) -> dict:
     # --- Phase 2: LLM Analysis (non-fatal) ---
     try:
         from app.core.gemini_client import get_gemini_client  # noqa: PLC0415
+
         gemini = get_gemini_client()
 
         rag_text = _fetch_rag_context_text(
@@ -707,10 +760,12 @@ _BUILDERS = {
 # Brief analysis helper (for include_analysis=true on standard reports)
 # ---------------------------------------------------------------------------
 
+
 def _enrich_with_brief_analysis(report_data: dict, report_type: str) -> dict:
     """Append a brief LLM analysis to a standard report (non-fatal)."""
     try:
         from app.core.gemini_client import get_gemini_client  # noqa: PLC0415
+
         gemini = get_gemini_client()
         rag_text = _fetch_rag_context_text(
             f"{report_type} análisis financiero NIIF Colombia"
@@ -730,6 +785,7 @@ def _enrich_with_brief_analysis(report_data: dict, report_type: str) -> dict:
 # ---------------------------------------------------------------------------
 # Node entry point
 # ---------------------------------------------------------------------------
+
 
 def reportero_node(state: AgentState) -> AgentState:
     """
@@ -766,11 +822,16 @@ def reportero_node(state: AgentState) -> AgentState:
     state["current_agent"] = "reportero"
     state["current_stage"] = "reportero"
 
-    append_log(state, "reportero", "node_start", {
-        "report_type": report_type,
-        "params": params,
-        "include_analysis": include_analysis,
-    })
+    append_log(
+        state,
+        "reportero",
+        "node_start",
+        {
+            "report_type": report_type,
+            "params": params,
+            "include_analysis": include_analysis,
+        },
+    )
 
     try:
         from app.core.database import SessionLocal  # noqa: PLC0415
@@ -807,10 +868,15 @@ def reportero_node(state: AgentState) -> AgentState:
     state["result"]["status"] = "ok"
     state["current_stage"] = "reporting_complete"
 
-    append_log(state, "reportero", "node_complete", {
-        "report_type": report_type,
-        "generated_at": report_data.get("generated_at"),
-        "has_analysis": "analysis" in report_data,
-    })
+    append_log(
+        state,
+        "reportero",
+        "node_complete",
+        {
+            "report_type": report_type,
+            "generated_at": report_data.get("generated_at"),
+            "has_analysis": "analysis" in report_data,
+        },
+    )
     logger.info("reportero: '%s' report generated successfully", report_type)
     return state

@@ -6,13 +6,19 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.database import ProcessStatus
-from app.models.schemas import ProcessResponse, ProcessStatusResponse, ProcessResultResponse
+from app.models.schemas import (
+    ProcessResponse,
+    ProcessStatusResponse,
+    ProcessResultResponse,
+)
 from app.services import db_service, jobs
 
 router = APIRouter()
 
 
-def _classify_process_error(error_message: str | None) -> tuple[str | None, str | None, str | None]:
+def _classify_process_error(
+    error_message: str | None,
+) -> tuple[str | None, str | None, str | None]:
     """Classify process failures for API consumers.
 
     Accepts either:
@@ -60,7 +66,11 @@ def _classify_process_error(error_message: str | None) -> tuple[str | None, str 
             "Ensure staged transactions contain nit_receptor before processing.",
         )
 
-    return "system_error", "PROCESS_EXECUTION_ERROR", "Review process job logs and retry."
+    return (
+        "system_error",
+        "PROCESS_EXECUTION_ERROR",
+        "Review process job logs and retry.",
+    )
 
 
 @router.post("/accounting/{ingest_id}", response_model=ProcessResponse)
@@ -94,7 +104,14 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
             },
         )
 
-    nit_receptor = next((getattr(tx, "nit_receptor", None) for tx in staged if getattr(tx, "nit_receptor", None)), None)
+    nit_receptor = next(
+        (
+            getattr(tx, "nit_receptor", None)
+            for tx in staged
+            if getattr(tx, "nit_receptor", None)
+        ),
+        None,
+    )
     if not nit_receptor:
         raise HTTPException(
             status_code=409,
@@ -145,9 +162,13 @@ async def get_process_status(process_id: str, db: Session = Depends(get_db)):
     """Polling endpoint for async process job status and progress."""
     process_job = db_service.get_process_job(db, process_id)
     if not process_job:
-        raise HTTPException(status_code=404, detail=f"Process job {process_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Process job {process_id} not found"
+        )
 
-    error_category, error_code, remediation = _classify_process_error(process_job.error_message)
+    error_category, error_code, remediation = _classify_process_error(
+        process_job.error_message
+    )
 
     return ProcessStatusResponse(
         process_id=process_job.id,
@@ -160,9 +181,15 @@ async def get_process_status(process_id: str, db: Session = Depends(get_db)):
         error_code=error_code,
         remediation=remediation,
         agent_log=process_job.agent_log or [],
-        created_at=process_job.created_at.isoformat() if process_job.created_at else None,
-        started_at=process_job.started_at.isoformat() if process_job.started_at else None,
-        completed_at=process_job.completed_at.isoformat() if process_job.completed_at else None,
+        created_at=(
+            process_job.created_at.isoformat() if process_job.created_at else None
+        ),
+        started_at=(
+            process_job.started_at.isoformat() if process_job.started_at else None
+        ),
+        completed_at=(
+            process_job.completed_at.isoformat() if process_job.completed_at else None
+        ),
     )
 
 
@@ -171,10 +198,14 @@ async def get_process_result(process_id: str, db: Session = Depends(get_db)):
     """Return final processed transactions for a completed process job."""
     process_job = db_service.get_process_job(db, process_id)
     if not process_job:
-        raise HTTPException(status_code=404, detail=f"Process job {process_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Process job {process_id} not found"
+        )
 
     if process_job.status == ProcessStatus.FAILED:
-        error_category, error_code, remediation = _classify_process_error(process_job.error_message)
+        error_category, error_code, remediation = _classify_process_error(
+            process_job.error_message
+        )
         status_code = 409 if error_category == "business_precondition" else 500
         return JSONResponse(
             status_code=status_code,

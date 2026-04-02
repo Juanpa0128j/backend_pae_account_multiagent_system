@@ -109,7 +109,12 @@ def test_db_persist_maps_tributario_taxes_to_posted_transaction(
     mock_update_process,
 ):
     """db_persist_node should persist retefuente/reteica/iva values computed by tributario."""
-    _ = (mock_update_ingest, mock_check_duplicates, mock_create_journal, mock_update_process)
+    _ = (
+        mock_update_ingest,
+        mock_check_duplicates,
+        mock_create_journal,
+        mock_update_process,
+    )
 
     mock_db = MagicMock()
     mock_session_local.return_value = mock_db

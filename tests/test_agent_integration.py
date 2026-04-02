@@ -17,12 +17,10 @@ Coverage:
 
 import os
 import pytest
-from decimal import Decimal
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 from app.agents.graph import create_agent_graph, invoke_ingest_pipeline
 from app.agents.state import AgentState
-
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -62,9 +60,7 @@ VALID_INTERPRETED_DATA = {
     "neto_a_pagar": 1335000,
     "cuenta_puc": "5110",
     "cuenta_nombre": "Honorarios",
-    "items": [
-        {"descripcion": "Consultoría contable", "cantidad": 1, "valor": 1500000}
-    ],
+    "items": [{"descripcion": "Consultoría contable", "cantidad": 1, "valor": 1500000}],
 }
 
 # Invalid output — missing required fields / bad values
@@ -113,7 +109,9 @@ def _make_mock_gemini_client(side_effect=None, return_value=None):
     if side_effect is not None:
         mock_client.extract_factura_venta.side_effect = side_effect
     else:
-        mock_client.extract_factura_venta.return_value = return_value or VALID_INTERPRETED_DATA.copy()
+        mock_client.extract_factura_venta.return_value = (
+            return_value or VALID_INTERPRETED_DATA.copy()
+        )
     mock_get_client = MagicMock(return_value=mock_client)
     return mock_get_client, mock_client
 
@@ -135,13 +133,18 @@ def _make_mock_db_service():
     mock_job.id = "test-ingest-uuid-001"
     mock_svc.create_ingest_job.return_value = mock_job
     mock_svc.update_ingest_job.return_value = mock_job
-    mock_svc.create_transaction_pending.return_value = MagicMock(id="test-pending-uuid-001")
-    mock_svc.create_transaction_posted.return_value = MagicMock(id="test-posted-uuid-001")
+    mock_svc.create_transaction_pending.return_value = MagicMock(
+        id="test-pending-uuid-001"
+    )
+    mock_svc.create_transaction_posted.return_value = MagicMock(
+        id="test-posted-uuid-001"
+    )
     mock_svc.create_journal_lines.return_value = []
     return mock_svc
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def initial_state(tmp_path) -> AgentState:
@@ -165,6 +168,7 @@ def initial_state(tmp_path) -> AgentState:
 
 def _make_mock_persist_node():
     """Return a mock db_persist_node that sets a db_result on state without hitting DB."""
+
     def _mock_persist(state):
         state["db_result"] = {
             "ingest_id": "test-ingest-uuid-001",
@@ -173,6 +177,7 @@ def _make_mock_persist_node():
             "journal_lines_count": 4,
         }
         return state
+
     return _mock_persist
 
 
@@ -208,6 +213,7 @@ def full_pipeline_patches():
 
 # ─── TEST: Graph Structure ─────────────────────────────────────────────────────
 
+
 class TestGraphStructure:
     """Verify graph compiles and has expected nodes/edges — no external I/O."""
 
@@ -217,7 +223,9 @@ class TestGraphStructure:
 
     def test_graph_has_expected_nodes(self):
         graph = create_agent_graph()
-        node_names = [n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")]
+        node_names = [
+            n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
+        ]
         assert "supervisor" in node_names
         assert "ingesta" in node_names
         assert "validate_output" in node_names
@@ -225,11 +233,14 @@ class TestGraphStructure:
 
     def test_graph_node_count(self):
         graph = create_agent_graph()
-        node_names = [n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")]
+        node_names = [
+            n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
+        ]
         assert len(node_names) == 10
 
 
 # ─── TEST: Happy Path ─────────────────────────────────────────────────────────
+
 
 class TestHappyPath:
     """Full pipeline run with all externals mocked."""
@@ -249,7 +260,9 @@ class TestHappyPath:
         patches["get_gemini_client"].assert_called()
 
         # No error
-        assert final_state.get("error") is None, f"Unexpected error: {final_state.get('error')}"
+        assert (
+            final_state.get("error") is None
+        ), f"Unexpected error: {final_state.get('error')}"
 
         # Raw text is populated
         assert final_state.get("raw_text") is not None
@@ -284,6 +297,7 @@ class TestHappyPath:
 
 # ─── TEST: Validation Retry Flow ──────────────────────────────────────────────
 
+
 class TestValidationRetry:
     """Tests the retry loop: invalid output → correction_feedback → retry → success."""
 
@@ -303,7 +317,9 @@ class TestValidationRetry:
         graph = create_agent_graph()
         final_state = graph.invoke(initial_state)
 
-        assert final_state.get("error") is None, f"Unexpected error: {final_state.get('error')}"
+        assert (
+            final_state.get("error") is None
+        ), f"Unexpected error: {final_state.get('error')}"
 
         history = final_state.get("validation_history", [])
         assert len(history) >= 2
@@ -313,7 +329,9 @@ class TestValidationRetry:
     def test_exhausted_retries_error(self, initial_state, full_pipeline_patches):
         """All retries fail → error state."""
         patches = full_pipeline_patches
-        patches["gemini_client"].extract_factura_venta.return_value = INVALID_GEMINI_OUTPUT.copy()
+        patches["gemini_client"].extract_factura_venta.return_value = (
+            INVALID_GEMINI_OUTPUT.copy()
+        )
         # Clear any side_effect
         patches["gemini_client"].extract_factura_venta.side_effect = None
 
@@ -331,10 +349,13 @@ class TestValidationRetry:
 
 # ─── TEST: DB Persist (Mocked) ────────────────────────────────────────────────
 
+
 class TestDbPersistIntegration:
     """Verify db_service interactions after a successful pipeline run."""
 
-    def test_db_service_called_after_success(self, initial_state, full_pipeline_patches):
+    def test_db_service_called_after_success(
+        self, initial_state, full_pipeline_patches
+    ):
         """db_persist_node should be called after a successful pipeline run."""
         patches = full_pipeline_patches
 
@@ -368,6 +389,7 @@ class TestDbPersistIntegration:
 
 # ─── TEST: Error Propagation ──────────────────────────────────────────────────
 
+
 class TestErrorPropagation:
     """Verify errors in early nodes skip downstream processing."""
 
@@ -392,7 +414,11 @@ class TestErrorPropagation:
 
         assert final_state.get("error") is not None
         error_lower = final_state["error"].lower()
-        assert "not found" in error_lower or "does not exist" in error_lower or "file" in error_lower
+        assert (
+            "not found" in error_lower
+            or "does not exist" in error_lower
+            or "file" in error_lower
+        )
         assert final_state.get("db_result") is None
 
     def test_non_pdf_file_error(self, tmp_path):
@@ -420,7 +446,9 @@ class TestErrorPropagation:
         assert final_state.get("error") is not None
         assert final_state.get("db_result") is None
 
-    def test_gemini_exception_produces_error(self, initial_state, full_pipeline_patches):
+    def test_gemini_exception_produces_error(
+        self, initial_state, full_pipeline_patches
+    ):
         """If Gemini throws, ingest catches it and sets error."""
         patches = full_pipeline_patches
         patches["gemini_client"].extract_factura_venta.side_effect = RuntimeError(
@@ -437,6 +465,7 @@ class TestErrorPropagation:
 
 # ─── TEST: invoke_ingest_pipeline wrapper ─────────────────────────────────────
 
+
 class TestInvokeAgent:
     """Test the invoke_ingest_pipeline() convenience function."""
 
@@ -450,7 +479,9 @@ class TestInvokeAgent:
         assert isinstance(result, dict)
         assert result.get("status") == "completed"
 
-    def test_invoke_agent_includes_validation_history(self, tmp_path, full_pipeline_patches):
+    def test_invoke_agent_includes_validation_history(
+        self, tmp_path, full_pipeline_patches
+    ):
         """Result should include validation_history."""
         dummy_pdf = tmp_path / "invoice2.pdf"
         dummy_pdf.write_bytes(b"%PDF-1.4 dummy")
@@ -462,12 +493,14 @@ class TestInvokeAgent:
 
 # ─── TEST: API Endpoint ───────────────────────────────────────────────────────
 
+
 class TestApiEndpoint:
     """Test the /api/v1/ingest/upload endpoint."""
 
     @pytest.fixture(autouse=True)
     def _add_root_to_path(self):
         import sys
+
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if root not in sys.path:
             sys.path.insert(0, root)

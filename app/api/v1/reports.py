@@ -43,7 +43,9 @@ def _run_report(report_type: str, params: dict) -> dict:
 @router.get("/balance", response_model=BalanceSheetOutput)
 async def get_balance_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
@@ -58,7 +60,9 @@ async def get_balance_report(
 @router.get("/pnl", response_model=PnLOutput)
 async def get_pnl_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
@@ -72,7 +76,9 @@ async def get_pnl_report(
 @router.get("/cashflow", response_model=CashFlowOutput)
 async def get_cashflow_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     include_analysis: bool = Query(False, description="Add LLM narrative analysis"),
 ):
     """
@@ -80,13 +86,17 @@ async def get_cashflow_report(
     Returns net balances of cash and bank accounts (class 11XX) for the period.
     Optionally includes LLM-powered analysis.
     """
-    return _run_report("cashflow", _build_params(start_date, end_date, include_analysis))
+    return _run_report(
+        "cashflow", _build_params(start_date, end_date, include_analysis)
+    )
 
 
 @router.get("/analysis", response_model=FinancialAnalysisOutput)
 async def get_financial_analysis(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
 ):
     """
     Análisis Financiero Integral.
@@ -131,10 +141,18 @@ async def get_comparative_report(
             detail=f"report_type must be one of {sorted(valid_types)}",
         )
 
-    p1s = datetime.combine(period1_start, datetime.min.time()).replace(tzinfo=timezone.utc)
-    p1e = datetime.combine(period1_end, datetime.max.time()).replace(tzinfo=timezone.utc)
-    p2s = datetime.combine(period2_start, datetime.min.time()).replace(tzinfo=timezone.utc)
-    p2e = datetime.combine(period2_end, datetime.max.time()).replace(tzinfo=timezone.utc)
+    p1s = datetime.combine(period1_start, datetime.min.time()).replace(
+        tzinfo=timezone.utc
+    )
+    p1e = datetime.combine(period1_end, datetime.max.time()).replace(
+        tzinfo=timezone.utc
+    )
+    p2s = datetime.combine(period2_start, datetime.min.time()).replace(
+        tzinfo=timezone.utc
+    )
+    p2e = datetime.combine(period2_end, datetime.max.time()).replace(
+        tzinfo=timezone.utc
+    )
 
     comparison = db_service.get_period_comparison(db, p1s, p1e, p2s, p2e)
     comparison["report_type"] = f"comparative_{report_type}"

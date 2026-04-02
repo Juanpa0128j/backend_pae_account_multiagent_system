@@ -114,11 +114,16 @@ def ingest_node(state: AgentState) -> AgentState:
     is_retry = bool(state.get("correction_feedback"))
     settings = get_settings()
 
-    append_log(state, "ingesta", "node_start", {
-        "file_path": file_path,
-        "format": ext,
-        "is_retry": is_retry,
-    })
+    append_log(
+        state,
+        "ingesta",
+        "node_start",
+        {
+            "file_path": file_path,
+            "format": ext,
+            "is_retry": is_retry,
+        },
+    )
 
     try:
         # Step 1: Extract raw text (format-aware)
@@ -127,7 +132,10 @@ def ingest_node(state: AgentState) -> AgentState:
                 # Excel: may already be extracted by supervisor classify step
                 if not state.get("raw_text"):
                     from app.services.excel_parser import parse_excel
-                    logger.info(f"Ingest: Extracting text from {file_path} using excel_parser")
+
+                    logger.info(
+                        f"Ingest: Extracting text from {file_path} using excel_parser"
+                    )
                     raw_text, tabular_data = parse_excel(file_path)
                     state["raw_text"] = raw_text
                     state["parsed_content"] = tabular_data
@@ -135,13 +143,18 @@ def ingest_node(state: AgentState) -> AgentState:
                     logger.info("Ingest: Re-using Excel text extracted by supervisor")
                 raw_text = state["raw_text"]
             elif ext == ".xml":
-                logger.info(f"Ingest: Extracting text from {file_path} using XML parser")
+                logger.info(
+                    f"Ingest: Extracting text from {file_path} using XML parser"
+                )
                 from app.services.xml_parser import parse_xml
+
                 raw_text = parse_xml(file_path)
                 state["raw_text"] = raw_text
             elif ext in (".pdf", ".jpg", ".jpeg", ".png"):
                 format_label = "image" if ext in (".jpg", ".jpeg", ".png") else "PDF"
-                logger.info(f"Ingest: Extracting text from {file_path} ({format_label}) using LlamaParse")
+                logger.info(
+                    f"Ingest: Extracting text from {file_path} ({format_label}) using LlamaParse"
+                )
                 if LlamaParse is None:
                     raise RuntimeError(
                         "LlamaParse client is not available. "
@@ -153,7 +166,9 @@ def ingest_node(state: AgentState) -> AgentState:
                 _safe_name = Path(file_path).name.replace(" ", "_")
                 _cache_path = _cache_dir / f"{_safe_name}.md"
                 if _cache_path.exists():
-                    logger.info("Ingest: Using cached parse for %s", Path(file_path).name)
+                    logger.info(
+                        "Ingest: Using cached parse for %s", Path(file_path).name
+                    )
                     raw_text = _cache_path.read_text(encoding="utf-8")
                 else:
                     try:
@@ -212,11 +227,21 @@ def ingest_node(state: AgentState) -> AgentState:
                 "Ingest: extracted text is very short (%d chars) — proceeding but extraction quality may be low",
                 len(stripped_text),
             )
-            append_log(state, "ingesta", "short_text_warning", {"text_chars": len(stripped_text)})
+            append_log(
+                state,
+                "ingesta",
+                "short_text_warning",
+                {"text_chars": len(stripped_text)},
+            )
 
-        append_log(state, "ingesta", "extraction_complete", {
-            "text_chars": len(raw_text),
-        })
+        append_log(
+            state,
+            "ingesta",
+            "extraction_complete",
+            {
+                "text_chars": len(raw_text),
+            },
+        )
 
         # Step 2: Send to Gemini for interpretation (doc-type-aware)
         gemini_client = get_gemini_client()
@@ -278,7 +303,10 @@ def ingest_node(state: AgentState) -> AgentState:
         else:
             # Non-transaction documents: store interpreted_data directly, raw_transactions empty
             state["raw_transactions"] = []
-            data_summary = {"doc_type": doc_type, "fields": list(interpreted_data.keys())}
+            data_summary = {
+                "doc_type": doc_type,
+                "fields": list(interpreted_data.keys()),
+            }
             result_data = interpreted_data
 
         append_log(state, "ingesta", "interpretation_complete", data_summary)

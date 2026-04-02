@@ -27,7 +27,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Load .env
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
+
 load_dotenv(PROJECT_ROOT / ".env")
 
 SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".jpg", ".jpeg", ".png"}
@@ -43,13 +44,24 @@ RESET = "\033[0m"
 BOLD = "\033[1m"
 
 
-def ok(msg): print(f"{GREEN}✓ {msg}{RESET}")
-def fail(msg): print(f"{RED}✗ {msg}{RESET}")
-def warn(msg): print(f"{YELLOW}⚠ {msg}{RESET}")
-def info(msg): print(f"{CYAN}  {msg}{RESET}")
+def ok(msg):
+    print(f"{GREEN}✓ {msg}{RESET}")
+
+
+def fail(msg):
+    print(f"{RED}✗ {msg}{RESET}")
+
+
+def warn(msg):
+    print(f"{YELLOW}⚠ {msg}{RESET}")
+
+
+def info(msg):
+    print(f"{CYAN}  {msg}{RESET}")
 
 
 # ─── LlamaParse extraction with caching ──────────────────────────────────────
+
 
 def get_cache_path(file_path: Path, cache_dir: Path) -> Path:
     """Return the cache file path for a given document."""
@@ -57,7 +69,9 @@ def get_cache_path(file_path: Path, cache_dir: Path) -> Path:
     return cache_dir / safe_name
 
 
-def extract_text_llamaparse(file_path: Path, cache_dir: Path, no_cache: bool = False) -> str:
+def extract_text_llamaparse(
+    file_path: Path, cache_dir: Path, no_cache: bool = False
+) -> str:
     """
     Parse a document with LlamaParse (supports PDF, JPG, PNG).
     Caches the markdown output to avoid repeated API calls.
@@ -86,7 +100,9 @@ def extract_text_llamaparse(file_path: Path, cache_dir: Path, no_cache: bool = F
 
     # LlamaParse can silently return empty text on some scanned PDFs — retry with plain text mode
     if not text.strip():
-        info(f"  [llamaparse] markdown returned empty — retrying with result_type='text'")
+        info(
+            "  [llamaparse] markdown returned empty — retrying with result_type='text'"
+        )
         parser = LlamaParse(api_key=api_key, result_type="text", fast_mode=not is_image)
         documents = parser.load_data(str(file_path))
         text = "\n\n".join(doc.text for doc in documents)
@@ -102,14 +118,17 @@ def extract_text_llamaparse(file_path: Path, cache_dir: Path, no_cache: bool = F
 def extract_text_excel(file_path: Path) -> str:
     """Parse an Excel file and return markdown text."""
     from app.services.excel_parser import parse_excel
+
     raw_text, _ = parse_excel(str(file_path))
     return raw_text
 
 
 # ─── Pipeline steps ──────────────────────────────────────────────────────────
 
+
 def classify(text: str, source_format: str) -> dict:
     from app.services.doc_classifier import classify_document
+
     result = classify_document(text[:3000], source_format)
     return {
         "doc_type": result.doc_type.value,
@@ -124,6 +143,7 @@ def classify(text: str, source_format: str) -> dict:
 
 def extract(text: str, doc_type: str, gemini_client) -> dict:
     from app.agents.ingest_agent import _EXTRACT_METHOD_MAP
+
     method_name = _EXTRACT_METHOD_MAP.get(doc_type, "extract_transactions")
     method = getattr(gemini_client, method_name, None)
     if method is None:
@@ -138,7 +158,10 @@ def validate_schema(data: dict, doc_type: str) -> dict:
 
     schema_cls = INGEST_CONTENT_SCHEMAS.get(doc_type)
     if schema_cls is None:
-        return {"valid": None, "error": f"No schema registered for doc_type '{doc_type}'"}
+        return {
+            "valid": None,
+            "error": f"No schema registered for doc_type '{doc_type}'",
+        }
 
     try:
         schema_cls.model_validate(data)
@@ -155,7 +178,9 @@ def get_key_fields(data: dict, doc_type: str) -> dict:
         emisor = data.get("emisor") or data.get("proveedor") or {}
         key["emisor_nit"] = emisor.get("nit") if isinstance(emisor, dict) else None
         totales = data.get("totales") or {}
-        key["total_a_pagar"] = totales.get("total_a_pagar") if isinstance(totales, dict) else None
+        key["total_a_pagar"] = (
+            totales.get("total_a_pagar") if isinstance(totales, dict) else None
+        )
     elif doc_type == "extracto_bancario":
         key["entidad"] = data.get("entidad_financiera")
         key["cuenta"] = data.get("numero_cuenta")
@@ -171,7 +196,9 @@ def get_key_fields(data: dict, doc_type: str) -> dict:
     elif doc_type in ("declaracion_iva", "declaracion_reteica", "declaracion_ica"):
         key["nit_declarante"] = data.get("nit_declarante")
         key["periodo"] = data.get("periodo") or data.get("anio")
-        key["total_a_pagar"] = data.get("total_a_pagar") or (data.get("liquidacion") or {}).get("total_a_pagar")
+        key["total_a_pagar"] = data.get("total_a_pagar") or (
+            data.get("liquidacion") or {}
+        ).get("total_a_pagar")
     elif doc_type == "autorretencion_ica":
         key["nit_declarante"] = data.get("nit_declarante")
         key["municipio"] = data.get("municipio")
@@ -212,7 +239,14 @@ def get_key_fields(data: dict, doc_type: str) -> dict:
 
 # ─── Process a single file ───────────────────────────────────────────────────
 
-def process_file(file_path: Path, cache_dir: Path, gemini_client, no_cache: bool = False, doc_type_override: str | None = None) -> dict:
+
+def process_file(
+    file_path: Path,
+    cache_dir: Path,
+    gemini_client,
+    no_cache: bool = False,
+    doc_type_override: str | None = None,
+) -> dict:
     result = {
         "file": str(file_path.relative_to(PROJECT_ROOT)),
         "timestamp": datetime.now().isoformat(),
@@ -259,7 +293,9 @@ def process_file(file_path: Path, cache_dir: Path, gemini_client, no_cache: bool
         result["entity_nit"] = classification.get("entity_nit")
         result["entity_name"] = classification.get("entity_name")
         if not doc_type_override:
-            info(f"  Type: {classification['doc_type']} (confidence={classification['confidence']:.2f})")
+            info(
+                f"  Type: {classification['doc_type']} (confidence={classification['confidence']:.2f})"
+            )
 
         # Step 3: Extract
         extracted = extract(raw_text, classification["doc_type"], gemini_client)
@@ -286,6 +322,7 @@ def process_file(file_path: Path, cache_dir: Path, gemini_client, no_cache: bool
 
 # ─── Collect files ───────────────────────────────────────────────────────────
 
+
 def collect_files(base_dir: Path) -> list[Path]:
     """Collect all supported files from a directory recursively."""
     files = []
@@ -298,8 +335,11 @@ def collect_files(base_dir: Path) -> list[Path]:
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Test the ingestion pipeline against real documents.")
+    parser = argparse.ArgumentParser(
+        description="Test the ingestion pipeline against real documents."
+    )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--all", action="store_true", help="Process all files in --dir")
     group.add_argument("--file", nargs="+", help="Process one or more files")
@@ -308,7 +348,9 @@ def main():
         default="ejemplos_docs_ingesta",
         help="Directory with documents to test (default: ejemplos_docs_ingesta)",
     )
-    parser.add_argument("--no-cache", action="store_true", help="Force re-parse (ignore cache)")
+    parser.add_argument(
+        "--no-cache", action="store_true", help="Force re-parse (ignore cache)"
+    )
     parser.add_argument(
         "--doc-type",
         help="Override doc_type for all files (skips classification — useful when quota is limited)",
@@ -333,6 +375,7 @@ def main():
 
     # Initialise LLM client (OpenAI primary → Gemini → Groq)
     from app.core.llm_client import get_llm_client
+
     print(f"\n{BOLD}Initialising LLM client (OpenAI primary)...{RESET}")
     gemini_client = get_llm_client()
     print(f"{GREEN}OK{RESET}")
@@ -353,9 +396,6 @@ def main():
         files = collect_files(base_dir)
         print(f"\n{BOLD}Found {len(files)} files in {base_dir}{RESET}")
 
-    # Default cache dir (used for --all; per-file mode uses file's own parent)
-    default_cache_dir = PROJECT_ROOT / args.dir / CACHE_DIR_NAME
-
     # Process
     results = []
     passed = 0
@@ -368,7 +408,9 @@ def main():
         cache_dir = file_path.parent / CACHE_DIR_NAME
         print(f"\n{BOLD}[{i}/{len(files)}] {file_path.name}{RESET}")
         result = process_file(
-            file_path, cache_dir, gemini_client,
+            file_path,
+            cache_dir,
+            gemini_client,
             no_cache=args.no_cache,
             doc_type_override=args.doc_type,
         )
@@ -378,10 +420,12 @@ def main():
 
         if result["status"] == "ok":
             passed += 1
-            ok(f"  Classified as: {result['doc_type']} ({result['confidence']:.0%} confidence)")
+            ok(
+                f"  Classified as: {result['doc_type']} ({result['confidence']:.0%} confidence)"
+            )
             if result["schema_valid"] is True:
                 schema_ok += 1
-                ok(f"  Schema validation: PASS")
+                ok("  Schema validation: PASS")
             elif result["schema_valid"] is False:
                 schema_fail += 1
                 fail(f"  Schema validation: FAIL — {result['schema_error']}")
@@ -398,7 +442,7 @@ def main():
         info(f"  Duration: {result['duration_s']}s")
 
     # Summary
-    print(f"\n{BOLD}{'═'*60}{RESET}")
+    print(f"\n{BOLD}{'═' * 60}{RESET}")
     print(f"{BOLD}SUMMARY{RESET}")
     print(f"  Total files:        {len(files)}")
     print(f"  {GREEN}Processed OK:       {passed}{RESET}")

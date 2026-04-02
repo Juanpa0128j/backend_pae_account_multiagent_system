@@ -33,7 +33,6 @@ Notes:
 """
 
 import sys
-from decimal import Decimal
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
@@ -47,42 +46,97 @@ from tests.conftest import base_reporting_state, base_state
 
 # Fixed dates — deterministic tests (never datetime.now())
 _START = "2026-01-01"
-_END   = "2026-01-31"
+_END = "2026-01-31"
 
 # ─── Mock data ───────────────────────────────────────────────────────────────
 
 _BALANCE_DATA = {
-    "assets":        17_000_000.0,
-    "liabilities":    5_000_000.0,
-    "equity":        10_000_000.0,
-    "revenue":        8_000_000.0,
-    "expenses":       2_000_000.0,
-    "cost_of_sales":  4_000_000.0,
-    "net_profit":     2_000_000.0,
-    "total_equity":  12_000_000.0,
-    "is_balanced":   True,
+    "assets": 17_000_000.0,
+    "liabilities": 5_000_000.0,
+    "equity": 10_000_000.0,
+    "revenue": 8_000_000.0,
+    "expenses": 2_000_000.0,
+    "cost_of_sales": 4_000_000.0,
+    "net_profit": 2_000_000.0,
+    "total_equity": 12_000_000.0,
+    "is_balanced": True,
 }
 
 _LEDGER = [
     # class 4 — Ingresos
-    {"account": "4135",   "name": "Servicios",            "total_debit": 0.0,           "total_credit": 8_000_000.0, "net_balance": -8_000_000.0},
+    {
+        "account": "4135",
+        "name": "Servicios",
+        "total_debit": 0.0,
+        "total_credit": 8_000_000.0,
+        "net_balance": -8_000_000.0,
+    },
     # class 5 — Gastos
-    {"account": "5110",   "name": "Honorarios",           "total_debit": 2_000_000.0,   "total_credit": 0.0,         "net_balance":  2_000_000.0},
+    {
+        "account": "5110",
+        "name": "Honorarios",
+        "total_debit": 2_000_000.0,
+        "total_credit": 0.0,
+        "net_balance": 2_000_000.0,
+    },
     # class 6 — Costo ventas
-    {"account": "6135",   "name": "Costo servicios",      "total_debit": 4_000_000.0,   "total_credit": 0.0,         "net_balance":  4_000_000.0},
+    {
+        "account": "6135",
+        "name": "Costo servicios",
+        "total_debit": 4_000_000.0,
+        "total_credit": 0.0,
+        "net_balance": 4_000_000.0,
+    },
     # class 11 — Efectivo
-    {"account": "1110",   "name": "Bancos",                "total_debit": 5_000_000.0,   "total_credit": 1_000_000.0, "net_balance":  4_000_000.0},
-    {"account": "1105",   "name": "Caja",                  "total_debit":   500_000.0,   "total_credit":   200_000.0, "net_balance":    300_000.0},
+    {
+        "account": "1110",
+        "name": "Bancos",
+        "total_debit": 5_000_000.0,
+        "total_credit": 1_000_000.0,
+        "net_balance": 4_000_000.0,
+    },
+    {
+        "account": "1105",
+        "name": "Caja",
+        "total_debit": 500_000.0,
+        "total_credit": 200_000.0,
+        "net_balance": 300_000.0,
+    },
     # IVA
-    {"account": "240808", "name": "IVA Generado",          "total_debit": 0.0,           "total_credit":   900_000.0, "net_balance":   -900_000.0},
-    {"account": "240802", "name": "IVA Descontable",       "total_debit": 300_000.0,     "total_credit": 0.0,         "net_balance":    300_000.0},
+    {
+        "account": "240808",
+        "name": "IVA Generado",
+        "total_debit": 0.0,
+        "total_credit": 900_000.0,
+        "net_balance": -900_000.0,
+    },
+    {
+        "account": "240802",
+        "name": "IVA Descontable",
+        "total_debit": 300_000.0,
+        "total_credit": 0.0,
+        "net_balance": 300_000.0,
+    },
     # Retenciones
-    {"account": "240815", "name": "Retefuente por Pagar",  "total_debit": 0.0,           "total_credit":   235_000.0, "net_balance":   -235_000.0},
-    {"account": "236540", "name": "ReteICA por Pagar",     "total_debit": 0.0,           "total_credit":    65_000.0, "net_balance":    -65_000.0},
+    {
+        "account": "240815",
+        "name": "Retefuente por Pagar",
+        "total_debit": 0.0,
+        "total_credit": 235_000.0,
+        "net_balance": -235_000.0,
+    },
+    {
+        "account": "236540",
+        "name": "ReteICA por Pagar",
+        "total_debit": 0.0,
+        "total_credit": 65_000.0,
+        "net_balance": -65_000.0,
+    },
 ]
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
+
 
 def _mock_db_modules(svc_mock: MagicMock) -> dict:
     """
@@ -106,13 +160,14 @@ def _mock_db_modules(svc_mock: MagicMock) -> dict:
     mock_services_pkg.db_service = svc_mock
 
     return {
-        "app.core.database":       mock_database_module,
-        "app.services":            mock_services_pkg,
+        "app.core.database": mock_database_module,
+        "app.services": mock_services_pkg,
         "app.services.db_service": svc_mock,
     }
 
 
 # ─── Unit tests — reportero_node ─────────────────────────────────────────────
+
 
 class TestReporteroNodeBalance:
     def test_balance_report_success(self):
@@ -166,11 +221,11 @@ class TestReporteroNodePnL:
         assert result_state.get("error") is None
         report = result_state["result"]["report"]
         assert report["report_type"] == "profit_and_loss"
-        assert report["total_ingresos"]      == pytest.approx(8_000_000.0)
-        assert report["total_costo_ventas"]  == pytest.approx(4_000_000.0)
-        assert report["total_gastos"]        == pytest.approx(2_000_000.0)
-        assert report["utilidad_bruta"]      == pytest.approx(4_000_000.0)  # 8M - 4M
-        assert report["utilidad_neta"]       == pytest.approx(2_000_000.0)  # 4M - 2M
+        assert report["total_ingresos"] == pytest.approx(8_000_000.0)
+        assert report["total_costo_ventas"] == pytest.approx(4_000_000.0)
+        assert report["total_gastos"] == pytest.approx(2_000_000.0)
+        assert report["utilidad_bruta"] == pytest.approx(4_000_000.0)  # 8M - 4M
+        assert report["utilidad_neta"] == pytest.approx(2_000_000.0)  # 4M - 2M
 
     def test_pnl_empty_ledger_returns_zeros(self):
         state = base_reporting_state("pnl")
@@ -183,8 +238,8 @@ class TestReporteroNodePnL:
         assert result_state.get("error") is None
         report = result_state["result"]["report"]
         assert report["utilidad_neta"] == pytest.approx(0.0)
-        assert report["ingresos"]      == []
-        assert report["gastos"]        == []
+        assert report["ingresos"] == []
+        assert report["gastos"] == []
 
 
 class TestReporteroNodeCashFlow:
@@ -199,7 +254,7 @@ class TestReporteroNodeCashFlow:
         assert result_state.get("error") is None
         report = result_state["result"]["report"]
         assert report["report_type"] == "cash_flow"
-        assert len(report["cuentas_efectivo"]) == 2   # 1110 + 1105
+        assert len(report["cuentas_efectivo"]) == 2  # 1110 + 1105
         # 1110: 5M-1M=4M; 1105: 500K-200K=300K → total=4.3M
         assert report["total_efectivo"] == pytest.approx(4_300_000.0)
 
@@ -225,10 +280,10 @@ class TestReporteroNodeIVA:
 
         assert result_state.get("error") is None
         report = result_state["result"]["report"]
-        assert report["report_type"]      == "iva_report"
-        assert report["iva_generado"]     == pytest.approx(900_000.0)
-        assert report["iva_descontable"]  == pytest.approx(300_000.0)
-        assert report["iva_a_pagar"]      == pytest.approx(600_000.0)
+        assert report["report_type"] == "iva_report"
+        assert report["iva_generado"] == pytest.approx(900_000.0)
+        assert report["iva_descontable"] == pytest.approx(300_000.0)
+        assert report["iva_a_pagar"] == pytest.approx(600_000.0)
         assert isinstance(report["referencias"], list)
 
     def test_iva_zero_when_accounts_absent(self):
@@ -240,9 +295,9 @@ class TestReporteroNodeIVA:
             result_state = reportero_node(state)
 
         report = result_state["result"]["report"]
-        assert report["iva_generado"]    == pytest.approx(0.0)
+        assert report["iva_generado"] == pytest.approx(0.0)
         assert report["iva_descontable"] == pytest.approx(0.0)
-        assert report["iva_a_pagar"]     == pytest.approx(0.0)
+        assert report["iva_a_pagar"] == pytest.approx(0.0)
 
 
 class TestReporteroNodeWithholdings:
@@ -256,10 +311,10 @@ class TestReporteroNodeWithholdings:
 
         assert result_state.get("error") is None
         report = result_state["result"]["report"]
-        assert report["report_type"]             == "withholdings_report"
-        assert report["retencion_en_la_fuente"]  == pytest.approx(235_000.0)
-        assert report["retencion_ica"]           == pytest.approx(65_000.0)
-        assert report["total_retenciones"]       == pytest.approx(300_000.0)
+        assert report["report_type"] == "withholdings_report"
+        assert report["retencion_en_la_fuente"] == pytest.approx(235_000.0)
+        assert report["retencion_ica"] == pytest.approx(65_000.0)
+        assert report["total_retenciones"] == pytest.approx(300_000.0)
         assert isinstance(report["referencias"], list)
 
 
@@ -280,7 +335,9 @@ class TestReporteroNodeErrorHandling:
 
     def test_upstream_error_passthrough(self):
         """State with a pre-existing error must be returned unchanged (no DB call)."""
-        state = base_state(mode="reporting", report_type="balance", error="upstream failure")
+        state = base_state(
+            mode="reporting", report_type="balance", error="upstream failure"
+        )
         result_state = reportero_node(state)
 
         assert result_state["error"] == "upstream failure"
@@ -308,42 +365,67 @@ class TestReporteroNodeErrorHandling:
 
         assert len(result_state["agent_log"]) >= 2
         events = [e["event"] for e in result_state["agent_log"]]
-        assert "node_start"    in events
+        assert "node_start" in events
         assert "node_complete" in events
 
 
 # ─── API tests ───────────────────────────────────────────────────────────────
 
 _MOCK_BALANCE_RESULT = {
-    "report_type": "balance_sheet", "period_start": _START, "period_end": _END,
+    "report_type": "balance_sheet",
+    "period_start": _START,
+    "period_end": _END,
     "generated_at": "2026-01-31T00:00:00+00:00",
-    "activos": 17_000_000.0, "pasivos": 5_000_000.0, "patrimonio": 10_000_000.0,
-    "utilidad_neta": 2_000_000.0, "patrimonio_total": 12_000_000.0,
-    "cuadre": True, "mensaje_cuadre": "ACTIVOS == PASIVOS + PATRIMONIO TOTAL ✓",
+    "activos": 17_000_000.0,
+    "pasivos": 5_000_000.0,
+    "patrimonio": 10_000_000.0,
+    "utilidad_neta": 2_000_000.0,
+    "patrimonio_total": 12_000_000.0,
+    "cuadre": True,
+    "mensaje_cuadre": "ACTIVOS == PASIVOS + PATRIMONIO TOTAL ✓",
 }
 _MOCK_PNL_RESULT = {
-    "report_type": "profit_and_loss", "period_start": _START, "period_end": _END,
+    "report_type": "profit_and_loss",
+    "period_start": _START,
+    "period_end": _END,
     "generated_at": "2026-01-31T00:00:00+00:00",
-    "ingresos": [], "costo_ventas": [], "gastos": [],
-    "total_ingresos": 0.0, "total_costo_ventas": 0.0, "total_gastos": 0.0,
-    "utilidad_bruta": 0.0, "utilidad_neta": 0.0,
+    "ingresos": [],
+    "costo_ventas": [],
+    "gastos": [],
+    "total_ingresos": 0.0,
+    "total_costo_ventas": 0.0,
+    "total_gastos": 0.0,
+    "utilidad_bruta": 0.0,
+    "utilidad_neta": 0.0,
 }
 _MOCK_CASHFLOW_RESULT = {
-    "report_type": "cash_flow", "period_start": _START, "period_end": _END,
+    "report_type": "cash_flow",
+    "period_start": _START,
+    "period_end": _END,
     "generated_at": "2026-01-31T00:00:00+00:00",
-    "cuentas_efectivo": [], "total_efectivo": 0.0, "nota": "Flujo de caja directo.",
+    "cuentas_efectivo": [],
+    "total_efectivo": 0.0,
+    "nota": "Flujo de caja directo.",
 }
 _MOCK_IVA_RESULT = {
-    "report_type": "iva_report", "period_start": _START, "period_end": _END,
+    "report_type": "iva_report",
+    "period_start": _START,
+    "period_end": _END,
     "generated_at": "2026-01-31T00:00:00+00:00",
-    "iva_generado": 900_000.0, "iva_descontable": 300_000.0, "iva_a_pagar": 600_000.0,
+    "iva_generado": 900_000.0,
+    "iva_descontable": 300_000.0,
+    "iva_a_pagar": 600_000.0,
     "referencias": ["Art. 477 ET"],
 }
 _MOCK_WITHHOLDINGS_RESULT = {
-    "report_type": "withholdings_report", "period_start": _START, "period_end": _END,
+    "report_type": "withholdings_report",
+    "period_start": _START,
+    "period_end": _END,
     "generated_at": "2026-01-31T00:00:00+00:00",
-    "retencion_en_la_fuente": 235_000.0, "retencion_ica": 65_000.0,
-    "total_retenciones": 300_000.0, "referencias": ["Art. 383 ET"],
+    "retencion_en_la_fuente": 235_000.0,
+    "retencion_ica": 65_000.0,
+    "total_retenciones": 300_000.0,
+    "referencias": ["Art. 383 ET"],
 }
 
 
@@ -355,17 +437,23 @@ def _pipeline_ok(report_data: dict) -> dict:
 def client():
     """FastAPI TestClient — DB and vectordb disabled, pipeline mocked per test."""
     from fastapi.testclient import TestClient  # lazy: only available in container env
-    with patch("app.core.database.SessionLocal"), \
-         patch("app.core.vectordb.get_vectordb", return_value=MagicMock()):
+
+    with (
+        patch("app.core.database.SessionLocal"),
+        patch("app.core.vectordb.get_vectordb", return_value=MagicMock()),
+    ):
         from main import app
+
         with TestClient(app) as c:
             yield c
 
 
 class TestReportsAPI:
     def test_get_balance_returns_200(self, client):
-        with patch("app.api.v1.reports.invoke_reporting_pipeline",
-                   return_value=_pipeline_ok(_MOCK_BALANCE_RESULT)) as mock_fn:
+        with patch(
+            "app.api.v1.reports.invoke_reporting_pipeline",
+            return_value=_pipeline_ok(_MOCK_BALANCE_RESULT),
+        ) as mock_fn:
             resp = client.get("/api/v1/reports/balance")
 
         assert resp.status_code == 200
@@ -375,24 +463,30 @@ class TestReportsAPI:
         assert kwargs["report_type"] == "balance"
 
     def test_get_pnl_returns_200(self, client):
-        with patch("app.api.v1.reports.invoke_reporting_pipeline",
-                   return_value=_pipeline_ok(_MOCK_PNL_RESULT)):
+        with patch(
+            "app.api.v1.reports.invoke_reporting_pipeline",
+            return_value=_pipeline_ok(_MOCK_PNL_RESULT),
+        ):
             resp = client.get("/api/v1/reports/pnl")
 
         assert resp.status_code == 200
         assert resp.json()["report_type"] == "profit_and_loss"
 
     def test_get_cashflow_returns_200(self, client):
-        with patch("app.api.v1.reports.invoke_reporting_pipeline",
-                   return_value=_pipeline_ok(_MOCK_CASHFLOW_RESULT)):
+        with patch(
+            "app.api.v1.reports.invoke_reporting_pipeline",
+            return_value=_pipeline_ok(_MOCK_CASHFLOW_RESULT),
+        ):
             resp = client.get("/api/v1/reports/cashflow")
 
         assert resp.status_code == 200
         assert resp.json()["report_type"] == "cash_flow"
 
     def test_get_balance_with_date_params(self, client):
-        with patch("app.api.v1.reports.invoke_reporting_pipeline",
-                   return_value=_pipeline_ok(_MOCK_BALANCE_RESULT)) as mock_fn:
+        with patch(
+            "app.api.v1.reports.invoke_reporting_pipeline",
+            return_value=_pipeline_ok(_MOCK_BALANCE_RESULT),
+        ) as mock_fn:
             resp = client.get(
                 "/api/v1/reports/balance",
                 params={"start_date": _START, "end_date": _END},
@@ -401,11 +495,17 @@ class TestReportsAPI:
         assert resp.status_code == 200
         _, kwargs = mock_fn.call_args
         assert kwargs["report_params"]["start_date"] == _START
-        assert kwargs["report_params"]["end_date"]   == _END
+        assert kwargs["report_params"]["end_date"] == _END
 
     def test_reports_pipeline_error_returns_500(self, client):
-        with patch("app.api.v1.reports.invoke_reporting_pipeline",
-                   return_value={"status": "error", "error": "DB unavailable", "agent_log": []}):
+        with patch(
+            "app.api.v1.reports.invoke_reporting_pipeline",
+            return_value={
+                "status": "error",
+                "error": "DB unavailable",
+                "agent_log": [],
+            },
+        ):
             resp = client.get("/api/v1/reports/balance")
 
         assert resp.status_code == 500
@@ -414,8 +514,10 @@ class TestReportsAPI:
 
 class TestTaxAPI:
     def test_get_iva_returns_200(self, client):
-        with patch("app.api.v1.tax.invoke_reporting_pipeline",
-                   return_value=_pipeline_ok(_MOCK_IVA_RESULT)) as mock_fn:
+        with patch(
+            "app.api.v1.tax.invoke_reporting_pipeline",
+            return_value=_pipeline_ok(_MOCK_IVA_RESULT),
+        ) as mock_fn:
             resp = client.get("/api/v1/tax/iva")
 
         assert resp.status_code == 200
@@ -426,8 +528,10 @@ class TestTaxAPI:
         assert kwargs["report_type"] == "iva"
 
     def test_get_withholdings_returns_200(self, client):
-        with patch("app.api.v1.tax.invoke_reporting_pipeline",
-                   return_value=_pipeline_ok(_MOCK_WITHHOLDINGS_RESULT)):
+        with patch(
+            "app.api.v1.tax.invoke_reporting_pipeline",
+            return_value=_pipeline_ok(_MOCK_WITHHOLDINGS_RESULT),
+        ):
             resp = client.get("/api/v1/tax/withholdings")
 
         assert resp.status_code == 200
@@ -436,8 +540,10 @@ class TestTaxAPI:
         assert data["total_retenciones"] == pytest.approx(300_000.0)
 
     def test_get_tax_with_date_params(self, client):
-        with patch("app.api.v1.tax.invoke_reporting_pipeline",
-                   return_value=_pipeline_ok(_MOCK_IVA_RESULT)) as mock_fn:
+        with patch(
+            "app.api.v1.tax.invoke_reporting_pipeline",
+            return_value=_pipeline_ok(_MOCK_IVA_RESULT),
+        ) as mock_fn:
             resp = client.get(
                 "/api/v1/tax/iva",
                 params={"start_date": _START, "end_date": _END},
@@ -446,11 +552,13 @@ class TestTaxAPI:
         assert resp.status_code == 200
         _, kwargs = mock_fn.call_args
         assert kwargs["report_params"]["start_date"] == _START
-        assert kwargs["report_params"]["end_date"]   == _END
+        assert kwargs["report_params"]["end_date"] == _END
 
     def test_tax_pipeline_error_returns_500(self, client):
-        with patch("app.api.v1.tax.invoke_reporting_pipeline",
-                   return_value={"status": "error", "error": "ledger empty", "agent_log": []}):
+        with patch(
+            "app.api.v1.tax.invoke_reporting_pipeline",
+            return_value={"status": "error", "error": "ledger empty", "agent_log": []},
+        ):
             resp = client.get("/api/v1/tax/withholdings")
 
         assert resp.status_code == 500
@@ -460,15 +568,35 @@ class TestTaxAPI:
 
 # Sample RAG result dicts used to build mock RAGResult objects
 _RAG_IVA_RESULTS = [
-    {"content": "Artículo 468 ET. Tarifa general IVA 19%.", "metadata": {"articulo": "Art. 468 ET", "fuente": "Estatuto Tributario"}, "score": 0.95},
-    {"content": "Artículo 477 ET. Bienes exentos del IVA.", "metadata": {"articulo": "Art. 477 ET", "fuente": "Estatuto Tributario"}, "score": 0.88},
+    {
+        "content": "Artículo 468 ET. Tarifa general IVA 19%.",
+        "metadata": {"articulo": "Art. 468 ET", "fuente": "Estatuto Tributario"},
+        "score": 0.95,
+    },
+    {
+        "content": "Artículo 477 ET. Bienes exentos del IVA.",
+        "metadata": {"articulo": "Art. 477 ET", "fuente": "Estatuto Tributario"},
+        "score": 0.88,
+    },
 ]
 _RAG_WITHHOLDING_RESULTS = [
-    {"content": "Artículo 392 ET. Retención sobre honorarios 11%.", "metadata": {"articulo": "Art. 392 ET", "fuente": "Estatuto Tributario"}, "score": 0.93},
-    {"content": "Decreto 2048/1992. ReteICA.", "metadata": {"articulo": "Decreto 2048/1992", "fuente": "Decreto 2048 de 1992"}, "score": 0.85},
+    {
+        "content": "Artículo 392 ET. Retención sobre honorarios 11%.",
+        "metadata": {"articulo": "Art. 392 ET", "fuente": "Estatuto Tributario"},
+        "score": 0.93,
+    },
+    {
+        "content": "Decreto 2048/1992. ReteICA.",
+        "metadata": {"articulo": "Decreto 2048/1992", "fuente": "Decreto 2048 de 1992"},
+        "score": 0.85,
+    },
 ]
 _RAG_NIIF_RESULTS = [
-    {"content": "Principio de realización. Ley 43/1990 Art. 12.", "metadata": {"articulo": "Art. 12 Ley 43/1990", "fuente": "Ley 43/1990"}, "score": 0.87},
+    {
+        "content": "Principio de realización. Ley 43/1990 Art. 12.",
+        "metadata": {"articulo": "Art. 12 Ley 43/1990", "fuente": "Ley 43/1990"},
+        "score": 0.87,
+    },
 ]
 
 
@@ -524,7 +652,10 @@ class TestReporteroNodeRAGEnrichment:
         mock_rag_module = MagicMock()
         mock_rag_module.get_rag_service.side_effect = RuntimeError("RAG unavailable")
 
-        all_mocks = {**_mock_db_modules(svc), "app.services.rag_service": mock_rag_module}
+        all_mocks = {
+            **_mock_db_modules(svc),
+            "app.services.rag_service": mock_rag_module,
+        }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
 
@@ -539,7 +670,10 @@ class TestReporteroNodeRAGEnrichment:
         svc = MagicMock()
         svc.get_general_ledger.return_value = _LEDGER
 
-        all_mocks = {**_mock_db_modules(svc), **_mock_rag_modules(_RAG_WITHHOLDING_RESULTS)}
+        all_mocks = {
+            **_mock_db_modules(svc),
+            **_mock_rag_modules(_RAG_WITHHOLDING_RESULTS),
+        }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
 
@@ -585,7 +719,10 @@ class TestReporteroNodeRAGEnrichment:
         mock_rag_module = MagicMock()
         mock_rag_module.get_rag_service.side_effect = Exception("connection refused")
 
-        all_mocks = {**_mock_db_modules(svc), "app.services.rag_service": mock_rag_module}
+        all_mocks = {
+            **_mock_db_modules(svc),
+            "app.services.rag_service": mock_rag_module,
+        }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
 
@@ -619,14 +756,19 @@ class TestReporteroNodeRAGEnrichment:
         assert result_state.get("error") is None
         assert "notas_normativas" in result_state["result"]["report"]
 
-    @pytest.mark.parametrize("report_type,svc_method,mock_return", [
-        ("iva", "get_general_ledger", _LEDGER),
-        ("withholdings", "get_general_ledger", _LEDGER),
-        ("balance", "get_balance_sheet", _BALANCE_DATA),
-        ("pnl", "get_general_ledger", _LEDGER),
-        ("cashflow", "get_general_ledger", _LEDGER),
-    ])
-    def test_rag_failure_never_sets_state_error(self, report_type, svc_method, mock_return):
+    @pytest.mark.parametrize(
+        "report_type,svc_method,mock_return",
+        [
+            ("iva", "get_general_ledger", _LEDGER),
+            ("withholdings", "get_general_ledger", _LEDGER),
+            ("balance", "get_balance_sheet", _BALANCE_DATA),
+            ("pnl", "get_general_ledger", _LEDGER),
+            ("cashflow", "get_general_ledger", _LEDGER),
+        ],
+    )
+    def test_rag_failure_never_sets_state_error(
+        self, report_type, svc_method, mock_return
+    ):
         """Critical invariant: RAG RuntimeError MUST NOT set state['error'] for any report type."""
         state = base_reporting_state(report_type)
         svc = MagicMock()
@@ -635,12 +777,16 @@ class TestReporteroNodeRAGEnrichment:
         mock_rag_module = MagicMock()
         mock_rag_module.get_rag_service.side_effect = RuntimeError("network error")
 
-        all_mocks = {**_mock_db_modules(svc), "app.services.rag_service": mock_rag_module}
+        all_mocks = {
+            **_mock_db_modules(svc),
+            "app.services.rag_service": mock_rag_module,
+        }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
 
-        assert result_state.get("error") is None, \
-            f"RAG failure set error for report_type={report_type!r}"
+        assert (
+            result_state.get("error") is None
+        ), f"RAG failure set error for report_type={report_type!r}"
         assert result_state["result"]["status"] == "ok"
 
 
@@ -673,10 +819,20 @@ class TestReporteroAnalysis:
         svc.get_balance_sheet_for_period.return_value = _BALANCE_DATA
         svc.get_general_ledger.return_value = _LEDGER
         svc.get_top_accounts.return_value = [
-            {"codigo": "4135", "nombre": "Servicios", "total_debito": 0, "total_credito": 8_000_000},
+            {
+                "codigo": "4135",
+                "nombre": "Servicios",
+                "total_debito": 0,
+                "total_credito": 8_000_000,
+            },
         ]
         svc.get_top_terceros.return_value = [
-            {"nit": "900123456", "num_movimientos": 10, "total_debito": 5_000_000, "total_credito": 0},
+            {
+                "nit": "900123456",
+                "num_movimientos": 10,
+                "total_debito": 5_000_000,
+                "total_credito": 0,
+            },
         ]
         svc.get_monthly_totals_by_class.return_value = _MONTHLY_TREND_DATA
 
@@ -736,7 +892,9 @@ class TestReporteroAnalysis:
         self._setup_analysis_mocks(svc)
 
         mock_gemini_module = MagicMock()
-        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("quota exhausted")
+        mock_gemini_module.get_gemini_client.side_effect = RuntimeError(
+            "quota exhausted"
+        )
 
         all_mocks = {
             **_mock_db_modules(svc),
