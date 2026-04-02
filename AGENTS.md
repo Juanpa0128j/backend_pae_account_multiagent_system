@@ -153,11 +153,23 @@ FastAPI (main.py) → /api/v1/* routers
 - **NIT validation:** Colombian NITs must be cleaned (strip `.` and spaces) before storing. Reject empty strings.
 - **PUC fallback:** When defaulting to account `519595`, emit an explicit `logger.warning`.
 
+## After Every File Modification
+
+Run these three steps in order before marking any task complete:
+
+```bash
+make lint        # ruff check — must show 0 errors
+make format      # ruff format + black — auto-formats in place
+make test        # pytest (e2e excluded) — must pass with no new failures
+```
+
+If `make lint` reports errors, fix them before continuing. Do not bypass with `# noqa` unless the error is a known intentional pattern (e.g. E402 after a sys.path manipulation block).
+
 ## Testing
 
 - Tests live in `tests/`. Fixtures are in `tests/conftest.py`.
 - External dependencies (DB, Gemini, LlamaParse) must be mocked in unit tests. Only E2E tests (`test_e2e_*.py`) hit real services.
-- Run `pytest tests/ -v` and confirm all tests pass before marking work complete.
+- Run `make test` and confirm all tests pass before marking work complete.
 - Do not add tests for behavior that doesn't exist yet (no speculative coverage).
 
 ## Git Rules

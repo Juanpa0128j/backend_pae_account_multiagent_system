@@ -29,18 +29,31 @@ python scripts/populate_rag.py --force  # Force re-index
 uvicorn main:app --reload
 
 # Tests
-pytest tests/ -v
-pytest tests/test_rag.py -v                          # Single file
-pytest tests/test_rag.py::TestDataFileIntegrity -v   # Single class
+make test                                            # Full suite (e2e excluded)
+make test-file FILE=tests/test_rag.py                # Single file
+make test-class FILE=tests/test_rag.py CLASS=TestDataFileIntegrity  # Single class
 
 # Lint / format
-ruff check .
-black .
+make lint                                            # ruff check — must be 0 errors
+make lint-fix                                        # auto-fix ruff errors
+make format                                          # ruff format + black
 
 # Database migrations
 alembic upgrade head
 alembic revision --autogenerate -m "description"
 ```
+
+## After Every File Modification
+
+**MANDATORY — run in order after any code change:**
+
+```bash
+make lint     # must report 0 errors before proceeding
+make format   # auto-formats; re-read any file you formatted before editing further
+make test     # must pass with no new failures
+```
+
+You are forbidden from reporting a task complete until all three pass.
 
 ## Architecture
 
