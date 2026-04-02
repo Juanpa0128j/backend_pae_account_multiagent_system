@@ -329,3 +329,8 @@ def test_factura_venta_qr_code_optional():
 def test_factura_compra_condiciones_pago_optional():
     obj = FacturaCompraContent()
     assert obj.condiciones_pago is None
+
+
+def test_factura_compra_qr_code_optional():
+    content = FacturaCompraContent(consecutivo="FC-999")
+    assert content.qr_code is None

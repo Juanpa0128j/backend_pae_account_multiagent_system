@@ -173,7 +173,7 @@ class FacturaCompraContent(ContentBase):
     forma_pago: Optional[str] = Field(None, description="contado | credito")
     medio_pago: Optional[str] = Field(None)
     plazo_dias: Optional[int] = Field(None)
-    condiciones_pago: Optional[str] = Field(None, description="Payment terms, e.g. '30 days net' or 'immediate'")
+    condiciones_pago: Optional[str] = Field(None, description="Condiciones de pago acordadas, p. ej. '30 días neto' o 'contado inmediato'")
     proveedor: Optional[EmisorFactura] = Field(None, description="Supplier")
     empresa_receptora: Optional[ReceptorFactura] = Field(None, description="Receiving company")
     items: Optional[List[FacturaItem]] = Field(None)
