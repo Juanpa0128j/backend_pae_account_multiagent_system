@@ -411,7 +411,7 @@ Y cita fuentes legales."""
 
 Eres un experto contable colombiano. Extrae la información de este EXTRACTO BANCARIO.
 
-Extrae obligatoriamente: entidad financiera, número y tipo de cuenta, titular (NIT y razón social), período (inicio y fin), saldo anterior (saldo_inicial) al comienzo del extracto, saldo actual (saldo_final) al final del extracto, todos los movimientos con fecha/descripción/referencia/tipo(débito o crédito), importe en campo `debito` si es cargo o en campo `credito` si es abono/saldo, resumen con total de cargos (total_debitos) y total de abonos (total_creditos) — estos totales son necesarios para verificar que estén registradas todas las partidas del mes —, GMF cobrado, intereses generados, y retención en la fuente sobre rendimientos.
+Extrae obligatoriamente: entidad financiera, número y tipo de cuenta, titular (NIT y razón social), período (inicio y fin), saldo anterior (saldo_inicial) al comienzo del extracto, saldo actual (saldo_final) al final del extracto, todos los movimientos con fecha/descripción/referencia/tipo(débito o crédito), importe en campo `debito` si es cargo, en campo `credito` si es abono, y saldo después de cada movimiento en campo `saldo`, resumen con total de cargos (total_debitos) y total de abonos (total_creditos) — estos totales son necesarios para verificar que estén registradas todas las partidas del mes —, GMF cobrado, intereses generados, y retención en la fuente sobre rendimientos.
 
 Documento:
 ---
