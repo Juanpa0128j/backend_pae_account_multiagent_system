@@ -306,25 +306,26 @@ class TestSchemaRegistry:
 # qr_code and condiciones_pago fields
 # ---------------------------------------------------------------------------
 
-class TestFacturaVentaQrCode:
-    def test_qr_code_field_exists(self):
-        schema = FacturaVentaContent.model_fields
-        assert "qr_code" in schema
-
-    def test_qr_code_is_optional_string(self):
-        obj = FacturaVentaContent()
-        assert obj.qr_code is None
-
-    def test_qr_code_accepts_value(self):
-        obj = FacturaVentaContent(qr_code="https://dian.gov.co/qr/abc123")
-        assert obj.qr_code == "https://dian.gov.co/qr/abc123"
+def test_factura_venta_has_qr_code_field():
+    schema = FacturaVentaContent.model_fields
+    assert "qr_code" in schema
 
 
-class TestFacturaCompraQrCodeAndCondicionesPago:
-    def test_qr_code_field_exists(self):
-        schema = FacturaCompraContent.model_fields
-        assert "qr_code" in schema
+def test_factura_compra_has_qr_code_field():
+    schema = FacturaCompraContent.model_fields
+    assert "qr_code" in schema
 
-    def test_condiciones_pago_field_exists(self):
-        schema = FacturaCompraContent.model_fields
-        assert "condiciones_pago" in schema
+
+def test_factura_compra_has_condiciones_pago_field():
+    schema = FacturaCompraContent.model_fields
+    assert "condiciones_pago" in schema
+
+
+def test_factura_venta_qr_code_optional():
+    obj = FacturaVentaContent()
+    assert obj.qr_code is None
+
+
+def test_factura_compra_condiciones_pago_optional():
+    obj = FacturaCompraContent()
+    assert obj.condiciones_pago is None
