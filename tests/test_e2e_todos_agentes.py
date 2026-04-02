@@ -32,7 +32,7 @@ from reportlab.pdfgen import canvas
 
 from app.agents.graph import create_agent_graph, invoke_ingest_pipeline
 from app.core.config import settings
-from app.core.database import SessionLocal, check_db_connection
+from app.core.database import SessionLocal
 from app.models.agent_outputs import (
     AuditorOutput,
     ContadorOutput,

@@ -27,7 +27,7 @@ def save_temp_file(file_content: bytes, filename: str) -> str:
     """Save file to temporary directory."""
     temp_dir = Path(tempfile.gettempdir()) / "pae_uploads"
     temp_dir.mkdir(exist_ok=True)
-    temp_path = temp_dir / filename
+    temp_path = temp_dir / Path(filename).name
 
     with open(temp_path, "wb") as f:
         f.write(file_content)
@@ -106,11 +106,10 @@ async def upload_file(
             _expected_magic
         ):
             # XML may start with a BOM or whitespace — allow those through
-            if _ext == ".xml" and file_content.lstrip()[:5] in (
-                b"<?xml",
-                b"<Invoice",
-                b"<Credit",
-                b"<Debit",
+            _stripped = file_content.lstrip()
+            if _ext == ".xml" and any(
+                _stripped.startswith(pref)
+                for pref in (b"<?xml", b"<Invoice", b"<Credit", b"<Debit")
             ):
                 pass
             else:

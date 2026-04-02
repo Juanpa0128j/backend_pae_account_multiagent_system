@@ -20,7 +20,7 @@ help:
 	@echo "Lint & Format"
 	@echo "  lint           Run ruff linter"
 	@echo "  lint-fix       Auto-fix ruff lint errors"
-	@echo "  format         Format code with black + isort via ruff"
+	@echo "  format         Format code with ruff format + black"
 	@echo "  format-check   Check formatting without writing"
 	@echo ""
 	@echo "Database"
@@ -36,7 +36,7 @@ install:
 	uv sync
 
 dev:
-	uv sync --extra dev
+	uv sync --group dev
 
 # ── Development ───────────────────────────────────────────────────────────────
 
