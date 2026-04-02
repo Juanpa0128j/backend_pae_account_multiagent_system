@@ -399,7 +399,6 @@ def reportero_node(state: AgentState) -> AgentState:
         return state
 
     params: dict = state.get("report_params") or {}
-    include_analysis = bool(params.get("include_analysis", False))
     if state.get("company_nit") and not params.get("company_nit"):
         params["company_nit"] = state.get("company_nit")
     state["current_agent"] = "reportero"
@@ -408,7 +407,6 @@ def reportero_node(state: AgentState) -> AgentState:
     append_log(state, "reportero", "node_start", {
         "report_type": report_type,
         "params": params,
-        "include_analysis": include_analysis,
     })
 
     try:

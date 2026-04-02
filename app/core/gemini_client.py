@@ -205,98 +205,6 @@ class TaxRateLookup(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Reportero Analysis Schemas
-# ---------------------------------------------------------------------------
-
-
-class ExplicacionResultadoGemini(BaseModel):
-    """Detailed explanation of a financial metric."""
-
-    metrica: str = Field(
-        description="Metric name, e.g. 'activos_totales', 'razon_corriente'"
-    )
-    valor: float = Field(description="The metric's numeric value")
-    explicacion: str = Field(
-        description="WHY this value — root causes, contributing accounts, business implications"
-    )
-    nivel: Literal["positivo", "neutral", "negativo"] = Field(
-        description="Traffic light assessment"
-    )
-
-
-class PrediccionPeriodoGemini(BaseModel):
-    """Single month financial prediction."""
-
-    periodo: str = Field(description="Target month as YYYY-MM, e.g. '2026-04'")
-    ingresos_estimados: float = Field(description="Projected revenue for the month")
-    gastos_estimados: float = Field(description="Projected expenses for the month")
-    utilidad_estimada: float = Field(
-        description="Projected net profit for the month"
-    )
-    confianza: Literal["alta", "media", "baja"] = Field(
-        description="Confidence level based on data volume and trend consistency"
-    )
-
-
-class InterpretacionRatioGemini(BaseModel):
-    """Interpretation of a single financial ratio."""
-
-    ratio: str = Field(description="Ratio name in Spanish")
-    valor: Optional[float] = Field(None, description="Numeric value")
-    interpretacion: str = Field(
-        description="What this ratio means for the business"
-    )
-    que_significa: str = Field(
-        description="Plain-language explanation for non-accountants"
-    )
-
-
-class ReporteroAnalysisGemini(BaseModel):
-    """Full structured analysis output from the Reportero LLM call."""
-
-    resumen_ejecutivo: str = Field(
-        description="2-3 paragraph executive summary of financial health"
-    )
-    explicaciones: List[ExplicacionResultadoGemini] = Field(
-        description="Detailed explanation of EACH major financial result"
-    )
-    interpretacion_ratios: List[InterpretacionRatioGemini] = Field(
-        description="Interpretation of each financial ratio"
-    )
-    tendencias: str = Field(
-        description="Narrative of how revenue, expenses, profit evolved over recent months"
-    )
-    predicciones: List[PrediccionPeriodoGemini] = Field(
-        description="3-month financial projections"
-    )
-    predicciones_narrativa: str = Field(
-        description="Plain-language interpretation of predictions: where the company is headed, risks, inflection points"
-    )
-    alertas: List[str] = Field(description="Risk alerts and early warning signals")
-    recomendaciones: List[str] = Field(
-        description="3-5 actionable recommendations"
-    )
-    nivel_salud_financiera: Literal["bueno", "aceptable", "preocupante", "critico"] = Field(
-        description="Overall financial health assessment"
-    )
-
-
-class ReporteroBriefAnalysisGemini(BaseModel):
-    """Brief analysis for individual report types (balance, pnl, etc.)."""
-
-    resumen: str = Field(
-        description="1-2 paragraph summary of this specific report"
-    )
-    puntos_clave: List[str] = Field(description="3-5 key takeaways")
-    alertas: List[str] = Field(
-        default_factory=list, description="Risk alerts if any"
-    )
-    recomendaciones: List[str] = Field(
-        default_factory=list, description="1-3 recommendations"
-    )
-
-
-# ---------------------------------------------------------------------------
 # Ingest schema re-exports (used by llm_client extraction methods)
 # ---------------------------------------------------------------------------
 
@@ -341,12 +249,6 @@ __all__ = [
     "GENERAL_EXTRACTION_INSTRUCTIONS",
     "GeminiClient",
     "get_gemini_client",
-    # Reportero schemas
-    "ExplicacionResultadoGemini",
-    "PrediccionPeriodoGemini",
-    "InterpretacionRatioGemini",
-    "ReporteroAnalysisGemini",
-    "ReporteroBriefAnalysisGemini",
     # ingest schemas
     "FacturaVentaContent",
     "FacturaCompraContent",
