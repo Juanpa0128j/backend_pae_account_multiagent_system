@@ -57,7 +57,6 @@ async def get_balance_report(
     Balance General (Balance Sheet).
     Aggregates posted journal entries up to *end_date* grouped by PUC class.
     Returns assets, liabilities, equity, net profit and a balance-validation flag.
-    Optionally includes LLM-powered analysis when include_analysis=true.
     """
     return _run_report("balance", _build_params(start_date, end_date), company_nit)
 

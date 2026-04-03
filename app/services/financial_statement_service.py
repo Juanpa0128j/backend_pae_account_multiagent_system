@@ -82,9 +82,9 @@ def build_first_level_from_journal_entries(
                 "total_activos": bg_raw.get("assets", 0),
                 "total_pasivos": bg_raw.get("liabilities", 0),
                 "total_patrimonio": bg_raw.get("total_equity", 0),
-                "activos": bg_raw.get("assets", 0),
-                "pasivos": bg_raw.get("liabilities", 0),
-                "patrimonio": bg_raw.get("equity", 0),
+                "utilidad_neta": bg_raw.get("net_profit", 0),
+                "patrimonio_sin_utilidad": bg_raw.get("equity", 0),
+                "cuadre": bg_raw.get("is_balanced", False),
                 "moneda": "COP",
                 "source": "derived_from_journal",
             }

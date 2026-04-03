@@ -63,7 +63,6 @@ async def get_iva_report(
     Reporte IVA.
     Computes IVA generated (account 240808) vs. IVA deductible (account 240802)
     and returns the net IVA payable with applicable legal references.
-    Optionally includes LLM-powered analysis when include_analysis=true.
     """
     return _run_report("iva", _build_params(start_date, end_date), company_nit)
 

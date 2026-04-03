@@ -161,11 +161,10 @@ async def upload_file(
             _expected_magic
         ):
             # XML may start with a BOM or whitespace — allow those through
-            if _ext == ".xml" and file_content.lstrip()[:5] in (
-                b"<?xml",
-                b"<Invoice",
-                b"<Credit",
-                b"<Debit",
+            stripped = file_content.lstrip()
+            if _ext == ".xml" and any(
+                stripped.startswith(prefix)
+                for prefix in (b"<?xml", b"<Invoice", b"<Credit", b"<Debit", b"\xef\xbb\xbf<?xml")
             ):
                 pass
             else:

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -36,7 +36,12 @@ async def get_books(
     """
     fi = _parse_date(fecha_inicio)
     ff = _parse_date(fecha_fin)
-    normalized_company_nit = normalize_nit(company_nit) if company_nit else None
+    normalized_company_nit = None
+    if company_nit:
+        try:
+            normalized_company_nit = normalize_nit(company_nit)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
 
     if tipo == "diario":
         lines = db_service.get_daily_journal(db, fi, ff, normalized_company_nit)

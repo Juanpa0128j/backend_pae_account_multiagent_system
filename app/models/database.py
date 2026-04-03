@@ -397,7 +397,7 @@ class FinancialStatement(Base):
     period_start = Column(DateTime(timezone=True), nullable=True)
     period_end = Column(DateTime(timezone=True), nullable=True)
     entity_nit = Column(String(20), nullable=True)
-    source_mode = Column(String(20), nullable=False, server_default="direct", comment="direct | derived")
+    source_mode = Column(String(20), nullable=False, server_default="direct", comment="direct | derived | derived_from_journal")
     data = Column(JSONB, nullable=False, comment="Full parsed financial statement data")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
