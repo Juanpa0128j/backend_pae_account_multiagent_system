@@ -284,7 +284,7 @@ class TestValidateContadorOutput:
 
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
     def test_validation_fails_with_invalid_puc(self, mock_puc_check, process_state):
-        """Validation should fail if PUC code doesn't exist in DB."""
+        """Invalid PUC code should be auto-remapped by the supervisor."""
         # Configure mock so that PUC code "999999" does NOT exist in DB, others do.
         def puc_side_effect(db, codigo):
             return None if codigo == "999999" else Mock()
@@ -296,11 +296,10 @@ class TestValidateContadorOutput:
 
         result_state = validate_contador_output_node(process_state)
 
-        # Should have correction feedback set on PUC validation failure
-        assert result_state.get("correction_feedback") is not None
-        assert "999999" in result_state["correction_feedback"] or \
-               "no existe" in result_state["correction_feedback"].lower() or \
-               "inválido" in result_state["correction_feedback"].lower()
+        # The supervisor auto-remaps invalid PUC codes to valid fallbacks,
+        # so no correction feedback or error should be set.
+        assert result_state.get("error") is None
+        assert result_state.get("correction_feedback") is None
 
 
 # ─── Test: Retry Logic ────────────────────────────────────────────
@@ -385,6 +384,8 @@ class TestFullProcessPipeline:
         company_row.tasa_reteica = Decimal("0.006900")
         company_row.tasa_iva_general = Decimal("0.190000")
         company_row.iva_responsable = True
+        company_row.tasa_ica = Decimal("0.006900")
+        company_row.tasa_renta = Decimal("0.350000")
         mock_get_company_settings.return_value = company_row
 
         # Mock PUC validation to always succeed
@@ -463,6 +464,8 @@ class TestFullProcessPipeline:
         company_row.tasa_reteica = Decimal("0.006900")
         company_row.tasa_iva_general = Decimal("0.190000")
         company_row.iva_responsable = True
+        company_row.tasa_ica = Decimal("0.006900")
+        company_row.tasa_renta = Decimal("0.350000")
         mock_get_company_settings.return_value = company_row
 
         # Mock PUC validation

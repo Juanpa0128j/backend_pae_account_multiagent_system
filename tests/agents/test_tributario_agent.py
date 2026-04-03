@@ -558,6 +558,8 @@ def test_process_mode_without_taxes_does_not_crash(
         tasa_reteica=Decimal("0.000000"),
         tasa_iva_general=Decimal("0.000000"),
         iva_responsable=False,
+        tasa_ica=Decimal("0.006900"),
+        tasa_renta=Decimal("0.350000"),
     )
 
     state = _make_state(VALID_CONTADOR_OUTPUT)

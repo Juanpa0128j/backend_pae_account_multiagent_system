@@ -25,7 +25,7 @@ import pytest
 from app.core.vectordb import NORMATIVA_COLLECTION
 from app.services.rag_service import RAGResult, RAGService
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 
 
 # Deterministic fake embeddings (same implementation as test_rag.py)
