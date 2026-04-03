@@ -2,8 +2,8 @@
 Document classifier service.
 
 Classifies uploaded documents by type and ingestion pathway using LLM
-analysis of document content. Uses Groq for classification to avoid
-Gemini quota issues, with no filename-based heuristics.
+analysis of document content. Automatically selects the best available
+LLM provider: OpenAI → Gemini → Groq (first available key wins).
 """
 
 import copy
@@ -13,7 +13,6 @@ from typing import Literal, Optional, cast
 
 from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field, SecretStr
 
 from app.core.config import get_settings
@@ -101,7 +100,7 @@ Extrae también el NIT de la entidad, el nombre, y el período si están present
 
 
 class _ClassificationResponse(BaseModel):
-    """Schema for Groq structured output during classification."""
+    """Schema for LLM structured output during classification."""
 
     doc_type: str = Field(description="One of the document type values listed")
     confidence: float = Field(
@@ -140,34 +139,90 @@ def _clean_schema_patterns(schema: dict) -> dict:
 
 
 @lru_cache(maxsize=1)
-def _get_groq_classifier_chain():
+def _get_classifier_chain():
+    """Build the classification LLM chain using the first available provider.
+
+    Priority: OpenAI → Gemini → Groq.  Raises ValueError if none is configured.
+    """
     settings = get_settings()
-    if not settings.groq_api_key:
-        raise ValueError("GROQ_API_KEY not set")
-
-    model = ChatGroq(
-        model="openai/gpt-oss-120b",
-        api_key=SecretStr(settings.groq_api_key),
-        temperature=0,
-    )
-
     cleaned_schema = _clean_schema_patterns(_ClassificationResponse.model_json_schema())
-    bound = model.bind(
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": _ClassificationResponse.__name__,
-                "schema": cleaned_schema,
-                "strict": False,
-            },
-        }
-    )
+    model = None
+    provider = None
 
-    return (
-        bound
-        | JsonOutputParser()
-        | (lambda payload: _ClassificationResponse.model_validate(payload))
-    )
+    # 1. Try OpenAI
+    if settings.openai_api_key:
+        try:
+            from langchain_openai import ChatOpenAI
+
+            model = ChatOpenAI(
+                model="gpt-4o-mini",
+                api_key=SecretStr(settings.openai_api_key),
+                temperature=0,
+            )
+            provider = "openai/gpt-4o-mini"
+        except Exception as exc:
+            logger.warning("doc_classifier: OpenAI init failed: %s", exc)
+
+    # 2. Try Gemini
+    if model is None and settings.gemini_api_key:
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            model = ChatGoogleGenerativeAI(
+                model="gemini-2.0-flash",
+                google_api_key=settings.gemini_api_key,
+                temperature=0,
+            )
+            provider = "gemini/gemini-2.0-flash"
+        except Exception as exc:
+            logger.warning("doc_classifier: Gemini init failed: %s", exc)
+
+    # 3. Try Groq
+    if model is None and settings.groq_api_key:
+        try:
+            from langchain_groq import ChatGroq
+
+            model = ChatGroq(
+                model="openai/gpt-oss-120b",
+                api_key=SecretStr(settings.groq_api_key),
+                temperature=0,
+            )
+            provider = "groq/gpt-oss-120b"
+        except Exception as exc:
+            logger.warning("doc_classifier: Groq init failed: %s", exc)
+
+    if model is None:
+        raise ValueError(
+            "No LLM API key available for document classification. "
+            "Set at least one of: OPENAI_API_KEY, GEMINI_API_KEY, GROQ_API_KEY"
+        )
+
+    logger.info("doc_classifier: using provider %s", provider)
+
+    # Bind structured output — OpenAI/Groq support json_schema, Gemini uses direct invoke
+    if provider and provider.startswith("gemini"):
+        # Gemini doesn't support response_format json_schema; parse JSON from text
+        return (
+            model
+            | JsonOutputParser()
+            | (lambda payload: _ClassificationResponse.model_validate(payload))
+        ), provider
+    else:
+        bound = model.bind(
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": _ClassificationResponse.__name__,
+                    "schema": cleaned_schema,
+                    "strict": False,
+                },
+            }
+        )
+        return (
+            bound
+            | JsonOutputParser()
+            | (lambda payload: _ClassificationResponse.model_validate(payload))
+        ), provider
 
 
 def classify_document(
@@ -175,7 +230,7 @@ def classify_document(
     source_format: str,
 ) -> DocumentClassification:
     """
-    Classify a document using Groq LLM based on its content.
+    Classify a document using the best available LLM provider.
 
     Args:
         text_preview: First ~3000 chars of extracted text.
@@ -203,14 +258,14 @@ def classify_document(
         )
 
     try:
-        chain = _get_groq_classifier_chain()
-        response = chain.invoke(
-            [
-                HumanMessage(
-                    content=CLASSIFICATION_PROMPT.format(text_preview=text_preview)
-                )
-            ]
-        )
+        chain, provider = _get_classifier_chain()
+
+        # Gemini needs the JSON instruction in the prompt
+        prompt_content = CLASSIFICATION_PROMPT.format(text_preview=text_preview)
+        if provider and provider.startswith("gemini"):
+            prompt_content += "\n\nResponde EXCLUSIVAMENTE con un JSON válido con los campos: doc_type, confidence, period_start, period_end, entity_nit, entity_name."
+
+        response = chain.invoke([HumanMessage(content=prompt_content)])
 
         # Parse the doc_type string into the enum
         try:
@@ -236,7 +291,8 @@ def classify_document(
         )
 
         logger.info(
-            "doc_classifier: classified as %s (pathway=%s, confidence=%.2f)",
+            "doc_classifier: [%s] classified as %s (pathway=%s, confidence=%.2f)",
+            provider,
             classification.doc_type.value,
             classification.pathway.value,
             classification.confidence,

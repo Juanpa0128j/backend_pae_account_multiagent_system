@@ -205,53 +205,98 @@ def build_runs_from_existing_inputs(input_path: Path) -> list[UploadRun]:
     return runs
 
 
-def build_via_b_documents(output_dir: Path) -> list[UploadRun]:
-    """Generate synthetic first-level financial statement PDFs for Via B testing."""
+def build_via_b_documents(output_dir: Path, company_nit: str = "800999888-2") -> list[UploadRun]:
+    """Generate synthetic first-level financial statement PDFs for Via B testing.
+
+    PDFs include rich Colombian accounting terminology so the LLM classifier
+    correctly identifies them as balance_general / estado_resultados / libro_auxiliar.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     runs: list[UploadRun] = []
 
-    # Balance General
+    # Balance General — Estado de Situacion Financiera (NIIF)
     bg_path = output_dir / "balance_general_2024.pdf"
     _write_pdf(
         bg_path,
-        "BALANCE GENERAL",
+        "BALANCE GENERAL - ESTADO DE SITUACION FINANCIERA",
         [
-            "Empresa: Test S.A.S.",
-            "NIT: 800999888-2",
-            "Periodo: 01/01/2024 - 31/12/2024",
-            "ACTIVOS",
-            "  1105 Caja: $5,000,000",
-            "  1110 Bancos: $45,000,000",
-            "  1305 Clientes: $30,000,000",
-            "TOTAL ACTIVOS: $80,000,000",
+            "Presentado conforme a NIIF para PYMES (Decreto 2420 de 2015)",
+            f"Empresa: Contadores Asociados S.A.S.  NIT: {company_nit}",
+            "Periodo contable: del 01 de enero al 31 de diciembre de 2024",
+            "Cifras expresadas en pesos colombianos (COP)",
+            "",
+            "ACTIVOS                                    Codigo PUC     Saldo",
+            "Activos Corrientes",
+            "  Caja                                     1105       5,000,000.00",
+            "  Bancos                                   1110      45,000,000.00",
+            "  Clientes                                 1305      30,000,000.00",
+            "Total Activos Corrientes                              80,000,000.00",
+            "Activos No Corrientes",
+            "  Propiedad planta y equipo                1520      50,000,000.00",
+            "  Depreciacion acumulada                   1592     (10,000,000.00)",
+            "Total Activos No Corrientes                           40,000,000.00",
+            "TOTAL ACTIVOS                                        120,000,000.00",
+            "",
             "PASIVOS",
-            "  2205 Proveedores: $20,000,000",
-            "TOTAL PASIVOS: $20,000,000",
+            "Pasivos Corrientes",
+            "  Proveedores nacionales                   2205      20,000,000.00",
+            "  Retencion en la fuente por pagar         2365       3,000,000.00",
+            "  IVA por pagar                            2408       7,000,000.00",
+            "Total Pasivos Corrientes                              30,000,000.00",
+            "Obligaciones financieras largo plazo       2105      10,000,000.00",
+            "TOTAL PASIVOS                                         40,000,000.00",
+            "",
             "PATRIMONIO",
-            "  3105 Capital: $40,000,000",
-            "  3605 Utilidad ejercicio: $20,000,000",
-            "TOTAL PATRIMONIO: $60,000,000",
+            "  Capital social                           3105      50,000,000.00",
+            "  Reserva legal                            3305       5,000,000.00",
+            "  Resultados de ejercicios anteriores      3605       5,000,000.00",
+            "  Utilidad del ejercicio                   3610      20,000,000.00",
+            "TOTAL PATRIMONIO                                      80,000,000.00",
+            "",
+            "TOTAL PASIVOS + PATRIMONIO                           120,000,000.00",
+            "Activo = Pasivo + Patrimonio  >>>  CUADRE VERIFICADO",
         ],
     )
     runs.append(UploadRun("balance_general", bg_path))
 
-    # Estado de Resultados
+    # Estado de Resultados — PyG
     er_path = output_dir / "estado_resultados_2024.pdf"
     _write_pdf(
         er_path,
-        "ESTADO DE RESULTADOS",
+        "ESTADO DE RESULTADOS - ESTADO DE PERDIDAS Y GANANCIAS",
         [
-            "Empresa: Test S.A.S.",
-            "NIT: 800999888-2",
-            "Periodo: 01/01/2024 - 31/12/2024",
+            "Presentado conforme a NIIF para PYMES (Decreto 2420 de 2015)",
+            f"Empresa: Contadores Asociados S.A.S.  NIT: {company_nit}",
+            "Periodo: del 01 de enero al 31 de diciembre de 2024",
+            "Cifras expresadas en pesos colombianos (COP)",
+            "",
+            "                                           Codigo PUC     Valor",
             "INGRESOS OPERACIONALES",
-            "  4135 Comercio al por mayor: $100,000,000",
-            "TOTAL INGRESOS: $100,000,000",
-            "GASTOS OPERACIONALES",
-            "  5105 Gastos de personal: $50,000,000",
-            "  5195 Otros gastos: $30,000,000",
-            "TOTAL GASTOS: $80,000,000",
-            "UTILIDAD NETA: $20,000,000",
+            "  Comercio al por mayor y menor            4135     150,000,000.00",
+            "  Honorarios                               4115      20,000,000.00",
+            "  Servicios                                4170      30,000,000.00",
+            "Total Ingresos Operacionales                         200,000,000.00",
+            "",
+            "COSTO DE VENTAS",
+            "  Costo de mercancias vendidas             6135      80,000,000.00",
+            "Total Costo de Ventas                                 80,000,000.00",
+            "",
+            "UTILIDAD BRUTA                                       120,000,000.00",
+            "",
+            "GASTOS OPERACIONALES DE ADMINISTRACION",
+            "  Gastos de personal                       5105      40,000,000.00",
+            "  Honorarios                               5110      15,000,000.00",
+            "  Arrendamientos                           5120      12,000,000.00",
+            "  Servicios publicos                       5135       8,000,000.00",
+            "  Depreciaciones                           5160       5,000,000.00",
+            "  Diversos                                 5195      20,000,000.00",
+            "Total Gastos Operacionales                           100,000,000.00",
+            "",
+            "UTILIDAD OPERACIONAL                                  20,000,000.00",
+            "",
+            "UTILIDAD ANTES DE IMPUESTOS                           20,000,000.00",
+            "  Provision impuesto de renta (35%)                    0.00",
+            "UTILIDAD NETA DEL EJERCICIO                           20,000,000.00",
         ],
     )
     runs.append(UploadRun("estado_resultados", er_path))
@@ -260,16 +305,33 @@ def build_via_b_documents(output_dir: Path) -> list[UploadRun]:
     la_path = output_dir / "libro_auxiliar_2024.pdf"
     _write_pdf(
         la_path,
-        "LIBRO AUXILIAR",
+        "LIBRO AUXILIAR - MAYOR Y BALANCES POR CUENTA PUC",
         [
-            "Empresa: Test S.A.S.",
-            "NIT: 800999888-2",
-            "Periodo: 01/01/2024 - 31/12/2024",
-            "Cuenta 1105 - Caja",
-            "2024-01-15  Ingreso ventas           Deb: 5,000,000   Saldo: 5,000,000",
-            "2024-03-01  Pago servicios           Cre: 2,000,000   Saldo: 3,000,000",
-            "Cuenta 1110 - Bancos",
-            "2024-01-20  Deposito                 Deb: 45,000,000  Saldo: 45,000,000",
+            "Presentado conforme al Plan Unico de Cuentas (PUC) - Decreto 2650 de 1993",
+            f"Empresa: Contadores Asociados S.A.S.  NIT: {company_nit}",
+            "Periodo: del 01 de enero al 31 de diciembre de 2024",
+            "Cifras en COP",
+            "",
+            "Cuenta PUC: 1105 - CAJA",
+            "Fecha       Comprobante  Tercero NIT    Descripcion              Debito         Credito        Saldo",
+            "2024-01-15  CE-001       900123456-1    Recaudo clientes          5,000,000                    5,000,000",
+            "2024-02-01  CE-012       800555333-1    Pago arriendo                            2,000,000     3,000,000",
+            "2024-03-15  CE-025       900123456-1    Recaudo cartera           8,000,000                   11,000,000",
+            "2024-06-20  CE-048       800555333-1    Pago servicios                           1,000,000    10,000,000",
+            "                                        Saldo final cuenta 1105                                10,000,000",
+            "",
+            "Cuenta PUC: 1110 - BANCOS",
+            "Fecha       Comprobante  Tercero NIT    Descripcion              Debito         Credito        Saldo",
+            "2024-01-20  RC-001       900123456-1    Consignacion cliente     45,000,000                   45,000,000",
+            "2024-02-15  CE-015       800444222-1    Pago proveedor                          10,000,000    35,000,000",
+            "2024-04-10  RC-030       900123456-1    Consignacion             15,000,000                   50,000,000",
+            "                                        Saldo final cuenta 1110                                50,000,000",
+            "",
+            "Cuenta PUC: 2205 - PROVEEDORES NACIONALES",
+            "Fecha       Comprobante  Tercero NIT    Descripcion              Debito         Credito        Saldo",
+            "2024-01-10  FV-001       800444222-1    Compra mercancia                        20,000,000    20,000,000",
+            "2024-02-15  CE-015       800444222-1    Pago factura             10,000,000                   10,000,000",
+            "                                        Saldo final cuenta 2205                                10,000,000",
         ],
     )
     runs.append(UploadRun("libro_auxiliar", la_path))
@@ -285,7 +347,7 @@ def run_via_b_pipeline(
     output_dir = ROOT / "storage" / "uploads" / "frontend_sim" / "via_b"
     _print_header("VIA B: Uploading first-level financial statements")
 
-    runs = build_via_b_documents(output_dir)
+    runs = build_via_b_documents(output_dir, company_nit=args.company_nit)
     company_nit = args.company_nit
     base_url = args.base_url
 
