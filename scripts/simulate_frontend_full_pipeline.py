@@ -673,7 +673,7 @@ def _print_second_level_detail(statements: list) -> None:
             continue
 
         d = stmt.get("data", {})
-        period = f"{(stmt.get('period_start') or '')[:10]} → {(stmt.get('period_end') or '')[:10]}"
+        period = f"{(stmt.get('period_start') or '')[:10]} ->{(stmt.get('period_end') or '')[:10]}"
         print(f"\n--- {stype.upper().replace('_', ' ')} [{stmt.get('source_mode')}] ---")
         print(f"Periodo: {period}")
 
