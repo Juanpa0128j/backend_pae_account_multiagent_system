@@ -29,5 +29,13 @@
         }
     },
     "postCreateCommand": "uv sync && uv run pre-commit install",
-    "remoteUser": "vscode"
+    "remoteUser": "vscode",
+    "remoteEnv": {
+        "LLAMA_CLOUD_API_KEY": "${localEnv:LLAMA_CLOUD_API_KEY}",
+        "GEMINI_API_KEY": "${localEnv:GEMINI_API_KEY}",
+        "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+        "GROQ_API_KEY": "${localEnv:GROQ_API_KEY}",
+        "HUGGINGFACE_API_KEY": "${localEnv:HUGGINGFACE_API_KEY}",
+        "DATABASE_URL": "${localEnv:DATABASE_URL}"
+    }
 }
