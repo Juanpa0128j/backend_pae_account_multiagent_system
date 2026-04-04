@@ -12,7 +12,7 @@ This module keeps:
 from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional, TypeVar
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -82,38 +82,64 @@ class ContadorOutputGemini(BaseModel):
     asientos: List[AsientoContableGemini] = Field(
         description="Journal entries (at least one debit and one credit)"
     )
-    total_debitos: Decimal = Field(description="Sum of all debit entries")
-    total_creditos: Decimal = Field(description="Sum of all credit entries")
+    total_debitos: Decimal = Field(default=Decimal("0"), description="Sum of all debit entries")
+    total_creditos: Decimal = Field(default=Decimal("0"), description="Sum of all credit entries")
 
     @field_validator("total_debitos", "total_creditos", mode="before")
     @classmethod
     def parse_totals(cls, v):  # noqa: N805
+        if v is None:
+            return Decimal("0")
         if isinstance(v, (int, float)):
             return Decimal(str(v))
         return v
+
+    @model_validator(mode="after")
+    def ensure_totals(self) -> "ContadorOutputGemini":
+        """Backfill totals when LLM omits them but asientos are present."""
+        if not self.asientos:
+            return self
+
+        calc_debitos = Decimal("0")
+        calc_creditos = Decimal("0")
+        for asiento in self.asientos:
+            valor = Decimal(str(asiento.valor or 0))
+            if asiento.tipo_movimiento == "debito":
+                calc_debitos += valor
+            else:
+                calc_creditos += valor
+
+        if self.total_debitos == Decimal("0") and calc_debitos > Decimal("0"):
+            self.total_debitos = calc_debitos
+        if self.total_creditos == Decimal("0") and calc_creditos > Decimal("0"):
+            self.total_creditos = calc_creditos
+
+        return self
 
 
 class AuditorHallazgoGemini(BaseModel):
     """Single audit finding."""
 
-    codigo: str = Field(description="Finding code in format AUD-XXX")
+    codigo: str = Field(default="AUD-000", description="Finding code in format AUD-XXX")
     severidad: Literal["info", "advertencia", "error", "critico"] = Field(
+        default="advertencia",
         description="Finding severity level"
     )
-    descripcion: str = Field(description="Clear description of the finding")
+    descripcion: str = Field(default="", description="Clear description of the finding")
     campo_afectado: Optional[str] = Field(
         None, description="Campo contable afectado (opcional)"
     )
-    recomendacion: str = Field(description="Recomendacion para corregir el hallazgo")
+    recomendacion: str = Field(default="", description="Recomendacion para corregir el hallazgo")
 
 
 class AuditorOutputGemini(BaseModel):
     """AuditorOutput-compatible schema for structured output."""
 
-    fecha_auditoria: str = Field(description="Fecha de auditoria en formato YYYY-MM-DD")
-    documento_referencia: str = Field(description="Referencia del documento auditado")
-    aprobado: bool = Field(description="True cuando el audit pasa sin bloqueadores")
+    fecha_auditoria: str = Field(default="1970-01-01", description="Fecha de auditoria en formato YYYY-MM-DD")
+    documento_referencia: str = Field(default="sin referencia", description="Referencia del documento auditado")
+    aprobado: bool = Field(default=False, description="True cuando el audit pasa sin bloqueadores")
     nivel_riesgo: Literal["bajo", "medio", "alto", "critico"] = Field(
+        default="medio",
         description="Nivel de riesgo global de la transaccion"
     )
     hallazgos: List[AuditorHallazgoGemini] = Field(
@@ -121,11 +147,12 @@ class AuditorOutputGemini(BaseModel):
         description="Lista estructurada de hallazgos detectados",
     )
     puntaje_calidad: Decimal = Field(
+        default=Decimal("0"),
         ge=0,
         le=100,
         description="Puntaje de calidad contable entre 0 y 100",
     )
-    resumen: str = Field(description="Resumen ejecutivo de la auditoria")
+    resumen: str = Field(default="", description="Resumen ejecutivo de la auditoria")
 
 
 class TaxJustification(BaseModel):

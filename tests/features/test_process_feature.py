@@ -1,6 +1,10 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
+pytest.importorskip("fastapi")
+
 from fastapi.testclient import TestClient
 
 from app.core.database import get_db

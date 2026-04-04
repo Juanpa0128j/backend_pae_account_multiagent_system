@@ -43,8 +43,13 @@ def base_state(**overrides) -> dict:
         "audit_rejection_reason": None,
         "audit_decision": None,
         "audit_feedback": None,
+        "audit_rejection_count": 0,
         "report_type": None,
         "report_params": None,
+        "document_classification": None,
+        "pathway": None,
+        "parsed_content": None,
+        "company_nit": None,
     }
     state.update(overrides)
     return state

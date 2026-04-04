@@ -1,7 +1,8 @@
 {
     "name": "Backend PAE Account Multiagent System",
     "build": {
-        "dockerfile": "Dockerfile"
+        "dockerfile": "Dockerfile",
+        "context": ".."
     },
     "customizations": {
         "vscode": {

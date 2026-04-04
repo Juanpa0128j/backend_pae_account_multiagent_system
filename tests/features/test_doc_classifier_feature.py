@@ -110,10 +110,10 @@ class TestClassifyDocument:
         assert result.doc_type == DocumentType.OTRO
         assert result.confidence == 0.0
 
-    @patch("app.core.gemini_client.get_gemini_client")
-    def test_llm_classifies_iva_declaration(self, mock_get_client):
-        mock_client = MagicMock()
-        mock_client.classify_document.return_value = _ClassificationResponse(
+    @patch("app.services.doc_classifier._get_classifier_chain")
+    def test_llm_classifies_iva_declaration(self, mock_chain_fn):
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = _ClassificationResponse(
             doc_type="declaracion_iva",
             confidence=0.92,
             period_start="2026-01-01",
@@ -121,7 +121,7 @@ class TestClassifyDocument:
             entity_nit="900123456",
             entity_name="Distribuidora XYZ",
         )
-        mock_get_client.return_value = mock_client
+        mock_chain_fn.return_value = (mock_chain, "mock/test")
 
         result = classify_document(
             text_preview="Formulario 300 IVA bimestral...",
@@ -132,16 +132,16 @@ class TestClassifyDocument:
         assert result.confidence == 0.92
         assert result.entity_nit == "900123456"
 
-    @patch("app.core.gemini_client.get_gemini_client")
-    def test_llm_classifies_balance_general(self, mock_get_client):
-        mock_client = MagicMock()
-        mock_client.classify_document.return_value = _ClassificationResponse(
+    @patch("app.services.doc_classifier._get_classifier_chain")
+    def test_llm_classifies_balance_general(self, mock_chain_fn):
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = _ClassificationResponse(
             doc_type="balance_general",
             confidence=0.88,
             entity_nit="800999888",
             entity_name=None,
         )
-        mock_get_client.return_value = mock_client
+        mock_chain_fn.return_value = (mock_chain, "mock/test")
 
         result = classify_document(
             text_preview="Activos corrientes... Pasivos... Patrimonio...",
@@ -150,14 +150,14 @@ class TestClassifyDocument:
         assert result.doc_type == DocumentType.BALANCE_GENERAL
         assert result.pathway == IngestPathway.WORK_WITH_EXISTING
 
-    @patch("app.core.gemini_client.get_gemini_client")
-    def test_unknown_doc_type_falls_back_to_otro(self, mock_get_client):
-        mock_client = MagicMock()
-        mock_client.classify_document.return_value = _ClassificationResponse(
+    @patch("app.services.doc_classifier._get_classifier_chain")
+    def test_unknown_doc_type_falls_back_to_otro(self, mock_chain_fn):
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = _ClassificationResponse(
             doc_type="something_unknown",
             confidence=0.5,
         )
-        mock_get_client.return_value = mock_client
+        mock_chain_fn.return_value = (mock_chain, "mock/test")
 
         result = classify_document(
             text_preview="Some unknown content",
@@ -165,9 +165,9 @@ class TestClassifyDocument:
         )
         assert result.doc_type == DocumentType.OTRO
 
-    @patch("app.core.gemini_client.get_gemini_client")
-    def test_llm_failure_returns_otro(self, mock_get_client):
-        mock_get_client.side_effect = RuntimeError("API unavailable")
+    @patch("app.services.doc_classifier._get_classifier_chain")
+    def test_llm_failure_returns_otro(self, mock_chain_fn):
+        mock_chain_fn.side_effect = RuntimeError("API unavailable")
 
         result = classify_document(
             text_preview="Any content here",
@@ -176,16 +176,16 @@ class TestClassifyDocument:
         assert result.doc_type == DocumentType.OTRO
         assert result.confidence == 0.0
 
-    @patch("app.core.gemini_client.get_gemini_client")
-    def test_classifies_factura_venta(self, mock_get_client):
-        mock_client = MagicMock()
-        mock_client.classify_document.return_value = _ClassificationResponse(
+    @patch("app.services.doc_classifier._get_classifier_chain")
+    def test_classifies_factura_venta(self, mock_chain_fn):
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = _ClassificationResponse(
             doc_type="factura_venta",
             confidence=0.95,
             entity_nit="900111222",
             entity_name="Mi Empresa SAS",
         )
-        mock_get_client.return_value = mock_client
+        mock_chain_fn.return_value = (mock_chain, "mock/test")
 
         result = classify_document(
             text_preview="FACTURA DE VENTA No. FV-001...",
@@ -194,15 +194,15 @@ class TestClassifyDocument:
         assert result.doc_type == DocumentType.FACTURA_VENTA
         assert result.pathway == IngestPathway.BUILD_FROM_SCRATCH
 
-    @patch("app.core.gemini_client.get_gemini_client")
-    def test_classifies_auxiliar_impuesto(self, mock_get_client):
-        mock_client = MagicMock()
-        mock_client.classify_document.return_value = _ClassificationResponse(
+    @patch("app.services.doc_classifier._get_classifier_chain")
+    def test_classifies_auxiliar_impuesto(self, mock_chain_fn):
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = _ClassificationResponse(
             doc_type="auxiliar_impuesto",
             confidence=0.87,
             period_end="2026-02-28",
         )
-        mock_get_client.return_value = mock_client
+        mock_chain_fn.return_value = (mock_chain, "mock/test")
 
         result = classify_document(
             text_preview="Cuenta 240802 IVA Descontable... Débito Crédito Saldo",

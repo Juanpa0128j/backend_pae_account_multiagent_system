@@ -11,17 +11,169 @@ architecture agents based on state['mode'] and state['current_agent']:
 All routing decisions and validation outcomes are recorded in agent_log.
 """
 
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.database import SessionLocal
-
 from app.core.logger import get_logger
+from app.models.database import IngestStatus
 from app.services import db_service
+from app.services.nit_utils import normalize_optional_nit
 from app.services.validation_engine import ValidationResult, get_validator
 
 logger = get_logger("app.agents.supervisor")
+
+
+def _normalize_tributario_output(state: AgentState, tributario_output: dict) -> dict:
+    """Best-effort normalization for TributarioOutput before strict schema validation."""
+    if not isinstance(tributario_output, dict):
+        tributario_output = {}
+
+    normalized = dict(tributario_output)
+
+    impuestos = normalized.get("impuestos")
+    if not isinstance(impuestos, list):
+        impuestos = []
+
+    calculated_total = Decimal("0")
+    for imp in impuestos:
+        if not isinstance(imp, dict):
+            continue
+        try:
+            calculated_total += Decimal(str(imp.get("valor_impuesto", 0) or 0))
+        except Exception:
+            continue
+
+    aplica_impuestos = bool(impuestos)
+
+    total_impuestos = normalized.get("total_impuestos")
+    if total_impuestos is None:
+        total_impuestos = str(calculated_total)
+
+    documento_referencia = str(normalized.get("documento_referencia") or "").strip()
+    if not documento_referencia:
+        contador_output = state.get("contador_output") or {}
+        documento_referencia = str(
+            contador_output.get("descripcion_general") or ""
+        ).strip()
+    if not documento_referencia:
+        raw_txs = state.get("raw_transactions") or []
+        if isinstance(raw_txs, list) and raw_txs:
+            first_tx = raw_txs[0] if isinstance(raw_txs[0], dict) else {}
+            documento_referencia = str(
+                first_tx.get("referencia")
+                or first_tx.get("descripcion")
+                or "sin referencia"
+            ).strip()
+
+    referencias_legales = normalized.get("referencias_legales")
+    if not isinstance(referencias_legales, list):
+        referencias_legales = []
+
+    asientos_enriquecidos = normalized.get("asientos_enriquecidos")
+    if not isinstance(asientos_enriquecidos, list):
+        contador_output = state.get("contador_output") or {}
+        asientos_enriquecidos = (
+            contador_output.get("asientos") if isinstance(contador_output, dict) else []
+        )
+    if not isinstance(asientos_enriquecidos, list):
+        asientos_enriquecidos = []
+
+    normalized["fecha_analisis"] = (
+        normalized.get("fecha_analisis") or date.today().isoformat()
+    )
+    normalized["documento_referencia"] = documento_referencia or "sin referencia"
+    normalized["impuestos"] = impuestos
+    normalized["aplica_impuestos"] = aplica_impuestos
+    normalized["total_impuestos"] = str(total_impuestos)
+    normalized["observaciones"] = normalized.get("observaciones")
+    normalized["referencias_legales"] = referencias_legales
+    normalized["asientos_enriquecidos"] = asientos_enriquecidos
+
+    return normalized
+
+
+def _resolve_puc_code(db, raw_code: str) -> tuple[str | None, str | None]:
+    """Resolve a possibly invalid PUC code to an active account code.
+
+    Returns a tuple of (resolved_code, resolved_name).
+    """
+    code = str(raw_code or "").strip()
+    if not code:
+        return None, None
+
+    existing = db_service.validate_puc_exists(db, code)
+    if existing:
+        return code, str(getattr(existing, "nombre", "") or "").strip() or None
+
+    candidates: list[str] = []
+    if len(code) >= 6:
+        candidates.extend([code[:4], code[:2]])
+    elif len(code) == 5:
+        candidates.extend([code[:4], code[:2]])
+    elif len(code) == 4:
+        candidates.append(code[:2])
+
+    class_defaults = {
+        "1": ["130505", "110505", "1305", "1105"],
+        "2": ["220505", "2205", "2105", "2335"],
+        "3": ["3105"],
+        "4": ["4170", "4135"],
+        "5": ["519595", "5195", "5135", "5110"],
+        "6": ["6170", "6135"],
+    }
+    first_digit = code[:1]
+    candidates.extend(class_defaults.get(first_digit, []))
+
+    seen = set()
+    for candidate in candidates:
+        cand = str(candidate).strip()
+        if not cand or cand in seen:
+            continue
+        seen.add(cand)
+        row = db_service.validate_puc_exists(db, cand)
+        if row:
+            return cand, str(getattr(row, "nombre", "") or "").strip() or None
+
+    return None, None
+
+
+def _normalize_contador_puc_codes(contador_output: dict) -> dict:
+    """Replace missing/non-active PUC codes with active fallback equivalents."""
+    asientos = (
+        contador_output.get("asientos", []) if isinstance(contador_output, dict) else []
+    )
+    if not isinstance(asientos, list) or not asientos:
+        return contador_output
+
+    db = SessionLocal()
+    try:
+        for asiento in asientos:
+            if not isinstance(asiento, dict):
+                continue
+
+            raw_code = str(asiento.get("cuenta_puc") or "").strip()
+            if not raw_code:
+                continue
+
+            resolved_code, resolved_name = _resolve_puc_code(db, raw_code)
+            if resolved_code and resolved_code != raw_code:
+                logger.warning(
+                    "Supervisor: remapped missing PUC code %s -> %s",
+                    raw_code,
+                    resolved_code,
+                )
+                asiento["cuenta_puc"] = resolved_code
+                if resolved_name:
+                    asiento["nombre_cuenta"] = resolved_name
+
+    finally:
+        db.close()
+
+    return contador_output
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +252,7 @@ def supervisor_node(state: AgentState) -> AgentState:
 
         # --- Extract text preview and classify document ---
         ext = Path(file_path).suffix.lower()
+        file_name_lower = Path(file_path).name.lower()
         text_preview = ""
         try:
             if ext == ".xlsx":
@@ -119,6 +272,31 @@ def supervisor_node(state: AgentState) -> AgentState:
                 from app.services.pdf_processor import extract_text_from_pdf
 
                 text_preview = extract_text_from_pdf(file_path)[:3000]
+            elif ext in (".jpg", ".jpeg", ".png"):
+                from llama_parse import LlamaParse  # type: ignore[import-untyped]
+
+                from app.core.config import get_settings
+
+                settings = get_settings()
+                parser = LlamaParse(
+                    api_key=settings.llama_cloud_api_key,
+                    result_type="markdown",
+                )
+                documents = parser.load_data(file_path)
+                image_text = "\n\n".join([doc.text for doc in documents])
+
+                if not image_text.strip():
+                    logger.warning(
+                        "Supervisor: empty image preview in markdown mode; retrying with text mode"
+                    )
+                    parser = LlamaParse(
+                        api_key=settings.llama_cloud_api_key,
+                        result_type="text",
+                    )
+                    documents = parser.load_data(file_path)
+                    image_text = "\n\n".join([doc.text for doc in documents])
+
+                text_preview = image_text[:3000]
         except Exception as preview_err:
             logger.warning(
                 "Supervisor: text preview extraction failed: %s", preview_err
@@ -126,25 +304,68 @@ def supervisor_node(state: AgentState) -> AgentState:
 
         # Classify document by content using LLM
         try:
+            from app.models.document_types import DocumentType, IngestPathway
             from app.services.doc_classifier import classify_document
-            from app.models.document_types import IngestPathway
 
             classification = classify_document(
                 text_preview=text_preview,
                 source_format=ext.lstrip("."),
             )
             classification_dict = classification.model_dump(mode="json")
+            classification_dict["entity_nit"] = normalize_optional_nit(
+                classification_dict.get("entity_nit")
+            )
             # If the caller explicitly provided a company_nit, use it instead of
             # the NIT auto-detected from the document content.
             if state.get("company_nit"):
-                classification_dict["entity_nit"] = state["company_nit"]
+                override_nit = normalize_optional_nit(state.get("company_nit"))
+                if not override_nit:
+                    state["error"] = (
+                        "Supervisor: provided company_nit is empty after normalization"
+                    )
+                    append_log(
+                        state,
+                        "supervisor",
+                        "routing_error",
+                        {
+                            "reason": "invalid_company_nit",
+                        },
+                    )
+                    return state
+                classification_dict["entity_nit"] = override_nit
                 logger.info(
                     "Supervisor: company_nit override applied — using %s instead of auto-detected %s",
-                    state["company_nit"],
+                    override_nit,
                     classification.entity_nit,
                 )
             state["document_classification"] = classification_dict
             state["pathway"] = classification.pathway.value
+
+            # Persist classification metadata early so it remains visible in
+            # GET /api/v1/ingest/{id} even if downstream ingest fails.
+            ingest_id = str(state.get("ingest_id") or "").strip()
+            if ingest_id:
+                db = SessionLocal()
+                try:
+                    ingest_job = db_service.get_ingest_job(db, ingest_id)
+                    if ingest_job:
+                        current_status = ingest_job.status
+                        if not isinstance(current_status, IngestStatus):
+                            current_status = IngestStatus(str(current_status))
+                        db_service.update_ingest_job(
+                            db,
+                            ingest_id,
+                            current_status,
+                            document_type=classification.doc_type.value,
+                            pathway=classification.pathway.value,
+                        )
+                except Exception as persist_meta_err:
+                    logger.warning(
+                        "Supervisor: failed to persist classification metadata: %s",
+                        persist_meta_err,
+                    )
+                finally:
+                    db.close()
 
             append_log(
                 state,
@@ -158,24 +379,55 @@ def supervisor_node(state: AgentState) -> AgentState:
             )
 
             if classification.pathway == IngestPathway.WORK_WITH_EXISTING:
-                state["mode"] = "ingest"
-                state["current_agent"] = "import_existing"
-                logger.info(
-                    "Supervisor: Vía B — routing to import_existing for %s (%s)",
-                    file_path,
-                    classification.doc_type.value,
-                )
-                append_log(
-                    state,
-                    "supervisor",
-                    "routing_complete",
-                    {
-                        "next_agent": "import_existing",
-                        "mode": "ingest",
-                        "pathway": "work_with_existing",
-                    },
-                )
-                return state
+                if ext == ".xlsx" and "extracto" in file_name_lower:
+                    logger.warning(
+                        "Supervisor: forcing build_from_scratch for potential bank statement file %s",
+                        file_path,
+                    )
+                    state["pathway"] = IngestPathway.BUILD_FROM_SCRATCH.value
+                    classification_dict["doc_type"] = (
+                        DocumentType.EXTRACTO_BANCARIO.value
+                    )
+                    state["document_classification"] = classification_dict
+                else:
+                    via_b_doc_types = {
+                        DocumentType.BALANCE_GENERAL,
+                        DocumentType.ESTADO_RESULTADOS,
+                        DocumentType.LIBRO_AUXILIAR,
+                        DocumentType.FLUJO_DE_CAJA,
+                        DocumentType.CAMBIOS_PATRIMONIO,
+                        DocumentType.NOTAS_ESTADOS_FINANCIEROS,
+                        DocumentType.LIBRO_DIARIO,
+                    }
+
+                    if classification.doc_type in via_b_doc_types:
+                        state["mode"] = "ingest"
+                        # Vía B still needs typed extraction before persistence.
+                        # Route through ingesta so interpreted_data is populated,
+                        # then db_persist stores it as financial_statement.
+                        state["current_agent"] = "ingesta"
+                        logger.info(
+                            "Supervisor: Vía B — routing to ingesta for %s (%s)",
+                            file_path,
+                            classification.doc_type.value,
+                        )
+                        append_log(
+                            state,
+                            "supervisor",
+                            "routing_complete",
+                            {
+                                "next_agent": "ingesta",
+                                "mode": "ingest",
+                                "pathway": "work_with_existing",
+                            },
+                        )
+                        return state
+
+                    logger.warning(
+                        "Supervisor: classifier returned work_with_existing for source doc_type=%s; forcing build_from_scratch",
+                        classification.doc_type.value,
+                    )
+                    state["pathway"] = IngestPathway.BUILD_FROM_SCRATCH.value
         except Exception as classify_err:
             logger.warning(
                 "Supervisor: document classification failed (continuing with default): %s",
@@ -272,7 +524,10 @@ def supervisor_node(state: AgentState) -> AgentState:
 
         if current == "tributario":
             # Validate TributarioOutput schema before advancing to auditor
-            tributario_out = state.get("tributario_output", {})
+            tributario_out = _normalize_tributario_output(
+                state,
+                state.get("tributario_output", {}),
+            )
             validator = get_validator()
             result: ValidationResult = validator.validate(
                 "tributario", tributario_out, attempt=1
@@ -283,6 +538,8 @@ def supervisor_node(state: AgentState) -> AgentState:
                     state["tributario_output"] = result.validated_output.model_dump(
                         mode="json"
                     )
+                else:
+                    state["tributario_output"] = tributario_out
                 state["current_agent"] = "auditor"
                 append_log(
                     state,
@@ -553,6 +810,50 @@ def _missing_puc_codes(contador_output: dict) -> list[str]:
         db.close()
 
 
+def _hydrate_contador_account_names(contador_output: dict) -> dict:
+    """Fill missing `nombre_cuenta` values in contador asientos.
+
+    Priority:
+    1) PUC catalog name from DB by `cuenta_puc`
+    2) Existing asiento `descripcion`
+    3) Fallback to the account code itself
+    """
+    asientos = (
+        contador_output.get("asientos", []) if isinstance(contador_output, dict) else []
+    )
+    if not isinstance(asientos, list) or not asientos:
+        return contador_output
+
+    db = SessionLocal()
+    try:
+        for asiento in asientos:
+            if not isinstance(asiento, dict):
+                continue
+
+            nombre_actual = str(asiento.get("nombre_cuenta") or "").strip()
+            if nombre_actual:
+                continue
+
+            cuenta_puc = str(asiento.get("cuenta_puc") or "").strip()
+            nombre_puc = ""
+            if cuenta_puc:
+                cuenta = db_service.validate_puc_exists(db, cuenta_puc)
+                if cuenta and getattr(cuenta, "nombre", None):
+                    nombre_puc = str(cuenta.nombre).strip()
+
+            nombre_fallback = (
+                nombre_puc
+                or str(asiento.get("descripcion") or "").strip()
+                or cuenta_puc
+                or "Cuenta contable"
+            )
+            asiento["nombre_cuenta"] = nombre_fallback
+    finally:
+        db.close()
+
+    return contador_output
+
+
 def validate_contador_output_node(state: AgentState) -> AgentState:
     """Validate contador output schema + PUC existence business rule."""
     if state.get("error"):
@@ -560,6 +861,7 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
 
     agent_name = "contador"
     raw_output = state.get("contador_output") or state.get("interpreted_data", {})
+    raw_output = _hydrate_contador_account_names(raw_output)
     attempt = state.get("retry_count", 0) + 1
 
     append_log(state, agent_name, "validation_start", {"attempt": attempt})
@@ -618,6 +920,7 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         if result.validated_output
         else raw_output
     )
+    validated = _normalize_contador_puc_codes(validated)
 
     try:
         missing = _missing_puc_codes(validated)

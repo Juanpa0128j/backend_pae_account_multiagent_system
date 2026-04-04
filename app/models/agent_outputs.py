@@ -18,10 +18,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     field_validator,
     model_validator,
-    ConfigDict,
 )
 
 # ---------------------------------------------------------------------------
@@ -100,6 +100,22 @@ def _parse_date(v: str | date | None) -> date | None:
         except ValueError:
             raise ValueError(f"Invalid date '{v}'. Expected ISO format YYYY-MM-DD.")
     raise ValueError(f"Cannot parse date from type {type(v)}")
+
+
+def _normalize_entity_text(v: Any) -> str | None:
+    """Normalize legacy string fields that may arrive as structured entity dicts."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        text = v.strip()
+        return text or None
+    if isinstance(v, dict):
+        for key in ("razon_social", "nombre", "nit", "cedula"):
+            raw = v.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+        return None
+    return str(v).strip() or None
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +200,11 @@ class IngestOutput(BaseModel):
     @classmethod
     def parse_fecha(cls, v):  # noqa: N805
         return _parse_date(v)
+
+    @field_validator("beneficiario", "empresa", mode="before")
+    @classmethod
+    def normalize_entity_like_fields(cls, v):  # noqa: N805
+        return _normalize_entity_text(v)
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +479,9 @@ class BalanceSheetOutput(BaseModel):
         None, description="Start date ISO YYYY-MM-DD, or null for all-time"
     )
     period_end: str = Field(..., description="Cutoff date ISO YYYY-MM-DD")
+    company_nit: Optional[str] = Field(
+        None, description="Optional company NIT filter applied"
+    )
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
     activos: float = Field(..., description="Total assets (class 1 accounts)")
     pasivos: float = Field(..., description="Total liabilities (class 2 accounts)")
@@ -492,6 +516,9 @@ class PnLOutput(BaseModel):
         None, description="Start date ISO YYYY-MM-DD, or null for all-time"
     )
     period_end: str = Field(..., description="End date ISO YYYY-MM-DD")
+    company_nit: Optional[str] = Field(
+        None, description="Optional company NIT filter applied"
+    )
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
     ingresos: List[CuentaResumen] = Field(
         default_factory=list, description="Revenue accounts (class 4)"
@@ -527,6 +554,9 @@ class CashFlowOutput(BaseModel):
         None, description="Start date ISO YYYY-MM-DD, or null for all-time"
     )
     period_end: str = Field(..., description="End date ISO YYYY-MM-DD")
+    company_nit: Optional[str] = Field(
+        None, description="Optional company NIT filter applied"
+    )
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
     cuentas_efectivo: List[CuentaResumen] = Field(
         default_factory=list,
@@ -559,6 +589,9 @@ class IVAOutput(BaseModel):
         None, description="Start date ISO YYYY-MM-DD, or null for all-time"
     )
     period_end: str = Field(..., description="End date ISO YYYY-MM-DD")
+    company_nit: Optional[str] = Field(
+        None, description="Optional company NIT filter applied"
+    )
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
     iva_generado: float = Field(
         ..., ge=0, description="IVA generated on sales (account 240808)"
@@ -589,6 +622,9 @@ class WithholdingsOutput(BaseModel):
         None, description="Start date ISO YYYY-MM-DD, or null for all-time"
     )
     period_end: str = Field(..., description="End date ISO YYYY-MM-DD")
+    company_nit: Optional[str] = Field(
+        None, description="Optional company NIT filter applied"
+    )
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
     retencion_en_la_fuente: float = Field(
         ..., ge=0, description="Retefuente balance (account 240815)"

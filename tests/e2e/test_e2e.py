@@ -28,6 +28,10 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+
+pytest.importorskip("reportlab")
+pytest.importorskip("sqlalchemy")
+pytest.importorskip("langgraph")
 from reportlab.pdfgen import canvas
 
 from app.agents.graph import create_agent_graph, invoke_ingest_pipeline

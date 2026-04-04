@@ -50,3 +50,4 @@ test_*.pdf
 
 # scripts
 scripts/
+.venv/

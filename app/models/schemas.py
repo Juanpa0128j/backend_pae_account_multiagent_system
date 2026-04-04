@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
-from typing import List, Literal, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field
 
 
 class IngestResponse(BaseModel):
@@ -26,6 +27,8 @@ class IngestDetailResponse(BaseModel):
     ingest_id: str
     file_name: str
     status: str
+    document_type: Optional[str] = None
+    pathway: Optional[str] = None
     created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     extraction_errors: Optional[List[str]] = None

@@ -29,12 +29,15 @@ from app.agents.contador_agent import contador_node
 from app.agents.graph import create_agent_graph, invoke_accounting_pipeline
 from app.agents.state import AgentState
 from app.agents.supervisor import (
+    _normalize_contador_puc_codes,
     process_supervisor_node,
+    supervisor_node,
     should_retry_auditor,
     should_retry_contador,
     validate_auditor_output_node,
     validate_contador_output_node,
 )
+from app.models.document_types import DocumentType, IngestPathway
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -386,6 +389,108 @@ class TestProcessSupervisorNode:
         state = _base_state(retry_count=None)  # type: ignore[arg-type]
         result = process_supervisor_node(state)
         assert result["retry_count"] == 0
+
+    def test_tributario_partial_output_is_normalized_and_routes_to_auditor(self):
+        state = _base_state(
+            mode="process",
+            current_agent="tributario",
+            tributario_output={
+                "impuestos": [],
+            },
+            contador_output=dict(VALID_CONTADOR_OUTPUT),
+        )
+
+        result = supervisor_node(state)
+
+        assert result["error"] is None
+        assert result["current_agent"] == "auditor"
+        assert result["tributario_output"].get("fecha_analisis")
+        assert result["tributario_output"].get("documento_referencia")
+        assert result["tributario_output"].get("aplica_impuestos") is False
+        assert str(result["tributario_output"].get("total_impuestos")) == "0"
+
+    @patch("app.services.doc_classifier.classify_document")
+    @patch("app.services.excel_parser.parse_excel")
+    def test_ingest_extracto_xlsx_forces_build_from_scratch_pathway(
+        self,
+        mock_parse_excel,
+        mock_classify_document,
+        tmp_path,
+    ):
+        xlsx_path = tmp_path / "extracto_bancario_demo.xlsx"
+        xlsx_path.write_bytes(b"PK\x03\x04dummy")
+
+        mock_parse_excel.return_value = ("extracto bancario demo", [{"dummy": True}])
+
+        classification = MagicMock()
+        classification.doc_type = DocumentType.EXTRACTO_BANCARIO
+        classification.pathway = IngestPathway.WORK_WITH_EXISTING
+        classification.confidence = 0.99
+        classification.entity_nit = "800999888-2"
+        classification.model_dump.return_value = {
+            "doc_type": DocumentType.EXTRACTO_BANCARIO.value,
+            "pathway": IngestPathway.WORK_WITH_EXISTING.value,
+            "confidence": 0.99,
+            "entity_nit": "800999888-2",
+        }
+        mock_classify_document.return_value = classification
+
+        state = _base_state(
+            mode="ingest",
+            file_path=str(xlsx_path),
+            current_agent="",
+            raw_text="",
+        )
+
+        result = supervisor_node(state)
+
+        assert result.get("error") is None
+        assert result.get("current_agent") == "ingesta"
+        assert result.get("pathway") == IngestPathway.BUILD_FROM_SCRATCH.value
+        assert result.get("document_classification", {}).get("doc_type") == DocumentType.EXTRACTO_BANCARIO.value
+
+
+class TestPucNormalizationHelpers:
+
+    @patch("app.agents.supervisor.SessionLocal")
+    @patch("app.agents.supervisor.db_service.validate_puc_exists")
+    def test_remaps_unknown_subaccount_to_active_parent(
+        self,
+        mock_validate,
+        mock_session_local,
+    ):
+        db = MagicMock()
+        mock_session_local.return_value = db
+
+        row_2105 = MagicMock()
+        row_2105.nombre = "Bancos Nacionales"
+
+        def _validate_side_effect(_db, code):
+            if code == "210505":
+                return None
+            if code == "2105":
+                return row_2105
+            return None
+
+        mock_validate.side_effect = _validate_side_effect
+
+        payload = {
+            "asientos": [
+                {
+                    "cuenta_puc": "210505",
+                    "nombre_cuenta": "",
+                    "tipo_movimiento": "credito",
+                    "valor": 100000,
+                    "descripcion": "Obligacion financiera",
+                }
+            ]
+        }
+
+        normalized = _normalize_contador_puc_codes(payload)
+        asiento = normalized["asientos"][0]
+
+        assert asiento["cuenta_puc"] == "2105"
+        assert asiento["nombre_cuenta"] == "Bancos Nacionales"
 
 
 # ===========================================================================

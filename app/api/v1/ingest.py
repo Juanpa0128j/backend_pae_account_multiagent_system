@@ -2,22 +2,25 @@ import logging
 import tempfile
 from pathlib import Path
 from typing import Optional
+
 from fastapi import (
     APIRouter,
-    UploadFile,
+    BackgroundTasks,
+    Depends,
     File,
     Form,
     HTTPException,
-    Depends,
-    BackgroundTasks,
+    UploadFile,
     status,
 )
 from sqlalchemy.orm import Session
-from app.models.schemas import IngestResponse, IngestDetailResponse
+
 from app.agents.graph import invoke_ingest_pipeline
-from app.core.database import get_db
-from app.services import db_service
+from app.core.database import SessionLocal, get_db
 from app.models.database import IngestStatus
+from app.models.schemas import IngestDetailResponse, IngestResponse
+from app.services import db_service
+from app.services.nit_utils import normalize_nit
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,12 +48,55 @@ def process_ingest_background(
     if company_nit:
         initial["company_nit"] = company_nit
     try:
-        invoke_ingest_pipeline(
+        result = invoke_ingest_pipeline(
             temp_file_path,
             initial_state=initial,
         )
+        pipeline_error = None
+        if isinstance(result, dict):
+            pipeline_error = result.get("error")
+
+        if pipeline_error:
+            db = SessionLocal()
+            try:
+                db_service.update_ingest_job(
+                    db,
+                    ingest_id,
+                    IngestStatus.FAILED,
+                    extraction_errors=[
+                        f"Background ingest pipeline error: {pipeline_error}"
+                    ],
+                )
+            except Exception as status_err:
+                logger.error(
+                    "Failed to mark ingest %s as FAILED after pipeline error payload: %s",
+                    ingest_id,
+                    status_err,
+                    exc_info=True,
+                )
+            finally:
+                db.close()
     except Exception as e:
         logger.error(f"Error in background ingest {ingest_id}: {e}", exc_info=True)
+        # Prevent clients from waiting forever on pending_processing when the
+        # background task crashes before graph-level persistence can run.
+        db = SessionLocal()
+        try:
+            db_service.update_ingest_job(
+                db,
+                ingest_id,
+                IngestStatus.FAILED,
+                extraction_errors=[f"Background ingest error: {str(e)}"],
+            )
+        except Exception as status_err:
+            logger.error(
+                "Failed to mark ingest %s as FAILED after background exception: %s",
+                ingest_id,
+                status_err,
+                exc_info=True,
+            )
+        finally:
+            db.close()
     finally:
         Path(temp_file_path).unlink(missing_ok=True)
 
@@ -85,6 +131,15 @@ async def upload_file(
         )
 
     try:
+        normalized_company_nit = None
+        if company_nit is not None:
+            try:
+                normalized_company_nit = normalize_nit(company_nit)
+            except ValueError as nit_err:
+                raise HTTPException(
+                    status_code=422, detail=f"Invalid company_nit: {nit_err}"
+                )
+
         file_content = await file.read()
 
         # Validate file is not empty
@@ -106,10 +161,10 @@ async def upload_file(
             _expected_magic
         ):
             # XML may start with a BOM or whitespace — allow those through
-            _stripped = file_content.lstrip()
+            stripped = file_content.lstrip()
             if _ext == ".xml" and any(
-                _stripped.startswith(pref)
-                for pref in (b"<?xml", b"<Invoice", b"<Credit", b"<Debit")
+                stripped.startswith(prefix)
+                for prefix in (b"<?xml", b"<Invoice", b"<Credit", b"<Debit", b"\xef\xbb\xbf<?xml")
             ):
                 pass
             else:
@@ -125,7 +180,10 @@ async def upload_file(
         logger.info(f"Created IngestJob: {ingest_job.id}")
 
         background_tasks.add_task(
-            process_ingest_background, temp_file_path, str(ingest_job.id), company_nit
+            process_ingest_background,
+            temp_file_path,
+            str(ingest_job.id),
+            normalized_company_nit,
         )
 
         return IngestResponse(
@@ -171,7 +229,7 @@ async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
     # advance to the accounting phase.
     # Guard: only reconcile if the job was created more than 60 seconds ago
     # to avoid racing with the background ingest task.
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     is_stale = job.created_at and (
         datetime.now(timezone.utc) - job.created_at
@@ -190,6 +248,8 @@ async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
         "ingest_id": job.id,
         "file_name": job.file_name,
         "status": job.status.value if job.status else "unknown",
+        "document_type": job.document_type,
+        "pathway": job.pathway,
         "created_at": job.created_at,
         "completed_at": job.completed_at,
         "extraction_errors": job.extraction_errors or [],

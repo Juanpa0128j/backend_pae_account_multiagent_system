@@ -62,13 +62,14 @@ python scripts/populate_rag.py   # Seed RAG vector store (skip if already seeded
 uvicorn main:app --reload
 
 # Tests
-pytest tests/ -v                                          # Full suite
-pytest tests/test_excel_parser.py -v                     # Single file
-pytest tests/test_agent_integration.py::TestGraphStructure -v  # Single class
+make test                                                 # Full suite (e2e excluded)
+make test-file FILE=tests/features/test_database_feature.py  # Single file
+make test-class FILE=tests/agents/test_ingest_agent.py CLASS=TestIngestNode  # Single class
 
 # Lint / format (run before committing)
-ruff check .
-black .
+make lint        # ruff check — must report 0 errors
+make lint-fix    # auto-fix ruff errors
+make format      # ruff format + black
 
 # Database migrations
 alembic upgrade head
@@ -104,7 +105,7 @@ FastAPI (main.py) → /api/v1/* routers
 ### Ingesta: Two Pathways
 
 - **Vía A (`build_from_scratch`):** Source documents (facturas, extractos, declaraciones) → full accounting pipeline
-- **Vía B (`work_with_existing`):** Pre-existing financial statements (balance, PYG, libro auxiliar) → stored directly for reporting via `import_existing` node
+- **Vía B (`work_with_existing`):** Pre-existing financial statements (balance_general, estado_resultados, libro_auxiliar, flujo_de_caja, cambios_patrimonio, notas_estados_financieros, libro_diario) → routed through ingesta for typed extraction, then stored as `FinancialStatement` in DB. `.xlsx` files classified as extracto_bancario are forced to Vía A.
 
 ### Supported Document Formats
 
@@ -122,14 +123,17 @@ FastAPI (main.py) → /api/v1/* routers
 | `app/agents/graph.py` | StateGraph: 10 nodes, conditional edges |
 | `app/agents/supervisor.py` | Entry node — validates file, classifies doc, sets mode/pathway |
 | `app/agents/ingest_agent.py` | Format-aware extraction + Gemini dispatch by doc type |
-| `app/agents/persist_node.py` | DB persistence for Vía A (transactions) and Vía B (financial statements) |
+| `app/agents/persist_node.py` | DB persistence for Vía A (transactions) and Vía B (financial statements); auto-derives statements via `_auto_derive_statements` |
 | `app/agents/import_existing_node.py` | Vía B node — skips accounting pipeline |
 | `app/core/config.py` | Pydantic Settings; loads `.env` |
 | `app/core/gemini_client.py` | Gemini 2.5 Flash; one extraction method per document type |
+| `app/core/llm_client.py` | Multi-provider LLM client with OpenAI → Gemini → Groq fallback chain |
 | `app/core/vectordb.py` | pgvector wrapper; `search()` and `search_hybrid()` (RRF k=60) |
 | `app/services/rag_service.py` | RAG interface: `search_normativo`, `search_historico`, `add_empresa_doc` |
 | `app/services/doc_classifier.py` | LLM-based document classifier (13+ types) |
-| `app/models/database.py` | SQLAlchemy ORM models |
+| `app/services/financial_statement_service.py` | Derives `FinancialStatement` rows from journal entries; exposes `list_financial_statements` |
+| `app/services/nit_utils.py` | Colombian NIT normalization: `normalize_nit`, `normalize_optional_nit` |
+| `app/models/database.py` | SQLAlchemy ORM models — includes `FinancialStatement` |
 | `app/models/document_types.py` | `DocumentType` enum + pathway constants |
 | `app/models/ingest_schemas.py` | Polymorphic extraction schemas per doc type |
 | `data/` | Static seed data: 41 PUC accounts, 50 Estatuto Tributario articles, 16 Ley 43/1990 entries |
@@ -167,8 +171,14 @@ If `make lint` reports errors, fix them before continuing. Do not bypass with `#
 
 ## Testing
 
-- Tests live in `tests/`. Fixtures are in `tests/conftest.py`.
-- External dependencies (DB, Gemini, LlamaParse) must be mocked in unit tests. Only E2E tests (`test_e2e_*.py`) hit real services.
+- Tests live in `tests/` organized by layer:
+  - `tests/agents/` — unit tests per agent node
+  - `tests/features/` — integration tests per feature slice
+  - `tests/core/` — unit tests for core modules (LLM client, Gemini client)
+  - `tests/services/` — unit tests for service modules
+  - `tests/e2e/` — end-to-end tests (excluded from `make test`; run via `make test-e2e`)
+- Fixtures are in `tests/conftest.py`.
+- External dependencies (DB, Gemini, LlamaParse) must be mocked in unit tests. Mock `app.agents.persist_node._auto_derive_statements` in process pipeline tests to avoid hitting the real DB for financial statement derivation.
 - Run `make test` and confirm all tests pass before marking work complete.
 - Do not add tests for behavior that doesn't exist yet (no speculative coverage).
 

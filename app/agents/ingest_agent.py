@@ -67,6 +67,16 @@ _EXTRACT_METHOD_MAP: dict[str, str] = {
     "recibo_pago_impuesto": "extract_recibo_pago_impuesto",
 }
 
+_VIA_B_STATEMENT_TYPES: set[str] = {
+    "balance_general",
+    "estado_resultados",
+    "libro_auxiliar",
+    "libro_diario",
+    "flujo_de_caja",
+    "cambios_patrimonio",
+    "notas_estados_financieros",
+}
+
 
 def _gemini_with_retry(client, raw_text: str, correction_feedback=None):
     """
@@ -93,7 +103,9 @@ def _gemini_with_retry_generic(method, raw_text: str, correction_feedback=None):
             )
         except Exception:
             raise
-    raise last_exc
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Gemini extraction failed without a captured exception")
 
 
 def ingest_node(state: AgentState) -> AgentState:
@@ -261,6 +273,21 @@ def ingest_node(state: AgentState) -> AgentState:
 
         # Dispatch to the appropriate extraction method
         method_name = _EXTRACT_METHOD_MAP.get(doc_type, "extract_transactions")
+        if not hasattr(gemini_client, method_name):
+            state["error"] = (
+                f"Ingest dispatch error: method '{method_name}' is not available "
+                f"for doc_type '{doc_type}'"
+            )
+            logger.error(state["error"])
+            append_log(state, "ingesta", "node_error", {"error": state["error"]})
+            return state
+
+        append_log(state, "ingesta", "dispatch_selected", {
+            "doc_type": doc_type,
+            "extract_method": method_name,
+            "pathway_hint": "work_with_existing" if doc_type in _VIA_B_STATEMENT_TYPES else "build_from_scratch",
+        })
+
         extract_method = getattr(gemini_client, method_name)
         interpreted_data = _gemini_with_retry_generic(
             extract_method, raw_text, correction_feedback=correction_feedback

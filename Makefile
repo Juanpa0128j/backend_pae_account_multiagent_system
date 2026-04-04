@@ -13,7 +13,7 @@ help:
 	@echo ""
 	@echo "Testing"
 	@echo "  test           Run all tests (excluding e2e)"
-	@echo "  test-e2e       Run e2e Supabase pipeline tests"
+	@echo "  test-e2e       Run e2e tests (tests/e2e/ + supabase pipeline)"
 	@echo "  test-file      Run a single test file: make test-file FILE=tests/test_foo.py"
 	@echo "  test-class     Run a single test class: make test-class FILE=tests/test_foo.py CLASS=TestBar"
 	@echo ""
@@ -49,11 +49,10 @@ PYTEST_OPTS = --timeout=30 -v
 
 test:
 	uv run pytest tests/ $(PYTEST_OPTS) \
-		--ignore=tests/test_e2e_supabase_pipeline_validation.py \
-		--ignore=tests/test_e2e_todos_agentes.py
+		--ignore=tests/e2e
 
 test-e2e:
-	uv run pytest tests/test_e2e_supabase_pipeline_validation.py tests/test_e2e_todos_agentes.py $(PYTEST_OPTS)
+	uv run pytest tests/e2e/ tests/features/test_supabase_pipeline_feature.py $(PYTEST_OPTS)
 
 test-file:
 	@test -n "$(FILE)" || (echo "Usage: make test-file FILE=tests/test_foo.py" && exit 1)
