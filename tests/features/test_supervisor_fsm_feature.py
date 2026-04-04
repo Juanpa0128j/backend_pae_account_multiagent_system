@@ -370,7 +370,13 @@ class TestPipeline2Routing:
             patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag,
             patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini,
             patch(MOCK_AUDITOR_GEMINI) as mock_auditor_gemini,
+            patch("app.services.rag_service.get_rag_service") as mock_cnt_rag,
+            patch("app.agents.contador_agent.get_llm_client") as mock_gc,
         ):
+            mock_cnt_rag.return_value.search_normativo.return_value = []
+            mock_gc.return_value.extract_contador_output.return_value = (
+                VALID_CONTADOR_OUTPUT
+            )
             mock_get_settings.return_value = MagicMock(
                 tasa_retefuente_servicios=0.11,
                 tasa_retefuente_bienes=0.03,
@@ -383,7 +389,6 @@ class TestPipeline2Routing:
             mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
             _setup_tributario_mocks(mock_trib_rag, mock_trib_gemini)
             _setup_auditor_mock(mock_auditor_gemini)
-            # Provide raw_transactions so process supervisor doesn't error
             s = _base_state(dummy_pdf, mode="process")
             s["raw_transactions"] = [
                 {
@@ -394,12 +399,7 @@ class TestPipeline2Routing:
                     "descripcion": "Servicio",
                 }
             ]
-            # Stub the Gemini client used by contador (not relevant for routing test)
-            with patch("app.agents.contador_agent.get_llm_client") as mock_gc:
-                mock_gc.return_value.extract_contador_output.return_value = (
-                    VALID_CONTADOR_OUTPUT
-                )
-                fs = create_agent_graph().invoke(s)
+            fs = create_agent_graph().invoke(s)
 
             agents_visited = {e["agent"] for e in fs.get("agent_log", [])}
             assert "contador" in agents_visited
@@ -423,6 +423,7 @@ class TestPipeline2Routing:
         ]
         with (
             patch("app.agents.contador_agent.get_llm_client") as mock_gc,
+            patch("app.services.rag_service.get_rag_service") as mock_cnt_rag,
             patch(MOCK_SESSION),
             patch(MOCK_DB_SVC),
             patch(MOCK_TRIBUTARIO_SESSION),
@@ -432,6 +433,7 @@ class TestPipeline2Routing:
             patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini,
             patch(MOCK_AUDITOR_GEMINI) as mock_auditor_gemini,
         ):
+            mock_cnt_rag.return_value.search_normativo.return_value = []
             mock_gc.return_value.extract_contador_output.return_value = (
                 VALID_CONTADOR_OUTPUT
             )

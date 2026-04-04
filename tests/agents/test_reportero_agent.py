@@ -373,7 +373,9 @@ class TestReporteroNodeErrorHandling:
         svc = MagicMock()
         svc.get_general_ledger.return_value = []
 
-        with patch.dict(sys.modules, _mock_db_modules(svc)):
+        with patch.dict(
+            sys.modules, {**_mock_db_modules(svc), **_mock_rag_modules([])}
+        ):
             result_state = reportero_node(state)
 
         assert len(result_state["agent_log"]) >= 2

@@ -627,6 +627,10 @@ def _run_persist(state: AgentState) -> AgentState:
             state["error"] = msg
             raise RuntimeError(msg)
 
+        # Expose built transactions so callers can access them via result["raw_transactions"]
+        if not state.get("raw_transactions"):
+            state["raw_transactions"] = transactions
+
     ingest_id = _as_str(state.get("ingest_id"), "")
     db = SessionLocal()
 

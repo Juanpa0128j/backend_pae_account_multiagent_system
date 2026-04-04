@@ -80,6 +80,31 @@ class FakeGeminiClient:
             self.justificacion = justificacion
             self.confirma_tasas = confirma_tasas
 
+    def __getattr__(self, name: str):
+        """Return a stub for any extract_* method not explicitly defined."""
+        if name.startswith("extract_"):
+
+            def _stub(text: str = "", correction_feedback: str | None = None, **_kw):
+                return {
+                    "fecha": "2026-03-07",
+                    "nit_emisor": "900123456",
+                    "nit_receptor": "800999888",
+                    "total": 1_250_000,
+                    "descripcion": "Servicios profesionales marzo 2026",
+                    "transactions": [
+                        {
+                            "fecha": "2026-03-07",
+                            "nit_emisor": "900123456",
+                            "nit_receptor": "800999888",
+                            "total": 1_250_000,
+                            "descripcion": "Servicios profesionales marzo 2026",
+                        }
+                    ],
+                }
+
+            return _stub
+        raise AttributeError(name)
+
     def extract_transactions(
         self, text: str, correction_feedback: str | None = None
     ) -> dict[str, Any]:
@@ -110,8 +135,9 @@ class FakeGeminiClient:
         raw_transactions: list[dict[str, Any]],
         rag_context: list[dict[str, Any]] | None = None,
         correction_feedback: str | None = None,
+        doc_type: str = "",
     ) -> dict[str, Any]:
-        _ = (rag_context, correction_feedback)
+        _ = (rag_context, correction_feedback, doc_type)
         tx = raw_transactions[0] if raw_transactions else {}
         total = Decimal(str(tx.get("total") or "0"))
         fecha = str(tx.get("fecha") or datetime.now(timezone.utc).date().isoformat())
@@ -269,7 +295,7 @@ def _create_context_from_ingest(
     pending_id = str(db_result.get("transaction_pending_id") or "")
     assert pending_id
 
-    raw_transactions = ingest_result.get("data") or []
+    raw_transactions = ingest_result.get("raw_transactions") or []
     assert isinstance(raw_transactions, list) and raw_transactions
 
     with SessionLocal() as db:
@@ -308,13 +334,15 @@ def test_e2e_ingesta_contador_auditor_and_supabase_persistence() -> None:
     ingest_result = _run_ingest_pipeline(pdf_path)
 
     # Validate INGEST output semantics
+    # data is now a structured FacturaVentaContent dict (not a list) — the
+    # pipeline returns rich extraction output, raw_transactions live in DB state.
     assert ingest_result.get("status") == "completed"
     assert ingest_result.get("error") is None
-    assert isinstance(ingest_result.get("data"), list) and ingest_result["data"]
-    tx = ingest_result["data"][0]
-    assert tx["nit_emisor"] == "900123456"
-    assert tx["nit_receptor"] == "800999888"
-    assert Decimal(str(tx["total"])) == Decimal("1250000")
+    data = ingest_result.get("data")
+    assert isinstance(data, dict) and data
+    assert data.get("nit_emisor") == "900123456"
+    assert data.get("nit_receptor") == "800999888"
+    assert Decimal(str(data.get("total", 0))) == Decimal("1250000")
 
     # Validate ingest DB update
     ingest_id = str(ingest_result.get("ingest_id"))
