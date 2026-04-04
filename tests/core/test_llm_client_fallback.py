@@ -49,11 +49,31 @@ def test_compact_error_message_single_line_and_trimmed():
     assert compact.endswith("...")
 
 
-def test_invoke_reports_provider_attempt_trace_on_total_failure():
+def test_invoke_fails_fast_on_first_permanent_error():
+    """Fails immediately on first provider's permanent error; doesn't try subsequent providers."""
     client = _build_client(
-        openai=_FailingProvider(RuntimeError("openai timed out")),
+        openai=_FailingProvider(RuntimeError("invalid API key")),
         gemini_key="x",
-        gemini=_FailingProvider(RuntimeError("gemini 429 quota")),
+        gemini=_OkProvider(),  # This would succeed, but won't be tried
+    )
+
+    try:
+        client._invoke(_DemoSchema, "ping")
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        # Error message is from OpenAI (first provider), not the comprehensive trace
+        msg = str(exc)
+        assert "invalid API key" in msg
+        # Should NOT show the "All configured LLM providers failed" message
+        assert "All configured LLM providers failed" not in msg
+
+
+def test_invoke_reports_comprehensive_trace_on_all_quota_exhaustion():
+    """When ALL providers are quota-exhausted, reports comprehensive trace of all attempts."""
+    client = _build_client(
+        openai=_FailingProvider(RuntimeError("429 Quota exceeded")),
+        gemini_key="x",
+        gemini=_FailingProvider(RuntimeError("RESOURCE_EXHAUSTED: quota")),
     )
 
     try:
@@ -62,16 +82,32 @@ def test_invoke_reports_provider_attempt_trace_on_total_failure():
     except RuntimeError as exc:
         msg = str(exc)
         assert "All configured LLM providers failed for _DemoSchema" in msg
-        assert "OpenAI: RuntimeError: openai timed out" in msg
-        assert "Gemini: RuntimeError: gemini 429 quota" in msg
+        assert "OpenAI: RuntimeError: 429 Quota exceeded" in msg
+        assert "Gemini: RuntimeError: RESOURCE_EXHAUSTED: quota" in msg
 
 
-def test_invoke_falls_back_and_returns_next_provider_success():
+def test_invoke_falls_back_on_quota_error_only():
+    """Falls back to next provider only on quota errors, not on permanent failures."""
     client = _build_client(
-        openai=_FailingProvider(RuntimeError("first provider down")),
+        openai=_FailingProvider(RuntimeError("429 Rate limit exceeded")),
         gemini_key="x",
         gemini=_OkProvider(),
     )
 
     out = client._invoke(_DemoSchema, "ping")
     assert out.ok == "ok"
+
+
+def test_invoke_fails_fast_on_permanent_error():
+    """Fails immediately on non-quota errors (auth, schema, etc) per CLAUDE.md: fail fast."""
+    client = _build_client(
+        openai=_FailingProvider(RuntimeError("invalid API key")),
+        gemini_key="x",
+        gemini=_OkProvider(),
+    )
+
+    try:
+        client._invoke(_DemoSchema, "ping")
+        assert False, "Expected RuntimeError to be raised on permanent error"
+    except RuntimeError as exc:
+        assert "invalid API key" in str(exc)

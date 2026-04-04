@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -295,32 +295,78 @@ def derive_financial_statements(
         total_patrimonio = Decimal(str(bg.get("total_patrimonio") or 0))
         utilidad_neta = Decimal(str(er.get("utilidad_neta") or 0))
 
+        # --- Cash Flow Derivation (NIC 7 Indirect Method) ---
         accounts = la.get("lines") or la.get("accounts") or []
+        
+        # Calculate ending cash (class 11 = Efectivo y equivalentes)
         efectivo_fin = Decimal("0")
+        flujo_inversion = Decimal("0")  # Classes 15-17: Property, Plant & Equipment + Long-term Investments
+        flujo_financiacion = Decimal("0")  # Classes 25-27: Long-term Debt + Equity
+        
         if isinstance(accounts, list):
             for acc in accounts:
                 codigo = str(acc.get("cuenta_puc") or acc.get("codigo") or "")
+                saldo = Decimal(str(acc.get("saldo") or acc.get("saldo_neto") or acc.get("total") or 0))
+                
+                # Ending cash position (class 11)
                 if codigo.startswith("11"):
-                    saldo = acc.get("saldo") or acc.get("saldo_neto") or acc.get("total") or 0
-                    efectivo_fin += Decimal(str(saldo))
-
+                    efectivo_fin += saldo
+                # Investment account changes (classes 15-17)
+                elif codigo.startswith(("15", "16", "17")):
+                    flujo_inversion += saldo
+                # Financing account changes (classes 25-27)
+                elif codigo.startswith(("25", "26", "27")):
+                    flujo_financiacion += saldo
+        
+        # Try to retrieve opening cash balance from prior period or use prior statement
+        # If unavailable, start from zero as conservative estimate (note constraint in informacion_adicional)
+        try:
+            prior_balance_sheet = db_service.get_balance_sheet(
+                db, cutoff_date=period_start - timedelta(days=1), company_nit=normalized_nit
+            )
+            prior_efectivo = Decimal(str(prior_balance_sheet.get("cash", 0) or 0))
+        except Exception:
+            prior_efectivo = Decimal("0")
+        
+        efectivo_inicio = prior_efectivo
+        
+        # NIC 7 Cash Flow Identity: Ending = Opening + Operating + Investing + Financing
+        # For indirect method with simplified derivation:
+        flujo_operacion = utilidad_neta  # Base from P&L
+        aumento_disminucion = efectivo_fin - efectivo_inicio
+        
+        # Verify the identity (may not hold exactly in derived statements due to rounding/schema gaps)
+        expected_fin = efectivo_inicio + flujo_operacion + flujo_inversion + flujo_financiacion
+        verificacion = (abs(efectivo_fin - expected_fin) < Decimal("0.01"))
+        
         flujo_data = {
             "tipo": "flujo_de_caja",
             "entidad": {"nit": normalized_nit},
             "periodo_inicio": period_start.date().isoformat(),
             "periodo_fin": period_end.date().isoformat(),
             "metodo": "indirecto",
-            "flujo_neto_operacion": float(utilidad_neta),
-            "flujo_neto_inversion": 0.0,
-            "flujo_neto_financiacion": 0.0,
-            "aumento_disminucion_neto": float(utilidad_neta),
-            "efectivo_inicio_periodo": 0.0,
+            "base_presentacion": "NIIF_pymes",
+            "flujo_neto_operacion": float(flujo_operacion),
+            "flujo_neto_inversion": float(flujo_inversion),
+            "flujo_neto_financiacion": float(flujo_financiacion),
+            "aumento_disminucion_neto": float(aumento_disminucion),
+            "efectivo_inicio_periodo": float(efectivo_inicio),
             "efectivo_fin_periodo": float(efectivo_fin),
-            "verificacion": True,
+            "verificacion": verificacion,
             "moneda": "COP",
             "informacion_adicional": {
                 "derivation_basis": ["balance_general", "estado_resultados", "libro_auxiliar"],
-                "rule_version": "v1",
+                "rule_version": "v2",
+                "nic7_identity": {
+                    "expected_fin": float(expected_fin),
+                    "actual_fin": float(efectivo_fin),
+                    "tolerance": 0.01,
+                },
+                "limitations": (
+                    "Derived from GL aggregates; investment/financing flows are simplified "
+                    "GL account class sums. Opening balance retrieved from prior period balance sheet; "
+                    "may be unavailable for initial company periods. Identity verification is best-effort."
+                ),
             },
         }
 

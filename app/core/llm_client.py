@@ -103,6 +103,8 @@ class LLMClient:
                 if not has_next:
                     break
 
+                # Only fall back on quota errors. Permanent failures (auth, invalid API key,
+                # schema violations) must be surfaced immediately per CLAUDE.md: "Fail fast."
                 if _is_quota_error(exc):
                     logger.warning(
                         "%s quota exceeded — falling back for %s",
@@ -110,12 +112,14 @@ class LLMClient:
                         schema_cls.__name__,
                     )
                 else:
-                    logger.warning(
-                        "%s invocation failed (%s) — falling back for %s",
+                    # Non-quota errors are permanent; fail fast and surface immediately.
+                    logger.error(
+                        "%s permanent failure (%s) — not attempting fallback for %s",
                         name,
                         exc,
                         schema_cls.__name__,
                     )
+                    raise
 
         trace_summary = " | ".join(failure_trace) if failure_trace else str(last_exc)
         raise RuntimeError(

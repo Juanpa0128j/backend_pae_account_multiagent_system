@@ -463,17 +463,16 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         period_end.date(),
     )
 
-    try:
-        build_first_level_from_journal_entries(
-            db,
-            company_nit=company_nit,
-            period_start=period_start,
-            period_end=period_end,
-        )
-    except Exception as exc:
-        logger.warning("[persist] build_first_level failed (non-fatal): %s", exc)
-        return
+    # Build first-level derived statements (balance, P&L, ledger). Failures here are critical.
+    build_first_level_from_journal_entries(
+        db,
+        company_nit=company_nit,
+        period_start=period_start,
+        period_end=period_end,
+    )
 
+    # Derive second-level statements (cashflow, equity changes, notes).
+    # Fail fast on all errors except expected precondition mismatches.
     try:
         _derive_financial_statements(
             company_nit=company_nit,
@@ -482,8 +481,6 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         )
     except BusinessRuleError as exc:
         logger.warning("[persist] derive skipped (missing source inputs): %s", exc)
-    except Exception as exc:
-        logger.warning("[persist] derive failed (non-fatal): %s", exc)
 
 
 def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) -> None:
@@ -512,6 +509,7 @@ def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) ->
         "[persist] Via B: all 3 source docs present for %s — triggering derivation",
         company_nit,
     )
+    # Fail fast on derivation errors except expected precondition mismatches.
     try:
         _derive_financial_statements(
             company_nit=company_nit,
@@ -520,8 +518,6 @@ def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) ->
         )
     except BusinessRuleError as exc:
         logger.warning("[persist] Via B derive skipped: %s", exc)
-    except Exception as exc:
-        logger.warning("[persist] Via B derive failed (non-fatal): %s", exc)
 
 
 def _run_persist(state: AgentState) -> AgentState:

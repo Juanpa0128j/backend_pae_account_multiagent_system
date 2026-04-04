@@ -1029,11 +1029,17 @@ def financial_statements_exist(
     period_end: datetime,
     types: list[str],
 ) -> bool:
-    """Return True if all requested statement types exist for this company and period window."""
+    """Return True if all requested statement types exist for this company and period window.
+    
+    Checks that statements match BOTH period_start and period_end to exclude cross-period
+    overlaps that might appear in overlapping but different fiscal periods.
+    """
     count = (
         db.query(func.count(distinct(FinancialStatement.statement_type)))
         .filter(FinancialStatement.entity_nit == company_nit)
-        .filter(FinancialStatement.period_end >= period_start)
+        .filter(FinancialStatement.period_start >= period_start)
+        .filter(FinancialStatement.period_start < period_start + timedelta(days=1))
+        .filter(FinancialStatement.period_end >= period_end - timedelta(days=1))
         .filter(FinancialStatement.period_end <= period_end + timedelta(days=1))
         .filter(FinancialStatement.statement_type.in_(types))
         .scalar()
