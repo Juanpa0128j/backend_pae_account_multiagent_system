@@ -52,7 +52,9 @@ class AsientoContableGemini(BaseModel):
     """Simplified journal entry schema for structured output."""
 
     cuenta_puc: str = Field(description="PUC account code (1-6 digits)")
-    descripcion: str = Field(description="Description of the entry")
+    descripcion: Optional[str] = Field(
+        default=None, description="Description of the entry"
+    )
     tipo_movimiento: Literal["debito", "credito"] = Field(
         description="Movement type: 'debito' or 'credito' (lowercase)"
     )
