@@ -19,6 +19,9 @@ jobs:
         with:
           version: "latest"
 
+      - name: Set up Python
+        run: uv python install 3.11
+
       - name: Install dependencies
         run: uv sync
 
@@ -34,6 +37,7 @@ jobs:
           GROQ_API_KEY: ""
           DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
           LLAMA_CLOUD_API_KEY: "dummy-for-unit-tests"
+          HF_TOKEN: ""
 
   simulate-pipeline:
     name: Simulate Pipeline (Via A + Via B)
@@ -48,6 +52,9 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.11
 
       - name: Install dependencies
         run: uv sync
@@ -68,6 +75,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLAMA_CLOUD_API_KEY: ${{ secrets.LLAMA_CLOUD_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       - name: Wait for backend to be ready
@@ -95,6 +103,11 @@ jobs:
             --report-timeout-seconds 420
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLAMA_CLOUD_API_KEY: ${{ secrets.LLAMA_CLOUD_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       - name: Run Via B simulation (first-level uploads)
         run: |
@@ -105,13 +118,16 @@ jobs:
             --city Medellin \
             --ciiu 6910 \
             --timeout-seconds 180 \
-            --poll-seconds 3
+            --poll-seconds 3 \
+            --report-timeout-seconds 420
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLAMA_CLOUD_API_KEY: ${{ secrets.LLAMA_CLOUD_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       - name: Stop backend server
         if: always()
-        run: |
-          if [ -f /tmp/uvicorn.pid ]; then
-            kill $(cat /tmp/uvicorn.pid) || true
-          fi
+        run: pkill -f "uvicorn main:app" || true
