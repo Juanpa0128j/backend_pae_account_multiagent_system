@@ -185,7 +185,7 @@ class TestAuditorNode:
         assert result["error"] is not None
         assert "contador" in result["error"].lower()
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
     def test_successful_approved_audit(self, mock_factory):
         mock_gemini = MagicMock()
         mock_gemini.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
@@ -201,7 +201,7 @@ class TestAuditorNode:
         assert result["current_stage"] == "auditor"
         assert result["result"]["audit_approved"] is True
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
     def test_rejected_audit_stored_in_state(self, mock_factory):
         mock_gemini = MagicMock()
         mock_gemini.extract_auditor_output.return_value = dict(REJECTED_AUDITOR_OUTPUT)
@@ -216,7 +216,7 @@ class TestAuditorNode:
             h["codigo"] == "AUD-001" for h in result["auditor_output"]["hallazgos"]
         )
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
     def test_retry_clears_correction_feedback(self, mock_factory):
         """After a successful call, correction_feedback must be cleared."""
         mock_gemini = MagicMock()
@@ -233,7 +233,7 @@ class TestAuditorNode:
         assert result["correction_feedback"] is None
         assert result["error"] is None
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
     def test_retry_passes_feedback_to_gemini(self, mock_factory):
         """On retry, correction_feedback must be forwarded to Gemini."""
         mock_gemini = MagicMock()
@@ -251,7 +251,7 @@ class TestAuditorNode:
         call_kwargs = mock_gemini.extract_auditor_output.call_args.kwargs
         assert call_kwargs.get("correction_feedback") == feedback
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
     def test_gemini_exception_captures_error(self, mock_factory):
         mock_gemini = MagicMock()
         mock_gemini.extract_auditor_output.side_effect = RuntimeError(
@@ -283,7 +283,7 @@ class TestContadorNode:
         result = contador_node(state)
         assert result["error"] is not None
 
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_successful_classification(self, mock_factory):
         mock_gemini = MagicMock()
         mock_gemini.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
@@ -302,7 +302,7 @@ class TestContadorNode:
         assert result["current_stage"] == "contador"
         assert result["interpreted_data"] == result["contador_output"]
 
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_rag_failure_is_non_fatal(self, mock_factory):
         """RAG lookup errors must not abort the node; Gemini proceeds without context."""
         mock_gemini = MagicMock()
@@ -321,7 +321,7 @@ class TestContadorNode:
         call_kwargs = mock_gemini.extract_contador_output.call_args.kwargs
         assert call_kwargs.get("rag_context") == []
 
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_retry_forwards_feedback_and_clears_it(self, mock_factory):
         mock_gemini = MagicMock()
         mock_gemini.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
@@ -339,7 +339,7 @@ class TestContadorNode:
         assert call_kwargs.get("correction_feedback") == feedback
         assert result["correction_feedback"] is None  # cleared after consume
 
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_gemini_exception_captures_error(self, mock_factory):
         mock_gemini = MagicMock()
         mock_gemini.extract_contador_output.side_effect = RuntimeError("timeout")
@@ -692,8 +692,8 @@ class TestProcessGraphE2E:
     No PostgreSQL required.
     """
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_happy_path_approved(
@@ -722,9 +722,9 @@ class TestProcessGraphE2E:
         assert final["db_result"]["journal_lines_count"] == 2
         assert len(final["validation_history"]) >= 2  # contador + auditor validated
 
-    @patch("app.agents.tributario_agent.get_gemini_client")
-    @patch("app.agents.auditor_agent.get_gemini_client")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.tributario_agent.get_llm_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_rejected_audit_triggers_self_correction_then_approves(
@@ -771,8 +771,8 @@ class TestProcessGraphE2E:
             "Auditor should have been called twice (reject + approve)"
         )
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_contador_retry_then_success(
@@ -813,8 +813,8 @@ class TestProcessGraphE2E:
         assert any(not h["is_valid"] for h in contador_history)
         assert any(h["is_valid"] for h in contador_history)
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_auditor_retry_then_success(
@@ -849,7 +849,7 @@ class TestProcessGraphE2E:
         assert final.get("error") is None
         assert aud_call_count["n"] >= 2, "Expected at least one retry of auditor"
 
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     def test_contador_exhausted_retries_sets_error(self, _mock_puc, mock_cnt_factory):
         """When all retries are exhausted, graph stops with a hard error."""
@@ -865,8 +865,8 @@ class TestProcessGraphE2E:
 
         assert final.get("error") is not None
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_audit_result_propagated_to_result_dict(
@@ -990,8 +990,8 @@ class TestProcessGraphDBIntegration:
         finally:
             db.close()
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     def test_full_pipeline_persists_records(
         self, _mock_puc, mock_cnt_factory, mock_aud_factory
@@ -1059,9 +1059,9 @@ class TestProcessGraphDBIntegration:
         finally:
             db.close()
 
-    @patch("app.agents.tributario_agent.get_gemini_client")
-    @patch("app.agents.auditor_agent.get_gemini_client")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.tributario_agent.get_llm_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
     def test_rejected_audit_stored_with_findings(
         self, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory

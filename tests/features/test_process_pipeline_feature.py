@@ -199,7 +199,7 @@ class TestProcessGraphStructure:
 class TestContadorNode:
     """Test contador agent node in isolation."""
 
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_contador_with_valid_output(self, mock_get_client, process_state):
         """Contador should produce valid ContadorOutput from raw transactions."""
         mock_client = MagicMock()
@@ -212,7 +212,7 @@ class TestContadorNode:
         assert "contador_output" in result_state
         assert result_state["current_agent"] == "contador"
 
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_contador_with_correction_feedback(self, mock_get_client, process_state):
         """Contador should use correction_feedback on retry."""
         mock_client = MagicMock()
@@ -370,11 +370,11 @@ class TestFullProcessPipeline:
     """Test complete process pipeline execution."""
 
     @patch("app.agents.persist_node._auto_derive_statements")
-    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.persist_node.SessionLocal")
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_process_pipeline_happy_path(
         self,
         mock_get_client,
@@ -445,10 +445,10 @@ class TestFullProcessPipeline:
         # Should complete successfully
         assert result.get("error") is None, "Pipeline should complete without error"
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_process_pipeline_retry_then_success(
         self,
         mock_get_client,
@@ -527,7 +527,7 @@ class TestFullProcessPipeline:
             assert result.get("error") is None
 
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_process_pipeline_exhausted_retries(self, mock_get_client, mock_puc_check):
         """Pipeline should fail after MAX_RETRIES with invalid output."""
         # Mock Gemini to always return invalid output

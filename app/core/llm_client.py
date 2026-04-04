@@ -14,7 +14,6 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-from app.core.providers.openai_provider import OpenAIProvider
 from app.models.ingest_schemas import (
     AnexoIVAContent,
     AutoretencionICAContent,
@@ -95,15 +94,21 @@ class LLMClient:
                 "OPENAI_API_KEY, GEMINI_API_KEY, GROQ_API_KEY"
             )
 
-        self._openai: Any = OpenAIProvider() if self._openai_key else None
-
-        # Lazy-initialised on first fallback
+        # All providers lazy-initialised on first use
+        self._openai: Any = None
         self._gemini: Any = None
         self._groq: Any = None
 
     # ------------------------------------------------------------------
     # Internal fallback chain
     # ------------------------------------------------------------------
+
+    def _get_openai(self):
+        if self._openai is None and self._openai_key:
+            from app.core.providers.openai_provider import OpenAIProvider
+
+            self._openai = OpenAIProvider()
+        return self._openai
 
     def _get_gemini(self):
         if self._gemini is None:
@@ -122,8 +127,9 @@ class LLMClient:
     def _invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
         """Invoke with OpenAI → Gemini → Groq fallback chain."""
         providers: list[tuple[str, Any]] = []
-        if self._openai is not None:
-            providers.append(("OpenAI", self._openai))
+        openai_provider = self._get_openai()
+        if openai_provider is not None:
+            providers.append(("OpenAI", openai_provider))
         if self._gemini_key:
             providers.append(("Gemini", self._get_gemini()))
         if self._groq_key:

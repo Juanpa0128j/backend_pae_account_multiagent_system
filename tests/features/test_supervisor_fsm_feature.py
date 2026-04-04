@@ -22,14 +22,14 @@ from app.models.llm_schemas import TaxJustification
 # Mock targets — must match the import location in each module
 # ---------------------------------------------------------------------------
 MOCK_LLAMA_PARSE = "app.agents.ingest_agent.LlamaParse"
-MOCK_GEMINI = "app.agents.ingest_agent.get_gemini_client"
+MOCK_GEMINI = "app.agents.ingest_agent.get_llm_client"
 MOCK_SESSION = "app.agents.persist_node.SessionLocal"
 MOCK_DB_SVC = "app.agents.persist_node.db_service"
-MOCK_TRIBUTARIO_GEMINI = "app.agents.tributario_agent.get_gemini_client"
+MOCK_TRIBUTARIO_GEMINI = "app.agents.tributario_agent.get_llm_client"
 MOCK_TRIBUTARIO_RAG = "app.agents.tributario_agent.get_rag_service"
 MOCK_TRIBUTARIO_SESSION = "app.core.database.SessionLocal"
 MOCK_TRIBUTARIO_DB_SVC = "app.services.db_service.get_company_settings"
-MOCK_AUDITOR_GEMINI = "app.agents.auditor_agent.get_gemini_client"
+MOCK_AUDITOR_GEMINI = "app.agents.auditor_agent.get_llm_client"
 
 # ---------------------------------------------------------------------------
 # Test data
@@ -395,7 +395,7 @@ class TestPipeline2Routing:
                 }
             ]
             # Stub the Gemini client used by contador (not relevant for routing test)
-            with patch("app.agents.contador_agent.get_gemini_client") as mock_gc:
+            with patch("app.agents.contador_agent.get_llm_client") as mock_gc:
                 mock_gc.return_value.extract_contador_output.return_value = (
                     VALID_CONTADOR_OUTPUT
                 )
@@ -422,7 +422,7 @@ class TestPipeline2Routing:
             }
         ]
         with (
-            patch("app.agents.contador_agent.get_gemini_client") as mock_gc,
+            patch("app.agents.contador_agent.get_llm_client") as mock_gc,
             patch(MOCK_SESSION),
             patch(MOCK_DB_SVC),
             patch(MOCK_TRIBUTARIO_SESSION),

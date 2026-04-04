@@ -378,7 +378,7 @@ def _invoke_ingest(pdf_path: str) -> dict[str, Any]:
     with (
         patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
         patch(
-            "app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()
+            "app.agents.ingest_agent.get_llm_client", return_value=FakeGeminiClient()
         ),
     ):
         return invoke_ingest_pipeline(pdf_path)
@@ -441,9 +441,9 @@ def _invoke_process_full_state(
         }
     )
     with (
-        patch("app.agents.contador_agent.get_gemini_client", return_value=fake),
-        patch("app.agents.tributario_agent.get_gemini_client", return_value=fake),
-        patch("app.agents.auditor_agent.get_gemini_client", return_value=fake),
+        patch("app.agents.contador_agent.get_llm_client", return_value=fake),
+        patch("app.agents.tributario_agent.get_llm_client", return_value=fake),
+        patch("app.agents.auditor_agent.get_llm_client", return_value=fake),
     ):
         return dict(graph.invoke(state))
 

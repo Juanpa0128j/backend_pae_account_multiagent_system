@@ -145,7 +145,7 @@ class TestIngestNodeRoutes:
             lambda _: ("xlsx extracted text for tests", [{"sheet": "A"}]),
         )
         client = _build_client("extract_transactions", {"any": "value"})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xlsx_file)
         out = ingest_agent.ingest_node(state)
@@ -160,7 +160,7 @@ class TestIngestNodeRoutes:
         monkeypatch.setattr("app.services.excel_parser.parse_excel", parse_mock)
 
         client = _build_client("extract_transactions", {"ok": 1})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(
             file_path=xlsx_file, raw_text="already extracted xlsx content"
@@ -175,7 +175,7 @@ class TestIngestNodeRoutes:
             "app.services.xml_parser.parse_xml", lambda _: "xml text for tests"
         )
         client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)
@@ -208,7 +208,7 @@ class TestIngestNodeRoutes:
             lambda: SimpleNamespace(llama_cloud_api_key="k"),
         )
         client = _build_client("extract_transactions", {"ok": 1})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=pdf_file)
         out = ingest_agent.ingest_node(state)
@@ -239,7 +239,7 @@ class TestIngestNodeRoutes:
             lambda: SimpleNamespace(llama_cloud_api_key="k"),
         )
         client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=pdf_file)
         out = ingest_agent.ingest_node(state)
@@ -258,7 +258,7 @@ class TestIngestNodeRoutes:
     def test_empty_extracted_text_sets_readable_error(self, xml_file, monkeypatch):
         monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "   ")
         client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)
@@ -269,7 +269,7 @@ class TestIngestNodeRoutes:
     def test_short_text_logs_warning_event(self, xml_file, monkeypatch):
         monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "short text")
         client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)
@@ -284,9 +284,7 @@ class TestIngestNodeRoutes:
             "app.services.xml_parser.parse_xml",
             lambda _: "text long enough for dispatch",
         )
-        monkeypatch.setattr(
-            ingest_agent, "get_gemini_client", lambda: SimpleNamespace()
-        )
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: SimpleNamespace())
 
         state = base_state(
             file_path=xml_file,
@@ -302,7 +300,7 @@ class TestIngestNodeRoutes:
             "app.services.xml_parser.parse_xml", lambda _: "text long enough for output"
         )
         client = _build_client("extract_transactions", [1, 2, 3])
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)
@@ -317,7 +315,7 @@ class TestIngestNodeRoutes:
         monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
 
         client = _build_client("extract_factura_venta", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(
             file_path=pdf_file,
@@ -341,7 +339,7 @@ class TestIngestNodeRoutes:
             lambda _: "xml content long enough for via b",
         )
         client = _build_client("extract_balance_general", {"statement": "ok"})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(
             file_path=xml_file,
@@ -361,7 +359,7 @@ class TestIngestNodeRoutes:
 
         client = MagicMock()
         client.extract_transactions.side_effect = RuntimeError("gemini exploded")
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)

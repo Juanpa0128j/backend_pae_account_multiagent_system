@@ -872,7 +872,7 @@ class TestReporteroAnalysis:
 
         # Mock out LLM (non-fatal, will fail gracefully)
         mock_gemini_module = MagicMock()
-        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("no LLM")
+        mock_gemini_module.get_llm_client.side_effect = RuntimeError("no LLM")
 
         all_mocks = {
             **_mock_db_modules(svc),
@@ -897,7 +897,7 @@ class TestReporteroAnalysis:
         self._setup_analysis_mocks(svc)
 
         mock_gemini_module = MagicMock()
-        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("no LLM")
+        mock_gemini_module.get_llm_client.side_effect = RuntimeError("no LLM")
 
         all_mocks = {
             **_mock_db_modules(svc),
@@ -920,9 +920,7 @@ class TestReporteroAnalysis:
         self._setup_analysis_mocks(svc)
 
         mock_gemini_module = MagicMock()
-        mock_gemini_module.get_gemini_client.side_effect = RuntimeError(
-            "quota exhausted"
-        )
+        mock_gemini_module.get_llm_client.side_effect = RuntimeError("quota exhausted")
 
         all_mocks = {
             **_mock_db_modules(svc),
@@ -951,7 +949,7 @@ class TestReporteroAnalysis:
         self._setup_analysis_mocks(svc)
 
         mock_gemini_module = MagicMock()
-        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("no LLM")
+        mock_gemini_module.get_llm_client.side_effect = RuntimeError("no LLM")
 
         all_mocks = {
             **_mock_db_modules(svc),
@@ -979,7 +977,7 @@ class TestIncludeAnalysis:
         svc.get_balance_sheet.return_value = _BALANCE_DATA
 
         mock_gemini_module = MagicMock()
-        mock_gemini_module.get_gemini_client.side_effect = RuntimeError("no LLM")
+        mock_gemini_module.get_llm_client.side_effect = RuntimeError("no LLM")
 
         all_mocks = {
             **_mock_db_modules(svc),

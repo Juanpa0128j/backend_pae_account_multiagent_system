@@ -253,7 +253,7 @@ def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
     with (
         patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
         patch(
-            "app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()
+            "app.agents.ingest_agent.get_llm_client", return_value=FakeGeminiClient()
         ),
     ):
         return invoke_ingest_pipeline(pdf_path)
@@ -288,11 +288,9 @@ def _create_context_from_ingest(
 def _run_process_pipeline(ctx: SupabaseE2EContext) -> dict[str, Any]:
     fake_client = FakeGeminiClient()
     with (
-        patch("app.agents.contador_agent.get_gemini_client", return_value=fake_client),
-        patch(
-            "app.agents.tributario_agent.get_gemini_client", return_value=fake_client
-        ),
-        patch("app.agents.auditor_agent.get_gemini_client", return_value=fake_client),
+        patch("app.agents.contador_agent.get_llm_client", return_value=fake_client),
+        patch("app.agents.tributario_agent.get_llm_client", return_value=fake_client),
+        patch("app.agents.auditor_agent.get_llm_client", return_value=fake_client),
     ):
         return invoke_accounting_pipeline(
             ingest_id=ctx.ingest_id,

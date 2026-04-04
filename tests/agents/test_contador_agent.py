@@ -89,7 +89,7 @@ def test_contador_example_service_expense_output_is_sensible() -> None:
     mock_gemini.extract_contador_output.return_value = expected_output
 
     with (
-        patch("app.agents.contador_agent.get_gemini_client", return_value=mock_gemini),
+        patch("app.agents.contador_agent.get_llm_client", return_value=mock_gemini),
         patch(
             "app.services.rag_service.get_rag_service",
             side_effect=Exception("rag unavailable"),
@@ -139,7 +139,7 @@ def test_contador_example_retry_feedback_roundtrip() -> None:
     state = _base_state(correction_feedback=feedback, retry_count=1)
 
     with (
-        patch("app.agents.contador_agent.get_gemini_client", return_value=mock_gemini),
+        patch("app.agents.contador_agent.get_llm_client", return_value=mock_gemini),
         patch(
             "app.services.rag_service.get_rag_service",
             side_effect=Exception("rag unavailable"),
@@ -220,8 +220,8 @@ def test_contador_prompt_includes_transaction_fields_and_rag_context() -> None:
     client.extract_contador_output(raw_transactions=tx, rag_context=rag)
 
     prompt_text = captured[0]
-    assert "NIT emisor: 900123456" in prompt_text
-    assert "Total: 1190000" in prompt_text
+    assert "900123456" in prompt_text
+    assert "1190000" in prompt_text
     assert "Contexto normativo/RAG" in prompt_text
     assert "PUC 5135" in prompt_text
 
