@@ -304,7 +304,9 @@ class TestReporteroNodeIVA:
         svc = MagicMock()
         svc.get_general_ledger.return_value = []
 
-        with patch.dict(sys.modules, _mock_db_modules(svc)):
+        with patch.dict(
+            sys.modules, {**_mock_db_modules(svc), **_mock_rag_modules([])}
+        ):
             result_state = reportero_node(state)
 
         report = result_state["result"]["report"]
@@ -927,7 +929,7 @@ class TestReporteroAnalysis:
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.gemini_client": mock_gemini_module,
+            "app.core.llm_client": mock_gemini_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)

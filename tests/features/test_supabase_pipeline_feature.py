@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from reportlab.pdfgen import canvas
@@ -317,6 +317,10 @@ def _run_process_pipeline(ctx: SupabaseE2EContext) -> dict[str, Any]:
         patch("app.agents.contador_agent.get_llm_client", return_value=fake_client),
         patch("app.agents.tributario_agent.get_llm_client", return_value=fake_client),
         patch("app.agents.auditor_agent.get_llm_client", return_value=fake_client),
+        patch(
+            "app.services.rag_service.get_rag_service",
+            return_value=MagicMock(search_normativo=MagicMock(return_value=[])),
+        ),
     ):
         return invoke_accounting_pipeline(
             ingest_id=ctx.ingest_id,

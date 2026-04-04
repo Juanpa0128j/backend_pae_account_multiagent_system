@@ -199,12 +199,14 @@ class TestProcessGraphStructure:
 class TestContadorNode:
     """Test contador agent node in isolation."""
 
+    @patch("app.services.rag_service.get_rag_service")
     @patch("app.agents.contador_agent.get_llm_client")
-    def test_contador_with_valid_output(self, mock_get_client, process_state):
+    def test_contador_with_valid_output(self, mock_get_client, mock_rag, process_state):
         """Contador should produce valid ContadorOutput from raw transactions."""
         mock_client = MagicMock()
         mock_client.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
         mock_get_client.return_value = mock_client
+        mock_rag.return_value.search_normativo.return_value = []
 
         result_state = contador_node(process_state)
 
@@ -370,6 +372,7 @@ class TestFullProcessPipeline:
     """Test complete process pipeline execution."""
 
     @patch("app.agents.persist_node._auto_derive_statements")
+    @patch("app.services.rag_service.get_rag_service")
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.persist_node.SessionLocal")
@@ -382,9 +385,12 @@ class TestFullProcessPipeline:
         mock_session,
         mock_get_company_settings,
         mock_get_auditor_client,
+        mock_rag,
         mock_auto_derive,
     ):
         """Full pipeline: staged TX → contador → validation → persist → success."""
+        mock_rag.return_value.search_normativo.return_value = []
+
         # Mock Gemini to return valid contador output
         mock_client = MagicMock()
         mock_client.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
