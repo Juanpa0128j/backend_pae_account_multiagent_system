@@ -940,8 +940,96 @@ def main() -> int:
 
         _print_second_level_detail(all_stmts)
 
+        # ── Chatbot validation ──────────────────────────────────────
+        test_chatbot(client, args.base_url, company_nit)
+
     print("\nSimulacion completada.")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Chatbot validation
+# ---------------------------------------------------------------------------
+
+def test_chatbot(
+    client: httpx.Client,
+    base_url: str,
+    company_nit: str,
+) -> None:
+    """Validate the Reportero Chatbot via the non-streaming endpoint."""
+    _print_header("Chatbot financiero: validacion")
+
+    questions = [
+        ("¿Cuál es mi balance general actual?", "balance"),
+        ("¿Cuánto debo de IVA este periodo?", "iva"),
+        ("¿Cuáles son las cuentas con mayor movimiento?", "top_accounts"),
+        ("¿Qué recomiendas para mejorar la liquidez?", None),  # any intent ok
+    ]
+
+    session_id = None  # reuse session across questions to test memory
+
+    for question, expected_intent in questions:
+        payload: dict = {"message": question, "company_nit": company_nit}
+        if session_id:
+            payload["session_id"] = session_id
+
+        try:
+            resp = client.post(
+                f"{base_url}/api/v1/chat",
+                json=payload,
+                timeout=120,
+            )
+        except Exception as exc:
+            print(f"  [ERR] Chat request failed: {exc}")
+            continue
+
+        if resp.status_code != 200:
+            print(f"  [ERR] HTTP {resp.status_code}: {resp.text[:200]}")
+            continue
+
+        data = resp.json()
+        reply = data.get("reply", "")
+        detected = data.get("intent_detected", "?")
+        cards = data.get("data_cards", [])
+        session_id = data.get("session_id")  # reuse for next question
+
+        ok = bool(reply)
+        if expected_intent:
+            ok = ok and (detected == expected_intent)
+
+        status = "[OK]" if ok else "[WARN]"
+        print(
+            f"  {status} [{detected:18s}] "
+            f"cards={len(cards)} "
+            f"q={question[:45]}..."
+        )
+        if reply:
+            print(f"       reply: {reply[:120]}...")
+
+    # Validate session persistence: list sessions and check ours exists
+    if session_id:
+        try:
+            sessions_resp = client.get(
+                f"{base_url}/api/v1/chat/sessions",
+                params={"company_nit": company_nit},
+                timeout=30,
+            )
+            if sessions_resp.status_code == 200:
+                sessions = sessions_resp.json()
+                found = any(s["id"] == session_id for s in sessions)
+                print(f"\n  Session persistence: {'[OK]' if found else '[WARN]'} "
+                      f"session_id={session_id} found={found} total_sessions={len(sessions)}")
+
+                # Fetch messages for the session
+                msgs_resp = client.get(
+                    f"{base_url}/api/v1/chat/sessions/{session_id}/messages",
+                    timeout=30,
+                )
+                if msgs_resp.status_code == 200:
+                    msgs = msgs_resp.json()
+                    print(f"  Session messages: {len(msgs)} messages stored")
+        except Exception as exc:
+            print(f"  [WARN] Session validation failed: {exc}")
 
 
 if __name__ == "__main__":

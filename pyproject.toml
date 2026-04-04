@@ -33,6 +33,7 @@ dependencies = [
     "openpyxl>=3.1.0",
     "langchain-groq>=1.1.2",
     "langchain-openai>=1.1.11",
+    "sse-starlette>=1.6.0",
 ]
 
 [project.optional-dependencies]

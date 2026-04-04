@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.api.v1 import ingest, process, reports, tax, evaluation, transactions, dashboard, books, settings as settings_router_mod
+from app.api.v1 import ingest, process, reports, tax, evaluation, transactions, dashboard, books, settings as settings_router_mod, chat
 from app.core.config import settings
 from app.core.database import check_db_connection
 from app.core.exceptions import PAEException, DatabaseException
@@ -104,6 +104,7 @@ app.include_router(transactions.router, prefix="/api/v1/transactions", tags=["Tr
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 app.include_router(books.router, prefix="/api/v1/books", tags=["Libros"])
 app.include_router(settings_router_mod.router, prefix="/api/v1/settings", tags=["Configuración"])
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat Financiero"])
 
 if __name__ == "__main__":
     import uvicorn
