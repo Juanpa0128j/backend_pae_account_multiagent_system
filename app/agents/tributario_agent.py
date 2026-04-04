@@ -20,7 +20,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
-from app.core.gemini_client import get_gemini_client
+from app.core.llm_client import get_llm_client
 from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
@@ -486,14 +486,14 @@ def tributario_node(state: AgentState) -> AgentState:
             "tipo_transaccion": tipo_transaccion,
         }
 
-        gemini_client = get_gemini_client()
+        gemini_client = get_llm_client()
         try:
             justification = gemini_client.justify_tax_analysis(tax_amounts, rag_context)
         except Exception as gemini_err:
             logger.warning(
                 f"Tributario: Gemini justification failed (using fallback): {gemini_err}"
             )
-            from app.core.gemini_client import TaxJustification as _TaxJustification
+            from app.models.llm_schemas import TaxJustification as _TaxJustification
 
             justification = _TaxJustification(
                 referencias=[

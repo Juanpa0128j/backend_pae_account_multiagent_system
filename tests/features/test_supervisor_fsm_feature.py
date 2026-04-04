@@ -16,7 +16,7 @@ dependencies mocked. Validates:
 import pytest
 from unittest.mock import MagicMock, patch
 
-from app.core.gemini_client import TaxJustification
+from app.models.llm_schemas import TaxJustification
 
 # ---------------------------------------------------------------------------
 # Mock targets — must match the import location in each module

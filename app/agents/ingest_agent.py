@@ -15,7 +15,7 @@ from pathlib import Path
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.config import get_settings
-from app.core.gemini_client import get_gemini_client
+from app.core.llm_client import get_llm_client
 from app.core.logger import get_logger
 
 try:
@@ -256,7 +256,7 @@ def ingest_node(state: AgentState) -> AgentState:
         )
 
         # Step 2: Send to Gemini for interpretation (doc-type-aware)
-        gemini_client = get_gemini_client()
+        gemini_client = get_llm_client()
         correction_feedback = state.get("correction_feedback") if is_retry else None
         classification = state.get("document_classification") or {}
         doc_type = classification.get("doc_type", "otro")

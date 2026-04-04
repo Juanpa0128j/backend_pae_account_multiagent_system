@@ -13,7 +13,7 @@ import logging
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
-from app.core.gemini_client import get_gemini_client
+from app.core.llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ def contador_node(state: AgentState) -> AgentState:
         logger.warning("contador: RAG lookup failed (non-fatal): %s", rag_err)
 
     try:
-        gemini = get_gemini_client()
+        gemini = get_llm_client()
 
         if is_retry:
             logger.info(
@@ -79,8 +79,11 @@ def contador_node(state: AgentState) -> AgentState:
                 state.get("retry_count", 1),
             )
 
+        doc_type = (state.get("document_classification") or {}).get("doc_type", "")
+
         contador_output = gemini.extract_contador_output(
             raw_transactions=raw_transactions,
+            doc_type=doc_type,
             rag_context=rag_context,
             correction_feedback=state.get("correction_feedback") if is_retry else None,
         )

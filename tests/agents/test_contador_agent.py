@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 from app.agents.contador_agent import contador_node
 from app.agents.state import AgentState
 from app.agents.supervisor import validate_contador_output_node
-from app.core.gemini_client import GeminiClient
+from app.core.llm_client import LLMClient as GeminiClient
 
 
 def _base_state(**overrides) -> AgentState:

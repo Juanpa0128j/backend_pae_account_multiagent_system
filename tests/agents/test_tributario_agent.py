@@ -30,7 +30,7 @@ from app.agents.tributario_agent import (
     _has_iva_in_asientos,
 )
 from app.agents.state import AgentState
-from app.core.gemini_client import TaxJustification
+from app.models.llm_schemas import TaxJustification
 from app.models.agent_outputs import TributarioOutput
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────

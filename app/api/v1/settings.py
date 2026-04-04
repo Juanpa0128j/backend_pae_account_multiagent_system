@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.gemini_client import get_gemini_client
+from app.core.llm_client import get_llm_client
 from app.models.schemas import (
     CompanyProfileSetupRequest,
     CompanySettingsRequest,
@@ -110,7 +110,7 @@ def setup_company_tax_profile(
             logger.warning(f"Tax profile setup: RAG lookup failed ({rag_err})")
 
         try:
-            gemini = get_gemini_client()
+            gemini = get_llm_client()
             rate_lookup = gemini.compute_tax_rates_from_profile(
                 ciudad=body.ciudad,
                 codigo_ciiu=body.codigo_ciiu,

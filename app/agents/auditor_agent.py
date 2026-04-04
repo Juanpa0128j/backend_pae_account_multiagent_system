@@ -24,7 +24,7 @@ import logging
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
-from app.core.gemini_client import get_gemini_client
+from app.core.llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def auditor_node(state: AgentState) -> AgentState:
     )
 
     try:
-        gemini = get_gemini_client()
+        gemini = get_llm_client()
 
         if is_retry:
             logger.info(

@@ -1,389 +1,62 @@
 """
-Gemini client — backward-compatibility shim.
+gemini_client — backward-compatibility shim. DO NOT ADD CODE HERE.
 
-All extraction logic has moved to `app.core.llm_client.LLMClient`.
-This module keeps:
-  - Pydantic structured-output models (imported by agents and tests)
-  - Ingest schema re-exports (imported by llm_client methods)
-  - GENERAL_EXTRACTION_INSTRUCTIONS constant
-  - GeminiClient / get_gemini_client aliases pointing to LLMClient
+All Pydantic schemas have moved to app.models.llm_schemas.
+All extraction logic lives in app.core.llm_client.LLMClient.
+All LLM providers live in app.core.providers.*.
+
+This file exists only to avoid breaking external callers during migration.
+It will be deleted once all import sites point to the correct modules.
 """
 
-from decimal import Decimal
-from typing import Any, Dict, List, Literal, Optional, TypeVar
-
-from pydantic import BaseModel, Field, field_validator, model_validator
-
-ModelT = TypeVar("ModelT", bound=BaseModel)
-
-# ---------------------------------------------------------------------------
-# Pydantic structured-output models (used by agents & tests)
-# ---------------------------------------------------------------------------
-
-
-class RawTransaction(BaseModel):
-    """Structured schema for extracted receipt/invoice data."""
-
-    fecha: Optional[str] = Field(None, description="Date in YYYY-MM-DD format")
-    nit_emisor: str = Field(description="NIT of the issuer")
-    nit_receptor: str = Field(description="NIT of the receiver (empresa)")
-    total: Decimal = Field(description="Total amount of the transaction")
-    descripcion: Optional[str] = Field(
-        None, description="Description/concept of the transaction"
-    )
-    items: Optional[List[Dict[str, Any]]] = Field(None, description="Line items")
-
-    @field_validator("total", mode="before")
-    @classmethod
-    def parse_total(cls, v):  # noqa: N805
-        if isinstance(v, (int, float)):
-            return Decimal(str(v))
-        return v
-
-
-class RawTransactionsList(BaseModel):
-    transactions: List[RawTransaction] = Field(
-        default_factory=list,
-        description="Extracted list of transactions from the document",
-    )
-
-
-class AsientoContableGemini(BaseModel):
-    """Simplified journal entry schema for structured output."""
-
-    cuenta_puc: str = Field(description="PUC account code (1-6 digits)")
-    descripcion: Optional[str] = Field(
-        default=None, description="Description of the entry"
-    )
-    tipo_movimiento: Literal["debito", "credito"] = Field(
-        description="Movement type: 'debito' or 'credito' (lowercase)"
-    )
-    valor: Decimal = Field(description="Amount of the entry")
-
-    @field_validator("valor", mode="before")
-    @classmethod
-    def parse_valor(cls, v):  # noqa: N805
-        if isinstance(v, (int, float)):
-            return Decimal(str(v))
-        return v
-
-
-class ContadorOutputGemini(BaseModel):
-    """ContadorOutput-compatible schema for structured output."""
-
-    fecha_registro: str = Field(description="Accounting registration date YYYY-MM-DD")
-    tipo_documento: str = Field(
-        description=(
-            "Document type: recibo, factura, extracto, nota_credito, "
-            "nota_debito, comprobante_egreso, otro"
-        )
-    )
-    descripcion_general: str = Field(
-        description="General description of the accounting event"
-    )
-    asientos: List[AsientoContableGemini] = Field(
-        description="Journal entries (at least one debit and one credit)"
-    )
-    total_debitos: Decimal = Field(
-        default=Decimal("0"), description="Sum of all debit entries"
-    )
-    total_creditos: Decimal = Field(
-        default=Decimal("0"), description="Sum of all credit entries"
-    )
-
-    @field_validator("total_debitos", "total_creditos", mode="before")
-    @classmethod
-    def parse_totals(cls, v):  # noqa: N805
-        if v is None:
-            return Decimal("0")
-        if isinstance(v, (int, float)):
-            return Decimal(str(v))
-        return v
-
-    @model_validator(mode="after")
-    def ensure_totals(self) -> "ContadorOutputGemini":
-        """Backfill totals when LLM omits them but asientos are present."""
-        if not self.asientos:
-            return self
-
-        calc_debitos = Decimal("0")
-        calc_creditos = Decimal("0")
-        for asiento in self.asientos:
-            valor = Decimal(str(asiento.valor or 0))
-            if asiento.tipo_movimiento == "debito":
-                calc_debitos += valor
-            else:
-                calc_creditos += valor
-
-        if self.total_debitos == Decimal("0") and calc_debitos > Decimal("0"):
-            self.total_debitos = calc_debitos
-        if self.total_creditos == Decimal("0") and calc_creditos > Decimal("0"):
-            self.total_creditos = calc_creditos
-
-        return self
-
-
-class AuditorHallazgoGemini(BaseModel):
-    """Single audit finding."""
-
-    codigo: str = Field(default="AUD-000", description="Finding code in format AUD-XXX")
-    severidad: Literal["info", "advertencia", "error", "critico"] = Field(
-        default="advertencia", description="Finding severity level"
-    )
-    descripcion: str = Field(default="", description="Clear description of the finding")
-    campo_afectado: Optional[str] = Field(
-        None, description="Campo contable afectado (opcional)"
-    )
-    recomendacion: str = Field(
-        default="", description="Recomendacion para corregir el hallazgo"
-    )
-
-
-class AuditorOutputGemini(BaseModel):
-    """AuditorOutput-compatible schema for structured output."""
-
-    fecha_auditoria: str = Field(
-        default="1970-01-01", description="Fecha de auditoria en formato YYYY-MM-DD"
-    )
-    documento_referencia: str = Field(
-        default="sin referencia", description="Referencia del documento auditado"
-    )
-    aprobado: bool = Field(
-        default=False, description="True cuando el audit pasa sin bloqueadores"
-    )
-    nivel_riesgo: Literal["bajo", "medio", "alto", "critico"] = Field(
-        default="medio", description="Nivel de riesgo global de la transaccion"
-    )
-    hallazgos: List[AuditorHallazgoGemini] = Field(
-        default_factory=list,
-        description="Lista estructurada de hallazgos detectados",
-    )
-    puntaje_calidad: Decimal = Field(
-        default=Decimal("0"),
-        ge=0,
-        le=100,
-        description="Puntaje de calidad contable entre 0 y 100",
-    )
-    resumen: str = Field(default="", description="Resumen ejecutivo de la auditoria")
-
-
-class TaxJustification(BaseModel):
-    """Structured output for tax justification calls."""
-
-    referencias: List[str] = Field(
-        description="Legal articles cited, e.g. ['Art. 383 ET', 'Decreto 2048/1992']"
-    )
-    justificacion: str = Field(
-        description="Spanish explanation of why these rates apply to the transaction"
-    )
-    confirma_tasas: bool = Field(
-        description="True if the normative context confirms the calculated rates"
-    )
-
-
-class TaxRateLookup(BaseModel):
-    """Structured output for tax profile setup."""
-
-    tasa_retefuente_servicios: Decimal = Field(
-        description="Retefuente rate for services as decimal fraction, e.g. 0.11"
-    )
-    tasa_retefuente_bienes: Decimal = Field(
-        description="Retefuente rate for goods purchases as decimal fraction"
-    )
-    tasa_retefuente_arrendamiento: Decimal = Field(
-        description="Retefuente rate for lease/rent as decimal fraction"
-    )
-    tasa_reteica: Decimal = Field(
-        description="ReteICA rate for city/CIIU as decimal fraction"
-    )
-    tasa_iva_general: Decimal = Field(
-        description="IVA tariff as decimal fraction (0.19 or 0.0)"
-    )
-    fuentes: List[str] = Field(
-        description="Legal articles and municipal agreements supporting rates"
-    )
-
-    @field_validator(
-        "tasa_retefuente_servicios",
-        "tasa_retefuente_bienes",
-        "tasa_retefuente_arrendamiento",
-        "tasa_reteica",
-        "tasa_iva_general",
-        mode="before",
-    )
-    @classmethod
-    def parse_rates(cls, v):  # noqa: N805
-        if isinstance(v, (int, float)):
-            return Decimal(str(v))
-        return v
-
-
-# ---------------------------------------------------------------------------
-# Reportero Analysis Schemas
-# ---------------------------------------------------------------------------
-
-
-class ExplicacionResultadoGemini(BaseModel):
-    """Detailed explanation of a financial metric."""
-
-    metrica: str = Field(
-        description="Metric name, e.g. 'activos_totales', 'razon_corriente'"
-    )
-    valor: float = Field(description="The metric's numeric value")
-    explicacion: str = Field(
-        description="WHY this value — root causes, contributing accounts, business implications"
-    )
-    nivel: Literal["positivo", "neutral", "negativo"] = Field(
-        description="Traffic light assessment"
-    )
-
-
-class PrediccionPeriodoGemini(BaseModel):
-    """Single month financial prediction."""
-
-    periodo: str = Field(description="Target month as YYYY-MM, e.g. '2026-04'")
-    ingresos_estimados: float = Field(description="Projected revenue for the month")
-    gastos_estimados: float = Field(description="Projected expenses for the month")
-    utilidad_estimada: float = Field(description="Projected net profit for the month")
-    confianza: Literal["alta", "media", "baja"] = Field(
-        description="Confidence level based on data volume and trend consistency"
-    )
-
-
-class InterpretacionRatioGemini(BaseModel):
-    """Interpretation of a single financial ratio."""
-
-    ratio: str = Field(description="Ratio name in Spanish")
-    valor: Optional[float] = Field(None, description="Numeric value")
-    interpretacion: str = Field(description="What this ratio means for the business")
-    que_significa: str = Field(
-        description="Plain-language explanation for non-accountants"
-    )
-
-
-class ReporteroAnalysisGemini(BaseModel):
-    """Full structured analysis output from the Reportero LLM call."""
-
-    resumen_ejecutivo: str = Field(
-        description="2-3 paragraph executive summary of financial health"
-    )
-    explicaciones: List[ExplicacionResultadoGemini] = Field(
-        description="Detailed explanation of EACH major financial result"
-    )
-    interpretacion_ratios: List[InterpretacionRatioGemini] = Field(
-        description="Interpretation of each financial ratio"
-    )
-    tendencias: str = Field(
-        description="Narrative of how revenue, expenses, profit evolved over recent months"
-    )
-    predicciones: List[PrediccionPeriodoGemini] = Field(
-        description="3-month financial projections"
-    )
-    predicciones_narrativa: str = Field(
-        description="Plain-language interpretation of predictions: where the company is headed, risks, inflection points"
-    )
-    alertas: List[str] = Field(description="Risk alerts and early warning signals")
-    recomendaciones: List[str] = Field(description="3-5 actionable recommendations")
-    nivel_salud_financiera: Literal["bueno", "aceptable", "preocupante", "critico"] = (
-        Field(description="Overall financial health assessment")
-    )
-
-
-class ReporteroBriefAnalysisGemini(BaseModel):
-    """Brief analysis for individual report types (balance, pnl, etc.)."""
-
-    resumen: str = Field(description="1-2 paragraph summary of this specific report")
-    puntos_clave: List[str] = Field(description="3-5 key takeaways")
-    alertas: List[str] = Field(default_factory=list, description="Risk alerts if any")
-    recomendaciones: List[str] = Field(
-        default_factory=list, description="1-3 recommendations"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Ingest schema re-exports (used by llm_client extraction methods)
-# ---------------------------------------------------------------------------
-
-from app.models.ingest_schemas import (  # noqa: E402
-    FacturaVentaContent,
-    FacturaCompraContent,
-    NotaCreditoContent,
-    NotaDebitoContent,
-    BankStatementContent,
-    TaxDeclarationContent,
-    DeclaracionICAContent,
-    AutoretencionICAContent,
-    AnexoIVAContent,
-    AuxiliarIVAContent,
-    AuxiliaryLedgerContent,
-    FinancialStatementContent,
-    BalanceGeneralContent,
-    EstadoResultadosContent,
-    LibroDiarioContent,
-    FlujoDeCajaContent,
-    CambiosPatrimonioContent,
-    NotasEstadosFinancierosContent,
-    ComprobanteEgresoContent,
-    DocumentoSoporteContent,
-    ReciboCajaContent,
-    NominaContent,
-    ConciliacionBancariaContent,
-    CuentaCobroContent,
-    PlanillaSegSocialContent,
-    ReciboPagoImpuestoContent,
+# Re-export schemas from their canonical location
+from app.models.llm_schemas import (  # noqa: F401
+    AsientoContableGemini,
+    AuditorHallazgoGemini,
+    AuditorOutputGemini,
+    ContadorOutputGemini,
+    ExplicacionResultadoGemini,
+    InterpretacionRatioGemini,
+    PrediccionPeriodoGemini,
+    RawTransaction,
+    RawTransactionsList,
+    ReporteroBriefAnalysisGemini,
+    ReporteroAnalysisGemini,
+    TaxJustification,
+    TaxRateLookup,
 )
 
-__all__ = [
-    "RawTransaction",
-    "RawTransactionsList",
-    "AsientoContableGemini",
-    "ContadorOutputGemini",
-    "AuditorHallazgoGemini",
-    "AuditorOutputGemini",
-    "TaxJustification",
-    "TaxRateLookup",
-    "GENERAL_EXTRACTION_INSTRUCTIONS",
-    "GeminiClient",
-    "get_gemini_client",
-    # Reportero schemas
-    "ExplicacionResultadoGemini",
-    "PrediccionPeriodoGemini",
-    "InterpretacionRatioGemini",
-    "ReporteroAnalysisGemini",
-    "ReporteroBriefAnalysisGemini",
-    # ingest schemas
-    "FacturaVentaContent",
-    "FacturaCompraContent",
-    "NotaCreditoContent",
-    "NotaDebitoContent",
-    "BankStatementContent",
-    "TaxDeclarationContent",
-    "DeclaracionICAContent",
-    "AutoretencionICAContent",
-    "AnexoIVAContent",
-    "AuxiliarIVAContent",
-    "AuxiliaryLedgerContent",
-    "FinancialStatementContent",
-    "BalanceGeneralContent",
-    "EstadoResultadosContent",
-    "LibroDiarioContent",
-    "FlujoDeCajaContent",
-    "CambiosPatrimonioContent",
-    "NotasEstadosFinancierosContent",
-    "ComprobanteEgresoContent",
-    "DocumentoSoporteContent",
-    "ReciboCajaContent",
-    "NominaContent",
-    "ConciliacionBancariaContent",
-    "CuentaCobroContent",
-    "PlanillaSegSocialContent",
-    "ReciboPagoImpuestoContent",
-]
+# Re-export ingest schemas
+from app.models.ingest_schemas import (  # noqa: F401
+    AnexoIVAContent,
+    AutoretencionICAContent,
+    AuxiliarIVAContent,
+    AuxiliaryLedgerContent,
+    BalanceGeneralContent,
+    BankStatementContent,
+    CambiosPatrimonioContent,
+    ConciliacionBancariaContent,
+    ComprobanteEgresoContent,
+    CuentaCobroContent,
+    DeclaracionICAContent,
+    DocumentoSoporteContent,
+    EstadoResultadosContent,
+    FacturaCompraContent,
+    FacturaVentaContent,
+    FinancialStatementContent,
+    FlujoDeCajaContent,
+    LibroDiarioContent,
+    NominaContent,
+    NotaCreditoContent,
+    NotaDebitoContent,
+    NotasEstadosFinancierosContent,
+    PlanillaSegSocialContent,
+    ReciboCajaContent,
+    ReciboPagoImpuestoContent,
+    TaxDeclarationContent,
+)
 
-# ---------------------------------------------------------------------------
-# Shared extraction instructions constant
-# ---------------------------------------------------------------------------
-
+# Extraction instructions constant (used by some tests/scripts)
 GENERAL_EXTRACTION_INSTRUCTIONS = """
 INSTRUCCIONES GENERALES DE EXTRACCIÓN:
 1. Extrae SOLO los campos que estén presentes en el documento. Si un campo no existe, usa null.
@@ -403,13 +76,10 @@ INSTRUCCIONES GENERALES DE EXTRACCIÓN:
    - Observaciones que el contador, tributarista o auditor necesitarían conocer
 """
 
-# ---------------------------------------------------------------------------
-# Backward-compatibility aliases
-# ---------------------------------------------------------------------------
-
-from app.core.llm_client import LLMClient as GeminiClient, get_llm_client  # noqa: E402
+# Backward-compatibility aliases — use app.core.llm_client directly instead
+from app.core.llm_client import LLMClient as GeminiClient, get_llm_client  # noqa: F401, E402
 
 
 def get_gemini_client() -> GeminiClient:
-    """Backward-compatible alias for get_llm_client()."""
+    """Deprecated. Use get_llm_client() from app.core.llm_client instead."""
     return get_llm_client()
