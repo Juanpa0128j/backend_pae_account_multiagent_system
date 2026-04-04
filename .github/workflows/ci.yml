@@ -46,6 +46,11 @@ jobs:
           DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_test"
           GEMINI_API_KEY: "dummy-for-unit-tests"
 
+      - name: Seed CI test data
+        run: uv run python scripts/seed_ci_settings.py
+        env:
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_test"
+
       - name: Run unit tests
         run: |
           uv run pytest tests/ -v --timeout=60 \
