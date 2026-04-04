@@ -18,6 +18,9 @@ extracted_text.txt
 read_pdfs.py
 temp/
 storage/
+.venv/
+scripts/ingest_test_results.json
+
 # Storage
 storage/
 *.db
@@ -47,7 +50,3 @@ test_*.pdf
 
 # Claude
 .claude/
-
-# scripts
-scripts/
-.venv/
