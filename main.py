@@ -4,7 +4,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.api.v1 import ingest, process, reports, tax, evaluation, transactions, dashboard, books, settings as settings_router_mod
+from app.api.v1 import (
+    ingest,
+    process,
+    reports,
+    tax,
+    evaluation,
+    transactions,
+    dashboard,
+    books,
+    settings as settings_router_mod,
+)
 from app.core.config import settings
 from app.core.database import check_db_connection
 from app.core.exceptions import PAEException, DatabaseException
@@ -12,7 +22,7 @@ from app.core.exceptions import PAEException, DatabaseException
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -41,9 +51,9 @@ app = FastAPI(
 
 # Base development origins
 origins = [
-    "http://localhost:3000",      # Next.js dev server
-    "http://localhost:5173",      # Vite dev server
-    "http://localhost:5174",      # Alternative dev port
+    "http://localhost:3000",  # Next.js dev server
+    "http://localhost:5173",  # Vite dev server
+    "http://localhost:5174",  # Alternative dev port
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5174",
@@ -52,7 +62,9 @@ origins = [
 # Add production origins from environment variable if present
 env_origins = os.getenv("ALLOWED_ORIGINS", "")
 if env_origins:
-    origins.extend([origin.strip() for origin in env_origins.split(",") if origin.strip()])
+    origins.extend(
+        [origin.strip() for origin in env_origins.split(",") if origin.strip()]
+    )
 
 # Configure CORS
 app.add_middleware(
@@ -63,9 +75,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/", tags=["Health"])
 async def root():
-    return {"message": "PAE Account Multiagent System API is running", "status": "healthy"}
+    return {
+        "message": "PAE Account Multiagent System API is running",
+        "status": "healthy",
+    }
+
 
 @app.get("/health", tags=["Health"])
 async def health_check():
@@ -91,8 +108,12 @@ async def db_exception_handler(request: Request, exc: DatabaseException):
     logger.error(f"Database error: {exc}")
     return JSONResponse(
         status_code=503,
-        content={"detail": "Database service unavailable", "error_type": "DatabaseException"},
+        content={
+            "detail": "Database service unavailable",
+            "error_type": "DatabaseException",
+        },
     )
+
 
 # Include routers
 app.include_router(ingest.router, prefix="/api/v1/ingest", tags=["Ingesta"])
@@ -100,11 +121,16 @@ app.include_router(process.router, prefix="/api/v1/process", tags=["Procesamient
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["Reportes"])
 app.include_router(tax.router, prefix="/api/v1/tax", tags=["Tributario"])
 app.include_router(evaluation.router, prefix="/api/v1/evaluation", tags=["Evaluación"])
-app.include_router(transactions.router, prefix="/api/v1/transactions", tags=["Transacciones"])
+app.include_router(
+    transactions.router, prefix="/api/v1/transactions", tags=["Transacciones"]
+)
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 app.include_router(books.router, prefix="/api/v1/books", tags=["Libros"])
-app.include_router(settings_router_mod.router, prefix="/api/v1/settings", tags=["Configuración"])
+app.include_router(
+    settings_router_mod.router, prefix="/api/v1/settings", tags=["Configuración"]
+)
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

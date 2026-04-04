@@ -282,11 +282,20 @@ def ingest_node(state: AgentState) -> AgentState:
             append_log(state, "ingesta", "node_error", {"error": state["error"]})
             return state
 
-        append_log(state, "ingesta", "dispatch_selected", {
-            "doc_type": doc_type,
-            "extract_method": method_name,
-            "pathway_hint": "work_with_existing" if doc_type in _VIA_B_STATEMENT_TYPES else "build_from_scratch",
-        })
+        append_log(
+            state,
+            "ingesta",
+            "dispatch_selected",
+            {
+                "doc_type": doc_type,
+                "extract_method": method_name,
+                "pathway_hint": (
+                    "work_with_existing"
+                    if doc_type in _VIA_B_STATEMENT_TYPES
+                    else "build_from_scratch"
+                ),
+            },
+        )
 
         extract_method = getattr(gemini_client, method_name)
         interpreted_data = _gemini_with_retry_generic(

@@ -512,8 +512,10 @@ class TestReportsAPI:
         assert kwargs["report_params"]["end_date"] == _END
 
     def test_get_balance_with_company_nit(self, client):
-        with patch("app.api.v1.reports.invoke_reporting_pipeline",
-                   return_value=_pipeline_ok(_MOCK_BALANCE_RESULT)) as mock_fn:
+        with patch(
+            "app.api.v1.reports.invoke_reporting_pipeline",
+            return_value=_pipeline_ok(_MOCK_BALANCE_RESULT),
+        ) as mock_fn:
             resp = client.get(
                 "/api/v1/reports/balance",
                 params={"company_nit": "900.123.456-7"},
@@ -810,9 +812,9 @@ class TestReporteroNodeRAGEnrichment:
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
 
-        assert (
-            result_state.get("error") is None
-        ), f"RAG failure set error for report_type={report_type!r}"
+        assert result_state.get("error") is None, (
+            f"RAG failure set error for report_type={report_type!r}"
+        )
         assert result_state["result"]["status"] == "ok"
 
 

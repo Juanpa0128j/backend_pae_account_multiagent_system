@@ -33,6 +33,9 @@ def _dummy_get_llm_client():
 
 _fake_llm.LLMClient = _DummyLLMClient
 _fake_llm.get_llm_client = _dummy_get_llm_client
+# Provide a no-op stub so other test modules that import _compact_error_message
+# don't fail when the stub is already cached in sys.modules.
+_fake_llm._compact_error_message = lambda exc, max_len=240: str(exc)[:max_len]
 sys.modules.setdefault("app.core.llm_client", _fake_llm)
 
 _fake_config = types.ModuleType("app.core.config")
@@ -43,6 +46,13 @@ def _dummy_get_settings():
 
 
 _fake_config.get_settings = _dummy_get_settings
+# Provide settings object so database.py (imported transitively by other test
+# modules) can do `from app.core.config import settings` without failing.
+_fake_config.settings = SimpleNamespace(
+    llama_cloud_api_key="test-key",
+    database_url="postgresql://localhost/test",
+    app_env="test",
+)
 sys.modules.setdefault("app.core.config", _fake_config)
 
 from app.agents import ingest_agent  # noqa: E402

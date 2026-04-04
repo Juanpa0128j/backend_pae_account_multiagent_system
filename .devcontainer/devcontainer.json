@@ -28,6 +28,6 @@
             }
         }
     },
-    "postCreateCommand": "uv sync",
+    "postCreateCommand": "uv sync && uv run pre-commit install",
     "remoteUser": "vscode"
 }

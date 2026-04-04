@@ -50,9 +50,7 @@ DATABASE_URL = os.getenv(
 @pytest.fixture(scope="session")
 def engine():
     """Create a test database engine; skip test session if DB is unreachable."""
-    eng = create_engine(
-        DATABASE_URL, echo=False, connect_args={"connect_timeout": 2}
-    )
+    eng = create_engine(DATABASE_URL, echo=False, connect_args={"connect_timeout": 2})
     try:
         conn = eng.connect()
         conn.close()
@@ -424,9 +422,9 @@ class TestAccountingBooks:
         total_debito = sum(line.debito for line in lines)
         total_credito = sum(line.credito for line in lines)
 
-        assert (
-            total_debito == total_credito
-        ), f"Partida doble violation: D={total_debito} != C={total_credito}"
+        assert total_debito == total_credito, (
+            f"Partida doble violation: D={total_debito} != C={total_credito}"
+        )
         assert total_debito == Decimal("1190000")
 
     def test_libro_diario(self, db, posted_with_entries):

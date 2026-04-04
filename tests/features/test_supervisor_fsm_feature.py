@@ -27,6 +27,8 @@ MOCK_SESSION = "app.agents.persist_node.SessionLocal"
 MOCK_DB_SVC = "app.agents.persist_node.db_service"
 MOCK_TRIBUTARIO_GEMINI = "app.agents.tributario_agent.get_gemini_client"
 MOCK_TRIBUTARIO_RAG = "app.agents.tributario_agent.get_rag_service"
+MOCK_TRIBUTARIO_SESSION = "app.core.database.SessionLocal"
+MOCK_TRIBUTARIO_DB_SVC = "app.services.db_service.get_company_settings"
 MOCK_AUDITOR_GEMINI = "app.agents.auditor_agent.get_gemini_client"
 
 # ---------------------------------------------------------------------------
@@ -362,11 +364,22 @@ class TestPipeline2Routing:
         with (
             patch(MOCK_SESSION),
             patch(MOCK_DB_SVC),
+            patch(MOCK_TRIBUTARIO_SESSION),
+            patch(MOCK_TRIBUTARIO_DB_SVC) as mock_get_settings,
             patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc,
             patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag,
             patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini,
             patch(MOCK_AUDITOR_GEMINI) as mock_auditor_gemini,
         ):
+            mock_get_settings.return_value = MagicMock(
+                tasa_retefuente_servicios=0.11,
+                tasa_retefuente_bienes=0.03,
+                tasa_retefuente_arrendamiento=0.035,
+                tasa_reteica=0.0048,
+                tasa_iva_general=0.19,
+                tasa_ica=0.0048,
+                tasa_renta=0.33,
+            )
             mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
             _setup_tributario_mocks(mock_trib_rag, mock_trib_gemini)
             _setup_auditor_mock(mock_auditor_gemini)
@@ -412,6 +425,8 @@ class TestPipeline2Routing:
             patch("app.agents.contador_agent.get_gemini_client") as mock_gc,
             patch(MOCK_SESSION),
             patch(MOCK_DB_SVC),
+            patch(MOCK_TRIBUTARIO_SESSION),
+            patch(MOCK_TRIBUTARIO_DB_SVC) as mock_get_settings,
             patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc,
             patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag,
             patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini,
@@ -419,6 +434,15 @@ class TestPipeline2Routing:
         ):
             mock_gc.return_value.extract_contador_output.return_value = (
                 VALID_CONTADOR_OUTPUT
+            )
+            mock_get_settings.return_value = MagicMock(
+                tasa_retefuente_servicios=0.11,
+                tasa_retefuente_bienes=0.03,
+                tasa_retefuente_arrendamiento=0.035,
+                tasa_reteica=0.0048,
+                tasa_iva_general=0.19,
+                tasa_ica=0.0048,
+                tasa_renta=0.33,
             )
             mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
             _setup_tributario_mocks(mock_trib_rag, mock_trib_gemini)

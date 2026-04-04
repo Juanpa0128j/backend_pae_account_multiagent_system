@@ -497,7 +497,10 @@ class TestFullProcessPipeline:
         mock_puc_record = Mock()
         mock_puc_check.return_value = mock_puc_record
 
-        with patch("app.agents.persist_node._auto_derive_statements"), patch("app.agents.persist_node.SessionLocal") as mock_session:
+        with (
+            patch("app.agents.persist_node._auto_derive_statements"),
+            patch("app.agents.persist_node.SessionLocal") as mock_session,
+        ):
             mock_db = MagicMock()
             mock_session.return_value = mock_db
             mock_pending = Mock()
@@ -537,7 +540,10 @@ class TestFullProcessPipeline:
         mock_puc_record = Mock()
         mock_puc_check.return_value = mock_puc_record
 
-        with patch("app.agents.persist_node._auto_derive_statements"), patch("app.agents.persist_node.SessionLocal") as mock_session:
+        with (
+            patch("app.agents.persist_node._auto_derive_statements"),
+            patch("app.agents.persist_node.SessionLocal") as mock_session,
+        ):
             mock_db = MagicMock()
             mock_session.return_value = mock_db
             mock_pending = Mock()

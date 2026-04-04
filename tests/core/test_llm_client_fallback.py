@@ -1,6 +1,11 @@
+import sys
+
 from pydantic import BaseModel
 
-from app.core.llm_client import LLMClient, _compact_error_message
+# Remove any stub installed by test_ingest_agent so we always load the real module.
+sys.modules.pop("app.core.llm_client", None)
+
+from app.core.llm_client import LLMClient, _compact_error_message  # noqa: E402
 
 
 class _DemoSchema(BaseModel):

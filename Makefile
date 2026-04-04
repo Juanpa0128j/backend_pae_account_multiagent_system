@@ -34,6 +34,7 @@ help:
 
 install:
 	uv sync
+	uv run pre-commit install
 
 dev:
 	uv sync --group dev

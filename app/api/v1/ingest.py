@@ -164,7 +164,13 @@ async def upload_file(
             stripped = file_content.lstrip()
             if _ext == ".xml" and any(
                 stripped.startswith(prefix)
-                for prefix in (b"<?xml", b"<Invoice", b"<Credit", b"<Debit", b"\xef\xbb\xbf<?xml")
+                for prefix in (
+                    b"<?xml",
+                    b"<Invoice",
+                    b"<Credit",
+                    b"<Debit",
+                    b"\xef\xbb\xbf<?xml",
+                )
             ):
                 pass
             else:

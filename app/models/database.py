@@ -280,7 +280,9 @@ class TransactionPending(Base):
 
     # Core transaction data
     fecha = Column(DateTime(timezone=True), nullable=True)
-    company_nit = Column(String(20), nullable=True, index=True, comment="Owning company NIT (tenant)")
+    company_nit = Column(
+        String(20), nullable=True, index=True, comment="Owning company NIT (tenant)"
+    )
     nit_emisor = Column(String(20), nullable=True, index=True)
     nit_receptor = Column(String(20), nullable=True, index=True)
     total = Column(Numeric(15, 2), nullable=True)
@@ -323,7 +325,9 @@ class TransactionPosted(Base):
         nullable=False,
         index=True,
     )
-    company_nit = Column(String(20), nullable=True, index=True, comment="Owning company NIT (tenant)")
+    company_nit = Column(
+        String(20), nullable=True, index=True, comment="Owning company NIT (tenant)"
+    )
 
     # PUC classification
     cuenta_puc = Column(String(10), nullable=False, index=True)
@@ -391,7 +395,9 @@ class JournalEntryLine(Base):
     )
 
     fecha = Column(DateTime(timezone=True), nullable=False)
-    company_nit = Column(String(20), nullable=True, index=True, comment="Owning company NIT (tenant)")
+    company_nit = Column(
+        String(20), nullable=True, index=True, comment="Owning company NIT (tenant)"
+    )
     comprobante = Column(String(20), nullable=True, comment="Voucher/receipt number")
     cuenta_puc = Column(String(10), nullable=False, index=True)
     cuenta_nombre = Column(String(255), nullable=True)
@@ -488,7 +494,12 @@ class FinancialStatement(Base):
     period_start = Column(DateTime(timezone=True), nullable=True)
     period_end = Column(DateTime(timezone=True), nullable=True)
     entity_nit = Column(String(20), nullable=True)
-    source_mode = Column(String(20), nullable=False, server_default="direct", comment="direct | derived | derived_from_journal")
+    source_mode = Column(
+        String(20),
+        nullable=False,
+        server_default="direct",
+        comment="direct | derived | derived_from_journal",
+    )
     data = Column(JSONB, nullable=False, comment="Full parsed financial statement data")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

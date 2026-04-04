@@ -886,15 +886,15 @@ def _run_persist(state: AgentState) -> AgentState:
             "transaction_pending_id": pending_ids[0] if pending_ids else "",
             "transaction_posted_id": posted_ids[0] if posted_ids else "",
             "audit_approved": state.get("audit_approved"),
-            "audit_nivel_riesgo": auditor_out.get("nivel_riesgo")
-            if mode == "process"
-            else None,
-            "audit_puntaje_calidad": auditor_out.get("puntaje_calidad")
-            if mode == "process"
-            else None,
-            "audit_hallazgos_count": len(auditor_out.get("hallazgos", []))
-            if mode == "process"
-            else 0,
+            "audit_nivel_riesgo": (
+                auditor_out.get("nivel_riesgo") if mode == "process" else None
+            ),
+            "audit_puntaje_calidad": (
+                auditor_out.get("puntaje_calidad") if mode == "process" else None
+            ),
+            "audit_hallazgos_count": (
+                len(auditor_out.get("hallazgos", [])) if mode == "process" else 0
+            ),
         }
 
         if state.get("result") is not None:

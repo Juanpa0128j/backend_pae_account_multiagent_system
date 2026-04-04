@@ -43,7 +43,9 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
         try:
             normalized_company_nit = normalize_nit(company_nit)
         except ValueError as nit_err:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {nit_err}")
+            raise HTTPException(
+                status_code=422, detail=f"Invalid company_nit: {nit_err}"
+            )
 
     result = invoke_reporting_pipeline(
         report_type=report_type,
@@ -58,7 +60,9 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
 @router.get("/iva", response_model=IVAOutput)
 async def get_iva_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
 ):
     """
@@ -72,7 +76,9 @@ async def get_iva_report(
 @router.get("/withholdings", response_model=WithholdingsOutput)
 async def get_withholdings_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
 ):
     """

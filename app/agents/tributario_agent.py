@@ -259,7 +259,9 @@ def tributario_node(state: AgentState) -> AgentState:
         and not str(a.get("cuenta_puc", "")).startswith("2")
     ]
     base_gravable = (
-        sum(non_tax_debits, Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        sum(non_tax_debits, Decimal("0")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
         if non_tax_debits
         else Decimal(str(contador_output.get("total_debitos", 0)))
     )

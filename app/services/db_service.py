@@ -530,9 +530,7 @@ def check_duplicates(
 def validate_puc_exists(db: Session, codigo: str) -> Optional[CuentaPUC]:
     """Validate a PUC code exists and is active."""
     return (
-        db.query(CuentaPUC)
-        .filter(CuentaPUC.codigo == codigo, CuentaPUC.activa)
-        .first()
+        db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo, CuentaPUC.activa).first()
     )
 
 
@@ -1031,7 +1029,7 @@ def financial_statements_exist(
     types: list[str],
 ) -> bool:
     """Return True if all requested statement types exist for this company and period window.
-    
+
     Checks that statements match BOTH period_start and period_end to exclude cross-period
     overlaps that might appear in overlapping but different fiscal periods.
     """
@@ -1112,9 +1110,15 @@ def get_pnl(
     utilidad_neta = utilidad_bruta - totals[5]
 
     return {
-        "ingresos": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[4].items())],
-        "gastos": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[5].items())],
-        "costo_ventas": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[6].items())],
+        "ingresos": [
+            {"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[4].items())
+        ],
+        "gastos": [
+            {"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[5].items())
+        ],
+        "costo_ventas": [
+            {"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[6].items())
+        ],
         "total_ingresos": float(totals[4]),
         "total_gastos": float(totals[5]),
         "total_costo_ventas": float(totals[6]),

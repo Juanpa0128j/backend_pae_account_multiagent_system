@@ -82,8 +82,12 @@ class ContadorOutputGemini(BaseModel):
     asientos: List[AsientoContableGemini] = Field(
         description="Journal entries (at least one debit and one credit)"
     )
-    total_debitos: Decimal = Field(default=Decimal("0"), description="Sum of all debit entries")
-    total_creditos: Decimal = Field(default=Decimal("0"), description="Sum of all credit entries")
+    total_debitos: Decimal = Field(
+        default=Decimal("0"), description="Sum of all debit entries"
+    )
+    total_creditos: Decimal = Field(
+        default=Decimal("0"), description="Sum of all credit entries"
+    )
 
     @field_validator("total_debitos", "total_creditos", mode="before")
     @classmethod
@@ -122,25 +126,31 @@ class AuditorHallazgoGemini(BaseModel):
 
     codigo: str = Field(default="AUD-000", description="Finding code in format AUD-XXX")
     severidad: Literal["info", "advertencia", "error", "critico"] = Field(
-        default="advertencia",
-        description="Finding severity level"
+        default="advertencia", description="Finding severity level"
     )
     descripcion: str = Field(default="", description="Clear description of the finding")
     campo_afectado: Optional[str] = Field(
         None, description="Campo contable afectado (opcional)"
     )
-    recomendacion: str = Field(default="", description="Recomendacion para corregir el hallazgo")
+    recomendacion: str = Field(
+        default="", description="Recomendacion para corregir el hallazgo"
+    )
 
 
 class AuditorOutputGemini(BaseModel):
     """AuditorOutput-compatible schema for structured output."""
 
-    fecha_auditoria: str = Field(default="1970-01-01", description="Fecha de auditoria en formato YYYY-MM-DD")
-    documento_referencia: str = Field(default="sin referencia", description="Referencia del documento auditado")
-    aprobado: bool = Field(default=False, description="True cuando el audit pasa sin bloqueadores")
+    fecha_auditoria: str = Field(
+        default="1970-01-01", description="Fecha de auditoria en formato YYYY-MM-DD"
+    )
+    documento_referencia: str = Field(
+        default="sin referencia", description="Referencia del documento auditado"
+    )
+    aprobado: bool = Field(
+        default=False, description="True cuando el audit pasa sin bloqueadores"
+    )
     nivel_riesgo: Literal["bajo", "medio", "alto", "critico"] = Field(
-        default="medio",
-        description="Nivel de riesgo global de la transaccion"
+        default="medio", description="Nivel de riesgo global de la transaccion"
     )
     hallazgos: List[AuditorHallazgoGemini] = Field(
         default_factory=list,
