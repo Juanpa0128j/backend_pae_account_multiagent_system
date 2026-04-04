@@ -191,6 +191,26 @@ Staged transactions → Contador (PUC classification) → Tributario (tax calc) 
 ### Pipeline 3 — Reporting (`mode="reporting"`)
 Generates balance / P&L reports via the Reportero agent.
 
+### Financial Statements Matrix (Direct vs Derived)
+
+| Source document | Target statement | Mode |
+|---|---|---|
+| `balance_general` upload (Vía B) | Balance General | `direct` |
+| `estado_resultados` upload (Vía B) | Estado de Resultados | `direct` |
+| `libro_auxiliar` upload (Vía B) | Libro Auxiliar | `direct` |
+| `flujo_de_caja` upload (Vía B) | Flujo de Caja | `direct` |
+| `cambios_patrimonio` upload (Vía B) | Cambios en Patrimonio | `direct` |
+| `notas_estados_financieros` upload (Vía B) | Notas a los EEFF | `direct` |
+| Persisted `balance_general` + `estado_resultados` + `libro_auxiliar` (same company + period) | Flujo de Caja | `derived` |
+| Persisted `balance_general` + `estado_resultados` + `libro_auxiliar` (same company + period) | Cambios en Patrimonio | `derived` |
+| Persisted `balance_general` + `estado_resultados` + `libro_auxiliar` (same company + period) | Notas a los EEFF | `derived` |
+
+Rules:
+- Preferred mode for `flujo_de_caja`, `cambios_patrimonio`, and `notas_estados_financieros` is `derived`.
+- If required inputs (`balance_general`, `estado_resultados`, `libro_auxiliar`) are missing for the selected company and period, the system returns a clear business error (no automatic fallback).
+- Direct fallback remains available only when the user explicitly uploads one of those target documents through Vía B.
+- Derived outputs are tracked with explicit lineage links in `financial_statement_lineage`.
+
 > See `docs/IMPLEMENTATION_STATUS.md` for the full Phase 3 roadmap.
 
 ---

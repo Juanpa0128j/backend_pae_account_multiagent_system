@@ -6,29 +6,31 @@ All DB operations used by agents, APIs, and the seed script go through here.
 # SQLAlchemy Column assignments are safe at runtime; Pylance flags them incorrectly.
 
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func, and_, cast, Integer, extract
+from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
 
+from app.core.logger import get_logger
 from app.models.database import (
+    AuditLog,
     CompanySettings,
-    ReteicaTarifa,
+    CuentaPUC,
+    FinancialStatement,
+    FinancialStatementLineage,
     IngestJob,
     IngestStatus,
-    TransactionPending,
-    TransactionPosted,
-    TransactionStatus,
     JournalEntryLine,
     ProcessJob,
     ProcessStatus,
-    AuditLog,
-    CuentaPUC,
+    ReteicaTarifa,
     Tercero,
+    TransactionPending,
+    TransactionPosted,
+    TransactionStatus,
 )
-from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -54,6 +56,7 @@ def _commit_or_flush(db: Session, commit: bool) -> None:
 
 # ─── IngestJob ───────────────────────────────────────────────────
 
+
 def create_ingest_job(
     db: Session, file_name: str, file_path: str = None, commit: bool = True
 ) -> IngestJob:
@@ -66,7 +69,9 @@ def create_ingest_job(
     )
     db.add(job)
     # Stage audit log before the single commit/flush so job + log are atomic
-    create_audit_log(db, "ingest_created", job.id, "ingest", {"file_name": file_name}, commit=False)
+    create_audit_log(
+        db, "ingest_created", job.id, "ingest", {"file_name": file_name}, commit=False
+    )
     _commit_or_flush(db, commit)
     db.refresh(job)
     logger.info(f"Created IngestJob: {job.id}")
@@ -79,6 +84,8 @@ def update_ingest_job(
     status: IngestStatus,
     raw_preview: Dict = None,
     extraction_errors: List[str] = None,
+    document_type: str = None,
+    pathway: str = None,
     commit: bool = True,
 ) -> Optional[IngestJob]:
     """Update an ingest job's status and preview data."""
@@ -91,6 +98,10 @@ def update_ingest_job(
         job.raw_preview = raw_preview
     if extraction_errors is not None:
         job.extraction_errors = extraction_errors
+    if document_type is not None:
+        job.document_type = document_type
+    if pathway is not None:
+        job.pathway = pathway
     if status in (IngestStatus.COMPLETED, IngestStatus.FAILED):
         job.completed_at = datetime.now(timezone.utc)
 
@@ -106,6 +117,7 @@ def get_ingest_job(db: Session, ingest_id: str) -> Optional[IngestJob]:
 
 # ─── TransactionPending ─────────────────────────────────────────
 
+
 def create_transaction_pending(
     db: Session,
     ingest_id: str,
@@ -116,12 +128,14 @@ def create_transaction_pending(
     descripcion: str = None,
     items: List[Dict] = None,
     raw_data: Dict = None,
+    company_nit: str = None,
     commit: bool = True,
 ) -> TransactionPending:
     """Create a pending transaction from extracted data."""
     txn = TransactionPending(
         id=_generate_id("txn_"),
         ingest_id=ingest_id,
+        company_nit=company_nit,
         fecha=fecha,
         nit_emisor=nit_emisor,
         nit_receptor=nit_receptor,
@@ -133,10 +147,17 @@ def create_transaction_pending(
     )
     db.add(txn)
     # Stage audit log before the single commit/flush so txn + log are atomic
-    create_audit_log(db, "transaction_pending_created", txn.id, "transaction", {
-        "ingest_id": ingest_id,
-        "total": str(total) if total else None,
-    }, commit=False)
+    create_audit_log(
+        db,
+        "transaction_pending_created",
+        txn.id,
+        "transaction",
+        {
+            "ingest_id": ingest_id,
+            "total": str(total) if total else None,
+        },
+        commit=False,
+    )
     _commit_or_flush(db, commit)
     db.refresh(txn)
     return txn
@@ -144,9 +165,11 @@ def create_transaction_pending(
 
 def get_transactions_by_ingest(db: Session, ingest_id: str) -> List[TransactionPending]:
     """Get all pending transactions for an ingest job."""
-    return db.query(TransactionPending).filter(
-        TransactionPending.ingest_id == ingest_id
-    ).all()
+    return (
+        db.query(TransactionPending)
+        .filter(TransactionPending.ingest_id == ingest_id)
+        .all()
+    )
 
 
 def get_transactions_by_status(
@@ -159,10 +182,17 @@ def get_transactions_by_status(
     query = db.query(TransactionPending)
     if status:
         query = query.filter(TransactionPending.status == status)
-    return query.order_by(TransactionPending.created_at.desc()).offset(offset).limit(limit).all()
+    return (
+        query.order_by(TransactionPending.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
-def get_transactions_by_nit(db: Session, nit: str, limit: int = 10) -> List[TransactionPosted]:
+def get_transactions_by_nit(
+    db: Session, nit: str, limit: int = 10
+) -> List[TransactionPosted]:
     """Get posted transactions by NIT emisor (for agent historical lookup)."""
     return (
         db.query(TransactionPosted)
@@ -188,6 +218,7 @@ def update_transaction_status(
 
 # ─── TransactionPosted ──────────────────────────────────────────
 
+
 def create_transaction_posted(
     db: Session,
     transaction_pending_id: str,
@@ -202,12 +233,14 @@ def create_transaction_posted(
     journal_entries_json: List[Dict] = None,
     tax_references: List[str] = None,
     agent_reasoning: Dict = None,
+    company_nit: str = None,
     commit: bool = True,
 ) -> TransactionPosted:
     """Create a fully processed posted transaction."""
     posted = TransactionPosted(
         id=_generate_id("posted_"),
         transaction_pending_id=transaction_pending_id,
+        company_nit=company_nit,
         cuenta_puc=cuenta_puc,
         puc_descripcion=puc_descripcion,
         retefuente=retefuente,
@@ -224,23 +257,33 @@ def create_transaction_posted(
     db.add(posted)
 
     # Also update the pending transaction status
-    pending = db.query(TransactionPending).filter(
-        TransactionPending.id == transaction_pending_id
-    ).first()
+    pending = (
+        db.query(TransactionPending)
+        .filter(TransactionPending.id == transaction_pending_id)
+        .first()
+    )
     if pending:
         pending.status = TransactionStatus.POSTED
 
     # Stage audit log before the single commit/flush so posted + log are atomic
-    create_audit_log(db, "transaction_posted", posted.id, "transaction", {
-        "cuenta_puc": cuenta_puc,
-        "pending_id": transaction_pending_id,
-    }, commit=False)
+    create_audit_log(
+        db,
+        "transaction_posted",
+        posted.id,
+        "transaction",
+        {
+            "cuenta_puc": cuenta_puc,
+            "pending_id": transaction_pending_id,
+        },
+        commit=False,
+    )
     _commit_or_flush(db, commit)
     db.refresh(posted)
     return posted
 
 
 # ─── JournalEntryLine ───────────────────────────────────────────
+
 
 def _parse_fecha(value) -> datetime:
     """Ensure fecha is a timezone-aware datetime, parsing strings if needed."""
@@ -265,6 +308,7 @@ def create_journal_entry_lines(
     transaction_posted_id: str,
     entries: List[Dict[str, Any]],
     commit: bool = True,
+    company_nit: str = None,
 ) -> List[JournalEntryLine]:
     """Create normalized journal entry lines for a posted transaction."""
     lines = []
@@ -272,6 +316,7 @@ def create_journal_entry_lines(
         line = JournalEntryLine(
             transaction_posted_id=transaction_posted_id,
             fecha=_parse_fecha(entry.get("fecha", datetime.now(timezone.utc))),
+            company_nit=company_nit,
             comprobante=entry.get("comprobante"),
             cuenta_puc=entry["cuenta"],
             cuenta_nombre=entry.get("descripcion", ""),
@@ -293,13 +338,17 @@ def create_journal_entry_lines(
 
 # ─── Accounting Books ───────────────────────────────────────────
 
+
 def get_daily_journal(
     db: Session,
     start_date: datetime = None,
     end_date: datetime = None,
+    company_nit: str = None,
 ) -> List[JournalEntryLine]:
     """Daily Journal — all journal entries in chronological order."""
     query = db.query(JournalEntryLine)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
@@ -311,6 +360,7 @@ def get_general_ledger(
     db: Session,
     start_date: datetime = None,
     end_date: datetime = None,
+    company_nit: str = None,
 ) -> List[Dict]:
     """
     Libro Mayor — aggregated by cuenta_puc.
@@ -330,6 +380,8 @@ def get_general_ledger(
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
         query = query.filter(JournalEntryLine.fecha <= end_date)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
 
     results = query.order_by(JournalEntryLine.cuenta_puc).all()
 
@@ -350,6 +402,7 @@ def get_subsidiary_journal(
     account: str,
     start_date: datetime = None,
     end_date: datetime = None,
+    company_nit: str = None,
 ) -> List[JournalEntryLine]:
     """Subsidiary journal — detail for a specific account."""
     query = db.query(JournalEntryLine).filter(JournalEntryLine.cuenta_puc == account)
@@ -357,10 +410,14 @@ def get_subsidiary_journal(
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
         query = query.filter(JournalEntryLine.fecha <= end_date)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
     return query.order_by(JournalEntryLine.fecha).all()
 
 
-def get_balance_sheet(db: Session, cutoff_date: datetime = None) -> Dict:
+def get_balance_sheet(
+    db: Session, cutoff_date: datetime = None, company_nit: str = None
+) -> Dict:
     """
     Balance Sheet (Statement of Financial Position).
     Assets (class 1) = Liabilities (class 2) + Equity (class 3)
@@ -370,11 +427,20 @@ def get_balance_sheet(db: Session, cutoff_date: datetime = None) -> Dict:
     query = db.query(JournalEntryLine)
     if cutoff_date:
         query = query.filter(JournalEntryLine.fecha <= cutoff_date)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
 
     # Group by first digit of cuenta_puc (clase)
     lines = query.all()
 
-    totals = {1: Decimal("0"), 2: Decimal("0"), 3: Decimal("0"), 4: Decimal("0"), 5: Decimal("0"), 6: Decimal("0")}
+    totals = {
+        1: Decimal("0"),
+        2: Decimal("0"),
+        3: Decimal("0"),
+        4: Decimal("0"),
+        5: Decimal("0"),
+        6: Decimal("0"),
+    }
 
     for line in lines:
         if not line.cuenta_puc:
@@ -383,9 +449,13 @@ def get_balance_sheet(db: Session, cutoff_date: datetime = None) -> Dict:
         if clase in totals:
             # Natural balance: Assets/Expenses are debit-nature, Liabilities/Equity/Revenue are credit-nature
             if clase in (1, 5, 6):  # Debit nature
-                totals[clase] += (line.debito or Decimal("0")) - (line.credito or Decimal("0"))
+                totals[clase] += (line.debito or Decimal("0")) - (
+                    line.credito or Decimal("0")
+                )
             else:  # Credit nature (2, 3, 4)
-                totals[clase] += (line.credito or Decimal("0")) - (line.debito or Decimal("0"))
+                totals[clase] += (line.credito or Decimal("0")) - (
+                    line.debito or Decimal("0")
+                )
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
     net_profit = totals[4] - totals[5] - totals[6]
@@ -405,6 +475,7 @@ def get_balance_sheet(db: Session, cutoff_date: datetime = None) -> Dict:
 
 # ─── Search & Duplicate Detection ───────────────────────────────
 
+
 def search_transactions(
     db: Session,
     nit: str = None,
@@ -417,7 +488,8 @@ def search_transactions(
     query = db.query(TransactionPending)
     if nit:
         query = query.filter(
-            (TransactionPending.nit_emisor == nit) | (TransactionPending.nit_receptor == nit)
+            (TransactionPending.nit_emisor == nit)
+            | (TransactionPending.nit_receptor == nit)
         )
     if fecha_inicio:
         query = query.filter(TransactionPending.fecha >= fecha_inicio)
@@ -453,6 +525,7 @@ def check_duplicates(
 
 # ─── PUC ─────────────────────────────────────────────────────────
 
+
 def validate_puc_exists(db: Session, codigo: str) -> Optional[CuentaPUC]:
     """Validate a PUC code exists and is active."""
     return (
@@ -464,7 +537,12 @@ def validate_puc_exists(db: Session, codigo: str) -> Optional[CuentaPUC]:
 
 def get_all_puc(db: Session) -> List[CuentaPUC]:
     """Get all active PUC accounts."""
-    return db.query(CuentaPUC).filter(CuentaPUC.activa == True).order_by(CuentaPUC.codigo).all()
+    return (
+        db.query(CuentaPUC)
+        .filter(CuentaPUC.activa == True)
+        .order_by(CuentaPUC.codigo)
+        .all()
+    )
 
 
 def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC]:
@@ -474,7 +552,7 @@ def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC
         .filter(
             CuentaPUC.activa == True,
             (CuentaPUC.codigo.ilike(f"%{search_term}%"))
-            | (CuentaPUC.nombre.ilike(f"%{search_term}%"))
+            | (CuentaPUC.nombre.ilike(f"%{search_term}%")),
         )
         .limit(limit)
         .all()
@@ -482,6 +560,7 @@ def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC
 
 
 # ─── ProcessJob ──────────────────────────────────────────────────
+
 
 def create_process_job(db: Session, ingest_id: str, commit: bool = True) -> ProcessJob:
     """Create a new processing job."""
@@ -555,7 +634,7 @@ def get_active_process_job_for_ingest(
 ) -> Optional[ProcessJob]:
     """
     Get an active (non-failed) ProcessJob for the given ingest_id.
-    
+
     Returns the latest ProcessJob that is not FAILED or CANCELLED.
     This prevents duplicate processing of the same ingest job.
     """
@@ -563,14 +642,18 @@ def get_active_process_job_for_ingest(
         db.query(ProcessJob)
         .filter(
             ProcessJob.ingest_id == ingest_id,
-            ProcessJob.status.in_([ProcessStatus.QUEUED, ProcessStatus.RUNNING, ProcessStatus.COMPLETED]),
+            ProcessJob.status.in_(
+                [ProcessStatus.QUEUED, ProcessStatus.RUNNING, ProcessStatus.COMPLETED]
+            ),
         )
         .order_by(ProcessJob.created_at.desc())
         .first()
     )
 
 
-def get_process_result_transactions(db: Session, ingest_id: str) -> List[Dict[str, Any]]:
+def get_process_result_transactions(
+    db: Session, ingest_id: str
+) -> List[Dict[str, Any]]:
     """Get final posted transaction payload for a given ingest job."""
     rows = (
         db.query(TransactionPending, TransactionPosted)
@@ -589,6 +672,7 @@ def get_process_result_transactions(db: Session, ingest_id: str) -> List[Dict[st
                 "transaction_pending_id": pending.id,
                 "transaction_posted_id": posted.id,
                 "date": pending.fecha.isoformat() if pending.fecha else None,
+                "company_nit": pending.company_nit,
                 "issuer_nit": pending.nit_emisor,
                 "receiver_nit": pending.nit_receptor,
                 "description": pending.descripcion,
@@ -610,6 +694,7 @@ def get_process_result_transactions(db: Session, ingest_id: str) -> List[Dict[st
 
 # ─── AuditLog ────────────────────────────────────────────────────
 
+
 def create_audit_log(
     db: Session,
     action: str,
@@ -630,7 +715,86 @@ def create_audit_log(
     return log
 
 
+# ─── Financial Statements (Vía B + derived) ───────────────────────────────
+
+
+def create_financial_statement(
+    db: Session,
+    *,
+    ingest_id: str,
+    statement_type: str,
+    data: Dict[str, Any],
+    entity_nit: str = None,
+    period_start: datetime = None,
+    period_end: datetime = None,
+    source_mode: str = "direct",
+    commit: bool = True,
+) -> FinancialStatement:
+    row = FinancialStatement(
+        id=_generate_id("fs_"),
+        ingest_id=ingest_id,
+        statement_type=statement_type,
+        period_start=period_start,
+        period_end=period_end,
+        entity_nit=entity_nit,
+        source_mode=source_mode,
+        data=data,
+    )
+    db.add(row)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def create_financial_statement_lineage(
+    db: Session,
+    *,
+    target_statement_id: str,
+    source_statement_id: str,
+    relation_type: str = "input",
+    commit: bool = True,
+) -> FinancialStatementLineage:
+    row = FinancialStatementLineage(
+        id=_generate_id("fsl_"),
+        target_statement_id=target_statement_id,
+        source_statement_id=source_statement_id,
+        relation_type=relation_type,
+    )
+    db.add(row)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def get_financial_statements(
+    db: Session,
+    *,
+    company_nit: str,
+    statement_type: str | None = None,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+    source_mode: str | None = None,
+) -> List[FinancialStatement]:
+    query = db.query(FinancialStatement).filter(
+        FinancialStatement.entity_nit == company_nit
+    )
+
+    if statement_type:
+        query = query.filter(FinancialStatement.statement_type == statement_type)
+    if source_mode:
+        query = query.filter(FinancialStatement.source_mode == source_mode)
+    if period_start:
+        query = query.filter(FinancialStatement.period_start >= period_start)
+    if period_end:
+        query = query.filter(FinancialStatement.period_end <= period_end)
+
+    return query.order_by(
+        FinancialStatement.period_end.desc(), FinancialStatement.created_at.desc()
+    ).all()
+
+
 # ─── Terceros ────────────────────────────────────────────────────
+
 
 def get_or_create_third_party(
     db: Session,
@@ -643,6 +807,7 @@ def get_or_create_third_party(
     tercero = db.query(Tercero).filter(Tercero.nit == nit).first()
     if not tercero:
         from app.models.database import TerceroTipo
+
         tercero = Tercero(
             nit=nit,
             razon_social=business_name,
@@ -656,12 +821,15 @@ def get_or_create_third_party(
 
 # ─── Company Settings ─────────────────────────────────────────────────────────
 
+
 def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
     """Return the CompanySettings row for the given NIT, or None if not found."""
     return db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
 
 
-def upsert_company_settings(db: Session, nit: str, data: dict, commit: bool = True) -> CompanySettings:
+def upsert_company_settings(
+    db: Session, nit: str, data: dict, commit: bool = True
+) -> CompanySettings:
     """Create or fully replace the CompanySettings row for the given NIT."""
     row = db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
     if row:
@@ -680,41 +848,98 @@ def upsert_company_settings(db: Session, nit: str, data: dict, commit: bool = Tr
 # Maps CIIU code prefixes to ISIC/CIIU section letters.
 # This covers the most common sections used in Colombia.
 _CIIU_SECTION_MAP: dict[str, str] = {
-    "01": "A", "02": "A", "03": "A",               # Agricultura, ganadería
-    "05": "B", "06": "B", "07": "B", "08": "B",    # Minería
-    "10": "C", "11": "C", "12": "C", "13": "C",    # Industria manufacturera
-    "14": "C", "15": "C", "16": "C", "17": "C",
-    "18": "C", "19": "C", "20": "C", "21": "C",
-    "22": "C", "23": "C", "24": "C", "25": "C",
-    "26": "C", "27": "C", "28": "C", "29": "C",
-    "30": "C", "31": "C", "32": "C", "33": "C",
-    "35": "D",                                       # Electricidad, gas
-    "36": "E", "37": "E", "38": "E", "39": "E",    # Agua y saneamiento
-    "41": "F", "42": "F", "43": "F",               # Construcción
-    "45": "G", "46": "G", "47": "G",               # Comercio
-    "49": "H", "50": "H", "51": "H", "52": "H",   # Transporte
+    "01": "A",
+    "02": "A",
+    "03": "A",  # Agricultura, ganadería
+    "05": "B",
+    "06": "B",
+    "07": "B",
+    "08": "B",  # Minería
+    "10": "C",
+    "11": "C",
+    "12": "C",
+    "13": "C",  # Industria manufacturera
+    "14": "C",
+    "15": "C",
+    "16": "C",
+    "17": "C",
+    "18": "C",
+    "19": "C",
+    "20": "C",
+    "21": "C",
+    "22": "C",
+    "23": "C",
+    "24": "C",
+    "25": "C",
+    "26": "C",
+    "27": "C",
+    "28": "C",
+    "29": "C",
+    "30": "C",
+    "31": "C",
+    "32": "C",
+    "33": "C",
+    "35": "D",  # Electricidad, gas
+    "36": "E",
+    "37": "E",
+    "38": "E",
+    "39": "E",  # Agua y saneamiento
+    "41": "F",
+    "42": "F",
+    "43": "F",  # Construcción
+    "45": "G",
+    "46": "G",
+    "47": "G",  # Comercio
+    "49": "H",
+    "50": "H",
+    "51": "H",
+    "52": "H",  # Transporte
     "53": "H",
-    "55": "I", "56": "I",                           # Alojamiento, restaurantes
-    "58": "J", "59": "J", "60": "J", "61": "J",   # Información, tecnología
-    "62": "J", "63": "J",
-    "64": "K", "65": "K", "66": "K",               # Financiero, seguros
-    "68": "L",                                       # Inmobiliario
-    "69": "M", "70": "M", "71": "M", "72": "M",   # Profesional, científico
-    "73": "M", "74": "M", "75": "M",
-    "77": "N", "78": "N", "79": "N", "80": "N",   # Servicios administrativos
-    "81": "N", "82": "N",
-    "84": "O",                                       # Administración pública
-    "85": "P",                                       # Educación
-    "86": "Q", "87": "Q", "88": "Q",               # Salud
-    "90": "R", "91": "R", "92": "R", "93": "R",   # Entretenimiento
-    "94": "S", "95": "S", "96": "S",               # Otras actividades de servicios
-    "97": "T",                                       # Hogares
+    "55": "I",
+    "56": "I",  # Alojamiento, restaurantes
+    "58": "J",
+    "59": "J",
+    "60": "J",
+    "61": "J",  # Información, tecnología
+    "62": "J",
+    "63": "J",
+    "64": "K",
+    "65": "K",
+    "66": "K",  # Financiero, seguros
+    "68": "L",  # Inmobiliario
+    "69": "M",
+    "70": "M",
+    "71": "M",
+    "72": "M",  # Profesional, científico
+    "73": "M",
+    "74": "M",
+    "75": "M",
+    "77": "N",
+    "78": "N",
+    "79": "N",
+    "80": "N",  # Servicios administrativos
+    "81": "N",
+    "82": "N",
+    "84": "O",  # Administración pública
+    "85": "P",  # Educación
+    "86": "Q",
+    "87": "Q",
+    "88": "Q",  # Salud
+    "90": "R",
+    "91": "R",
+    "92": "R",
+    "93": "R",  # Entretenimiento
+    "94": "S",
+    "95": "S",
+    "96": "S",  # Otras actividades de servicios
+    "97": "T",  # Hogares
 }
 
 
 def _normalize_municipio(ciudad: str) -> str:
     """Normalize a city name for DB lookup (lowercase, remove accents)."""
     import unicodedata
+
     normalized = unicodedata.normalize("NFD", ciudad.lower().strip())
     return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
 
@@ -781,9 +1006,11 @@ def get_reteica_tarifa(db: Session, ciudad: str, ciiu: str) -> Optional[float]:
 
 # ─── VectorDocument ───────────────────────────────────────────────────────────
 
+
 def count_vector_documents(db: Session, collection_name: str) -> int:
     """Return document count for a collection (health/readiness check)."""
     from sqlalchemy import text as _text  # noqa: PLC0415
+
     result = db.execute(
         _text("SELECT COUNT(*) FROM vector_documents WHERE collection_name = :c"),
         {"c": collection_name},
@@ -791,7 +1018,140 @@ def count_vector_documents(db: Session, collection_name: str) -> int:
     return int(result or 0)
 
 
+# ─── Financial Statement Helpers ──────────────────────────────────────────────
+
+
+def financial_statements_exist(
+    db: Session,
+    *,
+    company_nit: str,
+    period_start: datetime,
+    period_end: datetime,
+    types: list[str],
+) -> bool:
+    """Return True if all requested statement types exist for this company and period window.
+    
+    Checks that statements match BOTH period_start and period_end to exclude cross-period
+    overlaps that might appear in overlapping but different fiscal periods.
+    """
+    count = (
+        db.query(func.count(distinct(FinancialStatement.statement_type)))
+        .filter(FinancialStatement.entity_nit == company_nit)
+        .filter(FinancialStatement.period_start >= period_start)
+        .filter(FinancialStatement.period_start < period_start + timedelta(days=1))
+        .filter(FinancialStatement.period_end >= period_end - timedelta(days=1))
+        .filter(FinancialStatement.period_end <= period_end + timedelta(days=1))
+        .filter(FinancialStatement.statement_type.in_(types))
+        .scalar()
+    )
+    return count >= len(types)
+
+
+def get_journal_entry_period(
+    db: Session,
+    *,
+    company_nit: str,
+) -> tuple[datetime, datetime] | None:
+    """Return (min_fecha, max_fecha) from JournalEntryLine for the company, or None."""
+    row = (
+        db.query(
+            func.min(JournalEntryLine.fecha).label("min_fecha"),
+            func.max(JournalEntryLine.fecha).label("max_fecha"),
+        )
+        .filter(JournalEntryLine.company_nit == company_nit)
+        .first()
+    )
+    if row is None or row.min_fecha is None:
+        return None
+    return (row.min_fecha, row.max_fecha)
+
+
+def get_pnl(
+    db: Session,
+    *,
+    company_nit: str,
+    start_date: datetime = None,
+    end_date: datetime = None,
+) -> Dict[str, Any]:
+    """Income Statement (Estado de Resultados) for a company and period.
+
+    Aggregates revenue (class 4), expenses (class 5), and cost of sales (class 6)
+    from JournalEntryLine rows. Returns a dict with ingresos, gastos, costo_ventas,
+    utilidad_bruta, and utilidad_neta.
+    """
+    query = db.query(JournalEntryLine).filter(
+        JournalEntryLine.company_nit == company_nit
+    )
+    if start_date:
+        query = query.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        query = query.filter(JournalEntryLine.fecha <= end_date)
+
+    lines = query.all()
+
+    totals: dict[int, Decimal] = {4: Decimal("0"), 5: Decimal("0"), 6: Decimal("0")}
+    detail: dict[int, dict[str, Decimal]] = {4: {}, 5: {}, 6: {}}
+
+    for line in lines:
+        if not line.cuenta_puc:
+            continue
+        clase = int(line.cuenta_puc[0]) if line.cuenta_puc[0].isdigit() else None
+        if clase not in totals:
+            continue
+        # Revenue (4) is credit-nature; expenses (5,6) are debit-nature
+        if clase == 4:
+            amount = (line.credito or Decimal("0")) - (line.debito or Decimal("0"))
+        else:
+            amount = (line.debito or Decimal("0")) - (line.credito or Decimal("0"))
+        totals[clase] += amount
+        cuenta = line.cuenta_puc
+        detail[clase][cuenta] = detail[clase].get(cuenta, Decimal("0")) + amount
+
+    utilidad_bruta = totals[4] - totals[6]
+    utilidad_neta = utilidad_bruta - totals[5]
+
+    return {
+        "ingresos": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[4].items())],
+        "gastos": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[5].items())],
+        "costo_ventas": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[6].items())],
+        "total_ingresos": float(totals[4]),
+        "total_gastos": float(totals[5]),
+        "total_costo_ventas": float(totals[6]),
+        "utilidad_bruta": float(utilidad_bruta),
+        "utilidad_neta": float(utilidad_neta),
+    }
+
+
+def get_journal_entry_lines(
+    db: Session,
+    *,
+    company_nit: str,
+    start_date: datetime = None,
+    end_date: datetime = None,
+) -> List[Dict[str, Any]]:
+    """Return JournalEntryLine rows for a company as list of dicts."""
+    q = db.query(JournalEntryLine).filter(JournalEntryLine.company_nit == company_nit)
+    if start_date:
+        q = q.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        q = q.filter(JournalEntryLine.fecha <= end_date)
+    rows = q.order_by(JournalEntryLine.fecha).all()
+    return [
+        {
+            "fecha": r.fecha.isoformat() if r.fecha else None,
+            "comprobante": r.comprobante,
+            "cuenta_puc": r.cuenta_puc,
+            "tercero_nit": r.tercero_nit,
+            "descripcion": r.descripcion,
+            "debito": str(r.debito) if r.debito is not None else "0",
+            "credito": str(r.credito) if r.credito is not None else "0",
+        }
+        for r in rows
+    ]
+
+
 # ─── Reportero: Analytics & Dashboard Queries ─────────────────────────────────
+
 
 def get_balance_sheet_for_period(
     db: Session,
@@ -1027,4 +1387,3 @@ def get_recent_activity(db: Session, limit: int = 10) -> List[Dict[str, Any]]:
         }
         for log in logs
     ]
-

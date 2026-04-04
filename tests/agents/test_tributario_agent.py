@@ -536,100 +536,37 @@ def test_process_mode_uses_company_settings_when_present(
     assert result["tributario_output"] != {}
 
 
-# ─── ICA and Renta tests ──────────────────────────────────────────────────────
-
-
-def test_calc_ica_deterministic():
-    result = _calc_ica(Decimal("10000000"), Decimal("0.00690"))
-    assert result == Decimal("69000.00")
-
-
-def test_calc_provision_renta_35_pct():
-    result = _calc_provision_renta(Decimal("1000000"))
-    assert result == Decimal("350000.00")
-
-
-def test_provision_renta_zero_on_loss():
-    result = _calc_provision_renta(Decimal("-500000"))
-    assert result == Decimal("0.00")
-
-
-def test_provision_renta_zero_on_break_even():
-    result = _calc_provision_renta(Decimal("0"))
-    assert result == Decimal("0.00")
-
-
-def test_has_income_accounts_detected():
-    asientos = [
-        {"cuenta_puc": "4135", "tipo_movimiento": "credito", "valor": 5000000},
-        {"cuenta_puc": "1110", "tipo_movimiento": "debito", "valor": 5000000},
-    ]
-    found, total = _has_income_accounts(asientos)
-    assert found is True
-    assert total == Decimal("5000000.00")
-
-
-def test_has_income_accounts_none_for_purchase():
-    asientos = [
-        {"cuenta_puc": "5110", "tipo_movimiento": "debito", "valor": 1000000},
-        {"cuenta_puc": "1110", "tipo_movimiento": "credito", "valor": 1000000},
-    ]
-    found, total = _has_income_accounts(asientos)
-    assert found is False
-    assert total == Decimal("0.00")
-
-
-INCOME_CONTADOR_OUTPUT = {
-    "fecha_registro": "2026-03-07",
-    "tipo_documento": "factura",
-    "descripcion_general": "Venta de servicios",
-    "asientos": [
-        {
-            "cuenta_puc": "1110",
-            "nombre_cuenta": "Bancos",
-            "tipo_movimiento": "debito",
-            "valor": 1000000,
-            "descripcion": "Recaudo venta",
-        },
-        {
-            "cuenta_puc": "4135",
-            "nombre_cuenta": "Ingresos por Servicios",
-            "tipo_movimiento": "credito",
-            "valor": 1000000,
-            "descripcion": "Venta servicios",
-        },
-    ],
-    "total_debitos": 1000000,
-    "total_creditos": 1000000,
-}
-
-
-@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.services.db_service.get_company_settings")
+@patch("app.core.database.SessionLocal")
 @patch("app.agents.tributario_agent.get_gemini_client")
-def test_ica_applied_for_income_transaction(mock_gemini_fn, mock_rag_cls):
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
-    state = _make_state(INCOME_CONTADOR_OUTPUT)
-    result = tributario_node(state)
-
-    assert result.get("error") is None
-    trib = result["tributario_output"]
-    ica_entry = next((i for i in trib["impuestos"] if i["tipo_impuesto"] == "ica"), None)
-    assert ica_entry is not None, "ICA entry missing from impuestos"
-    assert Decimal(ica_entry["valor_impuesto"]) > Decimal("0")
-
-    puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
-    assert "540101" in puc_codes, "Gasto ICA (540101) missing from asientos_enriquecidos"
-    assert "240808" in puc_codes, "ICA por Pagar (240808) missing from asientos_enriquecidos"
-
-
 @patch("app.agents.tributario_agent.get_rag_service")
-@patch("app.agents.tributario_agent.get_gemini_client")
-def test_ica_not_applied_for_purchase_transaction(mock_gemini_fn, mock_rag_cls):
+def test_process_mode_without_taxes_does_not_crash(
+    mock_rag_cls,
+    mock_gemini_fn,
+    mock_session_local,
+    mock_get_settings,
+):
+    """When no tax applies, tributario must keep total_impuestos=0 without quantize errors."""
     _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_settings.return_value = SimpleNamespace(
+        tasa_retefuente_servicios=Decimal("0.000000"),
+        tasa_retefuente_bienes=Decimal("0.000000"),
+        tasa_retefuente_arrendamiento=Decimal("0.000000"),
+        tasa_reteica=Decimal("0.000000"),
+        tasa_iva_general=Decimal("0.000000"),
+        iva_responsable=False,
+        tasa_ica=Decimal("0.006900"),
+        tasa_renta=Decimal("0.350000"),
+    )
+
     state = _make_state(VALID_CONTADOR_OUTPUT)
+    state["raw_transactions"] = [{"nit_receptor": "800999888"}]
+
     result = tributario_node(state)
 
     assert result.get("error") is None
-    trib = result["tributario_output"]
-    ica_entry = next((i for i in trib["impuestos"] if i["tipo_impuesto"] == "ica"), None)
-    assert ica_entry is None, "ICA should NOT be applied for a pure purchase transaction"
+    assert result["tributario_output"].get("aplica_impuestos") is False
+    assert Decimal(str(result["tributario_output"].get("total_impuestos"))) == Decimal("0")

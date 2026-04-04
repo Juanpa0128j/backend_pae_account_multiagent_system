@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
-from typing import List, Literal, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field
 
 
 class IngestResponse(BaseModel):
@@ -12,6 +13,7 @@ class IngestResponse(BaseModel):
     raw_preview: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
 
+
 class RawTransaction(BaseModel):
     fecha: str
     nit_emisor: str
@@ -20,10 +22,13 @@ class RawTransaction(BaseModel):
     descripcion: Optional[str] = None
     items: Optional[List[Dict[str, Any]]] = None
 
+
 class IngestDetailResponse(BaseModel):
     ingest_id: str
     file_name: str
     status: str
+    document_type: Optional[str] = None
+    pathway: Optional[str] = None
     created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     extraction_errors: Optional[List[str]] = None
@@ -38,6 +43,7 @@ class ProcessResponse(BaseModel):
 
 class ProcessStatusResponse(BaseModel):
     """Response for GET /process/status/{process_id}"""
+
     process_id: str
     status: str
     current_stage: Optional[str] = None
@@ -55,6 +61,7 @@ class ProcessStatusResponse(BaseModel):
 
 class ProcessResultResponse(BaseModel):
     """Response for GET /process/result/{process_id}"""
+
     process_id: str
     ingest_id: str
     status: str
@@ -72,14 +79,27 @@ class CompanyProfileSetupRequest(BaseModel):
     The user provides what they know (city, CIIU, régimen) and the agent
     determines the correct tax rates from the normative RAG.
     """
+
     nombre: Optional[str] = None
-    ciudad: str = Field(..., min_length=2, description="City where the company operates, e.g. 'Bogotá', 'Medellín', 'Cali'")
-    codigo_ciiu: str = Field(..., min_length=1, description="CIIU economic activity code from the company's RUT")
-    iva_responsable: bool = Field(..., description="True if régimen común (IVA applies), False if régimen simplificado")
+    ciudad: str = Field(
+        ...,
+        min_length=2,
+        description="City where the company operates, e.g. 'Bogotá', 'Medellín', 'Cali'",
+    )
+    codigo_ciiu: str = Field(
+        ...,
+        min_length=1,
+        description="CIIU economic activity code from the company's RUT",
+    )
+    iva_responsable: bool = Field(
+        ...,
+        description="True if régimen común (IVA applies), False if régimen simplificado",
+    )
 
 
 class CompanySettingsRequest(BaseModel):
     """Request body for creating or updating company tax settings."""
+
     nombre: Optional[str] = None
     ciudad: Optional[str] = None
     codigo_ciiu: Optional[str] = None
@@ -95,6 +115,7 @@ class CompanySettingsRequest(BaseModel):
 
 class CompanySettingsResponse(CompanySettingsRequest):
     """Response body for company tax settings endpoints."""
+
     nit: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

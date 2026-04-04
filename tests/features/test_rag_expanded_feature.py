@@ -25,7 +25,7 @@ import pytest
 from app.core.vectordb import NORMATIVA_COLLECTION
 from app.services.rag_service import RAGResult, RAGService
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 
 
 # Deterministic fake embeddings (same implementation as test_rag.py)
@@ -477,7 +477,7 @@ class TestHybridEdgeCases:
 
     def test_search_normativo_hybrid_fallback_when_method_absent(self):
         """If the DB does not have search_hybrid, search_normativo must fall back silently."""
-        from tests.test_rag import FakeSupabaseVectorDB  # type: ignore
+        from tests.features.test_rag_feature import FakeSupabaseVectorDB  # type: ignore
 
         plain_db = FakeSupabaseVectorDB()
         rag = RAGService(vectordb=plain_db, hf_api_key="")

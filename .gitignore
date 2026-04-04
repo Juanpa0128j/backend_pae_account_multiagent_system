@@ -47,3 +47,5 @@ test_*.pdf
 
 # Claude
 .claude/
+
+.venv/

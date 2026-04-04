@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.services import db_service
+from app.services.nit_utils import normalize_nit
 
 router = APIRouter()
 
@@ -26,6 +27,7 @@ async def get_books(
     fecha_fin: Optional[str] = None,
     cuenta_puc: Optional[str] = None,
     tercero_nit: Optional[str] = None,
+    company_nit: Optional[str] = None,
     db: Session = Depends(get_db),
 ) -> Any:
     """
@@ -34,9 +36,15 @@ async def get_books(
     """
     fi = _parse_date(fecha_inicio)
     ff = _parse_date(fecha_fin)
+    normalized_company_nit = None
+    if company_nit:
+        try:
+            normalized_company_nit = normalize_nit(company_nit)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
 
     if tipo == "diario":
-        lines = db_service.get_daily_journal(db, fi, ff)
+        lines = db_service.get_daily_journal(db, fi, ff, normalized_company_nit)
         return [
             {
                 "fecha": str(l.fecha) if l.fecha else "",
@@ -50,12 +58,14 @@ async def get_books(
         ]
 
     elif tipo == "mayor":
-        return db_service.get_general_ledger(db, fi, ff)
+        return db_service.get_general_ledger(db, fi, ff, normalized_company_nit)
 
     elif tipo == "auxiliar":
         if not cuenta_puc:
             return {"error": "cuenta_puc is required for auxiliar"}
-        lines = db_service.get_subsidiary_journal(db, cuenta_puc, fi, ff)
+        lines = db_service.get_subsidiary_journal(
+            db, cuenta_puc, fi, ff, normalized_company_nit
+        )
         return [
             {
                 "fecha": str(l.fecha) if l.fecha else "",
@@ -69,7 +79,7 @@ async def get_books(
         ]
 
     elif tipo == "balance":
-        return db_service.get_balance_sheet(db, ff)
+        return db_service.get_balance_sheet(db, ff, normalized_company_nit)
 
     else:
         return {"error": f"Unknown book type: {tipo}. Use diario, mayor, auxiliar, or balance."}
