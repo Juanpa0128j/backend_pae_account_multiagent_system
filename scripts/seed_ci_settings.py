@@ -5,7 +5,6 @@ if it doesn't already exist.
 """
 
 import os
-from decimal import Decimal
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker

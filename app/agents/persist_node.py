@@ -480,7 +480,9 @@ def _auto_derive_statements(db, company_nit: str) -> None:
             period_end=period_end,
         )
     except Exception as exc:
-        logger.warning("[persist] build_first_level failed (non-fatal): %s", exc)
+        # Non-fatal: missing derived statements don't break the accounting pipeline.
+        # The request still succeeds; derivation can be re-triggered on next run.
+        logger.warning("[persist] build_first_level failed (non-fatal): %s", exc, exc_info=True)
         return
 
     try:
@@ -492,7 +494,7 @@ def _auto_derive_statements(db, company_nit: str) -> None:
     except BusinessRuleError as exc:
         logger.warning("[persist] derive skipped (missing source inputs): %s", exc)
     except Exception as exc:
-        logger.warning("[persist] derive failed (non-fatal): %s", exc)
+        logger.warning("[persist] derive failed (non-fatal): %s", exc, exc_info=True)
 
 
 def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) -> None:
