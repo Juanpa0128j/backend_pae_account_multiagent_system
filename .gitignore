@@ -25,7 +25,8 @@ scripts/ingest_test_results.json
 storage/
 *.db
 ejemplos_docs_ingesta/
-# plans/  # docs/plans tracked for design docs; only ignore standalone plans/ at root
+plans/   
+docs/plans/
 
 
 # Alembic

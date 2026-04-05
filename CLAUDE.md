@@ -85,7 +85,7 @@ FastAPI (main.py) → /api/v1/* routers
 | `app/agents/graph.py` | StateGraph with 10 nodes and conditional edges |
 | `app/agents/supervisor.py` | Routing logic based on `state["mode"]`: `ingest`, `process`, `reporting` |
 | `app/core/config.py` | Pydantic Settings; loads `.env` (GEMINI_API_KEY, DATABASE_URL, etc.) |
-| `app/core/gemini_client.py` | Gemini 2.5 Flash client; `extract_transactions`, `extract_bank_statement`, etc. |
+| `app/core/gemini_client.py` | Backward-compatibility re-export shim — all extraction logic lives in `llm_client.py`. Do not add code here. |
 | `app/core/vectordb.py` | pgvector wrapper; `search()` (vector) and `search_hybrid()` (BM25+vector, RRF k=60) |
 | `app/services/rag_service.py` | High-level RAG interface: `search_normativo`, `search_historico`, `add_empresa_doc` |
 | `app/models/database.py` | SQLAlchemy ORM: `CompanySettings`, `CuentaPUC`, `IngestJob`, `TransactionPosted`, `JournalEntryLine`, `FinancialStatement`, etc. |
@@ -96,7 +96,7 @@ FastAPI (main.py) → /api/v1/* routers
 
 ### Tech Stack
 
-- **LLM:** Google Gemini 2.5 Flash (`langchain-google-genai`)
+- **LLM:** Multi-provider fallback — OpenAI GPT-4o-mini (primary if key set) → Google Gemini 2.5 Flash → Groq (`langchain-openai`, `langchain-google-genai`, `langchain-groq`)
 - **Agent orchestration:** LangGraph StateGraph
 - **Embeddings:** BAAI/bge-m3 (1024 dims) via HuggingFace Inference API
 - **Reranking:** BAAI/bge-reranker-v2-m3

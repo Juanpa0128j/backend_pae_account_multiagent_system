@@ -693,13 +693,13 @@ class AuxiliarIVAContent(ContentBase):
 
 class LedgerLine(BaseModel):
     fecha: str = Field(description="Date YYYY-MM-DD")
-    cuenta_puc: str = Field(description="PUC account code")
+    cuenta_puc: Optional[str] = Field(None, description="PUC account code")
     cuenta_nombre: Optional[str] = Field(None)
     tercero_nit: Optional[str] = Field(None)
     tercero_nombre: Optional[str] = Field(None)
     comprobante: Optional[str] = Field(None, description="Voucher type and number")
     centro_costo: Optional[str] = Field(None)
-    detalle: str = Field(description="Line detail/description")
+    detalle: Optional[str] = Field(None, description="Line detail/description")
     debito: Decimal = Field(ge=0)
     credito: Decimal = Field(ge=0)
     saldo: Optional[Decimal] = Field(None)
