@@ -1,4 +1,5 @@
 """Groq provider — second fallback LLM."""
+
 from __future__ import annotations
 
 import copy
@@ -65,7 +66,9 @@ class GroqProvider:
                     },
                 }
             )
-            self._models[schema_cls] = bound | JsonOutputParser() | schema_cls.model_validate
+            self._models[schema_cls] = (
+                bound | JsonOutputParser() | schema_cls.model_validate
+            )
         return self._models[schema_cls]
 
     def invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:

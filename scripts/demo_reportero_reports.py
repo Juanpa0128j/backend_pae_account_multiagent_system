@@ -19,7 +19,6 @@ Prerequisitos:
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -40,14 +39,27 @@ REPORT_CONFIGS = [
         "type": "balance",
         "label": "Balance General",
         "endpoint": "GET /api/v1/reports/balance",
-        "key_fields": ["activos", "pasivos", "patrimonio_total", "utilidad_neta", "cuadre", "mensaje_cuadre"],
+        "key_fields": [
+            "activos",
+            "pasivos",
+            "patrimonio_total",
+            "utilidad_neta",
+            "cuadre",
+            "mensaje_cuadre",
+        ],
         "rag_field": "notas_normativas",
     },
     {
         "type": "pnl",
         "label": "Estado de Resultados (P&L)",
         "endpoint": "GET /api/v1/reports/pnl",
-        "key_fields": ["total_ingresos", "total_costo_ventas", "total_gastos", "utilidad_bruta", "utilidad_neta"],
+        "key_fields": [
+            "total_ingresos",
+            "total_costo_ventas",
+            "total_gastos",
+            "utilidad_bruta",
+            "utilidad_neta",
+        ],
         "rag_field": "notas_normativas",
     },
     {
@@ -98,13 +110,11 @@ def run_demo(start_date: str | None, end_date: str | None) -> None:
     if end_date:
         params["end_date"] = end_date
 
-    period_label = (
-        f"{start_date or 'inicio'} → {end_date or 'hoy'}"
-    )
+    period_label = f"{start_date or 'inicio'} → {end_date or 'hoy'}"
 
     print()
     print_separator("═")
-    print(f"  AGENTE REPORTERO — Demo de Informes Financieros")
+    print("  AGENTE REPORTERO — Demo de Informes Financieros")
     print(f"  Período: {period_label}")
     print_separator("═")
 
@@ -146,15 +156,23 @@ def run_demo(start_date: str | None, end_date: str | None) -> None:
             print()
             print("  Cuentas de efectivo:")
             for cuenta in report["cuentas_efectivo"]:
-                print(f"    {cuenta['codigo']} {cuenta['nombre']:<30} {fmt_cop(cuenta['saldo'])}")
+                print(
+                    f"    {cuenta['codigo']} {cuenta['nombre']:<30} {fmt_cop(cuenta['saldo'])}"
+                )
 
         if cfg["type"] == "pnl":
-            for section, label in [("ingresos", "Ingresos"), ("costo_ventas", "Costo ventas"), ("gastos", "Gastos")]:
+            for section, label in [
+                ("ingresos", "Ingresos"),
+                ("costo_ventas", "Costo ventas"),
+                ("gastos", "Gastos"),
+            ]:
                 if report.get(section):
                     print()
                     print(f"  {label}:")
                     for cuenta in report[section]:
-                        print(f"    {cuenta['codigo']} {cuenta['nombre']:<30} {fmt_cop(cuenta['saldo'])}")
+                        print(
+                            f"    {cuenta['codigo']} {cuenta['nombre']:<30} {fmt_cop(cuenta['saldo'])}"
+                        )
 
         # RAG enrichment
         rag_values = report.get(cfg["rag_field"], [])

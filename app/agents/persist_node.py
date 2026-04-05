@@ -6,6 +6,7 @@ Persists ingest/process outputs to PostgreSQL:
 IngestJob -> TransactionPending -> TransactionPosted -> JournalEntryLines.
 
 """
+
 # type: ignore[assignment]
 # SQLAlchemy model attributes are runtime values on instances; static typing
 # can mis-infer them as Column[...] in service/pipeline code.
@@ -640,6 +641,10 @@ def _run_persist(state: AgentState) -> AgentState:
             state["error"] = msg
             raise RuntimeError(msg)
 
+        # Expose built transactions so callers can access them via result["raw_transactions"]
+        if not state.get("raw_transactions"):
+            state["raw_transactions"] = transactions
+
     ingest_id = _as_str(state.get("ingest_id"), "")
     db = SessionLocal()
 
@@ -899,15 +904,15 @@ def _run_persist(state: AgentState) -> AgentState:
             "transaction_pending_id": pending_ids[0] if pending_ids else "",
             "transaction_posted_id": posted_ids[0] if posted_ids else "",
             "audit_approved": state.get("audit_approved"),
-            "audit_nivel_riesgo": auditor_out.get("nivel_riesgo")
-            if mode == "process"
-            else None,
-            "audit_puntaje_calidad": auditor_out.get("puntaje_calidad")
-            if mode == "process"
-            else None,
-            "audit_hallazgos_count": len(auditor_out.get("hallazgos", []))
-            if mode == "process"
-            else 0,
+            "audit_nivel_riesgo": (
+                auditor_out.get("nivel_riesgo") if mode == "process" else None
+            ),
+            "audit_puntaje_calidad": (
+                auditor_out.get("puntaje_calidad") if mode == "process" else None
+            ),
+            "audit_hallazgos_count": (
+                len(auditor_out.get("hallazgos", [])) if mode == "process" else 0
+            ),
         }
 
         if state.get("result") is not None:

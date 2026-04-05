@@ -3,15 +3,14 @@ Tests for the Excel parser service.
 """
 
 import pytest
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from app.services.excel_parser import parse_excel, _normalize_cell, _format_cell
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def simple_xlsx(tmp_path) -> str:
@@ -54,6 +53,7 @@ def empty_xlsx(tmp_path) -> str:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestParseExcel:
     def test_parses_two_sheets(self, simple_xlsx):
         markdown, sheets = parse_excel(simple_xlsx)
@@ -63,7 +63,14 @@ class TestParseExcel:
 
     def test_headers_extracted(self, simple_xlsx):
         _, sheets = parse_excel(simple_xlsx)
-        assert sheets[0]["headers"] == ["Fecha", "Cuenta", "Detalle", "Débito", "Crédito", "Saldo"]
+        assert sheets[0]["headers"] == [
+            "Fecha",
+            "Cuenta",
+            "Detalle",
+            "Débito",
+            "Crédito",
+            "Saldo",
+        ]
 
     def test_rows_extracted_skipping_empty(self, simple_xlsx):
         _, sheets = parse_excel(simple_xlsx)

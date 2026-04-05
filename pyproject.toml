@@ -28,20 +28,13 @@ dependencies = [
     "httpx>=0.25.0",
     "langchain-community>=0.4.0",
     "langchain-google-genai>=2.0.0",
-    "llama-parse>=0.5.0",
+    "llama-cloud>=1.0.0",
     "nest-asyncio>=1.6.0",
-    "openpyxl>=3.1.0",
+    "langchain-openai>=1.1.12",
+    "openpyxl>=3.1.5",
     "langchain-groq>=1.1.2",
-    "langchain-openai>=1.1.11",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=9.0.2",
-    "pytest-asyncio>=0.21",
-    "black>=23.0",
-    "ruff>=0.1",
-    "numpy>=1.24",
+    "tqdm>=4.67.3",
+    "llama-parse>=0.5.20",
 ]
 
 [tool.setuptools]
@@ -55,5 +48,10 @@ python_functions = ["test_*"]
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
-    "pytest-timeout>=2.4.0",
+    "pytest-asyncio>=0.21",
+    "pytest-timeout>=2.3",
+    "black>=23.0",
+    "ruff>=0.1",
+    "numpy>=1.24",
+    "pre-commit>=4.5.1",
 ]

@@ -18,10 +18,13 @@ class ValidationRecord(TypedDict):
 
 class LogEntry(TypedDict):
     """Structured execution log entry written by each agent node."""
-    timestamp: str   # ISO UTC string
-    agent: str       # node/agent name
-    event: str       # event type: routing_start | routing_complete | validation_success | etc.
-    details: dict    # free-form event-specific payload
+
+    timestamp: str  # ISO UTC string
+    agent: str  # node/agent name
+    event: (
+        str  # event type: routing_start | routing_complete | validation_success | etc.
+    )
+    details: dict  # free-form event-specific payload
 
 
 class AgentState(TypedDict):
@@ -84,11 +87,15 @@ class AgentState(TypedDict):
     audit_rejection_reason: Optional[str]
     audit_decision: Optional[str]
     audit_feedback: Optional[str]
-    audit_rejection_count: int  # how many times auditor has rejected — not reset by retry_count
+    audit_rejection_count: (
+        int  # how many times auditor has rejected — not reset by retry_count
+    )
     report_type: Optional[str]
     report_params: Optional[dict]
     # Document classification fields (ingestion pipeline)
     document_classification: Optional[dict]  # DocumentClassification serialized
     pathway: Optional[str]  # "build_from_scratch" | "work_with_existing"
     parsed_content: Optional[list]  # Structured tabular data from Excel sheets
-    company_nit: Optional[str]  # Explicitly set by API caller; overrides auto-detected entity_nit
+    company_nit: Optional[
+        str
+    ]  # Explicitly set by API caller; overrides auto-detected entity_nit

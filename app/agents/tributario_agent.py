@@ -20,7 +20,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
-from app.core.gemini_client import get_gemini_client
+from app.core.llm_client import get_llm_client
 from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
@@ -30,43 +30,44 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 TASA_RETEFUENTE: dict[str, Decimal] = {
-    "servicios":     Decimal("0.11"),   # Art. 383 ET — servicios generales
-    "bienes":        Decimal("0.03"),   # Art. 401 ET — compras de bienes
-    "arrendamiento": Decimal("0.10"),   # Art. 401 ET — arrendamientos
+    "servicios": Decimal("0.11"),  # Art. 383 ET — servicios generales
+    "bienes": Decimal("0.03"),  # Art. 401 ET — compras de bienes
+    "arrendamiento": Decimal("0.10"),  # Art. 401 ET — arrendamientos
 }
-TASA_RETEICA_DEFAULT = Decimal("0.0069")   # Tarifa Cali / default municipal
+TASA_RETEICA_DEFAULT = Decimal("0.0069")  # Tarifa Cali / default municipal
 
 TASA_IVA: dict[str, Decimal] = {
-    "general":  Decimal("0.19"),   # Art. 477 ET — tarifa general
-    "reducida": Decimal("0.05"),   # Servicios especiales
-    "exento":   Decimal("0.00"),   # Bienes/servicios exentos
+    "general": Decimal("0.19"),  # Art. 477 ET — tarifa general
+    "reducida": Decimal("0.05"),  # Servicios especiales
+    "exento": Decimal("0.00"),  # Bienes/servicios exentos
 }
 
 # ICA — Impuesto de Industria y Comercio (Ley 14/1983, Decreto 1333/1986)
-TASA_ICA_DEFAULT  = Decimal("0.00690")   # 6.9‰ — conservative national reference
-CUENTA_ICA_GASTO  = "540101"             # Gasto ICA
-CUENTA_ICA_PASIVO = "240808"             # ICA por Pagar
+TASA_ICA_DEFAULT = Decimal("0.00690")  # 6.9‰ — conservative national reference
+CUENTA_ICA_GASTO = "540101"  # Gasto ICA
+CUENTA_ICA_PASIVO = "240808"  # ICA por Pagar
 
 # Renta — Art. 240 ET (Ley 2277/2022, vigente año fiscal 2023+)
-TASA_RENTA          = Decimal("0.35")    # 35% tarifa general sociedades
-CUENTA_RENTA_GASTO  = "540502"           # Provisión Impuesto de Renta
-CUENTA_RENTA_PASIVO = "240405"           # Impuesto de Renta por Pagar
+TASA_RENTA = Decimal("0.35")  # 35% tarifa general sociedades
+CUENTA_RENTA_GASTO = "540502"  # Provisión Impuesto de Renta
+CUENTA_RENTA_PASIVO = "240405"  # Impuesto de Renta por Pagar
 
 # PUC ranges
 PUC_SERVICIOS_START = 5000
-PUC_SERVICIOS_END   = 5999
-PUC_INGRESOS_START  = 4000
-PUC_INGRESOS_END    = 4999
+PUC_SERVICIOS_END = 5999
+PUC_INGRESOS_START = 4000
+PUC_INGRESOS_END = 4999
 
 # Tax liability PUC sub-accounts — aligned with persist_node._build_journal_entries
 CUENTA_RETEFUENTE = "240815"  # Retención en la Fuente - Servicios
-CUENTA_RETEICA    = "236540"  # ReteICA por pagar
-CUENTA_IVA        = "240802"  # IVA descontable
+CUENTA_RETEICA = "236540"  # ReteICA por pagar
+CUENTA_IVA = "240802"  # IVA descontable
 
 
 # ---------------------------------------------------------------------------
 # Helper: detect transaction type from PUC codes in asientos
 # ---------------------------------------------------------------------------
+
 
 def _detect_transaction_type(asientos: list[dict]) -> str:
     """
@@ -100,13 +101,16 @@ def _has_iva_in_asientos(asientos: list[dict]) -> tuple[bool, Decimal]:
         puc_raw = str(asiento.get("cuenta_puc", "")).strip()
         if puc_raw == "2408" or puc_raw.startswith("240802"):
             valor = asiento.get("valor", 0)
-            return True, Decimal(str(valor)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            return True, Decimal(str(valor)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
     return False, Decimal("0")
 
 
 # ---------------------------------------------------------------------------
 # Deterministic tax calculators
 # ---------------------------------------------------------------------------
+
 
 def _has_income_accounts(asientos: list[dict]) -> tuple[bool, Decimal]:
     """
@@ -130,7 +134,9 @@ def _calc_retefuente(base: Decimal, tipo: str) -> Decimal:
 
 
 def _calc_reteica(base: Decimal) -> Decimal:
-    return (base * TASA_RETEICA_DEFAULT).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return (base * TASA_RETEICA_DEFAULT).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
 
 
 def _calc_iva(base: Decimal, tarifa: str = "general") -> Decimal:
@@ -143,7 +149,9 @@ def _calc_ica(ingresos_brutos: Decimal, tasa: Decimal = TASA_ICA_DEFAULT) -> Dec
     return (ingresos_brutos * tasa).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def _calc_provision_renta(utilidad_neta: Decimal, tasa: Decimal = TASA_RENTA) -> Decimal:
+def _calc_provision_renta(
+    utilidad_neta: Decimal, tasa: Decimal = TASA_RENTA
+) -> Decimal:
     """Provisión renta = utilidad_antes_impuestos × 35%. Art. 240 ET. Returns 0 on losses."""
     if utilidad_neta <= Decimal("0"):
         return Decimal("0.00")
@@ -191,21 +199,21 @@ def calc_period_renta_provision(
     """)
     row = db_session.execute(query, params).fetchone()
     ingresos = Decimal(str(row.ingresos if row else 0))
-    gastos   = Decimal(str(row.gastos   if row else 0))
-    costos   = Decimal(str(row.costos   if row else 0))
+    gastos = Decimal(str(row.gastos if row else 0))
+    costos = Decimal(str(row.costos if row else 0))
     utilidad = ingresos - gastos - costos
     provision = _calc_provision_renta(utilidad, tasa_renta)
 
     return {
-        "report_type":              "renta_provision",
-        "period_start":             period_start_dt.isoformat() if period_start_dt else None,
-        "period_end":               period_end_dt.isoformat(),
-        "generated_at":             datetime.utcnow().isoformat(),
+        "report_type": "renta_provision",
+        "period_start": period_start_dt.isoformat() if period_start_dt else None,
+        "period_end": period_end_dt.isoformat(),
+        "generated_at": datetime.utcnow().isoformat(),
         "utilidad_antes_impuestos": float(utilidad),
-        "tasa_renta":               float(tasa_renta),
-        "provision_renta":          float(provision),
-        "cuenta_gasto_puc":         CUENTA_RENTA_GASTO,
-        "cuenta_pasivo_puc":        CUENTA_RENTA_PASIVO,
+        "tasa_renta": float(tasa_renta),
+        "provision_renta": float(provision),
+        "cuenta_gasto_puc": CUENTA_RENTA_GASTO,
+        "cuenta_pasivo_puc": CUENTA_RENTA_PASIVO,
         "referencias": [
             "Art. 240 Estatuto Tributario colombiano",
             "Ley 2277 de 2022 — tarifa general sociedades 35%",
@@ -216,6 +224,7 @@ def calc_period_renta_provision(
 # ---------------------------------------------------------------------------
 # Node
 # ---------------------------------------------------------------------------
+
 
 def tributario_node(state: AgentState) -> AgentState:
     """
@@ -250,17 +259,24 @@ def tributario_node(state: AgentState) -> AgentState:
         and not str(a.get("cuenta_puc", "")).startswith("2")
     ]
     base_gravable = (
-        sum(non_tax_debits, Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        sum(non_tax_debits, Decimal("0")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
         if non_tax_debits
         else Decimal(str(contador_output.get("total_debitos", 0)))
     )
 
     documento_ref = contador_output.get("descripcion_general", "sin referencia")[:100]
 
-    append_log(state, "tributario", "node_start", {
-        "base_gravable": str(base_gravable),
-        "asientos_count": len(asientos),
-    })
+    append_log(
+        state,
+        "tributario",
+        "node_start",
+        {
+            "base_gravable": str(base_gravable),
+            "asientos_count": len(asientos),
+        },
+    )
 
     try:
         # ------------------------------------------------------------------
@@ -271,7 +287,7 @@ def tributario_node(state: AgentState) -> AgentState:
         company_config = state.get("company_config")
         nit_receptor = None
         if not company_config:
-            for tx in (state.get("raw_transactions") or []):
+            for tx in state.get("raw_transactions") or []:
                 nit_receptor = tx.get("nit_receptor")
                 if nit_receptor:
                     break
@@ -280,19 +296,26 @@ def tributario_node(state: AgentState) -> AgentState:
                 try:
                     from app.core.database import SessionLocal
                     from app.services import db_service as _db_svc
+
                     _db = SessionLocal()
                     try:
                         row = _db_svc.get_company_settings(_db, nit_receptor)
                         if row:
                             company_config = {
-                                "tasa_retefuente_servicios":     float(row.tasa_retefuente_servicios),
-                                "tasa_retefuente_bienes":        float(row.tasa_retefuente_bienes),
-                                "tasa_retefuente_arrendamiento": float(row.tasa_retefuente_arrendamiento),
-                                "tasa_reteica":                  float(row.tasa_reteica),
-                                "tasa_iva_general":              float(row.tasa_iva_general),
-                                "iva_responsable":               row.iva_responsable,
-                                "tasa_ica":                      float(row.tasa_ica),
-                                "tasa_renta":                    float(row.tasa_renta),
+                                "tasa_retefuente_servicios": float(
+                                    row.tasa_retefuente_servicios
+                                ),
+                                "tasa_retefuente_bienes": float(
+                                    row.tasa_retefuente_bienes
+                                ),
+                                "tasa_retefuente_arrendamiento": float(
+                                    row.tasa_retefuente_arrendamiento
+                                ),
+                                "tasa_reteica": float(row.tasa_reteica),
+                                "tasa_iva_general": float(row.tasa_iva_general),
+                                "iva_responsable": row.iva_responsable,
+                                "tasa_ica": float(row.tasa_ica),
+                                "tasa_renta": float(row.tasa_renta),
                             }
                             logger.info(
                                 f"Tributario: loaded company settings for NIT {nit_receptor}"
@@ -338,31 +361,50 @@ def tributario_node(state: AgentState) -> AgentState:
             append_log(state, "tributario", "node_error", details)
             return state
 
-        append_log(state, "tributario", "config_loaded", {
-            "source": "db" if company_config else "defaults",
-        })
+        append_log(
+            state,
+            "tributario",
+            "config_loaded",
+            {
+                "source": "db" if company_config else "defaults",
+            },
+        )
 
         # Resolve effective tax rates (DB settings override hardcoded defaults)
-        iva_responsable = company_config.get("iva_responsable", True) if company_config else True
+        iva_responsable = (
+            company_config.get("iva_responsable", True) if company_config else True
+        )
 
         tasa_retefuente_efectiva = {
-            "servicios":     Decimal(str(company_config["tasa_retefuente_servicios"]))
-                             if company_config else TASA_RETEFUENTE["servicios"],
-            "bienes":        Decimal(str(company_config["tasa_retefuente_bienes"]))
-                             if company_config else TASA_RETEFUENTE["bienes"],
-            "arrendamiento": Decimal(str(company_config["tasa_retefuente_arrendamiento"]))
-                             if company_config else TASA_RETEFUENTE["arrendamiento"],
+            "servicios": (
+                Decimal(str(company_config["tasa_retefuente_servicios"]))
+                if company_config
+                else TASA_RETEFUENTE["servicios"]
+            ),
+            "bienes": (
+                Decimal(str(company_config["tasa_retefuente_bienes"]))
+                if company_config
+                else TASA_RETEFUENTE["bienes"]
+            ),
+            "arrendamiento": (
+                Decimal(str(company_config["tasa_retefuente_arrendamiento"]))
+                if company_config
+                else TASA_RETEFUENTE["arrendamiento"]
+            ),
         }
         tasa_reteica_efectiva = (
-            Decimal(str(company_config["tasa_reteica"])) if company_config
+            Decimal(str(company_config["tasa_reteica"]))
+            if company_config
             else TASA_RETEICA_DEFAULT
         )
         tasa_iva_efectiva = (
-            Decimal(str(company_config["tasa_iva_general"])) if company_config
+            Decimal(str(company_config["tasa_iva_general"]))
+            if company_config
             else TASA_IVA["general"]
         )
         tasa_ica_efectiva = (
-            Decimal(str(company_config["tasa_ica"])) if company_config
+            Decimal(str(company_config["tasa_ica"]))
+            if company_config
             else TASA_ICA_DEFAULT
         )
 
@@ -375,7 +417,9 @@ def tributario_node(state: AgentState) -> AgentState:
         # ------------------------------------------------------------------
         # Step 3 — Deterministic tax calculations using effective rates
         # ------------------------------------------------------------------
-        tasa_retefuente = tasa_retefuente_efectiva.get(tipo_transaccion, tasa_retefuente_efectiva["servicios"])
+        tasa_retefuente = tasa_retefuente_efectiva.get(
+            tipo_transaccion, tasa_retefuente_efectiva["servicios"]
+        )
         retefuente_val = (base_gravable * tasa_retefuente).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
@@ -402,7 +446,9 @@ def tributario_node(state: AgentState) -> AgentState:
         ica_val = Decimal("0.00")
         if has_income:
             ica_val = _calc_ica(ingresos_brutos, tasa_ica_efectiva)
-            logger.info(f"Tributario: ICA calculated = {ica_val} on ingresos {ingresos_brutos}")
+            logger.info(
+                f"Tributario: ICA calculated = {ica_val} on ingresos {ingresos_brutos}"
+            )
         else:
             logger.info("Tributario: ICA skipped — no PUC 4xxx credit entries detected")
 
@@ -429,27 +475,33 @@ def tributario_node(state: AgentState) -> AgentState:
         # Step 5 — Gemini justification (structured output)
         # ------------------------------------------------------------------
         tax_amounts = {
-            "retefuente":      float(retefuente_val),
-            "reteica":         float(reteica_val),
-            "iva":             float(iva_val),
-            "ica":             float(ica_val),
+            "retefuente": float(retefuente_val),
+            "reteica": float(reteica_val),
+            "iva": float(iva_val),
+            "ica": float(ica_val),
             "tasa_retefuente": f"{float(tasa_retefuente) * 100:.1f}%",
-            "tasa_reteica":    f"{float(tasa_reteica_efectiva) * 100:.2f}%",
-            "tasa_iva":        f"{float(tasa_iva_efectiva) * 100:.0f}%",
-            "tasa_ica":        f"{float(tasa_ica_efectiva) * 1000:.2f}‰",
+            "tasa_reteica": f"{float(tasa_reteica_efectiva) * 100:.2f}%",
+            "tasa_iva": f"{float(tasa_iva_efectiva) * 100:.0f}%",
+            "tasa_ica": f"{float(tasa_ica_efectiva) * 1000:.2f}‰",
             "tipo_transaccion": tipo_transaccion,
         }
 
-        gemini_client = get_gemini_client()
+        gemini_client = get_llm_client()
         try:
             justification = gemini_client.justify_tax_analysis(tax_amounts, rag_context)
         except Exception as gemini_err:
             logger.warning(
                 f"Tributario: Gemini justification failed (using fallback): {gemini_err}"
             )
-            from app.core.gemini_client import TaxJustification as _TaxJustification
+            from app.models.llm_schemas import TaxJustification as _TaxJustification
+
             justification = _TaxJustification(
-                referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],
+                referencias=[
+                    "Art. 383 ET",
+                    "Art. 401 ET",
+                    "Art. 477 ET",
+                    "Decreto 2048/1992",
+                ],
                 justificacion=(
                     "Retenciones aplicadas según tasas vigentes del Estatuto Tributario "
                     "colombiano. Retefuente según Art. 383 ET para servicios; ReteICA según "
@@ -460,10 +512,15 @@ def tributario_node(state: AgentState) -> AgentState:
         referencias = justification.referencias
         observaciones = justification.justificacion
 
-        append_log(state, "tributario", "justification_complete", {
-            "confirma_tasas": justification.confirma_tasas,
-            "referencias_count": len(referencias),
-        })
+        append_log(
+            state,
+            "tributario",
+            "justification_complete",
+            {
+                "confirma_tasas": justification.confirma_tasas,
+                "referencias_count": len(referencias),
+            },
+        )
 
         # ------------------------------------------------------------------
         # Step 5 — Build impuestos list (skip zero-amount entries)
@@ -471,40 +528,48 @@ def tributario_node(state: AgentState) -> AgentState:
         impuestos = []
 
         if retefuente_val > 0:
-            impuestos.append({
-                "tipo_impuesto":     "retefuente",
-                "base_gravable":     str(base_gravable),
-                "tarifa_porcentaje": str(tasa_retefuente * 100),
-                "valor_impuesto":    str(retefuente_val),
-                "cuenta_puc":        CUENTA_RETEFUENTE,
-            })
+            impuestos.append(
+                {
+                    "tipo_impuesto": "retefuente",
+                    "base_gravable": str(base_gravable),
+                    "tarifa_porcentaje": str(tasa_retefuente * 100),
+                    "valor_impuesto": str(retefuente_val),
+                    "cuenta_puc": CUENTA_RETEFUENTE,
+                }
+            )
 
         if reteica_val > 0:
-            impuestos.append({
-                "tipo_impuesto":     "reteica",
-                "base_gravable":     str(base_gravable),
-                "tarifa_porcentaje": str(tasa_reteica_efectiva * 100),
-                "valor_impuesto":    str(reteica_val),
-                "cuenta_puc":        CUENTA_RETEICA,
-            })
+            impuestos.append(
+                {
+                    "tipo_impuesto": "reteica",
+                    "base_gravable": str(base_gravable),
+                    "tarifa_porcentaje": str(tasa_reteica_efectiva * 100),
+                    "valor_impuesto": str(reteica_val),
+                    "cuenta_puc": CUENTA_RETEICA,
+                }
+            )
 
         if iva_val > 0:
-            impuestos.append({
-                "tipo_impuesto":     "IVA",
-                "base_gravable":     str(base_gravable),
-                "tarifa_porcentaje": str(tasa_iva_efectiva * 100),
-                "valor_impuesto":    str(iva_val),
-                "cuenta_puc":        CUENTA_IVA,
-            })
+            impuestos.append(
+                {
+                    "tipo_impuesto": "IVA",
+                    "base_gravable": str(base_gravable),
+                    "tarifa_porcentaje": str(tasa_iva_efectiva * 100),
+                    "valor_impuesto": str(iva_val),
+                    "cuenta_puc": CUENTA_IVA,
+                }
+            )
 
         if ica_val > Decimal("0"):
-            impuestos.append({
-                "tipo_impuesto":     "ica",
-                "base_gravable":     str(ingresos_brutos),
-                "tarifa_porcentaje": str(tasa_ica_efectiva * 100),
-                "valor_impuesto":    str(ica_val),
-                "cuenta_puc":        CUENTA_ICA_PASIVO,
-            })
+            impuestos.append(
+                {
+                    "tipo_impuesto": "ica",
+                    "base_gravable": str(ingresos_brutos),
+                    "tarifa_porcentaje": str(tasa_ica_efectiva * 100),
+                    "valor_impuesto": str(ica_val),
+                    "cuenta_puc": CUENTA_ICA_PASIVO,
+                }
+            )
 
         total_impuestos = sum(
             (Decimal(i["valor_impuesto"]) for i in impuestos),
@@ -530,7 +595,8 @@ def tributario_node(state: AgentState) -> AgentState:
 
         if total_retenciones > 0 or iva_to_add > 0:
             credit_entries = [
-                (i, e) for i, e in enumerate(asientos_enriquecidos)
+                (i, e)
+                for i, e in enumerate(asientos_enriquecidos)
                 if e.get("tipo_movimiento", "").lower() == "credito"
             ]
             if credit_entries:
@@ -548,7 +614,9 @@ def tributario_node(state: AgentState) -> AgentState:
                         f"credit account {largest_entry.get('cuenta_puc')} "
                         f"valor ({original_valor}). Cannot produce a balanced journal entry."
                     )
-                    append_log(state, "tributario", "node_error", {"error": state["error"]})
+                    append_log(
+                        state, "tributario", "node_error", {"error": state["error"]}
+                    )
                     return state
                 asientos_enriquecidos[largest_idx]["valor"] = str(adjusted_valor)
                 logger.info(
@@ -559,68 +627,78 @@ def tributario_node(state: AgentState) -> AgentState:
 
         # IVA descontable — posted as DEBIT (asset, recoverable from DIAN)
         if iva_to_add > 0:
-            asientos_enriquecidos.append({
-                "cuenta_puc":       CUENTA_IVA,
-                "nombre_cuenta":    "IVA Descontable",
-                "descripcion":      "IVA descontable — Art. 477 ET",
-                "tipo_movimiento":  "debito",
-                "valor":            str(iva_to_add),
-            })
+            asientos_enriquecidos.append(
+                {
+                    "cuenta_puc": CUENTA_IVA,
+                    "nombre_cuenta": "IVA Descontable",
+                    "descripcion": "IVA descontable — Art. 477 ET",
+                    "tipo_movimiento": "debito",
+                    "valor": str(iva_to_add),
+                }
+            )
 
         # Retenciones — posted as CREDITS (liabilities to DIAN / municipality)
         if retefuente_val > 0:
-            asientos_enriquecidos.append({
-                "cuenta_puc":       CUENTA_RETEFUENTE,
-                "nombre_cuenta":    "Retención en la Fuente por Pagar",
-                "descripcion":      f"Retención en la Fuente por pagar — {referencias[0] if referencias else 'Art. 383 ET'}",
-                "tipo_movimiento":  "credito",
-                "valor":            str(retefuente_val),
-            })
+            asientos_enriquecidos.append(
+                {
+                    "cuenta_puc": CUENTA_RETEFUENTE,
+                    "nombre_cuenta": "Retención en la Fuente por Pagar",
+                    "descripcion": f"Retención en la Fuente por pagar — {referencias[0] if referencias else 'Art. 383 ET'}",
+                    "tipo_movimiento": "credito",
+                    "valor": str(retefuente_val),
+                }
+            )
 
         if reteica_val > 0:
-            asientos_enriquecidos.append({
-                "cuenta_puc":       CUENTA_RETEICA,
-                "nombre_cuenta":    "Retención ICA por Pagar",
-                "descripcion":      "Retención ICA por pagar — Decreto 2048/1992",
-                "tipo_movimiento":  "credito",
-                "valor":            str(reteica_val),
-            })
+            asientos_enriquecidos.append(
+                {
+                    "cuenta_puc": CUENTA_RETEICA,
+                    "nombre_cuenta": "Retención ICA por Pagar",
+                    "descripcion": "Retención ICA por pagar — Decreto 2048/1992",
+                    "tipo_movimiento": "credito",
+                    "valor": str(reteica_val),
+                }
+            )
 
         # ICA — Impuesto de Industria y Comercio (Ley 14/1983)
         if ica_val > Decimal("0"):
-            asientos_enriquecidos.append({
-                "cuenta_puc":      CUENTA_ICA_GASTO,
-                "nombre_cuenta":   "Gasto ICA",
-                "descripcion":     "Gasto ICA — Ley 14/1983, Art. 342 Ley 1955/2019",
-                "tipo_movimiento": "debito",
-                "valor":           str(ica_val),
-            })
-            asientos_enriquecidos.append({
-                "cuenta_puc":      CUENTA_ICA_PASIVO,
-                "nombre_cuenta":   "ICA por Pagar",
-                "descripcion":     "ICA por Pagar — Decreto 1333/1986",
-                "tipo_movimiento": "credito",
-                "valor":           str(ica_val),
-            })
+            asientos_enriquecidos.append(
+                {
+                    "cuenta_puc": CUENTA_ICA_GASTO,
+                    "nombre_cuenta": "Gasto ICA",
+                    "descripcion": "Gasto ICA — Ley 14/1983, Art. 342 Ley 1955/2019",
+                    "tipo_movimiento": "debito",
+                    "valor": str(ica_val),
+                }
+            )
+            asientos_enriquecidos.append(
+                {
+                    "cuenta_puc": CUENTA_ICA_PASIVO,
+                    "nombre_cuenta": "ICA por Pagar",
+                    "descripcion": "ICA por Pagar — Decreto 1333/1986",
+                    "tipo_movimiento": "credito",
+                    "valor": str(ica_val),
+                }
+            )
 
         # ------------------------------------------------------------------
         # Step 7 — Build TributarioOutput-compatible dict
         # ------------------------------------------------------------------
         tributario_output = {
-            "fecha_analisis":       date.today().isoformat(),
+            "fecha_analisis": date.today().isoformat(),
             "documento_referencia": documento_ref,
-            "aplica_impuestos":     aplica_impuestos,
-            "impuestos":            impuestos,
-            "total_impuestos":      str(total_impuestos),
-            "observaciones":        f"{observaciones} | Referencias: {', '.join(referencias)}",
+            "aplica_impuestos": aplica_impuestos,
+            "impuestos": impuestos,
+            "total_impuestos": str(total_impuestos),
+            "observaciones": f"{observaciones} | Referencias: {', '.join(referencias)}",
             "asientos_enriquecidos": asientos_enriquecidos,
-            "referencias_legales":  referencias,
+            "referencias_legales": referencias,
         }
 
         state["tributario_output"] = tributario_output
-        state["interpreted_data"]  = tributario_output
-        state["current_agent"]     = "tributario"
-        state["current_stage"]     = "tributario_complete"
+        state["interpreted_data"] = tributario_output
+        state["current_agent"] = "tributario"
+        state["current_stage"] = "tributario_complete"
         state["correction_feedback"] = None
 
         # ------------------------------------------------------------------
@@ -650,11 +728,16 @@ def tributario_node(state: AgentState) -> AgentState:
                 contador_output["total_creditos"] = str(total_creditos_enriched)
                 state["contador_output"] = contador_output
 
-                append_log(state, "tributario", "enrichment_propagated", {
-                    "asientos_enriched_count": len(asientos_enriquecidos),
-                    "total_debitos": str(total_debitos_enriched),
-                    "total_creditos": str(total_creditos_enriched),
-                })
+                append_log(
+                    state,
+                    "tributario",
+                    "enrichment_propagated",
+                    {
+                        "asientos_enriched_count": len(asientos_enriquecidos),
+                        "total_debitos": str(total_debitos_enriched),
+                        "total_creditos": str(total_creditos_enriched),
+                    },
+                )
                 logger.info(
                     f"Tributario: propagated enriched asientos to contador_output "
                     f"(debits={total_debitos_enriched}, credits={total_creditos_enriched})"
@@ -696,12 +779,17 @@ def tributario_node(state: AgentState) -> AgentState:
         result["agent_reasoning"] = agent_reasoning
         state["result"] = result
 
-        append_log(state, "tributario", "node_complete", {
-            "aplica_impuestos":  aplica_impuestos,
-            "total_impuestos":   str(total_impuestos),
-            "impuestos_count":   len(impuestos),
-            "tipo_transaccion":  tipo_transaccion,
-        })
+        append_log(
+            state,
+            "tributario",
+            "node_complete",
+            {
+                "aplica_impuestos": aplica_impuestos,
+                "total_impuestos": str(total_impuestos),
+                "impuestos_count": len(impuestos),
+                "tipo_transaccion": tipo_transaccion,
+            },
+        )
 
         logger.info(
             f"Tributario: complete — total_impuestos={total_impuestos}, "

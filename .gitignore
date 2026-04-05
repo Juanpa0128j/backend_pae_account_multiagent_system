@@ -18,11 +18,15 @@ extracted_text.txt
 read_pdfs.py
 temp/
 storage/
+.venv/
+scripts/ingest_test_results.json
+
 # Storage
 storage/
 *.db
 ejemplos_docs_ingesta/
-# plans/  # docs/plans tracked for design docs; only ignore standalone plans/ at root
+plans/   
+docs/plans/
 
 
 # Alembic
@@ -47,5 +51,3 @@ test_*.pdf
 
 # Claude
 .claude/
-
-.venv/

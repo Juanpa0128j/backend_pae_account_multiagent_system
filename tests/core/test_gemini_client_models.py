@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.core.gemini_client import AuditorOutputGemini, ContadorOutputGemini
+from app.models.llm_schemas import AuditorOutputGemini, ContadorOutputGemini
 
 
 def test_contador_output_backfills_missing_totals_from_asientos():

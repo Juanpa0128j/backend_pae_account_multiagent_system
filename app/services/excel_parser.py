@@ -68,10 +68,13 @@ def parse_excel(file_path: str) -> tuple[str, list[dict[str, Any]]]:
         if header_idx is None:
             continue  # all rows are empty — skip this sheet
 
-        headers = [str(cell) if cell is not None else f"col_{j}" for j, cell in enumerate(rows_raw[header_idx])]
+        headers = [
+            str(cell) if cell is not None else f"col_{j}"
+            for j, cell in enumerate(rows_raw[header_idx])
+        ]
         data_rows: list[dict[str, Any]] = []
 
-        for row in rows_raw[header_idx + 1:]:
+        for row in rows_raw[header_idx + 1 :]:
             if not any(cell is not None for cell in row):
                 continue  # skip empty rows
             row_dict = {}
@@ -80,11 +83,13 @@ def parse_excel(file_path: str) -> tuple[str, list[dict[str, Any]]]:
                 row_dict[key] = cell
             data_rows.append(row_dict)
 
-        sheets_data.append({
-            "sheet_name": sheet_name,
-            "headers": headers,
-            "rows": data_rows,
-        })
+        sheets_data.append(
+            {
+                "sheet_name": sheet_name,
+                "headers": headers,
+                "rows": data_rows,
+            }
+        )
 
         # Build markdown table for this sheet
         md = _build_markdown_table(sheet_name, headers, data_rows)

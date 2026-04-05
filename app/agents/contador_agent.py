@@ -13,7 +13,7 @@ import logging
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
-from app.core.gemini_client import get_gemini_client
+from app.core.llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -45,21 +45,25 @@ def contador_node(state: AgentState) -> AgentState:
     state["current_agent"] = "contador"
     state["current_stage"] = "contador"
 
-    append_log(state, "contador", "node_start", {
-        "tx_count": len(raw_transactions),
-        "is_retry": is_retry,
-    })
+    append_log(
+        state,
+        "contador",
+        "node_start",
+        {
+            "tx_count": len(raw_transactions),
+            "is_retry": is_retry,
+        },
+    )
 
     # Enrich context with RAG-retrieved PUC context when available
     rag_context: list[dict] = []
     try:
         from app.services.rag_service import get_rag_service
+
         rag_svc = get_rag_service()
         first_tx = raw_transactions[0] if raw_transactions else {}
         query_text = (
-            first_tx.get("descripcion")
-            or first_tx.get("concepto")
-            or "gasto general"
+            first_tx.get("descripcion") or first_tx.get("concepto") or "gasto general"
         )
         rag_results = rag_svc.search_normativo(query_text, n_results=5)
         rag_context = rag_results if isinstance(rag_results, list) else []
@@ -67,7 +71,7 @@ def contador_node(state: AgentState) -> AgentState:
         logger.warning("contador: RAG lookup failed (non-fatal): %s", rag_err)
 
     try:
-        gemini = get_gemini_client()
+        gemini = get_llm_client()
 
         if is_retry:
             logger.info(
@@ -75,8 +79,11 @@ def contador_node(state: AgentState) -> AgentState:
                 state.get("retry_count", 1),
             )
 
+        doc_type = (state.get("document_classification") or {}).get("doc_type", "")
+
         contador_output = gemini.extract_contador_output(
             raw_transactions=raw_transactions,
+            doc_type=doc_type,
             rag_context=rag_context,
             correction_feedback=state.get("correction_feedback") if is_retry else None,
         )

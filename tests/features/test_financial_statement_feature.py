@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -54,7 +53,9 @@ def test_list_financial_statements_normalizes_nit(monkeypatch):
     import app.services.financial_statement_service as svc
 
     monkeypatch.setattr(svc, "SessionLocal", lambda: fake_db)
-    monkeypatch.setattr(svc.db_service, "get_financial_statements", _get_financial_statements)
+    monkeypatch.setattr(
+        svc.db_service, "get_financial_statements", _get_financial_statements
+    )
 
     out = list_financial_statements(company_nit="900.123.456-7")
 
@@ -74,7 +75,9 @@ def test_derive_financial_statements_requires_bg_er_la(monkeypatch):
     import app.services.financial_statement_service as svc
 
     monkeypatch.setattr(svc, "SessionLocal", lambda: fake_db)
-    monkeypatch.setattr(svc.db_service, "get_financial_statements", _get_financial_statements)
+    monkeypatch.setattr(
+        svc.db_service, "get_financial_statements", _get_financial_statements
+    )
 
     with pytest.raises(BusinessRuleError):
         derive_financial_statements(
@@ -88,9 +91,15 @@ def test_derive_financial_statements_persists_outputs_and_lineage(monkeypatch):
     fake_db = _FakeDB()
     lineage_calls = []
 
-    bg = _row("fs_bg", "balance_general", {"total_activos": 1000, "total_pasivos": 400, "total_patrimonio": 600})
+    bg = _row(
+        "fs_bg",
+        "balance_general",
+        {"total_activos": 1000, "total_pasivos": 400, "total_patrimonio": 600},
+    )
     er = _row("fs_er", "estado_resultados", {"utilidad_neta": 120})
-    la = _row("fs_la", "libro_auxiliar", {"lines": [{"cuenta_puc": "110505", "saldo": 250}]})
+    la = _row(
+        "fs_la", "libro_auxiliar", {"lines": [{"cuenta_puc": "110505", "saldo": 250}]}
+    )
 
     def _get_financial_statements(_db, **kwargs):
         t = kwargs["statement_type"]
@@ -116,9 +125,13 @@ def test_derive_financial_statements_persists_outputs_and_lineage(monkeypatch):
     import app.services.financial_statement_service as svc
 
     monkeypatch.setattr(svc, "SessionLocal", lambda: fake_db)
-    monkeypatch.setattr(svc.db_service, "get_financial_statements", _get_financial_statements)
+    monkeypatch.setattr(
+        svc.db_service, "get_financial_statements", _get_financial_statements
+    )
     monkeypatch.setattr(svc.db_service, "create_ingest_job", _create_ingest_job)
-    monkeypatch.setattr(svc.db_service, "create_financial_statement", _create_financial_statement)
+    monkeypatch.setattr(
+        svc.db_service, "create_financial_statement", _create_financial_statement
+    )
     monkeypatch.setattr(
         svc.db_service,
         "create_financial_statement_lineage",

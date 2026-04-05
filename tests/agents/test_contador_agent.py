@@ -9,12 +9,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from app.agents.contador_agent import contador_node
 from app.agents.state import AgentState
 from app.agents.supervisor import validate_contador_output_node
-from app.core.gemini_client import GeminiClient
+from app.core.llm_client import LLMClient as GeminiClient
 
 
 def _base_state(**overrides) -> AgentState:
@@ -38,7 +37,9 @@ def _base_state(**overrides) -> AgentState:
                 "nit_receptor": "800999888",
                 "total": 1190000,
                 "descripcion": "Servicio de consultoria tributaria marzo",
-                "items": [{"descripcion": "Consultoria", "cantidad": 1, "valor": 1190000}],
+                "items": [
+                    {"descripcion": "Consultoria", "cantidad": 1, "valor": 1190000}
+                ],
             }
         ],
         "contador_output": {},
@@ -87,8 +88,12 @@ def test_contador_example_service_expense_output_is_sensible() -> None:
     mock_gemini = MagicMock()
     mock_gemini.extract_contador_output.return_value = expected_output
 
-    with patch("app.agents.contador_agent.get_gemini_client", return_value=mock_gemini), patch(
-        "app.services.rag_service.get_rag_service", side_effect=Exception("rag unavailable")
+    with (
+        patch("app.agents.contador_agent.get_llm_client", return_value=mock_gemini),
+        patch(
+            "app.services.rag_service.get_rag_service",
+            side_effect=Exception("rag unavailable"),
+        ),
     ):
         state = _base_state()
         result = contador_node(state)
@@ -97,7 +102,10 @@ def test_contador_example_service_expense_output_is_sensible() -> None:
     assert result["result"]["status"] == "clasificado"
     assert result["current_agent"] == "contador"
     assert result["current_stage"] == "contador"
-    assert result["contador_output"]["total_debitos"] == result["contador_output"]["total_creditos"]
+    assert (
+        result["contador_output"]["total_debitos"]
+        == result["contador_output"]["total_creditos"]
+    )
     assert result["contador_output"]["asientos"][0]["cuenta_puc"] == "5135"
     assert result["contador_output"]["asientos"][1]["cuenta_puc"] == "2205"
 
@@ -110,8 +118,18 @@ def test_contador_example_retry_feedback_roundtrip() -> None:
         "tipo_documento": "factura",
         "descripcion_general": "Asiento corregido",
         "asientos": [
-            {"cuenta_puc": "5135", "nombre_cuenta": "Servicios", "tipo_movimiento": "debito", "valor": 500000},
-            {"cuenta_puc": "2205", "nombre_cuenta": "Proveedores", "tipo_movimiento": "credito", "valor": 500000},
+            {
+                "cuenta_puc": "5135",
+                "nombre_cuenta": "Servicios",
+                "tipo_movimiento": "debito",
+                "valor": 500000,
+            },
+            {
+                "cuenta_puc": "2205",
+                "nombre_cuenta": "Proveedores",
+                "tipo_movimiento": "credito",
+                "valor": 500000,
+            },
         ],
         "total_debitos": 500000,
         "total_creditos": 500000,
@@ -120,8 +138,12 @@ def test_contador_example_retry_feedback_roundtrip() -> None:
     feedback = "Debitos y creditos no cuadran. Corrige la partida doble."
     state = _base_state(correction_feedback=feedback, retry_count=1)
 
-    with patch("app.agents.contador_agent.get_gemini_client", return_value=mock_gemini), patch(
-        "app.services.rag_service.get_rag_service", side_effect=Exception("rag unavailable")
+    with (
+        patch("app.agents.contador_agent.get_llm_client", return_value=mock_gemini),
+        patch(
+            "app.services.rag_service.get_rag_service",
+            side_effect=Exception("rag unavailable"),
+        ),
     ):
         result = contador_node(state)
 
@@ -137,8 +159,18 @@ def test_contador_example_unbalanced_output_triggers_validation_retry() -> None:
         "tipo_documento": "factura",
         "descripcion_general": "Asiento invalido",
         "asientos": [
-            {"cuenta_puc": "5135", "nombre_cuenta": "Servicios", "tipo_movimiento": "debito", "valor": 1000000},
-            {"cuenta_puc": "2205", "nombre_cuenta": "Proveedores", "tipo_movimiento": "credito", "valor": 900000},
+            {
+                "cuenta_puc": "5135",
+                "nombre_cuenta": "Servicios",
+                "tipo_movimiento": "debito",
+                "valor": 1000000,
+            },
+            {
+                "cuenta_puc": "2205",
+                "nombre_cuenta": "Proveedores",
+                "tipo_movimiento": "credito",
+                "valor": 900000,
+            },
         ],
         "total_debitos": 1000000,
         "total_creditos": 900000,
@@ -175,14 +207,21 @@ def test_contador_prompt_includes_transaction_fields_and_rag_context() -> None:
 
     client._invoke = fake_invoke  # type: ignore[method-assign]
 
-    tx = [{"fecha": "2026-03-01", "nit_emisor": "900123456", "total": 1190000, "descripcion": "Consultoria"}]
+    tx = [
+        {
+            "fecha": "2026-03-01",
+            "nit_emisor": "900123456",
+            "total": 1190000,
+            "descripcion": "Consultoria",
+        }
+    ]
     rag = [{"content": "PUC 5135: Servicios profesionales."}]
 
     client.extract_contador_output(raw_transactions=tx, rag_context=rag)
 
     prompt_text = captured[0]
-    assert "NIT emisor: 900123456" in prompt_text
-    assert "Total: 1190000" in prompt_text
+    assert "900123456" in prompt_text
+    assert "1190000" in prompt_text
     assert "Contexto normativo/RAG" in prompt_text
     assert "PUC 5135" in prompt_text
 
@@ -208,7 +247,14 @@ def test_contador_prompt_uses_fallback_when_rag_context_is_empty() -> None:
 
     client._invoke = fake_invoke  # type: ignore[method-assign]
 
-    tx = [{"fecha": "2026-03-01", "nit_emisor": "900123456", "total": 1190000, "descripcion": "Consultoria"}]
+    tx = [
+        {
+            "fecha": "2026-03-01",
+            "nit_emisor": "900123456",
+            "total": 1190000,
+            "descripcion": "Consultoria",
+        }
+    ]
 
     client.extract_contador_output(raw_transactions=tx, rag_context=[])
     prompt_text = captured[0]

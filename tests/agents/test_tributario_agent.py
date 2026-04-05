@@ -17,7 +17,6 @@ Tests cover:
 13. aplica_impuestos=False when all taxes are zero (zero base)
 """
 
-import pytest
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -28,15 +27,11 @@ from app.agents.tributario_agent import (
     _calc_retefuente,
     _calc_reteica,
     _calc_iva,
-    _calc_ica,
-    _calc_provision_renta,
     _has_iva_in_asientos,
-    _has_income_accounts,
 )
 from app.agents.state import AgentState
-from app.core.gemini_client import TaxJustification
+from app.models.llm_schemas import TaxJustification
 from app.models.agent_outputs import TributarioOutput
-
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -162,6 +157,7 @@ def _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn):
 
 # ─── Unit tests: pure calculator functions ────────────────────────────────────
 
+
 def test_calc_retefuente_servicios():
     result = _calc_retefuente(Decimal("1500000"), "servicios")
     assert result == Decimal("165000.00")
@@ -204,7 +200,11 @@ def test_detect_transaction_type_bienes():
 
 def test_detect_transaction_type_arrendamiento():
     asientos = [
-        {"cuenta_puc": "5120", "tipo_movimiento": "debito", "descripcion": "Arrendamiento oficina"}
+        {
+            "cuenta_puc": "5120",
+            "tipo_movimiento": "debito",
+            "descripcion": "Arrendamiento oficina",
+        }
     ]
     assert _detect_transaction_type(asientos) == "arrendamiento"
 
@@ -225,7 +225,8 @@ def test_has_iva_in_asientos_absent():
 
 # ─── Integration tests: tributario_node ───────────────────────────────────────
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_node_replaces_stub(mock_rag_cls, mock_gemini_fn):
     """Node populates tributario_output — no longer a stub."""
@@ -239,7 +240,7 @@ def test_node_replaces_stub(mock_rag_cls, mock_gemini_fn):
     assert result["current_stage"] == "tributario_complete"
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_retefuente_servicios_11_percent(mock_rag_cls, mock_gemini_fn):
     """Retefuente = 11% for PUC 5xxx (servicios), base 1,500,000."""
@@ -253,7 +254,7 @@ def test_retefuente_servicios_11_percent(mock_rag_cls, mock_gemini_fn):
     assert retefuente["cuenta_puc"] == "240815"
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_reteica_applied(mock_rag_cls, mock_gemini_fn):
     """ReteICA = 0.69% applied, cuenta 2368."""
@@ -267,7 +268,7 @@ def test_reteica_applied(mock_rag_cls, mock_gemini_fn):
     assert reteica["cuenta_puc"] == "236540"
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_iva_calculated_when_not_in_asientos(mock_rag_cls, mock_gemini_fn):
     """IVA 19% calculated when not present in contador asientos."""
@@ -280,7 +281,7 @@ def test_iva_calculated_when_not_in_asientos(mock_rag_cls, mock_gemini_fn):
     assert Decimal(iva["valor_impuesto"]) == Decimal("285000.00")
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_gemini_fn):
     """IVA from contador asientos is captured, not recalculated."""
@@ -297,10 +298,12 @@ def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_gemini_fn):
     # contador already covers it. Check that the IVA sub-account (240802) is absent.
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
     new_iva_entries = [a for a in enriquecidos if a.get("cuenta_puc") == "240802"]
-    assert len(new_iva_entries) == 0, "Tributario must not add IVA when already in asientos"
+    assert len(new_iva_entries) == 0, (
+        "Tributario must not add IVA when already in asientos"
+    )
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_retefuente_bienes_3_percent(mock_rag_cls, mock_gemini_fn):
     """Retefuente = 3% for bienes (non-5xxx PUC), base 1,000,000."""
@@ -313,7 +316,7 @@ def test_retefuente_bienes_3_percent(mock_rag_cls, mock_gemini_fn):
     assert Decimal(retefuente["valor_impuesto"]) == Decimal("30000.00")
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_upstream_error_passthrough(mock_rag_cls, mock_gemini_fn):
     """Node skips processing if upstream error is set."""
@@ -326,7 +329,7 @@ def test_upstream_error_passthrough(mock_rag_cls, mock_gemini_fn):
     mock_gemini_fn.return_value.justify_tax_analysis.assert_not_called()
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_missing_contador_output_sets_error(mock_rag_cls, mock_gemini_fn):
     """Missing contador_output results in an error being set."""
@@ -338,7 +341,7 @@ def test_missing_contador_output_sets_error(mock_rag_cls, mock_gemini_fn):
     assert "contador_output" in result["error"].lower()
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_schema_valid(mock_rag_cls, mock_gemini_fn):
     """tributario_output validates against TributarioOutput Pydantic schema."""
@@ -353,7 +356,7 @@ def test_schema_valid(mock_rag_cls, mock_gemini_fn):
     assert parsed.total_impuestos > 0
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_gemini_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
     """Node completes when GeminiClient returns a static fallback response."""
@@ -383,7 +386,7 @@ def test_gemini_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
     assert "Art. 383 ET" in result["tributario_output"].get("referencias_legales", [])
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_rag_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
     """Node completes when RAG lookup raises exception."""
@@ -406,7 +409,7 @@ def test_rag_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
     assert result["tributario_output"] != {}
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_journal_entries_enriched_with_tax_accounts(mock_rag_cls, mock_gemini_fn):
     """Enriched asientos contain tax liability accounts (240815, 236540, 240802)."""
@@ -417,12 +420,14 @@ def test_journal_entries_enriched_with_tax_accounts(mock_rag_cls, mock_gemini_fn
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
     cuentas = [a["cuenta_puc"] for a in enriquecidos]
 
-    assert "240815" in cuentas, "Retefuente account 240815 missing from enriched asientos"
+    assert "240815" in cuentas, (
+        "Retefuente account 240815 missing from enriched asientos"
+    )
     assert "236540" in cuentas, "ReteICA account 236540 missing from enriched asientos"
     assert "240802" in cuentas, "IVA account 240802 missing from enriched asientos"
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_referencias_legales_in_output(mock_rag_cls, mock_gemini_fn):
     """Legal references from Gemini are stored in tributario_output."""
@@ -435,7 +440,7 @@ def test_referencias_legales_in_output(mock_rag_cls, mock_gemini_fn):
     assert any("Art. 383" in r for r in referencias)
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_total_impuestos_matches_sum(mock_rag_cls, mock_gemini_fn):
     """total_impuestos equals the sum of individual impuesto values."""
@@ -450,7 +455,7 @@ def test_total_impuestos_matches_sum(mock_rag_cls, mock_gemini_fn):
     assert calculated == stored
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_agent_log_entries_written(mock_rag_cls, mock_gemini_fn):
     """node_start and node_complete are written to agent_log."""
@@ -463,7 +468,7 @@ def test_agent_log_entries_written(mock_rag_cls, mock_gemini_fn):
     assert "node_complete" in events
 
 
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_smoke_1500000_servicios(mock_rag_cls, mock_gemini_fn):
     """
@@ -475,17 +480,21 @@ def test_smoke_1500000_servicios(mock_rag_cls, mock_gemini_fn):
     result = tributario_node(state)
 
     output = result["tributario_output"]
-    impuestos = {i["tipo_impuesto"]: Decimal(i["valor_impuesto"]) for i in output["impuestos"]}
+    impuestos = {
+        i["tipo_impuesto"]: Decimal(i["valor_impuesto"]) for i in output["impuestos"]
+    }
 
     assert impuestos["retefuente"] == Decimal("165000.00")
-    assert impuestos["reteica"]    == Decimal("10350.00")
-    assert impuestos["IVA"]        == Decimal("285000.00")
+    assert impuestos["reteica"] == Decimal("10350.00")
+    assert impuestos["IVA"] == Decimal("285000.00")
     assert Decimal(output["total_impuestos"]) == Decimal("460350.00")
 
 
 @patch("app.services.db_service.get_company_settings", return_value=None)
 @patch("app.core.database.SessionLocal")
-def test_process_mode_fails_when_company_settings_missing(mock_session_local, mock_get_settings):
+def test_process_mode_fails_when_company_settings_missing(
+    mock_session_local, mock_get_settings
+):
     """Process mode must fail fast when no company_settings row exists for NIT."""
     _ = mock_get_settings
     mock_db = MagicMock()
@@ -503,7 +512,7 @@ def test_process_mode_fails_when_company_settings_missing(mock_session_local, mo
 
 @patch("app.services.db_service.get_company_settings")
 @patch("app.core.database.SessionLocal")
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_process_mode_uses_company_settings_when_present(
     mock_rag_cls,
@@ -536,9 +545,58 @@ def test_process_mode_uses_company_settings_when_present(
     assert result["tributario_output"] != {}
 
 
+INCOME_CONTADOR_OUTPUT = {
+    "fecha_registro": "2026-03-07",
+    "tipo_documento": "factura",
+    "descripcion_general": "Venta de servicios",
+    "asientos": [
+        {
+            "cuenta_puc": "1110",
+            "nombre_cuenta": "Bancos",
+            "tipo_movimiento": "debito",
+            "valor": 1000000,
+            "descripcion": "Recaudo venta",
+        },
+        {
+            "cuenta_puc": "4135",
+            "nombre_cuenta": "Ingresos por Servicios",
+            "tipo_movimiento": "credito",
+            "valor": 1000000,
+            "descripcion": "Venta servicios",
+        },
+    ],
+    "total_debitos": 1000000,
+    "total_creditos": 1000000,
+}
+
+
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.get_llm_client")
+def test_ica_applied_for_income_transaction(mock_gemini_fn, mock_rag_cls):
+    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    state = _make_state(INCOME_CONTADOR_OUTPUT)
+    result = tributario_node(state)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    ica_entry = next(
+        (i for i in trib["impuestos"] if i["tipo_impuesto"] == "ica"), None
+    )
+    assert ica_entry is not None, "ICA entry missing from impuestos"
+    assert Decimal(ica_entry["valor_impuesto"]) > Decimal("0")
+
+    puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
+    assert "540101" in puc_codes, (
+        "Gasto ICA (540101) missing from asientos_enriquecidos"
+    )
+    assert "240808" in puc_codes, (
+        "ICA por Pagar (240808) missing from asientos_enriquecidos"
+    )
+
+
 @patch("app.services.db_service.get_company_settings")
 @patch("app.core.database.SessionLocal")
-@patch("app.agents.tributario_agent.get_gemini_client")
+@patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_process_mode_without_taxes_does_not_crash(
     mock_rag_cls,
@@ -569,4 +627,6 @@ def test_process_mode_without_taxes_does_not_crash(
 
     assert result.get("error") is None
     assert result["tributario_output"].get("aplica_impuestos") is False
-    assert Decimal(str(result["tributario_output"].get("total_impuestos"))) == Decimal("0")
+    assert Decimal(str(result["tributario_output"].get("total_impuestos"))) == Decimal(
+        "0"
+    )

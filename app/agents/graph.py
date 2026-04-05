@@ -41,12 +41,15 @@ logger = logging.getLogger(__name__)
 # Keys that callers are permitted to pre-set via the initial_state parameter.
 # Core execution fields are intentionally excluded to prevent accidental
 # runtime corruption.
-_ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset({"ingest_id", "mode", "company_nit"})
+_ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset(
+    {"ingest_id", "mode", "company_nit"}
+)
 
 
 # ---------------------------------------------------------------------------
 # Unified 9-node graph
 # ---------------------------------------------------------------------------
+
 
 def create_agent_graph() -> Any:
     """
@@ -154,6 +157,7 @@ def _base_state() -> AgentState:
 # invoke_ingest_pipeline — Pipeline 1 (ingest) entry point
 # ---------------------------------------------------------------------------
 
+
 def invoke_ingest_pipeline(file_path: str, initial_state: dict | None = None) -> dict:
     """
     Invoke the unified agent graph for a file upload (Pipeline 1).
@@ -189,6 +193,7 @@ def invoke_ingest_pipeline(file_path: str, initial_state: dict | None = None) ->
     result["validation_history"] = final_state.get("validation_history", [])
     result["db_result"] = final_state.get("db_result")
     result["agent_log"] = final_state.get("agent_log", [])
+    result["raw_transactions"] = final_state.get("raw_transactions", [])
     if not result.get("ingest_id"):
         result["ingest_id"] = final_state.get("ingest_id", "")
     if final_state.get("error") and not result.get("error"):
@@ -199,6 +204,7 @@ def invoke_ingest_pipeline(file_path: str, initial_state: dict | None = None) ->
 # ---------------------------------------------------------------------------
 # invoke_accounting_pipeline — Pipeline 2 (accounting) entry point
 # ---------------------------------------------------------------------------
+
 
 def invoke_accounting_pipeline(
     *,
@@ -233,6 +239,7 @@ def invoke_accounting_pipeline(
 # invoke_reporting_pipeline — Reporting entry point
 # ---------------------------------------------------------------------------
 
+
 def invoke_reporting_pipeline(
     *,
     report_type: str,
@@ -262,7 +269,11 @@ def invoke_reporting_pipeline(
     state["report_params"] = report_params or {}
     state["company_nit"] = company_nit
 
-    logger.info("invoke_reporting_pipeline: report_type=%s params=%s", report_type, report_params)
+    logger.info(
+        "invoke_reporting_pipeline: report_type=%s params=%s",
+        report_type,
+        report_params,
+    )
     final_state = graph.invoke(state)
     result = final_state.get("result") or {}
     result["agent_log"] = final_state.get("agent_log", [])

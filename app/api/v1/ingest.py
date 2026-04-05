@@ -30,7 +30,7 @@ def save_temp_file(file_content: bytes, filename: str) -> str:
     """Save file to temporary directory."""
     temp_dir = Path(tempfile.gettempdir()) / "pae_uploads"
     temp_dir.mkdir(exist_ok=True)
-    temp_path = temp_dir / filename
+    temp_path = temp_dir / Path(filename).name
 
     with open(temp_path, "wb") as f:
         f.write(file_content)
@@ -164,7 +164,13 @@ async def upload_file(
             stripped = file_content.lstrip()
             if _ext == ".xml" and any(
                 stripped.startswith(prefix)
-                for prefix in (b"<?xml", b"<Invoice", b"<Credit", b"<Debit", b"\xef\xbb\xbf<?xml")
+                for prefix in (
+                    b"<?xml",
+                    b"<Invoice",
+                    b"<Credit",
+                    b"<Debit",
+                    b"\xef\xbb\xbf<?xml",
+                )
             ):
                 pass
             else:

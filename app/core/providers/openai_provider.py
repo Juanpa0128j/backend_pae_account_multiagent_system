@@ -1,4 +1,5 @@
 """OpenAI provider — primary LLM for structured extraction."""
+
 from __future__ import annotations
 
 import logging
@@ -41,4 +42,3 @@ class OpenAIProvider:
 
     def invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
         return self._get_model(schema_cls).invoke([HumanMessage(content=prompt)])
-

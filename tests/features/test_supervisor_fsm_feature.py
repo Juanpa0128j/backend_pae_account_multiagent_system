@@ -16,18 +16,20 @@ dependencies mocked. Validates:
 import pytest
 from unittest.mock import MagicMock, patch
 
-from app.core.gemini_client import TaxJustification
+from app.models.llm_schemas import TaxJustification
 
 # ---------------------------------------------------------------------------
 # Mock targets — must match the import location in each module
 # ---------------------------------------------------------------------------
 MOCK_LLAMA_PARSE = "app.agents.ingest_agent.LlamaParse"
-MOCK_GEMINI = "app.agents.ingest_agent.get_gemini_client"
+MOCK_GEMINI = "app.agents.ingest_agent.get_llm_client"
 MOCK_SESSION = "app.agents.persist_node.SessionLocal"
 MOCK_DB_SVC = "app.agents.persist_node.db_service"
-MOCK_TRIBUTARIO_GEMINI = "app.agents.tributario_agent.get_gemini_client"
+MOCK_TRIBUTARIO_GEMINI = "app.agents.tributario_agent.get_llm_client"
 MOCK_TRIBUTARIO_RAG = "app.agents.tributario_agent.get_rag_service"
-MOCK_AUDITOR_GEMINI = "app.agents.auditor_agent.get_gemini_client"
+MOCK_TRIBUTARIO_SESSION = "app.core.database.SessionLocal"
+MOCK_TRIBUTARIO_DB_SVC = "app.services.db_service.get_company_settings"
+MOCK_AUDITOR_GEMINI = "app.agents.auditor_agent.get_llm_client"
 
 # ---------------------------------------------------------------------------
 # Test data
@@ -71,9 +73,30 @@ VALID_CONTADOR_OUTPUT = {
     "tipo_documento": "factura",
     "descripcion_general": "Servicios enero 2026",
     "asientos": [
-        {"cuenta_puc": "5110", "nombre_cuenta": "Honorarios", "valor": 1500000.0, "debito": 1500000.0, "credito": 0.0, "tipo_movimiento": "debito"},
-        {"cuenta_puc": "2408", "nombre_cuenta": "Retefuente", "valor": 150000.0, "debito": 0.0, "credito": 150000.0, "tipo_movimiento": "credito"},
-        {"cuenta_puc": "2205", "nombre_cuenta": "Proveedores", "valor": 1350000.0, "debito": 0.0, "credito": 1350000.0, "tipo_movimiento": "credito"},
+        {
+            "cuenta_puc": "5110",
+            "nombre_cuenta": "Honorarios",
+            "valor": 1500000.0,
+            "debito": 1500000.0,
+            "credito": 0.0,
+            "tipo_movimiento": "debito",
+        },
+        {
+            "cuenta_puc": "2408",
+            "nombre_cuenta": "Retefuente",
+            "valor": 150000.0,
+            "debito": 0.0,
+            "credito": 150000.0,
+            "tipo_movimiento": "credito",
+        },
+        {
+            "cuenta_puc": "2205",
+            "nombre_cuenta": "Proveedores",
+            "valor": 1350000.0,
+            "debito": 0.0,
+            "credito": 1350000.0,
+            "tipo_movimiento": "credito",
+        },
     ],
     "total_debitos": 1500000.0,
     "total_creditos": 1500000.0,
@@ -83,6 +106,7 @@ VALID_CONTADOR_OUTPUT = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _setup_tributario_mocks(mock_trib_rag_cls, mock_trib_gemini_fn):
     """Wire up mock RAG and Gemini for tributario node."""
@@ -185,6 +209,7 @@ def dummy_pdf(tmp_path) -> str:
 # Graph structure
 # ---------------------------------------------------------------------------
 
+
 class TestGraphStructure:
     def test_all_nine_nodes_exist(self):
         from app.agents.graph import create_agent_graph
@@ -222,6 +247,7 @@ class TestGraphStructure:
 # ---------------------------------------------------------------------------
 # Pipeline 1 happy path
 # ---------------------------------------------------------------------------
+
 
 class TestPipeline1HappyPath:
     @patch(MOCK_DB_SVC)
@@ -283,6 +309,7 @@ class TestPipeline1HappyPath:
 # Supervisor error routing
 # ---------------------------------------------------------------------------
 
+
 class TestSupervisorErrorRouting:
     def test_missing_file_sets_error_and_goes_to_error_terminal(self):
         from app.agents.graph import create_agent_graph
@@ -327,21 +354,41 @@ class TestSupervisorErrorRouting:
 # Pipeline 2 — accounting routing with stubs
 # ---------------------------------------------------------------------------
 
+
 class TestPipeline2Routing:
     def test_accounting_pipeline_visits_contador_tributario_auditor(self, dummy_pdf):
         """Stub loop: supervisor → contador → supervisor → tributario → supervisor
         → auditor → supervisor → db_persist."""
         from app.agents.graph import create_agent_graph
 
-        with patch(MOCK_SESSION), patch(MOCK_DB_SVC), \
-                patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc, \
-                patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag, \
-                patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini, \
-                patch(MOCK_AUDITOR_GEMINI) as mock_auditor_gemini:
+        with (
+            patch(MOCK_SESSION),
+            patch(MOCK_DB_SVC),
+            patch(MOCK_TRIBUTARIO_SESSION),
+            patch(MOCK_TRIBUTARIO_DB_SVC) as mock_get_settings,
+            patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc,
+            patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag,
+            patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini,
+            patch(MOCK_AUDITOR_GEMINI) as mock_auditor_gemini,
+            patch("app.services.rag_service.get_rag_service") as mock_cnt_rag,
+            patch("app.agents.contador_agent.get_llm_client") as mock_gc,
+        ):
+            mock_cnt_rag.return_value.search_normativo.return_value = []
+            mock_gc.return_value.extract_contador_output.return_value = (
+                VALID_CONTADOR_OUTPUT
+            )
+            mock_get_settings.return_value = MagicMock(
+                tasa_retefuente_servicios=0.11,
+                tasa_retefuente_bienes=0.03,
+                tasa_retefuente_arrendamiento=0.035,
+                tasa_reteica=0.0048,
+                tasa_iva_general=0.19,
+                tasa_ica=0.0048,
+                tasa_renta=0.33,
+            )
             mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
             _setup_tributario_mocks(mock_trib_rag, mock_trib_gemini)
             _setup_auditor_mock(mock_auditor_gemini)
-            # Provide raw_transactions so process supervisor doesn't error
             s = _base_state(dummy_pdf, mode="process")
             s["raw_transactions"] = [
                 {
@@ -352,10 +399,7 @@ class TestPipeline2Routing:
                     "descripcion": "Servicio",
                 }
             ]
-            # Stub the Gemini client used by contador (not relevant for routing test)
-            with patch("app.agents.contador_agent.get_gemini_client") as mock_gc:
-                mock_gc.return_value.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
-                fs = create_agent_graph().invoke(s)
+            fs = create_agent_graph().invoke(s)
 
             agents_visited = {e["agent"] for e in fs.get("agent_log", [])}
             assert "contador" in agents_visited
@@ -370,16 +414,38 @@ class TestPipeline2Routing:
 
         s = _base_state(dummy_pdf, mode="process")
         s["raw_transactions"] = [
-            {"fecha": "2026-01-15", "nit_emisor": "900123456",
-             "nit_receptor": "800999888", "total": 500000}
+            {
+                "fecha": "2026-01-15",
+                "nit_emisor": "900123456",
+                "nit_receptor": "800999888",
+                "total": 500000,
+            }
         ]
-        with patch("app.agents.contador_agent.get_gemini_client") as mock_gc, \
-                patch(MOCK_SESSION), patch(MOCK_DB_SVC), \
-                patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc, \
-                patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag, \
-                patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini, \
-                patch(MOCK_AUDITOR_GEMINI) as mock_auditor_gemini:
-            mock_gc.return_value.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
+        with (
+            patch("app.agents.contador_agent.get_llm_client") as mock_gc,
+            patch("app.services.rag_service.get_rag_service") as mock_cnt_rag,
+            patch(MOCK_SESSION),
+            patch(MOCK_DB_SVC),
+            patch(MOCK_TRIBUTARIO_SESSION),
+            patch(MOCK_TRIBUTARIO_DB_SVC) as mock_get_settings,
+            patch("app.agents.supervisor.db_service.validate_puc_exists") as mock_puc,
+            patch(MOCK_TRIBUTARIO_RAG) as mock_trib_rag,
+            patch(MOCK_TRIBUTARIO_GEMINI) as mock_trib_gemini,
+            patch(MOCK_AUDITOR_GEMINI) as mock_auditor_gemini,
+        ):
+            mock_cnt_rag.return_value.search_normativo.return_value = []
+            mock_gc.return_value.extract_contador_output.return_value = (
+                VALID_CONTADOR_OUTPUT
+            )
+            mock_get_settings.return_value = MagicMock(
+                tasa_retefuente_servicios=0.11,
+                tasa_retefuente_bienes=0.03,
+                tasa_retefuente_arrendamiento=0.035,
+                tasa_reteica=0.0048,
+                tasa_iva_general=0.19,
+                tasa_ica=0.0048,
+                tasa_renta=0.33,
+            )
             mock_puc.return_value = MagicMock(codigo="5110", nombre="Honorarios")
             _setup_tributario_mocks(mock_trib_rag, mock_trib_gemini)
             _setup_auditor_mock(mock_auditor_gemini)
@@ -387,7 +453,8 @@ class TestPipeline2Routing:
 
         # Supervisor should have logged routing to db_persist after audit approved
         routing_completions = [
-            e for e in fs.get("agent_log", [])
+            e
+            for e in fs.get("agent_log", [])
             if e["agent"] == "supervisor" and e["event"] == "routing_complete"
         ]
         next_agents = [e["details"].get("next_agent") for e in routing_completions]
@@ -397,6 +464,7 @@ class TestPipeline2Routing:
 # ---------------------------------------------------------------------------
 # Retry flow (Pipeline 1)
 # ---------------------------------------------------------------------------
+
 
 class TestRetryFlow:
     @patch(MOCK_DB_SVC)
@@ -466,6 +534,7 @@ class TestRetryFlow:
 # ---------------------------------------------------------------------------
 # invoke_ingest_pipeline wrapper
 # ---------------------------------------------------------------------------
+
 
 class TestInvokeAgent:
     @patch(MOCK_DB_SVC)
