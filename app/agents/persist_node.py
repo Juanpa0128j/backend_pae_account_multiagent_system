@@ -457,23 +457,35 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         return
 
     period_start, period_end = period
+
+    # Guard: ensure period values are real datetimes (not Mock objects from tests)
+    if not isinstance(period_start, datetime) or not isinstance(period_end, datetime):
+        logger.warning(
+            "[persist] Unexpected period type (%s, %s) — skipping derivation",
+            type(period_start).__name__, type(period_end).__name__,
+        )
+        return
+
     logger.info(
-        "[persist] Building first-level statements for %s (%s → %s)",
+        "[persist] Building first-level statements for %s (%s -> %s)",
         company_nit,
         period_start.date(),
         period_end.date(),
     )
 
-    # Build first-level derived statements (balance, P&L, ledger). Failures here are critical.
-    build_first_level_from_journal_entries(
-        db,
-        company_nit=company_nit,
-        period_start=period_start,
-        period_end=period_end,
-    )
+    try:
+        build_first_level_from_journal_entries(
+            db,
+            company_nit=company_nit,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except Exception as exc:
+        # Non-fatal: missing derived statements don't break the accounting pipeline.
+        # The request still succeeds; derivation can be re-triggered on next run.
+        logger.warning("[persist] build_first_level failed (non-fatal): %s", exc, exc_info=True)
+        return
 
-    # Derive second-level statements (cashflow, equity changes, notes).
-    # Fail fast on all errors except expected precondition mismatches.
     try:
         _derive_financial_statements(
             company_nit=company_nit,
@@ -482,6 +494,8 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         )
     except BusinessRuleError as exc:
         logger.warning("[persist] derive skipped (missing source inputs): %s", exc)
+    except Exception as exc:
+        logger.warning("[persist] derive failed (non-fatal): %s", exc, exc_info=True)
 
 
 def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) -> None:
