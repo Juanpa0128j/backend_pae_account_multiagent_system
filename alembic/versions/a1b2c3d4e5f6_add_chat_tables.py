@@ -39,10 +39,16 @@ def upgrade() -> None:
             sa.Column("id", sa.String(50), primary_key=True),
             sa.Column("company_nit", sa.String(20), nullable=True),
             sa.Column("title", sa.String(200), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-            sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+            sa.Column(
+                "created_at", sa.DateTime(timezone=True), server_default=sa.func.now()
+            ),
+            sa.Column(
+                "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()
+            ),
         )
-        op.create_index("ix_chat_sessions_company_nit", "chat_sessions", ["company_nit"])
+        op.create_index(
+            "ix_chat_sessions_company_nit", "chat_sessions", ["company_nit"]
+        )
         op.create_index("ix_chat_sessions_created_at", "chat_sessions", ["created_at"])
 
     if not _table_exists("chat_messages"):
@@ -60,7 +66,9 @@ def upgrade() -> None:
             sa.Column("data_cards", JSONB, nullable=True),
             sa.Column("intent", sa.String(30), nullable=True),
             sa.Column("sources", JSONB, nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+            sa.Column(
+                "created_at", sa.DateTime(timezone=True), server_default=sa.func.now()
+            ),
         )
         op.create_index("ix_chat_messages_session_id", "chat_messages", ["session_id"])
         op.create_index("ix_chat_messages_created_at", "chat_messages", ["created_at"])

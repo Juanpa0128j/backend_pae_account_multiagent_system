@@ -1037,7 +1037,6 @@ Responde en español."""
             logger.warning("Brief report analysis failed (non-fatal): %s", e)
             return {"error": f"Análisis LLM no disponible: {e}"}
 
-
     # ------------------------------------------------------------------
     # Chatbot methods
     # ------------------------------------------------------------------
@@ -1045,11 +1044,13 @@ Responde en español."""
     def classify_chat_intent(self, prompt: str) -> dict:
         """Classify a chat message intent using structured output."""
         from app.core.gemini_client import ChatIntentClassification
+
         return self._as_dict(self._invoke(ChatIntentClassification, prompt))
 
     def generate_chat_response(self, prompt: str) -> dict:
         """Generate a structured (non-streaming) chatbot response."""
         from app.core.gemini_client import ChatbotResponseGemini
+
         return self._as_dict(self._invoke(ChatbotResponseGemini, prompt))
 
     def stream_chat_response(self, prompt: str) -> Iterator[str]:
@@ -1082,9 +1083,7 @@ Responde en español."""
                 if not has_next:
                     break
                 if _is_quota_error(exc):
-                    logger.warning(
-                        "%s quota exceeded — falling back for stream", name
-                    )
+                    logger.warning("%s quota exceeded — falling back for stream", name)
                 else:
                     raise
 

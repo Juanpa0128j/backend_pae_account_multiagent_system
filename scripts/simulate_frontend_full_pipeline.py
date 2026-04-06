@@ -983,6 +983,7 @@ def main() -> int:
 # Chatbot validation
 # ---------------------------------------------------------------------------
 
+
 def test_chatbot(
     client: httpx.Client,
     base_url: str,
@@ -1030,11 +1031,7 @@ def test_chatbot(
             ok = ok and (detected == expected_intent)
 
         status = "[OK]" if ok else "[WARN]"
-        print(
-            f"  {status} [{detected:18s}] "
-            f"cards={len(cards)} "
-            f"q={question[:45]}..."
-        )
+        print(f"  {status} [{detected:18s}] cards={len(cards)} q={question[:45]}...")
         if reply:
             print(f"       reply: {reply[:120]}...")
 
@@ -1049,8 +1046,10 @@ def test_chatbot(
             if sessions_resp.status_code == 200:
                 sessions = sessions_resp.json()
                 found = any(s["id"] == session_id for s in sessions)
-                print(f"\n  Session persistence: {'[OK]' if found else '[WARN]'} "
-                      f"session_id={session_id} found={found} total_sessions={len(sessions)}")
+                print(
+                    f"\n  Session persistence: {'[OK]' if found else '[WARN]'} "
+                    f"session_id={session_id} found={found} total_sessions={len(sessions)}"
+                )
 
                 # Fetch messages for the session
                 msgs_resp = client.get(

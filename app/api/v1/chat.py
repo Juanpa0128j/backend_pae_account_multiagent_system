@@ -15,7 +15,6 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from app.models.chat_schemas import ChatRequest, ChatResponse, SessionSummary
@@ -40,6 +39,7 @@ def _normalize_request_nit(request: ChatRequest) -> ChatRequest:
 # ---------------------------------------------------------------------------
 # Chat endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -78,6 +78,7 @@ async def chat_stream(request: ChatRequest):
         except Exception as exc:
             logger.error("Chat stream error: %s", exc, exc_info=True)
             import json
+
             yield {
                 "event": "error",
                 "data": json.dumps({"message": f"Error: {exc}"}),
@@ -90,8 +91,11 @@ async def chat_stream(request: ChatRequest):
 # Session management
 # ---------------------------------------------------------------------------
 
+
 @router.get("/sessions", response_model=list[SessionSummary])
-async def get_sessions(company_nit: Optional[str] = Query(None, description="Filter by company NIT")):
+async def get_sessions(
+    company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+):
     """List chat sessions, optionally filtered by company NIT."""
     nit = None
     if company_nit:
@@ -107,7 +111,9 @@ async def get_session_messages(session_id: str):
     """Get all messages for a chat session."""
     messages = chat_service.get_session_messages(session_id)
     if not messages:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found or empty")
+        raise HTTPException(
+            status_code=404, detail=f"Session {session_id} not found or empty"
+        )
     return messages
 
 

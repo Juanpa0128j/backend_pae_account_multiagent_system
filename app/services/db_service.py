@@ -1383,6 +1383,7 @@ def get_monthly_totals_by_class(
         "1": "activos",
         "2": "pasivos",
         "3": "patrimonio",
+        "11": "caja",
     }
     result = {}
     for prefix, name in class_map.items():

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from app.models.chat_schemas import ChatRequest, ChatResponse, FinancialDataCard
 
@@ -53,6 +52,7 @@ def _make_request(**kwargs) -> ChatRequest:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestClassifyIntent:
     """Tests for intent classification."""
@@ -121,7 +121,9 @@ class TestHandleChatMessage:
     @patch("app.services.chat_service.create_session", return_value="chat_test_123")
     @patch("app.services.chat_service.save_message", return_value="msg_test_1")
     @patch("app.services.chat_service.load_recent_messages", return_value=[])
-    @patch("app.services.chat_service.classify_intent", return_value=_MOCK_INTENT_BALANCE)
+    @patch(
+        "app.services.chat_service.classify_intent", return_value=_MOCK_INTENT_BALANCE
+    )
     @patch("app.services.chat_service.gather_financial_data")
     @patch("app.services.chat_service.fetch_rag_context", return_value="")
     @patch("app.core.llm_client.get_llm_client")
@@ -140,7 +142,13 @@ class TestHandleChatMessage:
 
         mock_gather.return_value = (
             _MOCK_BALANCE_DATA,
-            [FinancialDataCard(card_type="balance", title="Balance General", data=_MOCK_BALANCE_DATA)],
+            [
+                FinancialDataCard(
+                    card_type="balance",
+                    title="Balance General",
+                    data=_MOCK_BALANCE_DATA,
+                )
+            ],
         )
         mock_client = MagicMock()
         mock_client.generate_chat_response.return_value = _MOCK_LLM_RESPONSE
@@ -160,7 +168,9 @@ class TestHandleChatMessage:
     @patch("app.services.chat_service.create_session", return_value="chat_test_456")
     @patch("app.services.chat_service.save_message", return_value="msg_test_2")
     @patch("app.services.chat_service.load_recent_messages", return_value=[])
-    @patch("app.services.chat_service.classify_intent", return_value=_MOCK_INTENT_GENERAL)
+    @patch(
+        "app.services.chat_service.classify_intent", return_value=_MOCK_INTENT_GENERAL
+    )
     @patch("app.services.chat_service.gather_financial_data", return_value=(None, []))
     @patch("app.services.chat_service.fetch_rag_context", return_value="")
     @patch("app.core.llm_client.get_llm_client")
@@ -200,7 +210,9 @@ class TestHandleChatStream:
     @patch("app.services.chat_service.create_session", return_value="chat_stream_1")
     @patch("app.services.chat_service.save_message", return_value="msg_s1")
     @patch("app.services.chat_service.load_recent_messages", return_value=[])
-    @patch("app.services.chat_service.classify_intent", return_value=_MOCK_INTENT_GENERAL)
+    @patch(
+        "app.services.chat_service.classify_intent", return_value=_MOCK_INTENT_GENERAL
+    )
     @patch("app.services.chat_service.gather_financial_data", return_value=(None, []))
     @patch("app.services.chat_service.fetch_rag_context", return_value="")
     @patch("app.core.llm_client.get_llm_client")

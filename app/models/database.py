@@ -574,17 +574,23 @@ class VectorDocument(Base):
 
 # ─── Chat ────────────────────────────────────────────────────────
 
+
 class ChatSession(Base):
     """Persistent chat conversation session."""
+
     __tablename__ = "chat_sessions"
 
-    id          = Column(String(50), primary_key=True, index=True)
+    id = Column(String(50), primary_key=True, index=True)
     company_nit = Column(String(20), nullable=True, index=True)
-    title       = Column(String(200), nullable=True)
-    created_at  = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at  = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    title = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
-    messages = relationship("ChatMessageRecord", back_populates="session", cascade="all, delete-orphan")
+    messages = relationship(
+        "ChatMessageRecord", back_populates="session", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<ChatSession(id={self.id}, nit={self.company_nit})>"
@@ -592,15 +598,23 @@ class ChatSession(Base):
 
 class ChatMessageRecord(Base):
     """Individual message within a chat session."""
+
     __tablename__ = "chat_messages"
 
-    id         = Column(String(50), primary_key=True, index=True)
-    session_id = Column(String(50), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
-    role       = Column(String(10), nullable=False)       # "user" | "assistant"
-    content    = Column(Text, nullable=False)
-    data_cards = Column(JSONB, nullable=True)              # Structured financial data (assistant only)
-    intent     = Column(String(30), nullable=True)         # Classified intent (assistant only)
-    sources    = Column(JSONB, nullable=True)              # Normative references cited
+    id = Column(String(50), primary_key=True, index=True)
+    session_id = Column(
+        String(50),
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role = Column(String(10), nullable=False)  # "user" | "assistant"
+    content = Column(Text, nullable=False)
+    data_cards = Column(
+        JSONB, nullable=True
+    )  # Structured financial data (assistant only)
+    intent = Column(String(30), nullable=True)  # Classified intent (assistant only)
+    sources = Column(JSONB, nullable=True)  # Normative references cited
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")

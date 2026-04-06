@@ -462,7 +462,8 @@ def _auto_derive_statements(db, company_nit: str) -> None:
     if not isinstance(period_start, datetime) or not isinstance(period_end, datetime):
         logger.warning(
             "[persist] Unexpected period type (%s, %s) — skipping derivation",
-            type(period_start).__name__, type(period_end).__name__,
+            type(period_start).__name__,
+            type(period_end).__name__,
         )
         return
 
@@ -483,7 +484,9 @@ def _auto_derive_statements(db, company_nit: str) -> None:
     except Exception as exc:
         # Non-fatal: missing derived statements don't break the accounting pipeline.
         # The request still succeeds; derivation can be re-triggered on next run.
-        logger.warning("[persist] build_first_level failed (non-fatal): %s", exc, exc_info=True)
+        logger.warning(
+            "[persist] build_first_level failed (non-fatal): %s", exc, exc_info=True
+        )
         return
 
     try:

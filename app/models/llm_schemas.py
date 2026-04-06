@@ -256,6 +256,9 @@ class PrediccionPeriodoGemini(BaseModel):
     ingresos_estimados: float = Field(description="Projected revenue for the month")
     gastos_estimados: float = Field(description="Projected expenses for the month")
     utilidad_estimada: float = Field(description="Projected net profit for the month")
+    flujo_caja_estimado: float = Field(
+        description="Projected net cash flow for the month (based on historical cash movements)"
+    )
     confianza: Literal["alta", "media", "baja"] = Field(
         description="Confidence level based on data volume and trend consistency"
     )
@@ -311,6 +314,52 @@ class ReporteroBriefAnalysisGemini(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Chatbot schemas
+# ---------------------------------------------------------------------------
+
+
+class ChatIntentClassification(BaseModel):
+    """LLM structured output for classifying a user's financial question."""
+
+    intent: Literal[
+        "balance",
+        "pnl",
+        "cashflow",
+        "iva",
+        "withholdings",
+        "analysis",
+        "top_accounts",
+        "ratios",
+        "general_question",
+        "explanation",
+        "dashboard",
+    ] = Field(description="Classified intent of the user's question")
+    needs_data: bool = Field(
+        description="Whether financial data from DB is required to answer"
+    )
+    rag_query: Optional[str] = Field(
+        None,
+        description="If RAG normative search would help, the Spanish query to use",
+    )
+    explanation: str = Field(description="Brief reason for this classification")
+
+
+class ChatbotResponseGemini(BaseModel):
+    """LLM structured output for the non-streaming chat response."""
+
+    respuesta: str = Field(
+        description="Conversational response in Spanish, Markdown allowed"
+    )
+    puntos_clave: List[str] = Field(
+        default_factory=list, description="Key points highlighted"
+    )
+    referencias_normativas: List[str] = Field(
+        default_factory=list,
+        description="Legal/normative references cited (e.g. Art. 383 ET)",
+    )
+
+
 GENERAL_EXTRACTION_INSTRUCTIONS = """
 INSTRUCCIONES GENERALES DE EXTRACCIÓN:
 1. Extrae SOLO los campos que estén presentes en el documento. Si un campo no existe, usa null.
@@ -345,5 +394,7 @@ __all__ = [
     "InterpretacionRatioGemini",
     "ReporteroAnalysisGemini",
     "ReporteroBriefAnalysisGemini",
+    "ChatIntentClassification",
+    "ChatbotResponseGemini",
     "GENERAL_EXTRACTION_INSTRUCTIONS",
 ]
