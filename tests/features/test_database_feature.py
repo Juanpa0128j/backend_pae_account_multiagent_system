@@ -15,11 +15,11 @@ Tests use transactions that are rolled back after each test.
 
 import os
 import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.models.database import (
@@ -39,7 +39,6 @@ from app.models.database import (
 )
 from app.services import db_service
 
-
 # ─── Fixtures ────────────────────────────────────────────────────
 
 DATABASE_URL = os.getenv(
@@ -51,7 +50,7 @@ DATABASE_URL = os.getenv(
 @pytest.fixture(scope="session")
 def engine():
     """Create a test database engine; skip test session if DB is unreachable."""
-    eng = create_engine(DATABASE_URL, echo=False)
+    eng = create_engine(DATABASE_URL, echo=False, connect_args={"connect_timeout": 2})
     try:
         conn = eng.connect()
         conn.close()
@@ -92,11 +91,41 @@ def db(engine):
 def sample_puc(db):
     """Insert a few PUC accounts for testing."""
     accounts = [
-        CuentaPUC(codigo="519595", nombre="Gastos Diversos", clase=5, naturaleza=NaturalezaCuenta.DEBITO, activa=True),
-        CuentaPUC(codigo="220505", nombre="Proveedores Nacionales", clase=2, naturaleza=NaturalezaCuenta.CREDITO, activa=True),
-        CuentaPUC(codigo="240802", nombre="IVA Descontable", clase=2, naturaleza=NaturalezaCuenta.DEBITO, activa=True),
-        CuentaPUC(codigo="240815", nombre="Retefuente Servicios", clase=2, naturaleza=NaturalezaCuenta.CREDITO, activa=True),
-        CuentaPUC(codigo="110505", nombre="Caja General", clase=1, naturaleza=NaturalezaCuenta.DEBITO, activa=True),
+        CuentaPUC(
+            codigo="519595",
+            nombre="Gastos Diversos",
+            clase=5,
+            naturaleza=NaturalezaCuenta.DEBITO,
+            activa=True,
+        ),
+        CuentaPUC(
+            codigo="220505",
+            nombre="Proveedores Nacionales",
+            clase=2,
+            naturaleza=NaturalezaCuenta.CREDITO,
+            activa=True,
+        ),
+        CuentaPUC(
+            codigo="240802",
+            nombre="IVA Descontable",
+            clase=2,
+            naturaleza=NaturalezaCuenta.DEBITO,
+            activa=True,
+        ),
+        CuentaPUC(
+            codigo="240815",
+            nombre="Retefuente Servicios",
+            clase=2,
+            naturaleza=NaturalezaCuenta.CREDITO,
+            activa=True,
+        ),
+        CuentaPUC(
+            codigo="110505",
+            nombre="Caja General",
+            clase=1,
+            naturaleza=NaturalezaCuenta.DEBITO,
+            activa=True,
+        ),
     ]
     for acc in accounts:
         existing = db.query(CuentaPUC).filter(CuentaPUC.codigo == acc.codigo).first()
@@ -107,6 +136,7 @@ def sample_puc(db):
 
 
 # ─── Test ORM Models ─────────────────────────────────────────────
+
 
 class TestOrmModels:
     """Test that ORM models can be created and retrieved."""
@@ -157,7 +187,9 @@ class TestOrmModels:
     def test_create_full_transaction_chain(self, db):
         """Test creating the full chain: IngestJob → TransactionPending → TransactionPosted → JournalEntryLine."""
         # IngestJob
-        ingest = IngestJob(id="test_chain_001", file_name="chain.pdf", status=IngestStatus.PROCESSING)
+        ingest = IngestJob(
+            id="test_chain_001", file_name="chain.pdf", status=IngestStatus.PROCESSING
+        )
         db.add(ingest)
         db.flush()
 
@@ -199,13 +231,18 @@ class TestOrmModels:
         db.flush()
 
         # Verify relationships
-        found_posted = db.query(TransactionPosted).filter(TransactionPosted.id == "test_posted_001").first()
+        found_posted = (
+            db.query(TransactionPosted)
+            .filter(TransactionPosted.id == "test_posted_001")
+            .first()
+        )
         assert found_posted is not None
         assert found_posted.transaction_pending.ingest_id == "test_chain_001"
         assert len(found_posted.journal_lines) == 1
 
 
 # ─── Test db_service CRUD ────────────────────────────────────────
+
 
 class TestDbService:
     """Test the db_service repository functions."""
@@ -219,7 +256,9 @@ class TestDbService:
         assert proc.ingest_id == job.id
 
     def test_create_and_get_ingest_job(self, db):
-        job = db_service.create_ingest_job(db, "test_service.pdf", "/tmp/test_service.pdf")
+        job = db_service.create_ingest_job(
+            db, "test_service.pdf", "/tmp/test_service.pdf"
+        )
         assert job.id.startswith("ing_")
         assert job.status == IngestStatus.PENDING_PROCESSING
 
@@ -230,7 +269,9 @@ class TestDbService:
     def test_update_ingest_job(self, db):
         job = db_service.create_ingest_job(db, "update_test.pdf")
         updated = db_service.update_ingest_job(
-            db, job.id, IngestStatus.COMPLETED,
+            db,
+            job.id,
+            IngestStatus.COMPLETED,
             raw_preview={"nit": "123", "total": "1000"},
         )
         assert updated.status == IngestStatus.COMPLETED
@@ -254,7 +295,9 @@ class TestDbService:
     def test_get_transactions_by_status(self, db):
         job = db_service.create_ingest_job(db, "status_test.pdf")
         db_service.create_transaction_pending(
-            db, ingest_id=job.id, total=Decimal("100"),
+            db,
+            ingest_id=job.id,
+            total=Decimal("100"),
         )
         pending = db_service.get_transactions_by_status(db, TransactionStatus.PENDING)
         assert len(pending) >= 1
@@ -262,7 +305,9 @@ class TestDbService:
     def test_create_transaction_posted(self, db, sample_puc):
         job = db_service.create_ingest_job(db, "posted_test.pdf")
         txn = db_service.create_transaction_pending(
-            db, ingest_id=job.id, total=Decimal("1000000"),
+            db,
+            ingest_id=job.id,
+            total=Decimal("1000000"),
         )
         posted = db_service.create_transaction_posted(
             db,
@@ -277,7 +322,9 @@ class TestDbService:
         assert posted.cuenta_puc == "519595"
 
         # Verify pending was updated
-        refreshed = db.query(TransactionPending).filter(TransactionPending.id == txn.id).first()
+        refreshed = (
+            db.query(TransactionPending).filter(TransactionPending.id == txn.id).first()
+        )
         assert refreshed.status == TransactionStatus.POSTED
 
     def test_validate_puc(self, db, sample_puc):
@@ -295,6 +342,7 @@ class TestDbService:
 
 # ─── Test Journal Entries & Accounting Books ─────────────────────
 
+
 class TestAccountingBooks:
     """Test journal entry creation and accounting book queries."""
 
@@ -303,7 +351,8 @@ class TestAccountingBooks:
         """Create a complete transaction with journal entries."""
         job = db_service.create_ingest_job(db, "books_test.pdf")
         txn = db_service.create_transaction_pending(
-            db, ingest_id=job.id,
+            db,
+            ingest_id=job.id,
             fecha=datetime(2025, 3, 15, tzinfo=timezone.utc),
             nit_emisor="900777888",
             total=Decimal("1190000"),
@@ -370,8 +419,8 @@ class TestAccountingBooks:
         """Verify that debits == credits (fundamental accounting equation)."""
         posted, lines = posted_with_entries
 
-        total_debito = sum(l.debito for l in lines)
-        total_credito = sum(l.credito for l in lines)
+        total_debito = sum(line.debito for line in lines)
+        total_credito = sum(line.credito for line in lines)
 
         assert total_debito == total_credito, (
             f"Partida doble violation: D={total_debito} != C={total_credito}"
@@ -407,12 +456,13 @@ class TestAccountingBooks:
     def test_libro_auxiliar(self, db, posted_with_entries):
         """Subsidiary journal returns detail for a specific account."""
         lines = db_service.get_subsidiary_journal(
-            db, "519595",
+            db,
+            "519595",
             start_date=datetime(2025, 3, 1, tzinfo=timezone.utc),
             end_date=datetime(2025, 3, 31, tzinfo=timezone.utc),
         )
         assert len(lines) >= 1
-        assert all(l.cuenta_puc == "519595" for l in lines)
+        assert all(line.cuenta_puc == "519595" for line in lines)
 
     def test_balance_general(self, db, posted_with_entries):
         """Balance sheet calculates correctly from journal entries."""
@@ -431,12 +481,15 @@ class TestAccountingBooks:
         """is_balanced is False when journal entries do not balance across account classes."""
         job = db_service.create_ingest_job(db, "unbalanced_test.pdf")
         txn = db_service.create_transaction_pending(
-            db, ingest_id=job.id,
+            db,
+            ingest_id=job.id,
             fecha=datetime(2025, 5, 1, tzinfo=timezone.utc),
             total=Decimal("1000000"),
         )
         posted = db_service.create_transaction_posted(
-            db, transaction_pending_id=txn.id, cuenta_puc="110505",
+            db,
+            transaction_pending_id=txn.id,
+            cuenta_puc="110505",
         )
 
         # Intentionally unbalanced: debit class 1 (assets) with no matching credit in class 2/3
@@ -459,7 +512,8 @@ class TestAccountingBooks:
         db_service.create_journal_entry_lines(db, posted.id, entries)
 
         balance = db_service.get_balance_sheet(
-            db, cutoff_date=datetime(2025, 12, 31, tzinfo=timezone.utc),
+            db,
+            cutoff_date=datetime(2025, 12, 31, tzinfo=timezone.utc),
         )
         # assets=1_000_000, liabilities=0, equity=0, net_profit=-500_000
         # 1_000_000 != 0 + 0 + (-500_000) → is_balanced must be False
@@ -467,6 +521,7 @@ class TestAccountingBooks:
 
 
 # ─── Test Duplicate Detection ────────────────────────────────────
+
 
 class TestDuplicateDetection:
     """Test duplicate transaction detection."""
@@ -477,7 +532,8 @@ class TestDuplicateDetection:
 
         # Create first transaction
         db_service.create_transaction_pending(
-            db, ingest_id=job.id,
+            db,
+            ingest_id=job.id,
             fecha=fecha,
             nit_emisor="900111222",
             total=Decimal("500000"),
@@ -499,7 +555,8 @@ class TestDuplicateDetection:
         fecha = datetime(2025, 6, 20, tzinfo=timezone.utc)
 
         db_service.create_transaction_pending(
-            db, ingest_id=job.id,
+            db,
+            ingest_id=job.id,
             fecha=fecha,
             nit_emisor="900111222",
             total=Decimal("500000"),
@@ -516,6 +573,7 @@ class TestDuplicateDetection:
 
 # ─── Test Audit Log ──────────────────────────────────────────────
 
+
 class TestAuditLog:
     """Test immutable audit trail."""
 
@@ -523,10 +581,14 @@ class TestAuditLog:
         """Creating an ingest job should automatically create an audit log."""
         job = db_service.create_ingest_job(db, "audit_test.pdf")
 
-        logs = db.query(AuditLog).filter(
-            AuditLog.entity_id == job.id,
-            AuditLog.action == "ingest_created",
-        ).all()
+        logs = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_id == job.id,
+                AuditLog.action == "ingest_created",
+            )
+            .all()
+        )
         assert len(logs) >= 1
         assert logs[0].entity_type == "ingest"
 
@@ -535,10 +597,14 @@ class TestAuditLog:
         ingest = db_service.create_ingest_job(db, "proc_audit_test.pdf")
         proc = db_service.create_process_job(db, ingest.id)
 
-        logs = db.query(AuditLog).filter(
-            AuditLog.entity_id == proc.id,
-            AuditLog.action == "process_created",
-        ).all()
+        logs = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_id == proc.id,
+                AuditLog.action == "process_created",
+            )
+            .all()
+        )
         assert len(logs) == 1
         assert logs[0].entity_type == "process"
         assert logs[0].details["ingest_id"] == ingest.id
@@ -557,6 +623,7 @@ class TestAuditLog:
 
 # ─── Test Tercero ────────────────────────────────────────────────
 
+
 class TestTercero:
     """Test tercero (business partner) operations."""
 
@@ -572,6 +639,7 @@ class TestTercero:
 
 
 # ─── Test Atomic Persistence ──────────────────────────────────────
+
 
 class TestAtomicPersistence:
     """Test that commit=False helpers participate in the caller's transaction."""
@@ -597,13 +665,12 @@ class TestAtomicPersistence:
 
         # All staged writes must be gone
         assert db_service.get_ingest_job(db, job_id) is None
-        assert db.query(TransactionPending).filter(
-            TransactionPending.id == txn_id
-        ).first() is None
+        assert (
+            db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
+            is None
+        )
         # Audit logs for these entities must also be rolled back
-        assert db.query(AuditLog).filter(
-            AuditLog.entity_id == job_id
-        ).count() == 0
+        assert db.query(AuditLog).filter(AuditLog.entity_id == job_id).count() == 0
 
     def test_commit_false_followed_by_explicit_commit_persists_all(self, db):
         """
@@ -624,11 +691,17 @@ class TestAtomicPersistence:
         db.commit()
 
         assert db_service.get_ingest_job(db, job_id) is not None
-        assert db.query(TransactionPending).filter(
-            TransactionPending.id == txn_id
-        ).first() is not None
+        assert (
+            db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
+            is not None
+        )
         # Audit logs must also be present
-        assert db.query(AuditLog).filter(
-            AuditLog.entity_id == job_id,
-            AuditLog.action == "ingest_created",
-        ).count() >= 1
+        assert (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_id == job_id,
+                AuditLog.action == "ingest_created",
+            )
+            .count()
+            >= 1
+        )

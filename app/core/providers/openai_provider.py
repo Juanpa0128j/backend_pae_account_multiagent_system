@@ -1,4 +1,5 @@
 """OpenAI provider — primary LLM for structured extraction."""
+
 from __future__ import annotations
 
 import logging
@@ -47,4 +48,3 @@ class OpenAIProvider:
         for chunk in self._base.stream([HumanMessage(content=prompt)]):
             if chunk.content:
                 yield chunk.content
-

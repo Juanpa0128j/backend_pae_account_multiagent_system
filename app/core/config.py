@@ -7,6 +7,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 
+
 class Settings(BaseSettings):
     """Application settings loaded from environment / .env file."""
 
@@ -29,7 +30,10 @@ class Settings(BaseSettings):
     llama_cloud_api_key: str = Field("", alias="LLAMA_CLOUD_API_KEY")
 
     # --- Database (PostgreSQL only) ----------------------------------------
-    database_url: str = Field("postgresql://pae_user:password@localhost:5432/pae_accounting", alias="DATABASE_URL")
+    database_url: str = Field(
+        "postgresql://pae_user:password@localhost:5432/pae_accounting",
+        alias="DATABASE_URL",
+    )
 
     # --- App Config --------------------------------------------------------
     app_env: str = Field("development", alias="APP_ENV")
@@ -48,7 +52,9 @@ class Settings(BaseSettings):
     base_path: Path = Path(__file__).parent.parent.parent
 
     # --- CORS --------------------------------------------------------------
-    allowed_origins: str = Field("http://localhost:3000,http://localhost:5173", alias="ALLOWED_ORIGINS")
+    allowed_origins: str = Field(
+        "http://localhost:3000,http://localhost:5173", alias="ALLOWED_ORIGINS"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -64,7 +70,9 @@ class Settings(BaseSettings):
         if normalized_url.startswith("postgres://"):
             normalized_url = normalized_url.replace("postgres://", "postgresql://", 1)
 
-        is_supabase = "supabase.co" in normalized_url or "pooler.supabase.com" in normalized_url
+        is_supabase = (
+            "supabase.co" in normalized_url or "pooler.supabase.com" in normalized_url
+        )
         if is_supabase and "sslmode=" not in normalized_url:
             separator = "&" if "?" in normalized_url else "?"
             normalized_url = f"{normalized_url}{separator}sslmode=require"
@@ -76,7 +84,9 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.app_env == "production"
 
+
 settings = Settings()
+
 
 def get_settings():
     return settings

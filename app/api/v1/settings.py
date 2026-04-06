@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.gemini_client import get_gemini_client
+from app.core.llm_client import get_llm_client
 from app.models.schemas import (
     CompanyProfileSetupRequest,
     CompanySettingsRequest,
@@ -27,8 +27,8 @@ router = APIRouter()
 
 # Retefuente national rates (Art. 383 / Art. 401 ET) — these are fixed by law
 # and do not vary by municipality, so they are always taken from the code.
-_TASA_RETEFUENTE_SERVICIOS     = 0.11
-_TASA_RETEFUENTE_BIENES        = 0.03
+_TASA_RETEFUENTE_SERVICIOS = 0.11
+_TASA_RETEFUENTE_BIENES = 0.03
 _TASA_RETEFUENTE_ARRENDAMIENTO = 0.10
 
 
@@ -40,7 +40,7 @@ def get_company_settings(nit: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=404,
             detail=f"No tax settings found for NIT '{nit}'. "
-                   "Use PUT to set rates manually or POST /setup to compute them automatically.",
+            "Use PUT to set rates manually or POST /setup to compute them automatically.",
         )
     return row
 
@@ -110,7 +110,7 @@ def setup_company_tax_profile(
             logger.warning(f"Tax profile setup: RAG lookup failed ({rag_err})")
 
         try:
-            gemini = get_gemini_client()
+            gemini = get_llm_client()
             rate_lookup = gemini.compute_tax_rates_from_profile(
                 ciudad=body.ciudad,
                 codigo_ciiu=body.codigo_ciiu,
@@ -120,7 +120,9 @@ def setup_company_tax_profile(
             tasa_reteica = rate_lookup.tasa_reteica
             tasa_ica = rate_lookup.tasa_reteica
         except Exception as gemini_err:
-            logger.warning(f"Tax profile setup: Gemini failed ({gemini_err}), using national default")
+            logger.warning(
+                f"Tax profile setup: Gemini failed ({gemini_err}), using national default"
+            )
             tasa_reteica = 0.0069  # national reference rate
             tasa_ica = 0.0069
             reteica_source = "default"
@@ -140,12 +142,12 @@ def setup_company_tax_profile(
         "ciudad": body.ciudad,
         "codigo_ciiu": body.codigo_ciiu,
         "iva_responsable": body.iva_responsable,
-        "tasa_retefuente_servicios":     _TASA_RETEFUENTE_SERVICIOS,
-        "tasa_retefuente_bienes":        _TASA_RETEFUENTE_BIENES,
+        "tasa_retefuente_servicios": _TASA_RETEFUENTE_SERVICIOS,
+        "tasa_retefuente_bienes": _TASA_RETEFUENTE_BIENES,
         "tasa_retefuente_arrendamiento": _TASA_RETEFUENTE_ARRENDAMIENTO,
-        "tasa_reteica":     tasa_reteica,
+        "tasa_reteica": tasa_reteica,
         "tasa_iva_general": tasa_iva,
-        "tasa_ica":         tasa_ica,
-        "tasa_renta":       0.35,          # Fixed — Art. 240 ET, Ley 2277/2022. Never inferred.
+        "tasa_ica": tasa_ica,
+        "tasa_renta": 0.35,  # Fixed — Art. 240 ET, Ley 2277/2022. Never inferred.
     }
     return db_service.upsert_company_settings(db, nit, settings_data)

@@ -109,8 +109,8 @@ class CompanySettingsRequest(BaseModel):
     tasa_retefuente_arrendamiento: float = 0.10
     tasa_reteica: float = 0.0069
     tasa_iva_general: float = 0.19
-    tasa_ica: float = 0.00690      # ICA on gross income — Ley 14/1983
-    tasa_renta: float = 0.35       # Renta societaria — Art. 240 ET, Ley 2277/2022
+    tasa_ica: float = 0.00690  # ICA on gross income — Ley 14/1983
+    tasa_renta: float = 0.35  # Renta societaria — Art. 240 ET, Ley 2277/2022
 
 
 class CompanySettingsResponse(CompanySettingsRequest):
@@ -180,6 +180,7 @@ class CuentaPUCResponse(BaseModel):
 
 class ICADeclaracionOutput(BaseModel):
     """Response for GET /api/v1/tax/ica — período ICA declaration."""
+
     report_type: Literal["ica_declaracion"] = "ica_declaracion"
     period_start: Optional[str] = None
     period_end: str
@@ -194,6 +195,7 @@ class ICADeclaracionOutput(BaseModel):
 
 class RentaProvisionOutput(BaseModel):
     """Response for GET /api/v1/tax/renta-provision — periodic income tax provision."""
+
     report_type: Literal["renta_provision"] = "renta_provision"
     period_start: Optional[str] = None
     period_end: str

@@ -6,7 +6,7 @@ Replaces mock data with real database queries.
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -62,7 +62,8 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
     pending_count = (
         db.query(func.count(TransactionPending.id))
         .filter(TransactionPending.status == TransactionStatus.PENDING)
-        .scalar() or 0
+        .scalar()
+        or 0
     )
 
     # Transactions processed this month
@@ -71,14 +72,16 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
     processed_month = (
         db.query(func.count(TransactionPosted.id))
         .filter(TransactionPosted.created_at >= month_start)
-        .scalar() or 0
+        .scalar()
+        or 0
     )
 
     # Active alerts (recent rejected transactions)
     alerts_count = (
         db.query(func.count(TransactionPending.id))
         .filter(TransactionPending.status == TransactionStatus.REJECTED)
-        .scalar() or 0
+        .scalar()
+        or 0
     )
 
     # Balance sheet for financial totals
@@ -95,15 +98,27 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
     # IVA payable
     iva_gen = next((r for r in ledger if r["account"] == "240808"), None)
     iva_desc = next((r for r in ledger if r["account"] == "240802"), None)
-    iva_generado = float(iva_gen["total_credit"] - iva_gen["total_debit"]) if iva_gen else 0
-    iva_descontable = float(iva_desc["total_debit"] - iva_desc["total_credit"]) if iva_desc else 0
+    iva_generado = (
+        float(iva_gen["total_credit"] - iva_gen["total_debit"]) if iva_gen else 0
+    )
+    iva_descontable = (
+        float(iva_desc["total_debit"] - iva_desc["total_credit"]) if iva_desc else 0
+    )
     iva_por_pagar = iva_generado - iva_descontable
 
     # Total retenciones
     retfte_row = next((r for r in ledger if r["account"] == "240815"), None)
     retica_row = next((r for r in ledger if r["account"] == "236540"), None)
-    retfte = float(retfte_row["total_credit"] - retfte_row["total_debit"]) if retfte_row else 0
-    retica = float(retica_row["total_credit"] - retica_row["total_debit"]) if retica_row else 0
+    retfte = (
+        float(retfte_row["total_credit"] - retfte_row["total_debit"])
+        if retfte_row
+        else 0
+    )
+    retica = (
+        float(retica_row["total_credit"] - retica_row["total_debit"])
+        if retica_row
+        else 0
+    )
 
     # Transaction counts by status
     txn_counts = db_service.get_transaction_counts_by_status(db)
@@ -141,14 +156,26 @@ async def get_financial_summary(db: Session = Depends(get_db)):
     # IVA
     iva_gen = next((r for r in ledger if r["account"] == "240808"), None)
     iva_desc = next((r for r in ledger if r["account"] == "240802"), None)
-    iva_generado = float(iva_gen["total_credit"] - iva_gen["total_debit"]) if iva_gen else 0
-    iva_descontable = float(iva_desc["total_debit"] - iva_desc["total_credit"]) if iva_desc else 0
+    iva_generado = (
+        float(iva_gen["total_credit"] - iva_gen["total_debit"]) if iva_gen else 0
+    )
+    iva_descontable = (
+        float(iva_desc["total_debit"] - iva_desc["total_credit"]) if iva_desc else 0
+    )
 
     # Retenciones
     retfte_row = next((r for r in ledger if r["account"] == "240815"), None)
     retica_row = next((r for r in ledger if r["account"] == "236540"), None)
-    retfte = float(retfte_row["total_credit"] - retfte_row["total_debit"]) if retfte_row else 0
-    retica = float(retica_row["total_credit"] - retica_row["total_debit"]) if retica_row else 0
+    retfte = (
+        float(retfte_row["total_credit"] - retfte_row["total_debit"])
+        if retfte_row
+        else 0
+    )
+    retica = (
+        float(retica_row["total_credit"] - retica_row["total_debit"])
+        if retica_row
+        else 0
+    )
 
     # Revenue and expenses for period
     ingresos = sum(

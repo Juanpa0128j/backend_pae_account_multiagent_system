@@ -28,8 +28,6 @@ from app.agents.supervisor import (
     validate_contador_output_node,
     should_retry_contador,
 )
-from app.models.agent_outputs import ContadorOutput, AsientoContable
-
 
 # ─── Test Data ────────────────────────────────────────────────────
 
@@ -136,6 +134,7 @@ INVALID_CONTADOR_OUTPUT_BAD_PUC = {
 
 # ─── Fixtures ─────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def process_state() -> AgentState:
     """Basic process pipeline state."""
@@ -162,6 +161,7 @@ def process_state() -> AgentState:
 
 
 # ─── Test: Graph Structure ────────────────────────────────────────
+
 
 class TestProcessGraphStructure:
     """Verify unified agent graph compiles and has expected nodes."""
@@ -195,15 +195,18 @@ class TestProcessGraphStructure:
 
 # ─── Test: Contador Node ──────────────────────────────────────────
 
+
 class TestContadorNode:
     """Test contador agent node in isolation."""
 
-    @patch("app.agents.contador_agent.get_gemini_client")
-    def test_contador_with_valid_output(self, mock_get_client, process_state):
+    @patch("app.services.rag_service.get_rag_service")
+    @patch("app.agents.contador_agent.get_llm_client")
+    def test_contador_with_valid_output(self, mock_get_client, mock_rag, process_state):
         """Contador should produce valid ContadorOutput from raw transactions."""
         mock_client = MagicMock()
         mock_client.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
         mock_get_client.return_value = mock_client
+        mock_rag.return_value.search_normativo.return_value = []
 
         result_state = contador_node(process_state)
 
@@ -211,7 +214,7 @@ class TestContadorNode:
         assert "contador_output" in result_state
         assert result_state["current_agent"] == "contador"
 
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_contador_with_correction_feedback(self, mock_get_client, process_state):
         """Contador should use correction_feedback on retry."""
         mock_client = MagicMock()
@@ -224,27 +227,33 @@ class TestContadorNode:
         # Verify correction_feedback was passed to Gemini
         mock_client.extract_contador_output.assert_called_once()
         call_kwargs = mock_client.extract_contador_output.call_args[1]
-        assert call_kwargs["correction_feedback"] == "PUC 5110 debe ser 5115 para este caso"
+        assert (
+            call_kwargs["correction_feedback"]
+            == "PUC 5110 debe ser 5115 para este caso"
+        )
         assert result_state["correction_feedback"] is None  # Should be cleared
 
     def test_contador_skips_on_upstream_error(self, process_state):
         """Contador should skip execution if upstream error exists."""
         process_state["error"] = "Upstream error from supervisor"
         result_state = contador_node(process_state)
-        
+
         assert result_state["error"] == "Upstream error from supervisor"
-        assert "contador_output" not in result_state or not result_state["contador_output"]
+        assert (
+            "contador_output" not in result_state or not result_state["contador_output"]
+        )
 
     def test_contador_fails_on_empty_transactions(self, process_state):
         """Contador should error if no raw_transactions provided."""
         process_state["raw_transactions"] = []
         result_state = contador_node(process_state)
-        
+
         assert result_state.get("error") is not None
         assert "no raw_transactions" in result_state["error"].lower()
 
 
 # ─── Test: Validation Node ────────────────────────────────────────
+
 
 class TestValidateContadorOutput:
     """Test contador validation node."""
@@ -268,7 +277,9 @@ class TestValidateContadorOutput:
         # Validation successful means no error set
 
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
-    def test_validation_fails_with_unbalanced_output(self, mock_puc_check, process_state):
+    def test_validation_fails_with_unbalanced_output(
+        self, mock_puc_check, process_state
+    ):
         """Validation should fail if debito != credito."""
         mock_puc_record = Mock()
         mock_puc_check.return_value = mock_puc_record
@@ -280,11 +291,15 @@ class TestValidateContadorOutput:
 
         assert len(result_state["validation_history"]) > 0
         # Should have correction feedback set on failure
-        assert result_state.get("correction_feedback") is not None or result_state.get("error") is not None
+        assert (
+            result_state.get("correction_feedback") is not None
+            or result_state.get("error") is not None
+        )
 
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
     def test_validation_fails_with_invalid_puc(self, mock_puc_check, process_state):
         """Invalid PUC code should be auto-remapped by the supervisor."""
+
         # Configure mock so that PUC code "999999" does NOT exist in DB, others do.
         def puc_side_effect(db, codigo):
             return None if codigo == "999999" else Mock()
@@ -304,6 +319,7 @@ class TestValidateContadorOutput:
 
 # ─── Test: Retry Logic ────────────────────────────────────────────
 
+
 class TestContadorRetryLogic:
     """Test retry decision logic for contador."""
 
@@ -312,7 +328,11 @@ class TestContadorRetryLogic:
         process_state["retry_count"] = 1
         process_state["correction_feedback"] = "PUC inválido"
         process_state["validation_history"] = [
-            {"agent": "contador", "timestamp": "2026-03-07T10:00:00", "errors": ["PUC inválido"]}
+            {
+                "agent": "contador",
+                "timestamp": "2026-03-07T10:00:00",
+                "errors": ["PUC inválido"],
+            }
         ]
 
         decision = should_retry_contador(process_state)
@@ -323,7 +343,11 @@ class TestContadorRetryLogic:
         process_state["retry_count"] = 4  # Beyond MAX_RETRIES = 3
         process_state["correction_feedback"] = "Error"
         process_state["validation_history"] = [
-            {"agent": "contador", "timestamp": "2026-03-07T10:00:00", "errors": ["Error"]}
+            {
+                "agent": "contador",
+                "timestamp": "2026-03-07T10:00:00",
+                "errors": ["Error"],
+            }
         ]
 
         decision = should_retry_contador(process_state)
@@ -343,14 +367,17 @@ class TestContadorRetryLogic:
 
 # ─── Test: Full Process Pipeline ──────────────────────────────────
 
+
 class TestFullProcessPipeline:
     """Test complete process pipeline execution."""
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.agents.persist_node._auto_derive_statements")
+    @patch("app.services.rag_service.get_rag_service")
+    @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.persist_node.SessionLocal")
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_process_pipeline_happy_path(
         self,
         mock_get_client,
@@ -358,8 +385,12 @@ class TestFullProcessPipeline:
         mock_session,
         mock_get_company_settings,
         mock_get_auditor_client,
+        mock_rag,
+        mock_auto_derive,
     ):
         """Full pipeline: staged TX → contador → validation → persist → success."""
+        mock_rag.return_value.search_normativo.return_value = []
+
         # Mock Gemini to return valid contador output
         mock_client = MagicMock()
         mock_client.extract_contador_output.return_value = VALID_CONTADOR_OUTPUT
@@ -397,7 +428,7 @@ class TestFullProcessPipeline:
         # Mock DB session
         mock_db = MagicMock()
         mock_session.return_value = mock_db
-        
+
         # Mock TransactionPending query
         mock_pending = Mock()
         mock_pending.id = "pending_001"
@@ -420,10 +451,10 @@ class TestFullProcessPipeline:
         # Should complete successfully
         assert result.get("error") is None, "Pipeline should complete without error"
 
-    @patch("app.agents.auditor_agent.get_gemini_client")
+    @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_process_pipeline_retry_then_success(
         self,
         mock_get_client,
@@ -472,7 +503,10 @@ class TestFullProcessPipeline:
         mock_puc_record = Mock()
         mock_puc_check.return_value = mock_puc_record
 
-        with patch("app.agents.persist_node.SessionLocal") as mock_session:
+        with (
+            patch("app.agents.persist_node._auto_derive_statements"),
+            patch("app.agents.persist_node.SessionLocal") as mock_session,
+        ):
             mock_db = MagicMock()
             mock_session.return_value = mock_db
             mock_pending = Mock()
@@ -482,7 +516,9 @@ class TestFullProcessPipeline:
             mock_pending.nit_emisor = "900123456"
             mock_pending.nit_receptor = "800999888"
             mock_pending.descripcion = "Test"
-            mock_db.query.return_value.filter.return_value.first.return_value = mock_pending
+            mock_db.query.return_value.filter.return_value.first.return_value = (
+                mock_pending
+            )
 
             result = invoke_accounting_pipeline(
                 ingest_id="ingest_001",
@@ -497,18 +533,23 @@ class TestFullProcessPipeline:
             assert result.get("error") is None
 
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
-    @patch("app.agents.contador_agent.get_gemini_client")
+    @patch("app.agents.contador_agent.get_llm_client")
     def test_process_pipeline_exhausted_retries(self, mock_get_client, mock_puc_check):
         """Pipeline should fail after MAX_RETRIES with invalid output."""
         # Mock Gemini to always return invalid output
         mock_client = MagicMock()
-        mock_client.extract_contador_output.return_value = INVALID_CONTADOR_OUTPUT_UNBALANCED
+        mock_client.extract_contador_output.return_value = (
+            INVALID_CONTADOR_OUTPUT_UNBALANCED
+        )
         mock_get_client.return_value = mock_client
 
         mock_puc_record = Mock()
         mock_puc_check.return_value = mock_puc_record
 
-        with patch("app.agents.persist_node.SessionLocal") as mock_session:
+        with (
+            patch("app.agents.persist_node._auto_derive_statements"),
+            patch("app.agents.persist_node.SessionLocal") as mock_session,
+        ):
             mock_db = MagicMock()
             mock_session.return_value = mock_db
             mock_pending = Mock()
@@ -516,7 +557,9 @@ class TestFullProcessPipeline:
             mock_pending.fecha = datetime.now(timezone.utc)
             mock_pending.total = Decimal("1000000")
             mock_pending.nit_emisor = "900123456"
-            mock_db.query.return_value.filter.return_value.first.return_value = mock_pending
+            mock_db.query.return_value.filter.return_value.first.return_value = (
+                mock_pending
+            )
 
             result = invoke_accounting_pipeline(
                 ingest_id="ingest_001",
@@ -533,24 +576,28 @@ class TestFullProcessPipeline:
 
 # ─── Test: Process API Endpoints ──────────────────────────────────
 
+
 class TestProcessAPIEndpoints:
     """Test process API endpoints configuration."""
 
     def test_process_module_exists(self):
         """Verify process module can be imported."""
         from app.api.v1 import process
-        assert hasattr(process, 'router')
+
+        assert hasattr(process, "router")
 
     def test_process_endpoint_contract(self):
         """Verify process endpoint is properly configured."""
         from app.api.v1.process import router
-        routes = [r for r in router.routes if hasattr(r, 'path')]
+
+        routes = [r for r in router.routes if hasattr(r, "path")]
         paths = [r.path for r in routes]
-        assert any('/accounting/{ingest_id}' in p for p in paths)
-        assert any('/status/{process_id}' in p for p in paths)
+        assert any("/accounting/{ingest_id}" in p for p in paths)
+        assert any("/status/{process_id}" in p for p in paths)
 
 
 # ─── Test: Integration Ingest → Process ───────────────────────────
+
 
 class TestIngestToProcessIntegration:
     """Test separation of ingest and process pipelines."""
@@ -560,7 +607,9 @@ class TestIngestToProcessIntegration:
         from app.agents.graph import create_agent_graph
 
         graph = create_agent_graph()
-        node_names = [n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")]
+        node_names = [
+            n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
+        ]
 
         # Ingest pipeline nodes
         assert "ingesta" in node_names

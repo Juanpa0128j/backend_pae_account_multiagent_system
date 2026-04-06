@@ -2,6 +2,7 @@
 Database service layer — repository pattern.
 All DB operations used by agents, APIs, and the seed script go through here.
 """
+
 # type: ignore[assignment]
 # SQLAlchemy Column assignments are safe at runtime; Pylance flags them incorrectly.
 
@@ -10,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import distinct, func
+from sqlalchemy import distinct, extract, func
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
@@ -529,9 +530,7 @@ def check_duplicates(
 def validate_puc_exists(db: Session, codigo: str) -> Optional[CuentaPUC]:
     """Validate a PUC code exists and is active."""
     return (
-        db.query(CuentaPUC)
-        .filter(CuentaPUC.codigo == codigo, CuentaPUC.activa == True)
-        .first()
+        db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo, CuentaPUC.activa).first()
     )
 
 
@@ -539,7 +538,7 @@ def get_all_puc(db: Session) -> List[CuentaPUC]:
     """Get all active PUC accounts."""
     return (
         db.query(CuentaPUC)
-        .filter(CuentaPUC.activa == True)
+        .filter(CuentaPUC.activa == True)  # noqa: E712
         .order_by(CuentaPUC.codigo)
         .all()
     )
@@ -550,7 +549,7 @@ def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC
     return (
         db.query(CuentaPUC)
         .filter(
-            CuentaPUC.activa == True,
+            CuentaPUC.activa,
             (CuentaPUC.codigo.ilike(f"%{search_term}%"))
             | (CuentaPUC.nombre.ilike(f"%{search_term}%")),
         )
@@ -1030,7 +1029,7 @@ def financial_statements_exist(
     types: list[str],
 ) -> bool:
     """Return True if all requested statement types exist for this company and period window.
-    
+
     Checks that statements match BOTH period_start and period_end to exclude cross-period
     overlaps that might appear in overlapping but different fiscal periods.
     """
@@ -1111,9 +1110,15 @@ def get_pnl(
     utilidad_neta = utilidad_bruta - totals[5]
 
     return {
-        "ingresos": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[4].items())],
-        "gastos": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[5].items())],
-        "costo_ventas": [{"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[6].items())],
+        "ingresos": [
+            {"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[4].items())
+        ],
+        "gastos": [
+            {"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[5].items())
+        ],
+        "costo_ventas": [
+            {"cuenta_puc": k, "valor": float(v)} for k, v in sorted(detail[6].items())
+        ],
         "total_ingresos": float(totals[4]),
         "total_gastos": float(totals[5]),
         "total_costo_ventas": float(totals[6]),
@@ -1169,8 +1174,14 @@ def get_balance_sheet_for_period(
         query = query.filter(JournalEntryLine.fecha <= end_date)
 
     lines = query.all()
-    totals = {1: Decimal("0"), 2: Decimal("0"), 3: Decimal("0"),
-              4: Decimal("0"), 5: Decimal("0"), 6: Decimal("0")}
+    totals = {
+        1: Decimal("0"),
+        2: Decimal("0"),
+        3: Decimal("0"),
+        4: Decimal("0"),
+        5: Decimal("0"),
+        6: Decimal("0"),
+    }
 
     for line in lines:
         if not line.cuenta_puc:
@@ -1178,9 +1189,13 @@ def get_balance_sheet_for_period(
         clase = int(line.cuenta_puc[0])
         if clase in totals:
             if clase in (1, 5, 6):
-                totals[clase] += (line.debito or Decimal("0")) - (line.credito or Decimal("0"))
+                totals[clase] += (line.debito or Decimal("0")) - (
+                    line.credito or Decimal("0")
+                )
             else:
-                totals[clase] += (line.credito or Decimal("0")) - (line.debito or Decimal("0"))
+                totals[clase] += (line.credito or Decimal("0")) - (
+                    line.debito or Decimal("0")
+                )
 
     net_profit = totals[4] - totals[5] - totals[6]
     return {
@@ -1219,14 +1234,18 @@ def get_period_comparison(
         v2 = r2["net_balance"]
         abs_change = v2 - v1
         pct_change = (abs_change / abs(v1) * 100) if v1 != 0 else None
-        deltas.append({
-            "account": acc,
-            "name": r1.get("name") or r2.get("name", ""),
-            "period1_value": v1,
-            "period2_value": v2,
-            "absolute_change": abs_change,
-            "percentage_change": round(pct_change, 2) if pct_change is not None else None,
-        })
+        deltas.append(
+            {
+                "account": acc,
+                "name": r1.get("name") or r2.get("name", ""),
+                "period1_value": v1,
+                "period2_value": v2,
+                "absolute_change": abs_change,
+                "percentage_change": (
+                    round(pct_change, 2) if pct_change is not None else None
+                ),
+            }
+        )
 
     return {
         "period1": {"start": p1_start.isoformat(), "end": p1_end.isoformat()},
@@ -1243,7 +1262,11 @@ def get_top_accounts(
     limit: int = 5,
 ) -> List[Dict[str, Any]]:
     """Return top N accounts ranked by total debit or credit volume."""
-    order_col = func.sum(JournalEntryLine.debito) if by == "debit" else func.sum(JournalEntryLine.credito)
+    order_col = (
+        func.sum(JournalEntryLine.debito)
+        if by == "debit"
+        else func.sum(JournalEntryLine.credito)
+    )
 
     query = db.query(
         JournalEntryLine.cuenta_puc,
@@ -1276,15 +1299,19 @@ def get_top_terceros(
     limit: int = 5,
 ) -> List[Dict[str, Any]]:
     """Return top N terceros by transaction volume (count + total amount)."""
-    query = db.query(
-        JournalEntryLine.tercero_nit,
-        func.count(JournalEntryLine.id).label("num_entries"),
-        func.sum(JournalEntryLine.debito).label("total_debit"),
-        func.sum(JournalEntryLine.credito).label("total_credit"),
-    ).filter(
-        JournalEntryLine.tercero_nit.isnot(None),
-        JournalEntryLine.tercero_nit != "",
-    ).group_by(JournalEntryLine.tercero_nit)
+    query = (
+        db.query(
+            JournalEntryLine.tercero_nit,
+            func.count(JournalEntryLine.id).label("num_entries"),
+            func.sum(JournalEntryLine.debito).label("total_debit"),
+            func.sum(JournalEntryLine.credito).label("total_credit"),
+        )
+        .filter(
+            JournalEntryLine.tercero_nit.isnot(None),
+            JournalEntryLine.tercero_nit != "",
+        )
+        .group_by(JournalEntryLine.tercero_nit)
+    )
 
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
@@ -1314,15 +1341,20 @@ def get_monthly_trend(
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=months * 31)
 
-    query = db.query(
-        extract("year", JournalEntryLine.fecha).label("yr"),
-        extract("month", JournalEntryLine.fecha).label("mo"),
-        func.sum(JournalEntryLine.debito).label("total_debit"),
-        func.sum(JournalEntryLine.credito).label("total_credit"),
-    ).filter(
-        JournalEntryLine.cuenta_puc.startswith(account_prefix),
-        JournalEntryLine.fecha >= cutoff,
-    ).group_by("yr", "mo").order_by("yr", "mo")
+    query = (
+        db.query(
+            extract("year", JournalEntryLine.fecha).label("yr"),
+            extract("month", JournalEntryLine.fecha).label("mo"),
+            func.sum(JournalEntryLine.debito).label("total_debit"),
+            func.sum(JournalEntryLine.credito).label("total_credit"),
+        )
+        .filter(
+            JournalEntryLine.cuenta_puc.startswith(account_prefix),
+            JournalEntryLine.fecha >= cutoff,
+        )
+        .group_by("yr", "mo")
+        .order_by("yr", "mo")
+    )
 
     results = query.all()
     return [
@@ -1370,12 +1402,7 @@ def get_transaction_counts_by_status(db: Session) -> Dict[str, int]:
 
 def get_recent_activity(db: Session, limit: int = 10) -> List[Dict[str, Any]]:
     """Return the N most recent audit log entries."""
-    logs = (
-        db.query(AuditLog)
-        .order_by(AuditLog.created_at.desc())
-        .limit(limit)
-        .all()
-    )
+    logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).all()
     return [
         {
             "id": log.id,

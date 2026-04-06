@@ -205,7 +205,9 @@ def build_runs_from_existing_inputs(input_path: Path) -> list[UploadRun]:
     return runs
 
 
-def build_via_b_documents(output_dir: Path, company_nit: str = "800999888-2") -> list[UploadRun]:
+def build_via_b_documents(
+    output_dir: Path, company_nit: str = "800999888-2"
+) -> list[UploadRun]:
     """Generate synthetic first-level financial statement PDFs for Via B testing.
 
     PDFs include rich Colombian accounting terminology so the LLM classifier
@@ -312,26 +314,20 @@ def build_via_b_documents(output_dir: Path, company_nit: str = "800999888-2") ->
             "Periodo: del 01 de enero al 31 de diciembre de 2024",
             "Cifras en COP",
             "",
-            "Cuenta PUC: 1105 - CAJA",
-            "Fecha       Comprobante  Tercero NIT    Descripcion              Debito         Credito        Saldo",
-            "2024-01-15  CE-001       900123456-1    Recaudo clientes          5,000,000                    5,000,000",
-            "2024-02-01  CE-012       800555333-1    Pago arriendo                            2,000,000     3,000,000",
-            "2024-03-15  CE-025       900123456-1    Recaudo cartera           8,000,000                   11,000,000",
-            "2024-06-20  CE-048       800555333-1    Pago servicios                           1,000,000    10,000,000",
-            "                                        Saldo final cuenta 1105                                10,000,000",
+            "cuenta_puc  Fecha       Comprobante  Tercero NIT    Descripcion              Debito         Credito        Saldo",
+            "1105        2024-01-15  CE-001       900123456-1    Recaudo clientes       5,000,000.00       0.00      5,000,000.00",
+            "1105        2024-02-01  CE-012       800555333-1    Pago arriendo              0.00       2,000,000.00  3,000,000.00",
+            "1105        2024-03-15  CE-025       900123456-1    Recaudo cartera        8,000,000.00       0.00     11,000,000.00",
+            "1105        2024-06-20  CE-048       800555333-1    Pago servicios             0.00       1,000,000.00 10,000,000.00",
             "",
-            "Cuenta PUC: 1110 - BANCOS",
-            "Fecha       Comprobante  Tercero NIT    Descripcion              Debito         Credito        Saldo",
-            "2024-01-20  RC-001       900123456-1    Consignacion cliente     45,000,000                   45,000,000",
-            "2024-02-15  CE-015       800444222-1    Pago proveedor                          10,000,000    35,000,000",
-            "2024-04-10  RC-030       900123456-1    Consignacion             15,000,000                   50,000,000",
-            "                                        Saldo final cuenta 1110                                50,000,000",
+            "cuenta_puc  Fecha       Comprobante  Tercero NIT    Descripcion              Debito         Credito        Saldo",
+            "1110        2024-01-20  RC-001       900123456-1    Consignacion cliente  45,000,000.00       0.00     45,000,000.00",
+            "1110        2024-02-15  CE-015       800444222-1    Pago proveedor             0.00      10,000,000.00 35,000,000.00",
+            "1110        2024-04-10  RC-030       900123456-1    Consignacion          15,000,000.00       0.00     50,000,000.00",
             "",
-            "Cuenta PUC: 2205 - PROVEEDORES NACIONALES",
-            "Fecha       Comprobante  Tercero NIT    Descripcion              Debito         Credito        Saldo",
-            "2024-01-10  FV-001       800444222-1    Compra mercancia                        20,000,000    20,000,000",
-            "2024-02-15  CE-015       800444222-1    Pago factura             10,000,000                   10,000,000",
-            "                                        Saldo final cuenta 2205                                10,000,000",
+            "cuenta_puc  Fecha       Comprobante  Tercero NIT    Descripcion              Debito         Credito        Saldo",
+            "2205        2024-01-10  FV-001       800444222-1    Compra mercancia           0.00      20,000,000.00 20,000,000.00",
+            "2205        2024-02-15  CE-015       800444222-1    Pago factura          10,000,000.00       0.00     10,000,000.00",
         ],
     )
     runs.append(UploadRun("libro_auxiliar", la_path))
@@ -404,7 +400,7 @@ def run_via_b_pipeline(
                 pass
             time.sleep(args.poll_seconds)
         else:
-            print(f"  [WARN] Ingest timed out")
+            print("  [WARN] Ingest timed out")
             run.ingest_status = "timeout"
 
     print_run_summary(runs)
@@ -419,7 +415,11 @@ def run_via_b_pipeline(
         stype = stmt.get("statement_type", "?")
         print(f"  [{mode:30s}] {stype}")
 
-    second_level_types = {"flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros"}
+    second_level_types = {
+        "flujo_de_caja",
+        "cambios_patrimonio",
+        "notas_estados_financieros",
+    }
     found_second = {s["statement_type"] for s in all_stmts} & second_level_types
     if len(found_second) == 3:
         print("\n[OK] Via B: All 3 second-level documents derived successfully")
@@ -710,7 +710,12 @@ def fetch_and_print_reports(
 
 def _print_second_level_detail(statements: list) -> None:
     """Print a human-readable summary of each second-level financial document."""
-    SECOND_LEVEL = {"flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros", "libro_diario"}
+    SECOND_LEVEL = {
+        "flujo_de_caja",
+        "cambios_patrimonio",
+        "notas_estados_financieros",
+        "libro_diario",
+    }
 
     # Pick the most-recent record per type (avoid duplicates)
     by_type: dict = {}
@@ -719,7 +724,9 @@ def _print_second_level_detail(statements: list) -> None:
         if stype in SECOND_LEVEL:
             # prefer derived > derived_from_journal > direct; break ties by created_at
             existing = by_type.get(stype)
-            if existing is None or (s.get("created_at", "") > existing.get("created_at", "")):
+            if existing is None or (
+                s.get("created_at", "") > existing.get("created_at", "")
+            ):
                 by_type[stype] = s
 
     if not by_type:
@@ -729,33 +736,52 @@ def _print_second_level_detail(statements: list) -> None:
     print("DETALLE DOCUMENTOS DE SEGUNDO NIVEL")
     print("=" * 60)
 
-    for stype in ("flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros", "libro_diario"):
+    for stype in (
+        "flujo_de_caja",
+        "cambios_patrimonio",
+        "notas_estados_financieros",
+        "libro_diario",
+    ):
         stmt = by_type.get(stype)
         if not stmt:
             continue
 
         d = stmt.get("data", {})
         period = f"{(stmt.get('period_start') or '')[:10]} ->{(stmt.get('period_end') or '')[:10]}"
-        print(f"\n--- {stype.upper().replace('_', ' ')} [{stmt.get('source_mode')}] ---")
+        print(
+            f"\n--- {stype.upper().replace('_', ' ')} [{stmt.get('source_mode')}] ---"
+        )
         print(f"Periodo: {period}")
 
         if stype == "flujo_de_caja":
-            print(json.dumps({
-                "metodo": d.get("metodo"),
-                "flujo_neto_operacion": d.get("flujo_neto_operacion"),
-                "flujo_neto_inversion": d.get("flujo_neto_inversion"),
-                "flujo_neto_financiacion": d.get("flujo_neto_financiacion"),
-                "efectivo_inicio_periodo": d.get("efectivo_inicio_periodo"),
-                "efectivo_fin_periodo": d.get("efectivo_fin_periodo"),
-                "verificacion": d.get("verificacion"),
-            }, indent=2, ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        "metodo": d.get("metodo"),
+                        "flujo_neto_operacion": d.get("flujo_neto_operacion"),
+                        "flujo_neto_inversion": d.get("flujo_neto_inversion"),
+                        "flujo_neto_financiacion": d.get("flujo_neto_financiacion"),
+                        "efectivo_inicio_periodo": d.get("efectivo_inicio_periodo"),
+                        "efectivo_fin_periodo": d.get("efectivo_fin_periodo"),
+                        "verificacion": d.get("verificacion"),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
 
         elif stype == "cambios_patrimonio":
-            print(json.dumps({
-                "total_patrimonio_inicio": d.get("total_patrimonio_inicio"),
-                "total_patrimonio_fin": d.get("total_patrimonio_fin"),
-                "componentes": d.get("componentes"),
-            }, indent=2, ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        "total_patrimonio_inicio": d.get("total_patrimonio_inicio"),
+                        "total_patrimonio_fin": d.get("total_patrimonio_fin"),
+                        "componentes": d.get("componentes"),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
 
         elif stype == "notas_estados_financieros":
             notas = d.get("notas", [])
@@ -771,10 +797,12 @@ def _print_second_level_detail(statements: list) -> None:
             asientos = d.get("asientos", [])
             print(f"Total asientos: {len(asientos)}")
             for entry in asientos[:5]:
-                print(f"  {entry.get('fecha','')[:10]}  {entry.get('cuenta_puc',''):10s}  "
-                      f"D:{float(entry.get('debito') or 0):>14,.2f}  "
-                      f"C:{float(entry.get('credito') or 0):>14,.2f}  "
-                      f"{(entry.get('descripcion') or '')[:40]}")
+                print(
+                    f"  {entry.get('fecha', '')[:10]}  {entry.get('cuenta_puc', ''):10s}  "
+                    f"D:{float(entry.get('debito') or 0):>14,.2f}  "
+                    f"C:{float(entry.get('credito') or 0):>14,.2f}  "
+                    f"{(entry.get('descripcion') or '')[:40]}"
+                )
             if len(asientos) > 5:
                 print(f"  ... ({len(asientos) - 5} asientos más)")
 
@@ -930,7 +958,11 @@ def main() -> int:
             mode = stmt.get("source_mode", "?")
             stype = stmt.get("statement_type", "?")
             print(f"  [{mode:30s}] {stype}")
-        second_level_types = {"flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros"}
+        second_level_types = {
+            "flujo_de_caja",
+            "cambios_patrimonio",
+            "notas_estados_financieros",
+        }
         found_second = {s["statement_type"] for s in all_stmts} & second_level_types
         if len(found_second) == 3:
             print("\n[OK] All 3 second-level documents generated successfully")

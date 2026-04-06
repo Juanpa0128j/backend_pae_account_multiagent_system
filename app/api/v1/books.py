@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
-from typing import List, Optional, Dict, Any
+from typing import Optional, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 
@@ -47,14 +47,14 @@ async def get_books(
         lines = db_service.get_daily_journal(db, fi, ff, normalized_company_nit)
         return [
             {
-                "fecha": str(l.fecha) if l.fecha else "",
-                "comprobante": l.comprobante or "",
-                "cuenta": l.cuenta_puc,
-                "descripcion": l.descripcion or l.cuenta_nombre or "",
-                "debito": float(l.debito),
-                "credito": float(l.credito),
+                "fecha": str(line.fecha) if line.fecha else "",
+                "comprobante": line.comprobante or "",
+                "cuenta": line.cuenta_puc,
+                "descripcion": line.descripcion or line.cuenta_nombre or "",
+                "debito": float(line.debito),
+                "credito": float(line.credito),
             }
-            for l in lines
+            for line in lines
         ]
 
     elif tipo == "mayor":
@@ -68,18 +68,20 @@ async def get_books(
         )
         return [
             {
-                "fecha": str(l.fecha) if l.fecha else "",
-                "comprobante": l.comprobante or "",
-                "tercero_nit": l.tercero_nit or "",
-                "descripcion": l.descripcion or "",
-                "debito": float(l.debito),
-                "credito": float(l.credito),
+                "fecha": str(line.fecha) if line.fecha else "",
+                "comprobante": line.comprobante or "",
+                "tercero_nit": line.tercero_nit or "",
+                "descripcion": line.descripcion or "",
+                "debito": float(line.debito),
+                "credito": float(line.credito),
             }
-            for l in lines
+            for line in lines
         ]
 
     elif tipo == "balance":
         return db_service.get_balance_sheet(db, ff, normalized_company_nit)
 
     else:
-        return {"error": f"Unknown book type: {tipo}. Use diario, mayor, auxiliar, or balance."}
+        return {
+            "error": f"Unknown book type: {tipo}. Use diario, mayor, auxiliar, or balance."
+        }

@@ -29,18 +29,31 @@ python scripts/populate_rag.py --force  # Force re-index
 uvicorn main:app --reload
 
 # Tests
-pytest tests/ -v
-pytest tests/test_rag.py -v                          # Single file
-pytest tests/test_rag.py::TestDataFileIntegrity -v   # Single class
+make test                                            # Full suite (e2e excluded)
+make test-file FILE=tests/test_rag.py                # Single file
+make test-class FILE=tests/test_rag.py CLASS=TestDataFileIntegrity  # Single class
 
 # Lint / format
-ruff check .
-black .
+make lint                                            # ruff check — must be 0 errors
+make lint-fix                                        # auto-fix ruff errors
+make format                                          # ruff format + black
 
 # Database migrations
 alembic upgrade head
 alembic revision --autogenerate -m "description"
 ```
+
+## After Every File Modification
+
+**MANDATORY — run in order after any code change:**
+
+```bash
+make lint     # must report 0 errors before proceeding
+make format   # auto-formats; re-read any file you formatted before editing further
+make test     # must pass with no new failures
+```
+
+You are forbidden from reporting a task complete until all three pass.
 
 ## Architecture
 
@@ -72,15 +85,18 @@ FastAPI (main.py) → /api/v1/* routers
 | `app/agents/graph.py` | StateGraph with 10 nodes and conditional edges |
 | `app/agents/supervisor.py` | Routing logic based on `state["mode"]`: `ingest`, `process`, `reporting` |
 | `app/core/config.py` | Pydantic Settings; loads `.env` (GEMINI_API_KEY, DATABASE_URL, etc.) |
-| `app/core/gemini_client.py` | Gemini 2.5 Flash client; `extract_transactions`, `extract_bank_statement`, etc. |
+| `app/core/gemini_client.py` | Backward-compatibility re-export shim — all extraction logic lives in `llm_client.py`. Do not add code here. |
 | `app/core/vectordb.py` | pgvector wrapper; `search()` (vector) and `search_hybrid()` (BM25+vector, RRF k=60) |
 | `app/services/rag_service.py` | High-level RAG interface: `search_normativo`, `search_historico`, `add_empresa_doc` |
-| `app/models/database.py` | SQLAlchemy ORM: `CompanySettings`, `CuentaPUC`, `IngestJob`, `TransactionPosted`, `JournalEntryLine`, etc. |
+| `app/models/database.py` | SQLAlchemy ORM: `CompanySettings`, `CuentaPUC`, `IngestJob`, `TransactionPosted`, `JournalEntryLine`, `FinancialStatement`, etc. |
+| `app/services/financial_statement_service.py` | Derives `FinancialStatement` rows from journal entries; `list_financial_statements`, `derive_financial_statements` |
+| `app/services/nit_utils.py` | Colombian NIT normalization helpers: `normalize_nit`, `normalize_optional_nit` |
+| `app/core/llm_client.py` | Multi-provider LLM client with OpenAI → Gemini → Groq fallback chain |
 | `data/` | Static seed data: 41 PUC accounts, 50 Estatuto Tributario articles, 16 Ley 43/1990 entries |
 
 ### Tech Stack
 
-- **LLM:** Google Gemini 2.5 Flash (`langchain-google-genai`)
+- **LLM:** Multi-provider fallback — OpenAI GPT-4o-mini (primary if key set) → Google Gemini 2.5 Flash → Groq (`langchain-openai`, `langchain-google-genai`, `langchain-groq`)
 - **Agent orchestration:** LangGraph StateGraph
 - **Embeddings:** BAAI/bge-m3 (1024 dims) via HuggingFace Inference API
 - **Reranking:** BAAI/bge-reranker-v2-m3

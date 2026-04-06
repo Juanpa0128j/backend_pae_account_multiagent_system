@@ -1,4 +1,4 @@
-﻿"""
+"""
 RAG Service -- high-level interface for retrieval-augmented generation.
 
 Provides two retrieval methods used by the agents:

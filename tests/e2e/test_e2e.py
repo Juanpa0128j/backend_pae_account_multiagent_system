@@ -36,11 +36,10 @@ from reportlab.pdfgen import canvas
 
 from app.agents.graph import create_agent_graph, invoke_ingest_pipeline
 from app.core.config import settings
-from app.core.database import SessionLocal, check_db_connection
+from app.core.database import SessionLocal
 from app.models.agent_outputs import (
     AuditorOutput,
     ContadorOutput,
-    IngestOutput,
     TributarioOutput,
 )
 from app.models.database import (
@@ -54,10 +53,10 @@ from app.models.database import (
 )
 from app.services import db_service
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Dobles de prueba  (sin llamadas reales a LLM ni a LlamaParse)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class _FakeDocument:
     def __init__(self, text: str) -> None:
@@ -115,7 +114,12 @@ class FakeGeminiClient:
                 "total_a_pagar": Decimal("2500000"),
             },
             "items": [
-                {"descripcion": "Servicio contable integral", "cantidad": 1, "valor_unitario": Decimal("2500000"), "total_item": Decimal("2500000")},
+                {
+                    "descripcion": "Servicio contable integral",
+                    "cantidad": 1,
+                    "valor_unitario": Decimal("2500000"),
+                    "total_item": Decimal("2500000"),
+                },
             ],
         }
 
@@ -129,8 +133,12 @@ class FakeGeminiClient:
     def __getattr__(self, name: str):
         """Fallback for all extract_* methods added during the pipeline upgrade."""
         if name.startswith("extract_"):
-            def _method(text: str = "", correction_feedback: str | None = None, **_kw) -> dict[str, Any]:  # noqa: ANN001
+
+            def _method(
+                text: str = "", correction_feedback: str | None = None, **_kw
+            ) -> dict[str, Any]:  # noqa: ANN001
                 return self._fake_ingest_result()
+
             return _method
         raise AttributeError(name)
 
@@ -189,7 +197,9 @@ class FakeGeminiClient:
             confirma_tasas=True,
         )
 
-    def compute_tax_rates_from_profile(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def compute_tax_rates_from_profile(
+        self, *args: Any, **kwargs: Any
+    ) -> dict[str, Any]:
         return {}
 
     # ── Auditor ──────────────────────────────────────────────────────────────
@@ -217,11 +227,25 @@ class FakeGeminiClient:
 # Utilidades de setup
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _require_supabase() -> None:
     if "supabase.co" not in settings.database_url:
         pytest.skip("DATABASE_URL no apunta a Supabase — omitiendo E2E real.")
-    if not check_db_connection():
+    # Use a short-timeout probe to avoid hanging for 60 s on an unreachable host.
+    from sqlalchemy import create_engine
+
+    probe = create_engine(
+        settings.database_url,
+        echo=False,
+        connect_args={"connect_timeout": 2},
+    )
+    try:
+        with probe.connect() as conn:
+            conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+    except Exception:
         pytest.skip("Supabase no disponible en este entorno.")
+    finally:
+        probe.dispose()
 
 
 def _create_demo_pdf() -> str:
@@ -323,6 +347,7 @@ def _ensure_minimum_puc() -> None:
 # Helpers para inspeccionar agent_log
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _events_for(agent_log: list[dict], agent: str) -> list[dict]:
     """Filtra entradas del agent_log para un agente concreto."""
     return [e for e in agent_log if e.get("agent") == agent]
@@ -348,10 +373,13 @@ def _was_routed_to(agent_log: list[dict], next_agent: str) -> bool:
 # Runners que exponen el estado completo del grafo
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _invoke_ingest(pdf_path: str) -> dict[str, Any]:
     with (
         patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
-        patch("app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()),
+        patch(
+            "app.agents.ingest_agent.get_llm_client", return_value=FakeGeminiClient()
+        ),
     ):
         return invoke_ingest_pipeline(pdf_path)
 
@@ -413,9 +441,9 @@ def _invoke_process_full_state(
         }
     )
     with (
-        patch("app.agents.contador_agent.get_gemini_client", return_value=fake),
-        patch("app.agents.tributario_agent.get_gemini_client", return_value=fake),
-        patch("app.agents.auditor_agent.get_gemini_client", return_value=fake),
+        patch("app.agents.contador_agent.get_llm_client", return_value=fake),
+        patch("app.agents.tributario_agent.get_llm_client", return_value=fake),
+        patch("app.agents.auditor_agent.get_llm_client", return_value=fake),
     ):
         return dict(graph.invoke(state))
 
@@ -423,6 +451,7 @@ def _invoke_process_full_state(
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures de módulo — cada pipeline se ejecuta una sola vez
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(scope="module")
 def ingest_result() -> dict[str, Any]:
@@ -448,16 +477,26 @@ def process_state(ingest_result: dict[str, Any]) -> dict[str, Any]:
     emisor = (data.get("emisor") or {}) if isinstance(data, dict) else {}
     receptor = (data.get("receptor") or {}) if isinstance(data, dict) else {}
     totales = (data.get("totales") or {}) if isinstance(data, dict) else {}
-    raw_transactions: list[dict] = [
-        {
-            "fecha": data.get("fecha_emision", "2026-01-01") if isinstance(data, dict) else "2026-01-01",
-            "nit_emisor": emisor.get("nit", ""),
-            "nit_receptor": receptor.get("nit", ""),
-            "total": float(totales.get("total_a_pagar") or 0),
-            "descripcion": data.get("consecutivo", "") if isinstance(data, dict) else "",
-            "items": data.get("items", []) if isinstance(data, dict) else [],
-        }
-    ] if data else []
+    raw_transactions: list[dict] = (
+        [
+            {
+                "fecha": (
+                    data.get("fecha_emision", "2026-01-01")
+                    if isinstance(data, dict)
+                    else "2026-01-01"
+                ),
+                "nit_emisor": emisor.get("nit", ""),
+                "nit_receptor": receptor.get("nit", ""),
+                "total": float(totales.get("total_a_pagar") or 0),
+                "descripcion": (
+                    data.get("consecutivo", "") if isinstance(data, dict) else ""
+                ),
+                "items": data.get("items", []) if isinstance(data, dict) else [],
+            }
+        ]
+        if data
+        else []
+    )
     assert raw_transactions, "ingest_result no contiene datos en 'data'"
 
     with SessionLocal() as db:
@@ -477,6 +516,7 @@ def process_state(ingest_result: dict[str, Any]) -> dict[str, Any]:
 # supervisor → ingesta → validate_output → db_persist
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestIngestPipeline:
     """Valida cada etapa del pipeline de ingesta contra Supabase real."""
 
@@ -495,13 +535,17 @@ class TestIngestPipeline:
     def test_ingesta_node_start_registrado(self, ingest_result):
         """El nodo ingesta debe registrar un evento node_start en agent_log."""
         log = ingest_result.get("agent_log") or []
-        starts = [e for e in _events_for(log, "ingesta") if e.get("event") == "node_start"]
+        starts = [
+            e for e in _events_for(log, "ingesta") if e.get("event") == "node_start"
+        ]
         assert starts, "No se encontró node_start de 'ingesta' en agent_log"
 
     def test_ingesta_node_start_incluye_file_path(self, ingest_result):
         """node_start de ingesta debe registrar el file_path (input al nodo)."""
         log = ingest_result.get("agent_log") or []
-        starts = [e for e in _events_for(log, "ingesta") if e.get("event") == "node_start"]
+        starts = [
+            e for e in _events_for(log, "ingesta") if e.get("event") == "node_start"
+        ]
         assert starts[0]["details"].get("file_path"), (
             "node_start de ingesta no registró 'file_path' en details"
         )
@@ -513,15 +557,21 @@ class TestIngestPipeline:
         assert ingest_result.get("status") == "completed"
         assert ingest_result.get("error") is None
 
-    def test_ingesta_output_validated_data_cumple_schema_IngestOutput(self, ingest_result):
+    def test_ingesta_output_validated_data_cumple_schema_IngestOutput(
+        self, ingest_result
+    ):
         """validated_data debe contener los datos extraídos del documento."""
         vd = ingest_result.get("validated_data") or {}
-        assert vd, "validated_data está vacío; validate_output_node puede no haber corrido"
+        assert vd, (
+            "validated_data está vacío; validate_output_node puede no haber corrido"
+        )
         # New rich extraction schema: IngestOutput(extra="allow") passes all fields through.
         # Check the content via FacturaVentaContent structure.
         emisor = (vd.get("emisor") or {}) if isinstance(vd, dict) else {}
         totales = (vd.get("totales") or {}) if isinstance(vd, dict) else {}
-        assert emisor or totales, f"validated_data no tiene estructura esperada: {list(vd.keys())}"
+        assert emisor or totales, (
+            f"validated_data no tiene estructura esperada: {list(vd.keys())}"
+        )
 
     def test_ingesta_data_contiene_transaccion_raw(self, ingest_result):
         """result['data'] debe contener el contenido extraído con emisor/receptor correctos."""
@@ -531,7 +581,9 @@ class TestIngestPipeline:
         emisor = data.get("emisor") or {}
         receptor = data.get("receptor") or {}
         assert emisor.get("nit") == "900111222", f"nit emisor incorrecto: {emisor}"
-        assert receptor.get("nit") == "800333444", f"nit receptor incorrecto: {receptor}"
+        assert receptor.get("nit") == "800333444", (
+            f"nit receptor incorrecto: {receptor}"
+        )
         totales = data.get("totales") or {}
         assert Decimal(str(totales.get("total_a_pagar"))) == Decimal("2500000")
 
@@ -539,7 +591,8 @@ class TestIngestPipeline:
         """ingesta debe emitir interpretation_complete con datos extraídos."""
         log = ingest_result.get("agent_log") or []
         events = [
-            e for e in _events_for(log, "ingesta")
+            e
+            for e in _events_for(log, "ingesta")
             if e.get("event") == "interpretation_complete"
         ]
         assert events, "No se encontró interpretation_complete de 'ingesta'"
@@ -612,6 +665,7 @@ class TestIngestPipeline:
 #           → auditor   → supervisor(val) → db_persist
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestProcessPipeline:
     """Valida cada agente del pipeline de proceso contra Supabase real."""
 
@@ -621,8 +675,7 @@ class TestProcessPipeline:
         """Supervisor debe enrutar a 'contador' al iniciar el pipeline de proceso."""
         log = process_state.get("agent_log") or []
         assert _was_routed_to(log, "contador"), (
-            f"Supervisor no enrutó a 'contador'. "
-            f"Routing events: {_routing_events(log)}"
+            f"Supervisor no enrutó a 'contador'. Routing events: {_routing_events(log)}"
         )
 
     def test_supervisor_no_error_en_inicio(self, process_state):
@@ -657,7 +710,9 @@ class TestProcessPipeline:
         co = process_state.get("contador_output") or {}
         assert co, "contador_output no encontrado en final_state"
         parsed = ContadorOutput.model_validate(co)
-        assert len(parsed.asientos) >= 2, "ContadorOutput debe tener al menos 2 asientos"
+        assert len(parsed.asientos) >= 2, (
+            "ContadorOutput debe tener al menos 2 asientos"
+        )
         assert parsed.total_debitos == parsed.total_creditos, (
             f"Partida doble violada: débitos={parsed.total_debitos} "
             f"≠ créditos={parsed.total_creditos}"
@@ -774,8 +829,7 @@ class TestProcessPipeline:
         """Supervisor debe enrutar a 'auditor' tras validar el output tributario."""
         log = process_state.get("agent_log") or []
         assert _was_routed_to(log, "auditor"), (
-            f"Supervisor no enrutó a 'auditor'. "
-            f"Routing events: {_routing_events(log)}"
+            f"Supervisor no enrutó a 'auditor'. Routing events: {_routing_events(log)}"
         )
 
     # ── Agente Auditor: input ────────────────────────────────────────────────
@@ -815,9 +869,10 @@ class TestProcessPipeline:
         ao = process_state.get("auditor_output") or {}
         parsed = AuditorOutput.model_validate(ao)
         if parsed.aprobado:
-            assert parsed.nivel_riesgo.value not in ("alto", "critico"), (
-                "AuditorOutput aprobado no puede tener nivel_riesgo alto/critico"
-            )
+            assert parsed.nivel_riesgo.value not in (
+                "alto",
+                "critico",
+            ), "AuditorOutput aprobado no puede tener nivel_riesgo alto/critico"
 
     def test_auditor_output_sin_hallazgos_criticos_si_aprobado(self, process_state):
         """Si aprobado=True, no debe haber hallazgos con severidad 'critico'."""
@@ -913,9 +968,7 @@ class TestProcessPipeline:
                 .filter(JournalEntryLine.transaction_posted_id == posted.id)
                 .count()
             )
-        assert count >= 2, (
-            f"Se esperaban ≥ 2 JournalEntryLines, se encontraron {count}"
-        )
+        assert count >= 2, f"Se esperaban ≥ 2 JournalEntryLines, se encontraron {count}"
 
     def test_db_persist_proceso_agent_reasoning_en_posted(self, process_state):
         """TransactionPosted.agent_reasoning debe incluir claves 'contador' y 'auditor'."""
@@ -939,7 +992,9 @@ class TestProcessPipeline:
         db_res = process_state.get("db_result") or {}
         assert db_res.get("audit_approved") is True
         assert db_res.get("audit_nivel_riesgo") == "bajo"
-        assert isinstance(db_res.get("audit_puntaje_calidad"), (int, float, Decimal, str))
+        assert isinstance(
+            db_res.get("audit_puntaje_calidad"), (int, float, Decimal, str)
+        )
 
     # ── Integridad del agent_log: todos los agentes dejaron traza ────────────
 
@@ -957,11 +1012,15 @@ class TestProcessPipeline:
         supervisor → contador → tributario → auditor → db_persist.
         """
         log = process_state.get("agent_log") or []
-        ordered_agents = ["supervisor", "contador", "tributario", "auditor", "db_persist"]
+        ordered_agents = [
+            "supervisor",
+            "contador",
+            "tributario",
+            "auditor",
+            "db_persist",
+        ]
         first_seen = {
-            agent: next(
-                (i for i, e in enumerate(log) if e.get("agent") == agent), None
-            )
+            agent: next((i for i, e in enumerate(log) if e.get("agent") == agent), None)
             for agent in ordered_agents
         }
         for agent in ordered_agents:

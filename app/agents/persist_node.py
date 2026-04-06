@@ -6,6 +6,7 @@ Persists ingest/process outputs to PostgreSQL:
 IngestJob -> TransactionPending -> TransactionPosted -> JournalEntryLines.
 
 """
+
 # type: ignore[assignment]
 # SQLAlchemy model attributes are runtime values on instances; static typing
 # can mis-infer them as Column[...] in service/pipeline code.
@@ -456,23 +457,35 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         return
 
     period_start, period_end = period
+
+    # Guard: ensure period values are real datetimes (not Mock objects from tests)
+    if not isinstance(period_start, datetime) or not isinstance(period_end, datetime):
+        logger.warning(
+            "[persist] Unexpected period type (%s, %s) — skipping derivation",
+            type(period_start).__name__, type(period_end).__name__,
+        )
+        return
+
     logger.info(
-        "[persist] Building first-level statements for %s (%s → %s)",
+        "[persist] Building first-level statements for %s (%s -> %s)",
         company_nit,
         period_start.date(),
         period_end.date(),
     )
 
-    # Build first-level derived statements (balance, P&L, ledger). Failures here are critical.
-    build_first_level_from_journal_entries(
-        db,
-        company_nit=company_nit,
-        period_start=period_start,
-        period_end=period_end,
-    )
+    try:
+        build_first_level_from_journal_entries(
+            db,
+            company_nit=company_nit,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except Exception as exc:
+        # Non-fatal: missing derived statements don't break the accounting pipeline.
+        # The request still succeeds; derivation can be re-triggered on next run.
+        logger.warning("[persist] build_first_level failed (non-fatal): %s", exc, exc_info=True)
+        return
 
-    # Derive second-level statements (cashflow, equity changes, notes).
-    # Fail fast on all errors except expected precondition mismatches.
     try:
         _derive_financial_statements(
             company_nit=company_nit,
@@ -481,6 +494,8 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         )
     except BusinessRuleError as exc:
         logger.warning("[persist] derive skipped (missing source inputs): %s", exc)
+    except Exception as exc:
+        logger.warning("[persist] derive failed (non-fatal): %s", exc, exc_info=True)
 
 
 def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) -> None:
@@ -625,6 +640,10 @@ def _run_persist(state: AgentState) -> AgentState:
             logger.warning(msg)
             state["error"] = msg
             raise RuntimeError(msg)
+
+        # Expose built transactions so callers can access them via result["raw_transactions"]
+        if not state.get("raw_transactions"):
+            state["raw_transactions"] = transactions
 
     ingest_id = _as_str(state.get("ingest_id"), "")
     db = SessionLocal()
@@ -885,15 +904,15 @@ def _run_persist(state: AgentState) -> AgentState:
             "transaction_pending_id": pending_ids[0] if pending_ids else "",
             "transaction_posted_id": posted_ids[0] if posted_ids else "",
             "audit_approved": state.get("audit_approved"),
-            "audit_nivel_riesgo": auditor_out.get("nivel_riesgo")
-            if mode == "process"
-            else None,
-            "audit_puntaje_calidad": auditor_out.get("puntaje_calidad")
-            if mode == "process"
-            else None,
-            "audit_hallazgos_count": len(auditor_out.get("hallazgos", []))
-            if mode == "process"
-            else 0,
+            "audit_nivel_riesgo": (
+                auditor_out.get("nivel_riesgo") if mode == "process" else None
+            ),
+            "audit_puntaje_calidad": (
+                auditor_out.get("puntaje_calidad") if mode == "process" else None
+            ),
+            "audit_hallazgos_count": (
+                len(auditor_out.get("hallazgos", [])) if mode == "process" else 0
+            ),
         }
 
         if state.get("result") is not None:

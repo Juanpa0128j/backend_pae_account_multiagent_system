@@ -53,14 +53,14 @@ def test_start_process_job_returns_process_id(monkeypatch):
         lambda db, ingest_id: SimpleNamespace(id=ingest_id, file_path="/tmp/test.pdf"),
     )
     _mock_process_preconditions(monkeypatch)
-    
+
     # Mock the new idempotency check function
     monkeypatch.setattr(
         db_service,
         "get_active_process_job_for_ingest",
         lambda db, ingest_id: None,  # No active job exists
     )
-    
+
     monkeypatch.setattr(
         db_service,
         "create_process_job",
@@ -198,9 +198,9 @@ def test_post_accounting_returns_existing_process_job_idempotent(monkeypatch):
         ingest_id="ing_001",
         status=ProcessStatus.RUNNING,
     )
-    
+
     call_count = {"count": 0}
-    
+
     def _get_active_job(db, ingest_id):
         call_count["count"] += 1
         # First call to POST creates new job, so get_active returns None
@@ -432,13 +432,15 @@ def test_get_process_status_prefers_structured_error_payload(monkeypatch):
     app.dependency_overrides.clear()
 
 
-def test_get_process_status_falls_back_when_structured_payload_invalid_json(monkeypatch):
+def test_get_process_status_falls_back_when_structured_payload_invalid_json(
+    monkeypatch,
+):
     app.dependency_overrides[get_db] = _override_db
     client = TestClient(app)
 
     invalid_json_error = (
-        '{not valid json} Tributario precondition failed: '
-        'missing company tax settings for NIT 800999888'
+        "{not valid json} Tributario precondition failed: "
+        "missing company tax settings for NIT 800999888"
     )
 
     monkeypatch.setattr(
@@ -466,4 +468,3 @@ def test_get_process_status_falls_back_when_structured_payload_invalid_json(monk
     assert body["error_code"] == "MISSING_COMPANY_SETTINGS"
 
     app.dependency_overrides.clear()
-

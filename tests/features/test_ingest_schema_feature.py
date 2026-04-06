@@ -11,23 +11,20 @@ from app.models.ingest_schemas import (
     FacturaCompraContent,
     NotaCreditoContent,
     NotaDebitoContent,
-    BankMovement,
     BankStatementContent,
     TaxDeclarationContent,
     AnexoIVAContent,
-    LedgerLine,
     AuxiliaryLedgerContent,
-    AccountBalance,
     FinancialStatementContent,
     BalanceGeneralContent,
     EstadoResultadosContent,
     INGEST_CONTENT_SCHEMAS,
 )
 
-
 # ---------------------------------------------------------------------------
 # FacturaVentaContent (replaces TransactionListContent tests)
 # ---------------------------------------------------------------------------
+
 
 class TestFacturaVentaContent:
     def test_valid_minimal(self):
@@ -78,6 +75,7 @@ class TestFacturaCompraContent:
 # BankStatementContent
 # ---------------------------------------------------------------------------
 
+
 class TestBankStatementContent:
     def test_valid_statement(self):
         data = {
@@ -86,14 +84,16 @@ class TestBankStatementContent:
             "tipo_cuenta": "corriente",
             "saldo_inicial": 5000000,
             "saldo_final": 4200000,
-            "movements": [{
-                "fecha": "2026-01-10",
-                "descripcion": "Transferencia salida",
-                "tipo": "debito",
-                "debito": 800000,
-                "credito": None,
-                "saldo": 4200000,
-            }],
+            "movements": [
+                {
+                    "fecha": "2026-01-10",
+                    "descripcion": "Transferencia salida",
+                    "tipo": "debito",
+                    "debito": 800000,
+                    "credito": None,
+                    "saldo": 4200000,
+                }
+            ],
         }
         result = BankStatementContent.model_validate(data)
         assert result.saldo_inicial == Decimal("5000000")
@@ -125,6 +125,7 @@ class TestBankStatementContent:
 # ---------------------------------------------------------------------------
 # TaxDeclarationContent
 # ---------------------------------------------------------------------------
+
 
 class TestTaxDeclarationContent:
     def test_valid_iva_declaration(self):
@@ -159,6 +160,7 @@ class TestTaxDeclarationContent:
 # AnexoIVAContent (replaces TaxAnnexContent tests)
 # ---------------------------------------------------------------------------
 
+
 class TestAnexoIVAContent:
     def test_valid_annex(self):
         data = {
@@ -184,6 +186,7 @@ class TestAnexoIVAContent:
 # AuxiliaryLedgerContent
 # ---------------------------------------------------------------------------
 
+
 class TestAuxiliaryLedgerContent:
     def test_valid_ledger(self):
         data = {
@@ -207,13 +210,15 @@ class TestAuxiliaryLedgerContent:
 
     def test_optional_fields(self):
         data = {
-            "lines": [{
-                "fecha": "2026-01-15",
-                "cuenta_puc": "1110",
-                "detalle": "Depósito",
-                "debito": 1000000,
-                "credito": 0,
-            }],
+            "lines": [
+                {
+                    "fecha": "2026-01-15",
+                    "cuenta_puc": "1110",
+                    "detalle": "Depósito",
+                    "debito": 1000000,
+                    "credito": 0,
+                }
+            ],
         }
         result = AuxiliaryLedgerContent.model_validate(data)
         assert result.cuenta_principal is None
@@ -223,6 +228,7 @@ class TestAuxiliaryLedgerContent:
 # ---------------------------------------------------------------------------
 # FinancialStatementContent
 # ---------------------------------------------------------------------------
+
 
 class TestFinancialStatementContent:
     def test_valid_balance_general(self):
@@ -250,7 +256,11 @@ class TestFinancialStatementContent:
             "periodo_fin": "2026-01-31",
             "entity_nit": "900123456",
             "accounts": [
-                {"cuenta_puc": "4135", "nombre": "Ingresos servicios", "saldo": 10000000},
+                {
+                    "cuenta_puc": "4135",
+                    "nombre": "Ingresos servicios",
+                    "saldo": 10000000,
+                },
                 {"cuenta_puc": "5110", "nombre": "Honorarios", "saldo": 3000000},
             ],
             "utilidad_neta": 7000000,
@@ -261,16 +271,19 @@ class TestFinancialStatementContent:
 
     def test_invalid_tipo_rejected(self):
         with pytest.raises(ValidationError):
-            FinancialStatementContent.model_validate({
-                "tipo": "invalid_type",
-                "periodo_fin": "2026-01-31",
-                "accounts": [],
-            })
+            FinancialStatementContent.model_validate(
+                {
+                    "tipo": "invalid_type",
+                    "periodo_fin": "2026-01-31",
+                    "accounts": [],
+                }
+            )
 
 
 # ---------------------------------------------------------------------------
 # Schema registry
 # ---------------------------------------------------------------------------
+
 
 class TestSchemaRegistry:
     def test_registry_has_expected_entries(self):
@@ -300,3 +313,64 @@ class TestSchemaRegistry:
         assert "conciliacion_bancaria" in INGEST_CONTENT_SCHEMAS
         assert "flujo_de_caja" in INGEST_CONTENT_SCHEMAS
         assert "notas_estados_financieros" in INGEST_CONTENT_SCHEMAS
+
+
+# ---------------------------------------------------------------------------
+# qr_code and condiciones_pago fields
+# ---------------------------------------------------------------------------
+
+
+def test_factura_venta_has_qr_code_field():
+    schema = FacturaVentaContent.model_fields
+    assert "qr_code" in schema
+
+
+def test_factura_compra_has_qr_code_field():
+    schema = FacturaCompraContent.model_fields
+    assert "qr_code" in schema
+
+
+def test_factura_compra_has_condiciones_pago_field():
+    schema = FacturaCompraContent.model_fields
+    assert "condiciones_pago" in schema
+
+
+def test_factura_venta_qr_code_optional():
+    obj = FacturaVentaContent()
+    assert obj.qr_code is None
+
+
+def test_factura_compra_condiciones_pago_optional():
+    obj = FacturaCompraContent()
+    assert obj.condiciones_pago is None
+
+
+def test_factura_compra_qr_code_optional():
+    content = FacturaCompraContent(consecutivo="FC-999")
+    assert content.qr_code is None
+
+
+def test_tax_declaration_has_periodicidad():
+    content = TaxDeclarationContent(
+        formulario="300",
+        periodicidad="bimestral",
+        total_a_pagar=Decimal("500000"),
+    )
+    assert content.periodicidad == "bimestral"
+
+
+def test_tax_declaration_has_impuestos_descontables():
+    content = TaxDeclarationContent(
+        formulario="300",
+        impuestos_descontables={
+            "compras_nacionales": Decimal("200000"),
+            "importaciones": Decimal("50000"),
+        },
+    )
+    assert content.impuestos_descontables["compras_nacionales"] == Decimal("200000")
+
+
+def test_tax_declaration_periodicidad_optional():
+    content = TaxDeclarationContent(formulario="350")
+    assert content.periodicidad is None
+    assert content.impuestos_descontables is None

@@ -24,7 +24,11 @@ def guess_provider(text: str) -> str:
     t = (text or "").lower()
     if "openai" in t or "gpt-" in t:
         return "openai"
-    if "gemini" in t or "resource_exhausted" in t or "generativelanguage.googleapis.com" in t:
+    if (
+        "gemini" in t
+        or "resource_exhausted" in t
+        or "generativelanguage.googleapis.com" in t
+    ):
         return "gemini"
     if "groq" in t:
         return "groq"
@@ -45,9 +49,14 @@ for pid in PROCESS_IDS:
     provider = guess_provider(msg)
 
     print(f"\n{pid}")
-    print(json.dumps({
-        "status": status.get("status"),
-        "current_stage": status.get("current_stage"),
-        "error_message": msg,
-        "provider_guess": provider,
-    }, ensure_ascii=True))
+    print(
+        json.dumps(
+            {
+                "status": status.get("status"),
+                "current_stage": status.get("current_stage"),
+                "error_message": msg,
+                "provider_guess": provider,
+            },
+            ensure_ascii=True,
+        )
+    )

@@ -49,7 +49,7 @@ class TipoImpuesto(str, Enum):
     RETEFUENTE = "retefuente"
     RETEIVA = "reteiva"
     RETEICA = "reteica"
-    ICA = "ica"    # Impuesto de Industria y Comercio — Ley 14/1983
+    ICA = "ica"  # Impuesto de Industria y Comercio — Ley 14/1983
     RENTA = "renta"  # Provisión Impuesto de Renta — Art. 240 ET, Ley 2277/2022
     TIMBRE = "timbre"
     OTRO = "otro"
@@ -501,7 +501,8 @@ class BalanceSheetOutput(BaseModel):
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
     )
     analysis: Optional[Dict[str, Any]] = Field(
-        None, description="LLM narrative analysis (present when include_analysis=true)",
+        None,
+        description="LLM narrative analysis (present when include_analysis=true)",
     )
 
 
@@ -538,7 +539,8 @@ class PnLOutput(BaseModel):
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
     )
     analysis: Optional[Dict[str, Any]] = Field(
-        None, description="LLM narrative analysis (present when include_analysis=true)",
+        None,
+        description="LLM narrative analysis (present when include_analysis=true)",
     )
 
 
@@ -572,7 +574,8 @@ class CashFlowOutput(BaseModel):
         description="NIIF/PCGA normative notes retrieved from RAG (empty if RAG unavailable)",
     )
     analysis: Optional[Dict[str, Any]] = Field(
-        None, description="LLM narrative analysis (present when include_analysis=true)",
+        None,
+        description="LLM narrative analysis (present when include_analysis=true)",
     )
 
 
@@ -604,7 +607,8 @@ class IVAOutput(BaseModel):
         description="Applicable legal references",
     )
     analysis: Optional[Dict[str, Any]] = Field(
-        None, description="LLM narrative analysis (present when include_analysis=true)",
+        None,
+        description="LLM narrative analysis (present when include_analysis=true)",
     )
 
 
@@ -634,7 +638,8 @@ class WithholdingsOutput(BaseModel):
         description="Applicable legal references",
     )
     analysis: Optional[Dict[str, Any]] = Field(
-        None, description="LLM narrative analysis (present when include_analysis=true)",
+        None,
+        description="LLM narrative analysis (present when include_analysis=true)",
     )
 
 
@@ -642,18 +647,34 @@ class WithholdingsOutput(BaseModel):
 # 6. REPORTERO Analysis Output — financial analysis with predictions
 # ---------------------------------------------------------------------------
 
+
 class FinancialRatios(BaseModel):
     """Key financial ratios computed deterministically."""
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    razon_corriente: Optional[float] = Field(None, description="Current ratio: current assets / current liabilities")
-    prueba_acida: Optional[float] = Field(None, description="Acid test: (current assets - inventories) / current liabilities")
-    margen_neto: Optional[float] = Field(None, description="Net margin %: net profit / revenue")
-    roa: Optional[float] = Field(None, description="Return on assets %: net profit / total assets")
-    razon_endeudamiento: Optional[float] = Field(None, description="Debt ratio: liabilities / assets")
-    deuda_patrimonio: Optional[float] = Field(None, description="Debt-to-equity: liabilities / equity")
-    rotacion_activos: Optional[float] = Field(None, description="Asset turnover: revenue / assets")
+    razon_corriente: Optional[float] = Field(
+        None, description="Current ratio: current assets / current liabilities"
+    )
+    prueba_acida: Optional[float] = Field(
+        None,
+        description="Acid test: (current assets - inventories) / current liabilities",
+    )
+    margen_neto: Optional[float] = Field(
+        None, description="Net margin %: net profit / revenue"
+    )
+    roa: Optional[float] = Field(
+        None, description="Return on assets %: net profit / total assets"
+    )
+    razon_endeudamiento: Optional[float] = Field(
+        None, description="Debt ratio: liabilities / assets"
+    )
+    deuda_patrimonio: Optional[float] = Field(
+        None, description="Debt-to-equity: liabilities / equity"
+    )
+    rotacion_activos: Optional[float] = Field(
+        None, description="Asset turnover: revenue / assets"
+    )
 
 
 class PrediccionNumerica(BaseModel):
@@ -673,7 +694,9 @@ class PeriodDelta(BaseModel):
     period1_value: float = Field(0)
     period2_value: float = Field(0)
     absolute_change: float = Field(0)
-    percentage_change: Optional[float] = Field(None, description="% change, null if base is zero")
+    percentage_change: Optional[float] = Field(
+        None, description="% change, null if base is zero"
+    )
 
 
 class ComparativeReportOutput(BaseModel):
@@ -698,20 +721,25 @@ class FinancialAnalysisOutput(BaseModel):
     period_end: str = Field(...)
     generated_at: str = Field(...)
     # Deterministic section
-    balance_summary: Dict[str, Any] = Field(default_factory=dict, description="Balance sheet summary")
+    balance_summary: Dict[str, Any] = Field(
+        default_factory=dict, description="Balance sheet summary"
+    )
     pnl_summary: Dict[str, Any] = Field(default_factory=dict, description="P&L summary")
     ratios: FinancialRatios = Field(default_factory=FinancialRatios)
     top_accounts_debit: List[CuentaResumen] = Field(default_factory=list)
     top_accounts_credit: List[CuentaResumen] = Field(default_factory=list)
     top_terceros: List[Dict[str, Any]] = Field(default_factory=list)
     anomalies: List[Dict[str, Any]] = Field(default_factory=list)
-    monthly_trends: Dict[str, Any] = Field(default_factory=dict, description="Monthly trend data by class")
+    monthly_trends: Dict[str, Any] = Field(
+        default_factory=dict, description="Monthly trend data by class"
+    )
     predicciones_numericas: List[PrediccionNumerica] = Field(
         default_factory=list, description="3-month linear regression projections"
     )
     # LLM-generated section (non-fatal: may be absent if Gemini fails)
     analysis: Optional[Dict[str, Any]] = Field(
-        None, description="LLM narrative: resumen, explicaciones, predicciones, recomendaciones"
+        None,
+        description="LLM narrative: resumen, explicaciones, predicciones, recomendaciones",
     )
     notas_normativas: List[str] = Field(default_factory=list)
 

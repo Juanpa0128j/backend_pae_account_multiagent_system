@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from reportlab.pdfgen import canvas
@@ -48,7 +48,12 @@ class _FakeParsedDocument:
 
 
 class FakeLlamaParse:
-    def __init__(self, api_key: str | None = None, result_type: str = "markdown", verbose: bool = False):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        result_type: str = "markdown",
+        verbose: bool = False,
+    ):
         self.api_key = api_key
         self.result_type = result_type
         self.verbose = verbose
@@ -68,12 +73,41 @@ class FakeLlamaParse:
 
 class FakeGeminiClient:
     class _Justification:
-        def __init__(self, referencias: list[str], justificacion: str, confirma_tasas: bool):
+        def __init__(
+            self, referencias: list[str], justificacion: str, confirma_tasas: bool
+        ):
             self.referencias = referencias
             self.justificacion = justificacion
             self.confirma_tasas = confirma_tasas
 
-    def extract_transactions(self, text: str, correction_feedback: str | None = None) -> dict[str, Any]:
+    def __getattr__(self, name: str):
+        """Return a stub for any extract_* method not explicitly defined."""
+        if name.startswith("extract_"):
+
+            def _stub(text: str = "", correction_feedback: str | None = None, **_kw):
+                return {
+                    "fecha": "2026-03-07",
+                    "nit_emisor": "900123456",
+                    "nit_receptor": "800999888",
+                    "total": 1_250_000,
+                    "descripcion": "Servicios profesionales marzo 2026",
+                    "transactions": [
+                        {
+                            "fecha": "2026-03-07",
+                            "nit_emisor": "900123456",
+                            "nit_receptor": "800999888",
+                            "total": 1_250_000,
+                            "descripcion": "Servicios profesionales marzo 2026",
+                        }
+                    ],
+                }
+
+            return _stub
+        raise AttributeError(name)
+
+    def extract_transactions(
+        self, text: str, correction_feedback: str | None = None
+    ) -> dict[str, Any]:
         _ = (text, correction_feedback)
         tx = {
             "fecha": "2026-03-07",
@@ -81,7 +115,9 @@ class FakeGeminiClient:
             "nit_receptor": "800999888",
             "total": 1_250_000,
             "descripcion": "Servicios profesionales marzo 2026",
-            "items": [{"descripcion": "Servicio contable", "cantidad": 1, "valor": 1_250_000}],
+            "items": [
+                {"descripcion": "Servicio contable", "cantidad": 1, "valor": 1_250_000}
+            ],
         }
         return {
             "fecha": tx["fecha"],
@@ -99,8 +135,9 @@ class FakeGeminiClient:
         raw_transactions: list[dict[str, Any]],
         rag_context: list[dict[str, Any]] | None = None,
         correction_feedback: str | None = None,
+        doc_type: str = "",
     ) -> dict[str, Any]:
-        _ = (rag_context, correction_feedback)
+        _ = (rag_context, correction_feedback, doc_type)
         tx = raw_transactions[0] if raw_transactions else {}
         total = Decimal(str(tx.get("total") or "0"))
         fecha = str(tx.get("fecha") or datetime.now(timezone.utc).date().isoformat())
@@ -132,10 +169,17 @@ class FakeGeminiClient:
             "total_creditos": float(total),
         }
 
-    def justify_tax_analysis(self, tax_amounts: dict[str, Any], rag_context: str) -> _Justification:
+    def justify_tax_analysis(
+        self, tax_amounts: dict[str, Any], rag_context: str
+    ) -> _Justification:
         _ = (tax_amounts, rag_context)
         return self._Justification(
-            referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],
+            referencias=[
+                "Art. 383 ET",
+                "Art. 401 ET",
+                "Art. 477 ET",
+                "Decreto 2048/1992",
+            ],
             justificacion="Validacion tributaria para escenario E2E de pruebas.",
             confirma_tasas=True,
         )
@@ -232,13 +276,18 @@ def _ensure_minimum_puc() -> None:
 
 
 def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
-    with patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True), patch(
-        "app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()
+    with (
+        patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
+        patch(
+            "app.agents.ingest_agent.get_llm_client", return_value=FakeGeminiClient()
+        ),
     ):
         return invoke_ingest_pipeline(pdf_path)
 
 
-def _create_context_from_ingest(ingest_result: dict[str, Any], pdf_path: str) -> SupabaseE2EContext:
+def _create_context_from_ingest(
+    ingest_result: dict[str, Any], pdf_path: str
+) -> SupabaseE2EContext:
     ingest_id = str(ingest_result.get("ingest_id") or "")
     assert ingest_id
 
@@ -246,7 +295,7 @@ def _create_context_from_ingest(ingest_result: dict[str, Any], pdf_path: str) ->
     pending_id = str(db_result.get("transaction_pending_id") or "")
     assert pending_id
 
-    raw_transactions = ingest_result.get("data") or []
+    raw_transactions = ingest_result.get("raw_transactions") or []
     assert isinstance(raw_transactions, list) and raw_transactions
 
     with SessionLocal() as db:
@@ -264,9 +313,15 @@ def _create_context_from_ingest(ingest_result: dict[str, Any], pdf_path: str) ->
 
 def _run_process_pipeline(ctx: SupabaseE2EContext) -> dict[str, Any]:
     fake_client = FakeGeminiClient()
-    with patch("app.agents.contador_agent.get_gemini_client", return_value=fake_client), patch(
-        "app.agents.tributario_agent.get_gemini_client", return_value=fake_client
-    ), patch("app.agents.auditor_agent.get_gemini_client", return_value=fake_client):
+    with (
+        patch("app.agents.contador_agent.get_llm_client", return_value=fake_client),
+        patch("app.agents.tributario_agent.get_llm_client", return_value=fake_client),
+        patch("app.agents.auditor_agent.get_llm_client", return_value=fake_client),
+        patch(
+            "app.services.rag_service.get_rag_service",
+            return_value=MagicMock(search_normativo=MagicMock(return_value=[])),
+        ),
+    ):
         return invoke_accounting_pipeline(
             ingest_id=ctx.ingest_id,
             raw_transactions=ctx.raw_transactions,
@@ -283,17 +338,21 @@ def test_e2e_ingesta_contador_auditor_and_supabase_persistence() -> None:
     ingest_result = _run_ingest_pipeline(pdf_path)
 
     # Validate INGEST output semantics
+    # data is now a structured FacturaVentaContent dict (not a list) — the
+    # pipeline returns rich extraction output, raw_transactions live in DB state.
     assert ingest_result.get("status") == "completed"
     assert ingest_result.get("error") is None
-    assert isinstance(ingest_result.get("data"), list) and ingest_result["data"]
-    tx = ingest_result["data"][0]
-    assert tx["nit_emisor"] == "900123456"
-    assert tx["nit_receptor"] == "800999888"
-    assert Decimal(str(tx["total"])) == Decimal("1250000")
+    data = ingest_result.get("data")
+    assert isinstance(data, dict) and data
+    assert data.get("nit_emisor") == "900123456"
+    assert data.get("nit_receptor") == "800999888"
+    assert Decimal(str(data.get("total", 0))) == Decimal("1250000")
 
     # Validate ingest DB update
     ingest_id = str(ingest_result.get("ingest_id"))
-    pending_id = str((ingest_result.get("db_result") or {}).get("transaction_pending_id"))
+    pending_id = str(
+        (ingest_result.get("db_result") or {}).get("transaction_pending_id")
+    )
     assert ingest_id and pending_id
 
     with SessionLocal() as db:
@@ -301,7 +360,11 @@ def test_e2e_ingesta_contador_auditor_and_supabase_persistence() -> None:
         assert ingest_job is not None
         assert ingest_job.status == IngestStatus.COMPLETED
 
-        pending = db.query(TransactionPending).filter(TransactionPending.id == pending_id).first()
+        pending = (
+            db.query(TransactionPending)
+            .filter(TransactionPending.id == pending_id)
+            .first()
+        )
         assert pending is not None
         assert str(pending.nit_emisor) == "900123456"
 
@@ -311,7 +374,9 @@ def test_e2e_ingesta_contador_auditor_and_supabase_persistence() -> None:
 
     assert process_result.get("error") is None
     validation_history = process_result.get("validation_history") or []
-    agent_names = {v.get("agent_name") for v in validation_history if isinstance(v, dict)}
+    agent_names = {
+        v.get("agent_name") for v in validation_history if isinstance(v, dict)
+    }
     assert "contador" in agent_names
 
     db_result = process_result.get("db_result") or {}

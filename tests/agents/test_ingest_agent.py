@@ -33,6 +33,9 @@ def _dummy_get_llm_client():
 
 _fake_llm.LLMClient = _DummyLLMClient
 _fake_llm.get_llm_client = _dummy_get_llm_client
+# Provide a no-op stub so other test modules that import _compact_error_message
+# don't fail when the stub is already cached in sys.modules.
+_fake_llm._compact_error_message = lambda exc, max_len=240: str(exc)[:max_len]
 sys.modules.setdefault("app.core.llm_client", _fake_llm)
 
 _fake_config = types.ModuleType("app.core.config")
@@ -43,10 +46,17 @@ def _dummy_get_settings():
 
 
 _fake_config.get_settings = _dummy_get_settings
+# Provide settings object so database.py (imported transitively by other test
+# modules) can do `from app.core.config import settings` without failing.
+_fake_config.settings = SimpleNamespace(
+    llama_cloud_api_key="test-key",
+    database_url="postgresql://localhost/test",
+    app_env="test",
+)
 sys.modules.setdefault("app.core.config", _fake_config)
 
-from app.agents import ingest_agent
-from tests.conftest import base_state
+from app.agents import ingest_agent  # noqa: E402
+from tests.conftest import base_state  # noqa: E402
 
 
 @pytest.fixture
@@ -135,7 +145,7 @@ class TestIngestNodeRoutes:
             lambda _: ("xlsx extracted text for tests", [{"sheet": "A"}]),
         )
         client = _build_client("extract_transactions", {"any": "value"})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xlsx_file)
         out = ingest_agent.ingest_node(state)
@@ -150,18 +160,22 @@ class TestIngestNodeRoutes:
         monkeypatch.setattr("app.services.excel_parser.parse_excel", parse_mock)
 
         client = _build_client("extract_transactions", {"ok": 1})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
-        state = base_state(file_path=xlsx_file, raw_text="already extracted xlsx content")
+        state = base_state(
+            file_path=xlsx_file, raw_text="already extracted xlsx content"
+        )
         out = ingest_agent.ingest_node(state)
 
         assert out["error"] is None
         parse_mock.assert_not_called()
 
     def test_xml_path_uses_xml_parser(self, xml_file, monkeypatch):
-        monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "xml text for tests")
+        monkeypatch.setattr(
+            "app.services.xml_parser.parse_xml", lambda _: "xml text for tests"
+        )
         client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)
@@ -194,7 +208,7 @@ class TestIngestNodeRoutes:
             lambda: SimpleNamespace(llama_cloud_api_key="k"),
         )
         client = _build_client("extract_transactions", {"ok": 1})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=pdf_file)
         out = ingest_agent.ingest_node(state)
@@ -203,7 +217,9 @@ class TestIngestNodeRoutes:
         assert out["raw_text"] == "cached parsed text for ingest"
         llama_cls.assert_not_called()
 
-    def test_pdf_markdown_empty_falls_back_to_text_and_caches(self, pdf_file, monkeypatch):
+    def test_pdf_markdown_empty_falls_back_to_text_and_caches(
+        self, pdf_file, monkeypatch
+    ):
         first_parser = MagicMock()
         first_doc = MagicMock()
         first_doc.text = ""
@@ -223,7 +239,7 @@ class TestIngestNodeRoutes:
             lambda: SimpleNamespace(llama_cloud_api_key="k"),
         )
         client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=pdf_file)
         out = ingest_agent.ingest_node(state)
@@ -231,14 +247,18 @@ class TestIngestNodeRoutes:
         assert out["error"] is None
         assert llama_cls.call_count == 2
 
-        cache_file = Path(pdf_file).parent / ".parse_cache" / f"{Path(pdf_file).name.replace(' ', '_')}.md"
+        cache_file = (
+            Path(pdf_file).parent
+            / ".parse_cache"
+            / f"{Path(pdf_file).name.replace(' ', '_')}.md"
+        )
         assert cache_file.exists()
         assert "text mode output" in cache_file.read_text(encoding="utf-8")
 
     def test_empty_extracted_text_sets_readable_error(self, xml_file, monkeypatch):
         monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "   ")
         client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)
@@ -249,7 +269,7 @@ class TestIngestNodeRoutes:
     def test_short_text_logs_warning_event(self, xml_file, monkeypatch):
         monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "short text")
         client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)
@@ -257,9 +277,14 @@ class TestIngestNodeRoutes:
         assert out["error"] is None
         assert any(e["event"] == "short_text_warning" for e in out["agent_log"])
 
-    def test_dispatch_error_when_method_missing_for_doc_type(self, xml_file, monkeypatch):
-        monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "text long enough for dispatch")
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: SimpleNamespace())
+    def test_dispatch_error_when_method_missing_for_doc_type(
+        self, xml_file, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "app.services.xml_parser.parse_xml",
+            lambda _: "text long enough for dispatch",
+        )
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: SimpleNamespace())
 
         state = base_state(
             file_path=xml_file,
@@ -271,9 +296,11 @@ class TestIngestNodeRoutes:
         assert "dispatch error" in out["error"]
 
     def test_non_dict_gemini_output_sets_error(self, xml_file, monkeypatch):
-        monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "text long enough for output")
+        monkeypatch.setattr(
+            "app.services.xml_parser.parse_xml", lambda _: "text long enough for output"
+        )
         client = _build_client("extract_transactions", [1, 2, 3])
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)
@@ -281,12 +308,14 @@ class TestIngestNodeRoutes:
         assert out["error"] is not None
         assert "expected dict" in out["error"]
 
-    def test_retry_reuses_raw_text_and_passes_correction_feedback(self, pdf_file, monkeypatch):
+    def test_retry_reuses_raw_text_and_passes_correction_feedback(
+        self, pdf_file, monkeypatch
+    ):
         llama_cls = MagicMock()
         monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
 
         client = _build_client("extract_factura_venta", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(
             file_path=pdf_file,
@@ -305,9 +334,12 @@ class TestIngestNodeRoutes:
         llama_cls.assert_not_called()
 
     def test_dispatch_logs_via_b_pathway_hint(self, xml_file, monkeypatch):
-        monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "xml content long enough for via b")
+        monkeypatch.setattr(
+            "app.services.xml_parser.parse_xml",
+            lambda _: "xml content long enough for via b",
+        )
         client = _build_client("extract_balance_general", {"statement": "ok"})
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(
             file_path=xml_file,
@@ -316,19 +348,18 @@ class TestIngestNodeRoutes:
         out = ingest_agent.ingest_node(state)
 
         assert out["error"] is None
-        dispatch = [
-            e for e in out["agent_log"]
-            if e["event"] == "dispatch_selected"
-        ]
+        dispatch = [e for e in out["agent_log"] if e["event"] == "dispatch_selected"]
         assert dispatch
         assert dispatch[-1]["details"]["pathway_hint"] == "work_with_existing"
 
     def test_ingest_exception_sets_error_result(self, xml_file, monkeypatch):
-        monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "xml content long enough")
+        monkeypatch.setattr(
+            "app.services.xml_parser.parse_xml", lambda _: "xml content long enough"
+        )
 
         client = MagicMock()
         client.extract_transactions.side_effect = RuntimeError("gemini exploded")
-        monkeypatch.setattr(ingest_agent, "get_gemini_client", lambda: client)
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
         state = base_state(file_path=xml_file)
         out = ingest_agent.ingest_node(state)

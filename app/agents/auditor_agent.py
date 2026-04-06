@@ -24,7 +24,7 @@ import logging
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
-from app.core.gemini_client import get_gemini_client
+from app.core.llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +61,18 @@ def auditor_node(state: AgentState) -> AgentState:
     state["current_agent"] = "auditor"
     state["current_stage"] = "auditor"
 
-    append_log(state, "auditor", "node_start", {
-        "tx_count": len(raw_transactions),
-        "is_retry": is_retry,
-    })
+    append_log(
+        state,
+        "auditor",
+        "node_start",
+        {
+            "tx_count": len(raw_transactions),
+            "is_retry": is_retry,
+        },
+    )
 
     try:
-        gemini = get_gemini_client()
+        gemini = get_llm_client()
 
         if is_retry:
             logger.info(
@@ -107,10 +112,15 @@ def auditor_node(state: AgentState) -> AgentState:
             auditor_output.get("nivel_riesgo"),
             auditor_output.get("puntaje_calidad"),
         )
-        append_log(state, "auditor", "node_complete", {
-            "approved": approved,
-            "nivel_riesgo": auditor_output.get("nivel_riesgo"),
-        })
+        append_log(
+            state,
+            "auditor",
+            "node_complete",
+            {
+                "approved": approved,
+                "nivel_riesgo": auditor_output.get("nivel_riesgo"),
+            },
+        )
 
     except Exception as exc:
         state["error"] = f"auditor error: {exc}"

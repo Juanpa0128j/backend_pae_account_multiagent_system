@@ -21,14 +21,7 @@ from app.models.agent_outputs import (
     ContadorOutput,
     TributarioOutput,
     AuditorOutput,
-    AsientoContable,
-    DetalleImpuesto,
-    HallazgoAuditoria,
-    TipoDocumento,
-    TipoMovimiento,
-    TipoImpuesto,
     NivelRiesgo,
-    SeveridadHallazgo,
     AGENT_OUTPUT_SCHEMAS,
 )
 from app.services.validation_engine import (
@@ -37,10 +30,10 @@ from app.services.validation_engine import (
 )
 from pydantic import ValidationError
 
-
 # =========================================================================
 # Fixtures
 # =========================================================================
+
 
 @pytest.fixture
 def valid_ingest_data() -> dict:
@@ -127,8 +120,8 @@ def validator() -> OutputValidator:
 # 1. IngestOutput Tests
 # =========================================================================
 
-class TestIngestOutput:
 
+class TestIngestOutput:
     def test_valid_output(self, valid_ingest_data):
         output = IngestOutput.model_validate(valid_ingest_data)
         assert len(output.transactions) == 1
@@ -173,8 +166,8 @@ class TestIngestOutput:
 # 2. ContadorOutput Tests
 # =========================================================================
 
-class TestContadorOutput:
 
+class TestContadorOutput:
     def test_valid_output(self, valid_contador_data):
         output = ContadorOutput.model_validate(valid_contador_data)
         assert len(output.asientos) == 2
@@ -212,8 +205,8 @@ class TestContadorOutput:
 # 3. TributarioOutput Tests
 # =========================================================================
 
-class TestTributarioOutput:
 
+class TestTributarioOutput:
     def test_valid_output(self, valid_tributario_data):
         output = TributarioOutput.model_validate(valid_tributario_data)
         assert output.aplica_impuestos is True
@@ -258,8 +251,8 @@ class TestTributarioOutput:
 # 4. AuditorOutput Tests
 # =========================================================================
 
-class TestAuditorOutput:
 
+class TestAuditorOutput:
     def test_valid_output(self, valid_auditor_data):
         output = AuditorOutput.model_validate(valid_auditor_data)
         assert output.aprobado is True
@@ -271,25 +264,29 @@ class TestAuditorOutput:
             AuditorOutput.model_validate(valid_auditor_data)
 
     def test_approved_with_critical_finding(self, valid_auditor_data):
-        valid_auditor_data["hallazgos"] = [{
-            "codigo": "AUD-001",
-            "severidad": "critico",
-            "descripcion": "Discrepancia significativa en el monto registrado vs factura original",
-            "campo_afectado": "monto",
-            "recomendacion": "Revisar y corregir el monto contra el documento fuente original",
-        }]
+        valid_auditor_data["hallazgos"] = [
+            {
+                "codigo": "AUD-001",
+                "severidad": "critico",
+                "descripcion": "Discrepancia significativa en el monto registrado vs factura original",
+                "campo_afectado": "monto",
+                "recomendacion": "Revisar y corregir el monto contra el documento fuente original",
+            }
+        ]
         with pytest.raises(ValidationError, match="critical findings"):
             AuditorOutput.model_validate(valid_auditor_data)
 
     def test_invalid_finding_code(self, valid_auditor_data):
         valid_auditor_data["aprobado"] = False
         valid_auditor_data["nivel_riesgo"] = "medio"
-        valid_auditor_data["hallazgos"] = [{
-            "codigo": "WRONG-01",
-            "severidad": "advertencia",
-            "descripcion": "Un hallazgo con código inválido detectado",
-            "recomendacion": "Corregir el formato del código de hallazgo",
-        }]
+        valid_auditor_data["hallazgos"] = [
+            {
+                "codigo": "WRONG-01",
+                "severidad": "advertencia",
+                "descripcion": "Un hallazgo con código inválido detectado",
+                "recomendacion": "Corregir el formato del código de hallazgo",
+            }
+        ]
         with pytest.raises(ValidationError):
             AuditorOutput.model_validate(valid_auditor_data)
 
@@ -304,13 +301,15 @@ class TestAuditorOutput:
             "documento_referencia": "FAC-2026-001",
             "aprobado": False,
             "nivel_riesgo": "alto",
-            "hallazgos": [{
-                "codigo": "AUD-001",
-                "severidad": "error",
-                "descripcion": "Monto no coincide con el documento escaneado original",
-                "campo_afectado": "monto",
-                "recomendacion": "Verificar el monto contra la fuente documental física",
-            }],
+            "hallazgos": [
+                {
+                    "codigo": "AUD-001",
+                    "severidad": "error",
+                    "descripcion": "Monto no coincide con el documento escaneado original",
+                    "campo_afectado": "monto",
+                    "recomendacion": "Verificar el monto contra la fuente documental física",
+                }
+            ],
             "puntaje_calidad": 40.0,
             "resumen": "Documento rechazado por inconsistencias en el monto reportado.",
         }
@@ -323,8 +322,8 @@ class TestAuditorOutput:
 # 5. Validation Engine Tests
 # =========================================================================
 
-class TestOutputValidator:
 
+class TestOutputValidator:
     def test_validate_valid_ingest(self, validator, valid_ingest_data):
         result = validator.validate("ingesta", valid_ingest_data)
         assert result.is_valid
@@ -333,7 +332,9 @@ class TestOutputValidator:
 
     def test_validate_invalid_ingest(self, validator):
         # total < 0 violates the ge=0 constraint on RawTransactionItem
-        bad_data = {"transactions": [{"total": -999, "nit_emisor": "x", "nit_receptor": "y"}]}
+        bad_data = {
+            "transactions": [{"total": -999, "nit_emisor": "x", "nit_receptor": "y"}]
+        }
         result = validator.validate("ingesta", bad_data)
         assert not result.is_valid
         assert result.status == ValidationStatus.INVALID
@@ -352,7 +353,9 @@ class TestOutputValidator:
         # 3 valid + 2 invalid = 60% compliance
         for _ in range(3):
             validator.validate("ingesta", valid_ingest_data)
-        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
+        invalid = {
+            "transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]
+        }
         for _ in range(2):
             validator.validate("ingesta", invalid)
         assert validator.schema_compliance_rate() == 0.6
@@ -366,12 +369,16 @@ class TestOutputValidator:
         assert validator.schema_compliance_rate("contador") == 0.0
 
     def test_should_retry(self, validator):
-        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
+        invalid = {
+            "transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]
+        }
         result = validator.validate("ingesta", invalid, attempt=1)
         assert validator.should_retry(result) is True
 
     def test_should_not_retry_on_max_attempts(self, validator):
-        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
+        invalid = {
+            "transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]
+        }
         result = validator.validate("ingesta", invalid, attempt=3)
         assert validator.should_retry(result) is False
 
@@ -382,7 +389,9 @@ class TestOutputValidator:
         assert "ESQUEMA ESPERADO" in prompt
 
     def test_get_metrics(self, validator, valid_ingest_data):
-        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
+        invalid = {
+            "transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]
+        }
         validator.validate("ingesta", valid_ingest_data)
         validator.validate("ingesta", invalid)
         metrics = validator.get_metrics()
@@ -399,7 +408,9 @@ class TestOutputValidator:
         assert metrics["total_validations"] == 0
 
     def test_error_summary_format(self, validator):
-        invalid = {"transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]}
+        invalid = {
+            "transactions": [{"total": -1, "nit_emisor": "x", "nit_receptor": "y"}]
+        }
         result = validator.validate("ingesta", invalid)
         summary = result.error_summary()
         assert "ingesta" in summary
@@ -410,15 +421,18 @@ class TestOutputValidator:
 # 6. Schema Registry Tests
 # =========================================================================
 
-class TestSchemaRegistry:
 
+class TestSchemaRegistry:
     def test_all_agents_registered(self):
         # Core processing agents must be present
         core = {"ingesta", "contador", "tributario", "auditor"}
         # Reportero report-type schemas (not used in retry-validation loop)
         reportero = {
-            "reportero_balance", "reportero_pnl", "reportero_cashflow",
-            "reportero_iva", "reportero_withholdings",
+            "reportero_balance",
+            "reportero_pnl",
+            "reportero_cashflow",
+            "reportero_iva",
+            "reportero_withholdings",
         }
         registered = set(AGENT_OUTPUT_SCHEMAS.keys())
         assert core.issubset(registered)
@@ -426,6 +440,7 @@ class TestSchemaRegistry:
 
     def test_schemas_are_pydantic_models(self):
         from pydantic import BaseModel
+
         for name, schema_cls in AGENT_OUTPUT_SCHEMAS.items():
             assert issubclass(schema_cls, BaseModel), (
                 f"Schema for '{name}' is not a Pydantic BaseModel"
@@ -435,6 +450,4 @@ class TestSchemaRegistry:
         """All schemas should export a valid JSON schema."""
         for name, schema_cls in AGENT_OUTPUT_SCHEMAS.items():
             js = schema_cls.model_json_schema()
-            assert "properties" in js, (
-                f"JSON schema for '{name}' has no 'properties'"
-            )
+            assert "properties" in js, f"JSON schema for '{name}' has no 'properties'"

@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 _NS: dict[str, str] = {
     "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
     "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
-    "fe":  "http://www.dian.gov.co/contratos/facturaelectronica/v1",
-    "ds":  "http://www.w3.org/2000/09/xmldsig#",
+    "fe": "http://www.dian.gov.co/contratos/facturaelectronica/v1",
+    "ds": "http://www.w3.org/2000/09/xmldsig#",
     "ext": "urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2",
 }
 
@@ -44,13 +44,16 @@ def _party_block(party_node, label: str) -> list[str]:
         return []
     lines = [f"\n{label}:"]
     nit = _find(party_node, "cac:PartyTaxScheme/cbc:CompanyID")
-    name = _find(party_node, "cac:PartyTaxScheme/cbc:RegistrationName") or \
-           _find(party_node, "cac:PartyName/cbc:Name")
+    name = _find(party_node, "cac:PartyTaxScheme/cbc:RegistrationName") or _find(
+        party_node, "cac:PartyName/cbc:Name"
+    )
     regime = _find(party_node, "cac:PartyTaxScheme/cbc:TaxLevelCode")
-    address = _find(party_node, "cac:PhysicalLocation/cac:Address/cbc:CityName") or \
-              _find(party_node, "cac:PostalAddress/cbc:CityName")
-    dept = _find(party_node, "cac:PhysicalLocation/cac:Address/cac:AddressLine/cbc:Line") or \
-           _find(party_node, "cac:PostalAddress/cac:AddressLine/cbc:Line")
+    address = _find(
+        party_node, "cac:PhysicalLocation/cac:Address/cbc:CityName"
+    ) or _find(party_node, "cac:PostalAddress/cbc:CityName")
+    dept = _find(
+        party_node, "cac:PhysicalLocation/cac:Address/cac:AddressLine/cbc:Line"
+    ) or _find(party_node, "cac:PostalAddress/cac:AddressLine/cbc:Line")
     if nit:
         lines.append(f"  NIT: {nit}")
     if name:
@@ -82,7 +85,9 @@ def _parse_ubl(root: ET.Element) -> str:
     cufe = _find(root, "cbc:UUID")
     fecha = _find(root, "cbc:IssueDate")
     hora = _find(root, "cbc:IssueTime")
-    tipo_op = _find(root, "cbc:InvoiceTypeCode") or _find(root, "cbc:CreditNoteTypeCode")
+    tipo_op = _find(root, "cbc:InvoiceTypeCode") or _find(
+        root, "cbc:CreditNoteTypeCode"
+    )
     moneda = _find(root, "cbc:DocumentCurrencyCode")
     nota = _find(root, "cbc:Note")
 
@@ -112,7 +117,10 @@ def _parse_ubl(root: ET.Element) -> str:
     if payment is not None:
         forma = _find(payment, "cbc:PaymentMeansCode")
         vencimiento = _find(payment, "cbc:PaymentDueDate")
-        lines.append(f"Forma de pago: {forma}" + (f" (vence {vencimiento})" if vencimiento else ""))
+        lines.append(
+            f"Forma de pago: {forma}"
+            + (f" (vence {vencimiento})" if vencimiento else "")
+        )
 
     # Emisor
     supplier = root.find("cac:AccountingSupplierParty/cac:Party", _NS)
@@ -123,7 +131,6 @@ def _parse_ubl(root: ET.Element) -> str:
     lines.extend(_party_block(customer, "Receptor (Comprador)"))
 
     # Resolución de facturación
-    auth = root.find(".//cac:AuthorizationLine", _NS) or root.find(".//ext:UBLExtensions", _NS)
     resolucion = _find(root, ".//cbc:AuthorizationID")
     if resolucion:
         lines.append(f"\nResolución DIAN: {resolucion}")
@@ -144,9 +151,15 @@ def _parse_ubl(root: ET.Element) -> str:
         lines.append("\n## Detalle de ítems")
         for item in items:
             desc = _find(item, "cac:Item/cbc:Description")
-            qty = _find(item, "cbc:InvoicedQuantity") or _find(item, "cbc:CreditedQuantity") or _find(item, "cbc:DebitedQuantity")
+            qty = (
+                _find(item, "cbc:InvoicedQuantity")
+                or _find(item, "cbc:CreditedQuantity")
+                or _find(item, "cbc:DebitedQuantity")
+            )
             unit = ""
-            qty_el = item.find("cbc:InvoicedQuantity", _NS) or item.find("cbc:CreditedQuantity", _NS)
+            qty_el = item.find("cbc:InvoicedQuantity", _NS) or item.find(
+                "cbc:CreditedQuantity", _NS
+            )
             if qty_el is not None:
                 unit = qty_el.get("unitCode", "")
             valor_linea = _find(item, "cbc:LineExtensionAmount")
@@ -155,7 +168,10 @@ def _parse_ubl(root: ET.Element) -> str:
 
             tax_pct = _find(item, "cac:TaxTotal/cac:TaxSubtotal/cbc:Percent")
             tax_amount = _find(item, "cac:TaxTotal/cbc:TaxAmount")
-            tax_name = _find(item, "cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cac:TaxScheme/cbc:Name")
+            tax_name = _find(
+                item,
+                "cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cac:TaxScheme/cbc:Name",
+            )
 
             parts = []
             if code:
@@ -208,12 +224,12 @@ def _parse_ubl(root: ET.Element) -> str:
         lines.append("\n## Totales")
         for field, label in [
             ("cbc:LineExtensionAmount", "Subtotal sin impuestos"),
-            ("cbc:TaxExclusiveAmount",  "Base gravable"),
-            ("cbc:TaxInclusiveAmount",  "Total con impuestos"),
-            ("cbc:AllowanceTotalAmount","Total descuentos"),
-            ("cbc:ChargeTotalAmount",   "Total cargos"),
-            ("cbc:PrepaidAmount",       "Anticipo"),
-            ("cbc:PayableAmount",       "Total a pagar"),
+            ("cbc:TaxExclusiveAmount", "Base gravable"),
+            ("cbc:TaxInclusiveAmount", "Total con impuestos"),
+            ("cbc:AllowanceTotalAmount", "Total descuentos"),
+            ("cbc:ChargeTotalAmount", "Total cargos"),
+            ("cbc:PrepaidAmount", "Anticipo"),
+            ("cbc:PayableAmount", "Total a pagar"),
         ]:
             val = _find(totals, field)
             if val:
@@ -253,7 +269,9 @@ def parse_xml(file_path: str) -> str:
         return text
 
     # Generic fallback: walk all elements and collect text
-    logger.warning("xml_parser: unknown root tag '%s' — using generic text extraction", tag)
+    logger.warning(
+        "xml_parser: unknown root tag '%s' — using generic text extraction", tag
+    )
     parts: list[str] = []
     for el in root.iter():
         local = el.tag.split("}")[-1] if "}" in el.tag else el.tag

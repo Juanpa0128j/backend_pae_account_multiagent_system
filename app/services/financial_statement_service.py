@@ -17,7 +17,12 @@ _log = logging.getLogger(__name__)
 
 _REQUIRED_DERIVATION_INPUTS = ("balance_general", "estado_resultados", "libro_auxiliar")
 _DERIVED_TARGETS = ("flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros")
-_FIRST_LEVEL_TYPES = ("balance_general", "estado_resultados", "libro_auxiliar", "libro_diario")
+_FIRST_LEVEL_TYPES = (
+    "balance_general",
+    "estado_resultados",
+    "libro_auxiliar",
+    "libro_diario",
+)
 
 
 def _first_level_type_exists(
@@ -38,7 +43,9 @@ def _first_level_type_exists(
     return len(rows) > 0
 
 
-def _create_derivation_ingest_job(db, company_nit: str, period_end: datetime, doc_type: str):
+def _create_derivation_ingest_job(
+    db, company_nit: str, period_end: datetime, doc_type: str
+):
     """Create a synthetic IngestJob to satisfy the FK constraint on FinancialStatement."""
     ingest_job = db_service.create_ingest_job(
         db,
@@ -69,11 +76,18 @@ def build_first_level_from_journal_entries(
     skipped: list[str] = []
 
     # --- Balance General ---
-    if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="balance_general",
-                                    period_start=period_start, period_end=period_end):
+    if not _first_level_type_exists(
+        db,
+        company_nit=normalized_nit,
+        statement_type="balance_general",
+        period_start=period_start,
+        period_end=period_end,
+    ):
         try:
             # get_balance_sheet uses cutoff_date (not start_date/end_date); use period_end as cutoff
-            bg_raw = db_service.get_balance_sheet(db, cutoff_date=period_end, company_nit=normalized_nit)
+            bg_raw = db_service.get_balance_sheet(
+                db, cutoff_date=period_end, company_nit=normalized_nit
+            )
             bg_data = {
                 "tipo": "balance_general",
                 "entidad": {"nit": normalized_nit},
@@ -88,11 +102,19 @@ def build_first_level_from_journal_entries(
                 "moneda": "COP",
                 "source": "derived_from_journal",
             }
-            ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "balance_general")
+            ingest_job = _create_derivation_ingest_job(
+                db, normalized_nit, period_end, "balance_general"
+            )
             stmt = db_service.create_financial_statement(
-                db, ingest_id=ingest_job.id, statement_type="balance_general",
-                entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
-                source_mode="derived_from_journal", data=bg_data, commit=True,
+                db,
+                ingest_id=ingest_job.id,
+                statement_type="balance_general",
+                entity_nit=normalized_nit,
+                period_start=period_start,
+                period_end=period_end,
+                source_mode="derived_from_journal",
+                data=bg_data,
+                commit=True,
             )
             created["balance_general"] = stmt.id
         except Exception as exc:
@@ -102,11 +124,20 @@ def build_first_level_from_journal_entries(
         skipped.append("balance_general")
 
     # --- Estado de Resultados ---
-    if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="estado_resultados",
-                                    period_start=period_start, period_end=period_end):
+    if not _first_level_type_exists(
+        db,
+        company_nit=normalized_nit,
+        statement_type="estado_resultados",
+        period_start=period_start,
+        period_end=period_end,
+    ):
         try:
-            er_raw = db_service.get_pnl(db, company_nit=normalized_nit,
-                                        start_date=period_start, end_date=period_end)
+            er_raw = db_service.get_pnl(
+                db,
+                company_nit=normalized_nit,
+                start_date=period_start,
+                end_date=period_end,
+            )
             er_data = {
                 "tipo": "estado_resultados",
                 "entidad": {"nit": normalized_nit},
@@ -120,25 +151,42 @@ def build_first_level_from_journal_entries(
                 "moneda": "COP",
                 "source": "derived_from_journal",
             }
-            ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "estado_resultados")
+            ingest_job = _create_derivation_ingest_job(
+                db, normalized_nit, period_end, "estado_resultados"
+            )
             stmt = db_service.create_financial_statement(
-                db, ingest_id=ingest_job.id, statement_type="estado_resultados",
-                entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
-                source_mode="derived_from_journal", data=er_data, commit=True,
+                db,
+                ingest_id=ingest_job.id,
+                statement_type="estado_resultados",
+                entity_nit=normalized_nit,
+                period_start=period_start,
+                period_end=period_end,
+                source_mode="derived_from_journal",
+                data=er_data,
+                commit=True,
             )
             created["estado_resultados"] = stmt.id
         except Exception as exc:
-            _log.warning("build_first_level: failed to create estado_resultados: %s", exc)
+            _log.warning(
+                "build_first_level: failed to create estado_resultados: %s", exc
+            )
             skipped.append("estado_resultados")
     else:
         skipped.append("estado_resultados")
 
     # --- Libro Auxiliar ---
-    if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="libro_auxiliar",
-                                    period_start=period_start, period_end=period_end):
+    if not _first_level_type_exists(
+        db,
+        company_nit=normalized_nit,
+        statement_type="libro_auxiliar",
+        period_start=period_start,
+        period_end=period_end,
+    ):
         try:
             # get_general_ledger returns a List[Dict] directly
-            ledger = db_service.get_general_ledger(db, period_start, period_end, normalized_nit)
+            ledger = db_service.get_general_ledger(
+                db, period_start, period_end, normalized_nit
+            )
             la_data = {
                 "tipo": "libro_auxiliar",
                 "entidad": {"nit": normalized_nit},
@@ -148,11 +196,19 @@ def build_first_level_from_journal_entries(
                 "moneda": "COP",
                 "source": "derived_from_journal",
             }
-            ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "libro_auxiliar")
+            ingest_job = _create_derivation_ingest_job(
+                db, normalized_nit, period_end, "libro_auxiliar"
+            )
             stmt = db_service.create_financial_statement(
-                db, ingest_id=ingest_job.id, statement_type="libro_auxiliar",
-                entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
-                source_mode="derived_from_journal", data=la_data, commit=True,
+                db,
+                ingest_id=ingest_job.id,
+                statement_type="libro_auxiliar",
+                entity_nit=normalized_nit,
+                period_start=period_start,
+                period_end=period_end,
+                source_mode="derived_from_journal",
+                data=la_data,
+                commit=True,
             )
             created["libro_auxiliar"] = stmt.id
         except Exception as exc:
@@ -162,11 +218,19 @@ def build_first_level_from_journal_entries(
         skipped.append("libro_auxiliar")
 
     # --- Libro Diario ---
-    if not _first_level_type_exists(db, company_nit=normalized_nit, statement_type="libro_diario",
-                                    period_start=period_start, period_end=period_end):
+    if not _first_level_type_exists(
+        db,
+        company_nit=normalized_nit,
+        statement_type="libro_diario",
+        period_start=period_start,
+        period_end=period_end,
+    ):
         try:
             journal_lines = db_service.get_journal_entry_lines(
-                db, company_nit=normalized_nit, start_date=period_start, end_date=period_end
+                db,
+                company_nit=normalized_nit,
+                start_date=period_start,
+                end_date=period_end,
             )
             ld_data = {
                 "tipo": "libro_diario",
@@ -177,11 +241,19 @@ def build_first_level_from_journal_entries(
                 "moneda": "COP",
                 "source": "derived_from_journal",
             }
-            ingest_job = _create_derivation_ingest_job(db, normalized_nit, period_end, "libro_diario")
+            ingest_job = _create_derivation_ingest_job(
+                db, normalized_nit, period_end, "libro_diario"
+            )
             stmt = db_service.create_financial_statement(
-                db, ingest_id=ingest_job.id, statement_type="libro_diario",
-                entity_nit=normalized_nit, period_start=period_start, period_end=period_end,
-                source_mode="derived_from_journal", data=ld_data, commit=True,
+                db,
+                ingest_id=ingest_job.id,
+                statement_type="libro_diario",
+                entity_nit=normalized_nit,
+                period_start=period_start,
+                period_end=period_end,
+                source_mode="derived_from_journal",
+                data=ld_data,
+                commit=True,
             )
             created["libro_diario"] = stmt.id
         except Exception as exc:
@@ -229,7 +301,9 @@ def list_financial_statements(
                 "id": row.id,
                 "ingest_id": row.ingest_id,
                 "statement_type": row.statement_type,
-                "period_start": row.period_start.isoformat() if row.period_start else None,
+                "period_start": (
+                    row.period_start.isoformat() if row.period_start else None
+                ),
                 "period_end": row.period_end.isoformat() if row.period_end else None,
                 "entity_nit": row.entity_nit,
                 "source_mode": row.source_mode,
@@ -277,10 +351,13 @@ def derive_financial_statements(
         existing_derived = {
             stmt_type
             for stmt_type in _DERIVED_TARGETS
-            if _first_level_type_exists(db, company_nit=normalized_nit,
-                                        statement_type=stmt_type,
-                                        period_start=period_start,
-                                        period_end=period_end)
+            if _first_level_type_exists(
+                db,
+                company_nit=normalized_nit,
+                statement_type=stmt_type,
+                period_start=period_start,
+                period_end=period_end,
+            )
         }
         targets_to_create = [t for t in _DERIVED_TARGETS if t not in existing_derived]
         if not targets_to_create:
@@ -297,17 +374,26 @@ def derive_financial_statements(
 
         # --- Cash Flow Derivation (NIC 7 Indirect Method) ---
         accounts = la.get("lines") or la.get("accounts") or []
-        
+
         # Calculate ending cash (class 11 = Efectivo y equivalentes)
         efectivo_fin = Decimal("0")
-        flujo_inversion = Decimal("0")  # Classes 15-17: Property, Plant & Equipment + Long-term Investments
+        flujo_inversion = Decimal(
+            "0"
+        )  # Classes 15-17: Property, Plant & Equipment + Long-term Investments
         flujo_financiacion = Decimal("0")  # Classes 25-27: Long-term Debt + Equity
-        
+
         if isinstance(accounts, list):
             for acc in accounts:
                 codigo = str(acc.get("cuenta_puc") or acc.get("codigo") or "")
-                saldo = Decimal(str(acc.get("saldo") or acc.get("saldo_neto") or acc.get("total") or 0))
-                
+                saldo = Decimal(
+                    str(
+                        acc.get("saldo")
+                        or acc.get("saldo_neto")
+                        or acc.get("total")
+                        or 0
+                    )
+                )
+
                 # Ending cash position (class 11)
                 if codigo.startswith("11"):
                     efectivo_fin += saldo
@@ -317,28 +403,32 @@ def derive_financial_statements(
                 # Financing account changes (classes 25-27)
                 elif codigo.startswith(("25", "26", "27")):
                     flujo_financiacion += saldo
-        
+
         # Try to retrieve opening cash balance from prior period or use prior statement
         # If unavailable, start from zero as conservative estimate (note constraint in informacion_adicional)
         try:
             prior_balance_sheet = db_service.get_balance_sheet(
-                db, cutoff_date=period_start - timedelta(days=1), company_nit=normalized_nit
+                db,
+                cutoff_date=period_start - timedelta(days=1),
+                company_nit=normalized_nit,
             )
             prior_efectivo = Decimal(str(prior_balance_sheet.get("cash", 0) or 0))
         except Exception:
             prior_efectivo = Decimal("0")
-        
+
         efectivo_inicio = prior_efectivo
-        
+
         # NIC 7 Cash Flow Identity: Ending = Opening + Operating + Investing + Financing
         # For indirect method with simplified derivation:
         flujo_operacion = utilidad_neta  # Base from P&L
         aumento_disminucion = efectivo_fin - efectivo_inicio
-        
+
         # Verify the identity (may not hold exactly in derived statements due to rounding/schema gaps)
-        expected_fin = efectivo_inicio + flujo_operacion + flujo_inversion + flujo_financiacion
-        verificacion = (abs(efectivo_fin - expected_fin) < Decimal("0.01"))
-        
+        expected_fin = (
+            efectivo_inicio + flujo_operacion + flujo_inversion + flujo_financiacion
+        )
+        verificacion = abs(efectivo_fin - expected_fin) < Decimal("0.01")
+
         flujo_data = {
             "tipo": "flujo_de_caja",
             "entidad": {"nit": normalized_nit},
@@ -355,7 +445,11 @@ def derive_financial_statements(
             "verificacion": verificacion,
             "moneda": "COP",
             "informacion_adicional": {
-                "derivation_basis": ["balance_general", "estado_resultados", "libro_auxiliar"],
+                "derivation_basis": [
+                    "balance_general",
+                    "estado_resultados",
+                    "libro_auxiliar",
+                ],
                 "rule_version": "v2",
                 "nic7_identity": {
                     "expected_fin": float(expected_fin),
@@ -423,7 +517,11 @@ def derive_financial_statements(
                 }
             ],
             "informacion_adicional": {
-                "derivation_basis": ["balance_general", "estado_resultados", "libro_auxiliar"],
+                "derivation_basis": [
+                    "balance_general",
+                    "estado_resultados",
+                    "libro_auxiliar",
+                ],
                 "rule_version": "v1",
             },
         }

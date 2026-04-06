@@ -1,4 +1,5 @@
 """Gemini provider — fallback LLM when OpenAI quota is exhausted."""
+
 from __future__ import annotations
 
 import logging
