@@ -25,6 +25,7 @@ async def list_transactions(
     status: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
+    company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
     db: Session = Depends(get_db),
 ):
     """
@@ -37,7 +38,7 @@ async def list_transactions(
         except ValueError:
             pass
 
-    txns = db_service.get_transactions_by_status(db, txn_status, limit, offset)
+    txns = db_service.get_transactions_by_status(db, txn_status, limit, offset, company_nit)
 
     return [
         TransactionListItem(

@@ -411,6 +411,62 @@ PUC_ACCOUNTS = [
         "naturaleza": "debito",
         "descripcion": "Costo de prestación de servicios",
     },
+    # ── Clase 7: COSTOS DE PRODUCCIÓN (Naturaleza: Débito) ──
+    {
+        "codigo": "7",
+        "nombre": "Costos de Producción",
+        "clase": 7,
+        "naturaleza": "debito",
+        "descripcion": "Costos incurridos en el proceso de producción o fabricación",
+    },
+    {
+        "codigo": "72",
+        "nombre": "Costos Indirectos",
+        "clase": 7,
+        "grupo": "72",
+        "naturaleza": "debito",
+        "descripcion": "Costos indirectos de fabricación y producción",
+    },
+    {
+        "codigo": "7205",
+        "nombre": "Costos Indirectos de Fabricación",
+        "clase": 7,
+        "grupo": "72",
+        "naturaleza": "debito",
+        "descripcion": "Costos generales de producción no directamente asignables",
+    },
+    {
+        "codigo": "720505",
+        "nombre": "Materiales Indirectos",
+        "clase": 7,
+        "grupo": "72",
+        "naturaleza": "debito",
+        "descripcion": "Materiales y suministros de uso indirecto en producción",
+    },
+    {
+        "codigo": "76",
+        "nombre": "Ajustes por Inflación - Costos",
+        "clase": 7,
+        "grupo": "76",
+        "naturaleza": "debito",
+        "descripcion": "Ajustes de ejercicios anteriores y correcciones de costos de producción",
+    },
+    {
+        "codigo": "7605",
+        "nombre": "Ajustes de Costos de Producción",
+        "clase": 7,
+        "grupo": "76",
+        "naturaleza": "debito",
+        "descripcion": "Ajustes y correcciones sobre costos de producción de períodos anteriores",
+    },
+    {
+        "codigo": "760505",
+        "nombre": "Ajustes y Devoluciones de Costos de Producción",
+        "clase": 7,
+        "grupo": "76",
+        "naturaleza": "debito",
+        "descripcion": "Notas débito, devoluciones y ajustes relacionados con costos de producción",
+    },
 ]
 
 
