@@ -345,16 +345,28 @@ def tributario_node(state: AgentState) -> AgentState:
             "Tributario: doc_type=%s is a tax declaration — skipping tax application",
             doc_type,
         )
+        documento_ref = (
+            (state.get("contador_output") or {}).get("descripcion_general", doc_type)
+            or doc_type
+        )[:100]
         state["tributario_output"] = {
+            "fecha_analisis": date.today().isoformat(),
+            "documento_referencia": documento_ref,
             "aplica_impuestos": False,
             "impuestos": [],
-            "total_impuestos": 0.0,
-            "base_gravable": 0.0,
-            "justificacion": f"Documento tipo {doc_type}: los asientos del contador ya registran el pago/liquidación del impuesto. No se aplican impuestos adicionales.",
-            "referencias_normativas": [],
+            "total_impuestos": "0.00",
+            "observaciones": (
+                f"Documento tipo {doc_type}: los asientos del contador ya registran "
+                "el pago/liquidación del impuesto. No se aplican impuestos adicionales."
+            ),
+            "referencias_legales": [],
+            "asientos_enriquecidos": (state.get("contador_output") or {}).get(
+                "asientos", []
+            ),
         }
+        state["interpreted_data"] = state["tributario_output"]
         state["current_agent"] = "tributario"
-        state["current_stage"] = "tributario"
+        state["current_stage"] = "tributario_complete"
         append_log(
             state, "tributario", "skipped_tax_declaration", {"doc_type": doc_type}
         )

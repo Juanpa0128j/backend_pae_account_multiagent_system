@@ -47,12 +47,19 @@ def _extract_source_taxes_summary(source_doc: dict) -> dict | None:
     # Retenciones aplicadas (list of {tipo, base, tarifa, valor})
     retenciones = source_doc.get("retenciones_aplicadas") or []
     if isinstance(retenciones, list) and retenciones:
+
+        def _safe_float(val: object, default: float = 0.0) -> float:
+            try:
+                return float(val) if val is not None else default
+            except (TypeError, ValueError):
+                return default
+
         result["retenciones_aplicadas"] = [
             {
                 "tipo": str(r.get("tipo", "")),
-                "base": float(r.get("base", 0)),
-                "tarifa": float(r.get("tarifa", 0)),
-                "valor": float(r.get("valor", 0)),
+                "base": _safe_float(r.get("base")),
+                "tarifa": _safe_float(r.get("tarifa")),
+                "valor": _safe_float(r.get("valor")),
             }
             for r in retenciones
             if isinstance(r, dict)
