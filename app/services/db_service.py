@@ -826,6 +826,11 @@ def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
     return db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
 
 
+def list_companies(db: Session) -> list[CompanySettings]:
+    """Return all CompanySettings rows ordered by NIT."""
+    return db.query(CompanySettings).order_by(CompanySettings.nit).all()
+
+
 def upsert_company_settings(
     db: Session, nit: str, data: dict, commit: bool = True
 ) -> CompanySettings:
