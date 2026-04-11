@@ -178,11 +178,14 @@ def get_transactions_by_status(
     status: TransactionStatus = None,
     limit: int = 50,
     offset: int = 0,
+    company_nit: str = None,
 ) -> List[TransactionPending]:
-    """Get transactions optionally filtered by status."""
+    """Get transactions optionally filtered by status and company NIT."""
     query = db.query(TransactionPending)
     if status:
         query = query.filter(TransactionPending.status == status)
+    if company_nit:
+        query = query.filter(TransactionPending.company_nit == company_nit)
     return (
         query.order_by(TransactionPending.created_at.desc())
         .offset(offset)
