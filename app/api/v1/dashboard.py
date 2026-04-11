@@ -6,11 +6,11 @@ Replaces mock data with real database queries.
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.core.database import get_db
 from app.models.database import (
@@ -53,7 +53,10 @@ class DashboardFinancialSummaryResponse(BaseModel):
 
 
 @router.get("/stats", response_model=DashboardStatsResponse)
-async def get_dashboard_stats(db: Session = Depends(get_db)):
+async def get_dashboard_stats(
+    db: Session = Depends(get_db),
+    company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+):
     """
     Returns aggregated top-level metrics for the Dashboard view.
     Queries real data from the database.
@@ -85,10 +88,10 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
     )
 
     # Balance sheet for financial totals
-    balance = db_service.get_balance_sheet(db)
+    balance = db_service.get_balance_sheet(db, company_nit=company_nit)
 
     # Cash position (class 11 accounts)
-    ledger = db_service.get_general_ledger(db)
+    ledger = db_service.get_general_ledger(db, company_nit=company_nit)
     efectivo = sum(
         float(r["total_debit"] - r["total_credit"])
         for r in ledger
@@ -138,13 +141,16 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/financial-summary", response_model=DashboardFinancialSummaryResponse)
-async def get_financial_summary(db: Session = Depends(get_db)):
+async def get_financial_summary(
+    db: Session = Depends(get_db),
+    company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+):
     """
     Complete financial summary for the dashboard.
     Includes balance sheet totals, P&L, cash position, taxes, and recent activity.
     """
-    balance = db_service.get_balance_sheet(db)
-    ledger = db_service.get_general_ledger(db)
+    balance = db_service.get_balance_sheet(db, company_nit=company_nit)
+    ledger = db_service.get_general_ledger(db, company_nit=company_nit)
 
     # Cash
     efectivo = sum(

@@ -45,6 +45,12 @@ def get_company_settings(nit: str, db: Session = Depends(get_db)):
     return row
 
 
+@router.get("/companies", response_model=list[CompanySettingsResponse])
+def list_companies(db: Session = Depends(get_db)):
+    """Return all registered companies (used for the frontend company selector)."""
+    return db_service.list_companies(db)
+
+
 @router.put("/company/{nit}", response_model=CompanySettingsResponse)
 def upsert_company_settings(
     nit: str,
