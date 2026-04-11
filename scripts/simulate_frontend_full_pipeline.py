@@ -600,6 +600,55 @@ def print_run_summary(runs: list[UploadRun]) -> None:
             print(f"  error: {r.error}")
 
 
+def download_and_save_reports(
+    client: httpx.Client,
+    base_url: str,
+    company_nit: str,
+    company_name: str,
+    output_dir: Path,
+) -> None:
+    """Download reports in PDF and Excel formats and save locally."""
+    _print_header("Descargar reportes en PDF y Excel")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Report types and endpoints
+    reports = [
+        ("balance", "Balance General", ["pdf", "excel"]),
+        ("pnl", "Estado de Resultados", ["pdf", "excel"]),
+        ("cashflow", "Flujo de Caja", ["pdf", "excel"]),
+    ]
+
+    for report_name, report_title, formats in reports:
+        print(f"\n{report_title}:")
+
+        for fmt in formats:
+            try:
+                url = f"{base_url}/api/v1/reports/{report_name}/download/{fmt}"
+                params = {"company_nit": company_nit, "company_name": company_name}
+
+                resp = client.get(url, params=params, timeout=30)
+                resp.raise_for_status()
+
+                # Determine filename
+                if fmt == "pdf":
+                    filename = f"{report_name}_{company_nit}.pdf"
+                else:
+                    filename = f"{report_name}_{company_nit}.xlsx"
+
+                filepath = output_dir / filename
+                with open(filepath, "wb") as f:
+                    f.write(resp.content)
+
+                file_size = filepath.stat().st_size
+                print(
+                    f"  ✓ {fmt.upper():10s} → {filepath.name:40s} ({file_size:,} bytes)"
+                )
+
+            except Exception as exc:
+                print(f"  ✗ {fmt.upper():10s} → Error: {exc}")
+
+
 def fetch_all_statements(
     client: httpx.Client, base_url: str, company_nit: str, timeout: float = 60.0
 ) -> list:
@@ -746,7 +795,7 @@ def _print_second_level_detail(statements: list) -> None:
         if not stmt:
             continue
 
-        d = stmt.get("data", {})
+        d = stmt.get("data") or {}
         period = f"{(stmt.get('period_start') or '')[:10]} ->{(stmt.get('period_end') or '')[:10]}"
         print(
             f"\n--- {stype.upper().replace('_', ' ')} [{stmt.get('source_mode')}] ---"
@@ -784,17 +833,22 @@ def _print_second_level_detail(statements: list) -> None:
             )
 
         elif stype == "notas_estados_financieros":
-            notas = d.get("notas", [])
+            notas = d.get("notas") or []
             print(f"Base presentacion: {d.get('base_presentacion')}")
             for nota in notas:
                 print(f"  Nota {nota.get('numero_nota')}: {nota.get('titulo')}")
                 print(f"    Categoria: {nota.get('categoria')}")
                 print(f"    {nota.get('contenido_resumido', '')[:120]}")
                 for cifra in nota.get("cifras_relevantes") or []:
-                    print(f"    {cifra.get('concepto')}: {cifra.get('valor'):,.2f}")
+                    valor = cifra.get("valor")
+                    if isinstance(valor, (int, float)):
+                        valor_txt = f"{valor:,.2f}"
+                    else:
+                        valor_txt = str(valor)
+                    print(f"    {cifra.get('concepto')}: {valor_txt}")
 
         elif stype == "libro_diario":
-            asientos = d.get("asientos", [])
+            asientos = d.get("asientos") or []
             print(f"Total asientos: {len(asientos)}")
             for entry in asientos[:5]:
                 print(
@@ -946,6 +1000,16 @@ def main() -> int:
             company_nit,
             cuenta_aux,
             args.report_timeout_seconds,
+        )
+
+        # Download reports in PDF and Excel formats
+        reports_dir = ROOT / "storage" / "downloads" / "reports"
+        download_and_save_reports(
+            client,
+            args.base_url,
+            company_nit,
+            company_name="Empresa Demo PAE",
+            output_dir=reports_dir,
         )
 
         # Display all stored financial statements including second-level

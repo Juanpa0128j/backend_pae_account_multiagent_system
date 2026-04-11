@@ -486,6 +486,18 @@ class BalanceSheetOutput(BaseModel):
     activos: float = Field(..., description="Total assets (class 1 accounts)")
     pasivos: float = Field(..., description="Total liabilities (class 2 accounts)")
     patrimonio: float = Field(..., description="Equity (class 3 accounts)")
+    activos_detalle: List[CuentaResumen] = Field(
+        default_factory=list,
+        description="Detailed class-1 asset accounts used in report exports",
+    )
+    pasivos_detalle: List[CuentaResumen] = Field(
+        default_factory=list,
+        description="Detailed class-2 liability accounts used in report exports",
+    )
+    patrimonio_detalle: List[CuentaResumen] = Field(
+        default_factory=list,
+        description="Detailed class-3 equity accounts used in report exports",
+    )
     utilidad_neta: float = Field(
         ..., description="Net profit: revenue - expenses - COGS"
     )

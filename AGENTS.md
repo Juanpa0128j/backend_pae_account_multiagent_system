@@ -26,7 +26,7 @@ When working on a feature, check this table first to understand what's expected,
 | **Tributario** | IVA, retención en la fuente, ICA calculations | ✅ Implemented |
 | **Auditor** | Double-entry validation + internal control alerts | ✅ Implemented |
 | **Reportero** | Balance general, P&L, libro auxiliar, flujo de caja, cambios patrimonio, notas financieras | ✅ Implemented |
-| **Exportable reports** | PDF/Excel export of financial reports | ⏳ Pending |
+| **Exportable reports** | PDF/Excel export of financial reports | ✅ Implemented |
 | **Tax compliance assistant** | Preliminary tax values + deadline reminders (IVA, renta, retenciones, ICA) | ⏳ Pending |
 | **Financial analysis** | KPIs: rentabilidad, liquidez, eficiencia, endeudamiento, rotaciones | ⏳ Pending |
 | **Financial projections** | Income/expense/cash flow forecasts from historical data | ⏳ Pending |
