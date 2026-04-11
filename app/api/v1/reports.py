@@ -2,6 +2,10 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+<<<<<<< Updated upstream
+=======
+from fastapi.responses import StreamingResponse
+>>>>>>> Stashed changes
 
 from app.agents.graph import invoke_reporting_pipeline
 from app.core.database import SessionLocal
@@ -9,6 +13,11 @@ from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutp
 from app.models.database import FinancialStatement
 from app.services.financial_statement_service import list_financial_statements
 from app.services.nit_utils import normalize_nit
+from app.services.report_export_service import (
+    BalanceSheetExporter,
+    CashFlowExporter,
+    PnLExporter,
+)
 
 router = APIRouter()
 
@@ -154,9 +163,15 @@ async def get_financial_statement_by_id(statement_id: str):
             "id": stmt.id,
             "ingest_id": stmt.ingest_id,
             "statement_type": stmt.statement_type,
+<<<<<<< Updated upstream
             "period_start": (
                 stmt.period_start.isoformat() if stmt.period_start else None
             ),
+=======
+            "period_start": stmt.period_start.isoformat()
+            if stmt.period_start
+            else None,
+>>>>>>> Stashed changes
             "period_end": stmt.period_end.isoformat() if stmt.period_end else None,
             "entity_nit": stmt.entity_nit,
             "source_mode": stmt.source_mode,
@@ -165,3 +180,164 @@ async def get_financial_statement_by_id(statement_id: str):
         }
     finally:
         db.close()
+
+
+# ============================================================================
+# Export Endpoints: Download reports in PDF and Excel formats
+# ============================================================================
+
+
+@router.get("/balance/download/pdf")
+async def download_balance_pdf(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    company_name: str = Query("Empresa", description="Company name for PDF header"),
+):
+    """
+    Download Balance Sheet as PDF.
+
+    Generates a professional PDF Balance General in Colombian format
+    with proper PUC classifications, currency formatting, and balance validation.
+    """
+    report = _run_report("balance", _build_params(start_date, end_date), company_nit)
+    pdf_bytes = BalanceSheetExporter.to_pdf(report, company_name)
+
+    filename = f"balance_general_{end_date or date.today()}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/balance/download/excel")
+async def download_balance_excel(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    company_name: str = Query("Empresa", description="Company name for Excel header"),
+):
+    """
+    Download Balance Sheet as Excel.
+
+    Generates an Excel workbook with proper formatting, currency formatting,
+    and professional accounting layout.
+    """
+    report = _run_report("balance", _build_params(start_date, end_date), company_nit)
+    excel_bytes = BalanceSheetExporter.to_excel(report, company_name)
+
+    filename = f"balance_general_{end_date or date.today()}.xlsx"
+    return StreamingResponse(
+        iter([excel_bytes]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/pnl/download/pdf")
+async def download_pnl_pdf(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    company_name: str = Query("Empresa", description="Company name for PDF header"),
+):
+    """
+    Download Profit & Loss as PDF.
+
+    Generates a professional Estado de Resultados PDF with detailed
+    revenue, COGS, and expense breakdowns per PUC accounts.
+    """
+    report = _run_report("pnl", _build_params(start_date, end_date), company_nit)
+    pdf_bytes = PnLExporter.to_pdf(report, company_name)
+
+    filename = f"estado_resultados_{start_date or ''}_{end_date or date.today()}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/pnl/download/excel")
+async def download_pnl_excel(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    company_name: str = Query("Empresa", description="Company name for Excel header"),
+):
+    """
+    Download Profit & Loss as Excel.
+
+    Generates an Excel workbook with Estado de Resultados formatted
+    for professional accounting and audit purposes.
+    """
+    report = _run_report("pnl", _build_params(start_date, end_date), company_nit)
+    excel_bytes = PnLExporter.to_excel(report, company_name)
+
+    filename = f"estado_resultados_{start_date or ''}_{end_date or date.today()}.xlsx"
+    return StreamingResponse(
+        iter([excel_bytes]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/cashflow/download/pdf")
+async def download_cashflow_pdf(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    company_name: str = Query("Empresa", description="Company name for PDF header"),
+):
+    """
+    Download Cash Flow as PDF.
+
+    Generates a professional Flujo de Caja report in direct method format
+    showing cash and bank account movements.
+    """
+    report = _run_report("cashflow", _build_params(start_date, end_date), company_nit)
+    pdf_bytes = CashFlowExporter.to_pdf(report, company_name)
+
+    filename = f"flujo_caja_{start_date or ''}_{end_date or date.today()}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/cashflow/download/excel")
+async def download_cashflow_excel(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    company_name: str = Query("Empresa", description="Company name for Excel header"),
+):
+    """
+    Download Cash Flow as Excel.
+
+    Generates an Excel workbook with Flujo de Caja formatted for
+    professional cash flow analysis and planning.
+    """
+    report = _run_report("cashflow", _build_params(start_date, end_date), company_nit)
+    excel_bytes = CashFlowExporter.to_excel(report, company_name)
+
+    filename = f"flujo_caja_{start_date or ''}_{end_date or date.today()}.xlsx"
+    return StreamingResponse(
+        iter([excel_bytes]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

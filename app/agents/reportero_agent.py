@@ -280,6 +280,7 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
         "prueba_acida": _safe_divide(
             activos_corrientes - inventarios, pasivos_corrientes
         ),
+<<<<<<< Updated upstream
         "margen_neto": (
             round(_safe_divide(utilidad, ingresos) * 100, 2)
             if ingresos and _safe_divide(utilidad, ingresos) is not None
@@ -290,6 +291,14 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
             if activos and _safe_divide(utilidad, activos) is not None
             else None
         ),
+=======
+        "margen_neto": round(_safe_divide(utilidad, ingresos) * 100, 2)
+        if ingresos and _safe_divide(utilidad, ingresos) is not None
+        else None,
+        "roa": round(_safe_divide(utilidad, activos) * 100, 2)
+        if activos and _safe_divide(utilidad, activos) is not None
+        else None,
+>>>>>>> Stashed changes
         "razon_endeudamiento": _safe_divide(pasivos, activos) if activos else None,
         "deuda_patrimonio": _safe_divide(pasivos, patrimonio) if patrimonio else None,
         "rotacion_activos": _safe_divide(ingresos, activos) if activos else None,
@@ -426,9 +435,36 @@ def _detect_anomalies(
 
 
 def _build_balance(db, params: dict, svc) -> dict:
+    start_date = _parse_date_param(params.get("start_date"))
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
     company_nit = params.get("company_nit")
     data = svc.get_balance_sheet(db, cutoff_date=end_date, company_nit=company_nit)
+    ledger = svc.get_general_ledger(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        company_nit=company_nit,
+    )
+
+    def _to_cuenta(row: dict, balance: Decimal) -> dict:
+        return {
+            "codigo": row["account"],
+            "nombre": row["name"],
+            "saldo": float(balance),
+        }
+
+    activos_detalle = [
+        _to_cuenta(r, _debit_nature_balance(r))
+        for r in _ledger_by_prefix(ledger, _CLASS_ACTIVOS)
+    ]
+    pasivos_detalle = [
+        _to_cuenta(r, _credit_nature_balance(r))
+        for r in _ledger_by_prefix(ledger, _CLASS_PASIVOS)
+    ]
+    patrimonio_detalle = [
+        _to_cuenta(r, _credit_nature_balance(r))
+        for r in _ledger_by_prefix(ledger, _CLASS_PATRIMONIO)
+    ]
 
     activos = Decimal(str(data["assets"]))
     pasivos = Decimal(str(data["liabilities"]))
@@ -463,6 +499,9 @@ def _build_balance(db, params: dict, svc) -> dict:
         "activos": float(activos),
         "pasivos": float(pasivos),
         "patrimonio": float(patrimonio),
+        "activos_detalle": activos_detalle,
+        "pasivos_detalle": pasivos_detalle,
+        "patrimonio_detalle": patrimonio_detalle,
         "utilidad_neta": float(utilidad_neta),
         "patrimonio_total": float(patrimonio_total),
         "cuadre": cuadre,
@@ -730,9 +769,15 @@ def _build_analysis(db, params: dict, svc) -> dict:
 
     # --- Phase 2: LLM Analysis (non-fatal) ---
     try:
+<<<<<<< Updated upstream
         from app.core.llm_client import get_llm_client  # noqa: PLC0415
 
         gemini = get_llm_client()
+=======
+        from app.core.gemini_client import get_gemini_client  # noqa: PLC0415
+
+        gemini = get_gemini_client()
+>>>>>>> Stashed changes
 
         rag_text = _fetch_rag_context_text(
             "análisis financiero indicadores NIIF Colombia ratios liquidez rentabilidad"
@@ -782,9 +827,15 @@ _BUILDERS = {
 def _enrich_with_brief_analysis(report_data: dict, report_type: str) -> dict:
     """Append a brief LLM analysis to a standard report (non-fatal)."""
     try:
+<<<<<<< Updated upstream
         from app.core.llm_client import get_llm_client  # noqa: PLC0415
 
         gemini = get_llm_client()
+=======
+        from app.core.gemini_client import get_gemini_client  # noqa: PLC0415
+
+        gemini = get_gemini_client()
+>>>>>>> Stashed changes
         rag_text = _fetch_rag_context_text(
             f"{report_type} análisis financiero NIIF Colombia"
         )
