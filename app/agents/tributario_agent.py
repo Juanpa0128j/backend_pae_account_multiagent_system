@@ -226,6 +226,88 @@ def calc_period_renta_provision(
 # ---------------------------------------------------------------------------
 
 
+def _extract_source_taxes(source_doc: dict) -> dict:
+    """Extract explicit tax values from the ingest-pipeline's structured extraction dict.
+
+    Priority:
+    1. retenciones_aplicadas list  — explicit retefuente/reteica values from source doc
+    2. totales.total_iva           — IVA already computed by the issuer
+    3. items with es_gravado flag  — granular taxable base from line items
+    """
+    result: dict = {}
+
+    totales = source_doc.get("totales") or {}
+    if isinstance(totales, dict):
+        for key in ("total_iva", "total_retenciones"):
+            val = totales.get(key)
+            if val is not None:
+                try:
+                    result[key] = Decimal(str(val))
+                except Exception:
+                    pass
+
+    # Flat root-level IVA fields (nota_credito, nota_debito schemas)
+    if "total_iva" not in result:
+        for key in ("total_iva_ajustado", "total_iva_adicionado"):
+            val = source_doc.get(key)
+            if val is not None:
+                try:
+                    result["total_iva"] = Decimal(str(val))
+                    break
+                except Exception:
+                    pass
+
+    # Retenciones_aplicadas: [{tipo, base, tarifa, valor}]
+    retenciones = source_doc.get("retenciones_aplicadas") or []
+    if isinstance(retenciones, list):
+        parsed_rets = []
+        for r in retenciones:
+            if not isinstance(r, dict):
+                continue
+            try:
+                parsed_rets.append(
+                    {
+                        "tipo": str(r.get("tipo", "")).lower(),
+                        "base": Decimal(str(r.get("base", 0))),
+                        "tarifa": Decimal(str(r.get("tarifa", 0))),
+                        "valor": Decimal(str(r.get("valor", 0))),
+                    }
+                )
+            except Exception:
+                pass
+        if parsed_rets:
+            result["retenciones"] = parsed_rets
+
+    # Item-level tax flags for base_gravable override
+    items = source_doc.get("items") or []
+    if isinstance(items, list) and items:
+        base_items = Decimal("0")
+        any_flags = False
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            if it.get("es_gravado"):
+                any_flags = True
+                try:
+                    base_items += Decimal(
+                        str(
+                            it.get("valor_total_sin_impuesto")
+                            or it.get("valor_total")
+                            or 0
+                        )
+                    )
+                except Exception:
+                    pass
+            elif it.get("es_excluido") or it.get("es_exento"):
+                any_flags = True
+        if any_flags and base_items > 0:
+            result["base_gravable_from_items"] = base_items.quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+
+    return result
+
+
 def tributario_node(state: AgentState) -> AgentState:
     """
     Tributario worker node — replaces Sprint-12 stub.
@@ -249,22 +331,59 @@ def tributario_node(state: AgentState) -> AgentState:
 
     asientos: list[dict] = contador_output.get("asientos", [])
 
-    # Compute base gravable from non-tax debit lines only.
-    # PUC 2xxx = liabilities (IVA descontable, retenciones) — exclude these debits
-    # to avoid inflating the taxable base when the contador already broke out IVA.
-    non_tax_debits = [
-        Decimal(str(a.get("valor", 0)))
-        for a in asientos
-        if (a.get("tipo_movimiento") or "").lower() == "debito"
-        and not str(a.get("cuenta_puc", "")).startswith("2")
-    ]
-    base_gravable = (
-        sum(non_tax_debits, Decimal("0")).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
+    # Tax-payment declarations: the journal entries already ARE the tax settlement.
+    # Applying IVA/retefuente/reteICA on top would double-count.
+    _TAX_DECLARATION_TYPES = {
+        "declaracion_iva",
+        "declaracion_ica",
+        "autorretencion_ica",
+        "recibo_pago_impuesto",
+    }
+    doc_type = (state.get("document_classification") or {}).get("doc_type", "")
+    if doc_type in _TAX_DECLARATION_TYPES:
+        logger.info(
+            "Tributario: doc_type=%s is a tax declaration — skipping tax application",
+            doc_type,
         )
-        if non_tax_debits
-        else Decimal(str(contador_output.get("total_debitos", 0)))
-    )
+        state["tributario_output"] = {
+            "aplica_impuestos": False,
+            "impuestos": [],
+            "total_impuestos": 0.0,
+            "base_gravable": 0.0,
+            "justificacion": f"Documento tipo {doc_type}: los asientos del contador ya registran el pago/liquidación del impuesto. No se aplican impuestos adicionales.",
+            "referencias_normativas": [],
+        }
+        state["current_agent"] = "tributario"
+        state["current_stage"] = "tributario"
+        append_log(
+            state, "tributario", "skipped_tax_declaration", {"doc_type": doc_type}
+        )
+        return state
+
+    # Extract explicit tax values from the source document (ingest pipeline output)
+    source_doc = state.get("source_document") or {}
+    source_taxes = _extract_source_taxes(source_doc) if source_doc else {}
+
+    # Compute base gravable.
+    # Priority: (1) item-level gravado sum from source doc, (2) non-liability debit lines, (3) total_debitos.
+    if source_taxes.get("base_gravable_from_items"):
+        base_gravable = source_taxes["base_gravable_from_items"]
+        logger.info("Tributario: base_gravable from source items = %s", base_gravable)
+    else:
+        # PUC 2xxx = liabilities (IVA descontable, retenciones) — exclude to avoid inflating taxable base.
+        non_tax_debits = [
+            Decimal(str(a.get("valor", 0)))
+            for a in asientos
+            if (a.get("tipo_movimiento") or "").lower() == "debito"
+            and not str(a.get("cuenta_puc", "")).startswith("2")
+        ]
+        base_gravable = (
+            sum(non_tax_debits, Decimal("0")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            if non_tax_debits
+            else Decimal(str(contador_output.get("total_debitos", 0)))
+        )
 
     documento_ref = contador_output.get("descripcion_general", "sin referencia")[:100]
 
@@ -415,31 +534,72 @@ def tributario_node(state: AgentState) -> AgentState:
         logger.info(f"Tributario: detected transaction type = {tipo_transaccion}")
 
         # ------------------------------------------------------------------
-        # Step 3 — Deterministic tax calculations using effective rates
+        # Step 3 — Deterministic tax calculations using effective rates.
+        # Source-document values (from ingest extraction) take priority over
+        # computed defaults to avoid recomputing taxes already stated in the doc.
         # ------------------------------------------------------------------
         tasa_retefuente = tasa_retefuente_efectiva.get(
             tipo_transaccion, tasa_retefuente_efectiva["servicios"]
         )
-        retefuente_val = (base_gravable * tasa_retefuente).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
-        reteica_val = (base_gravable * tasa_reteica_efectiva).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
 
-        # IVA: capture from asientos if already present, otherwise calculate
+        # Retefuente: use source value when available
+        source_ret = None
+        for ret in source_taxes.get("retenciones", []):
+            if (
+                "retefuente" in ret.get("tipo", "").lower()
+                or "rte" in ret.get("tipo", "").lower()
+            ):
+                source_ret = ret["valor"]
+                break
+        if source_ret is not None and source_ret > 0:
+            retefuente_val = source_ret.quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            logger.info("Tributario: retefuente from source doc = %s", retefuente_val)
+        else:
+            retefuente_val = (base_gravable * tasa_retefuente).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+
+        # ReteICA: use source value when available
+        source_reteica = None
+        for ret in source_taxes.get("retenciones", []):
+            if (
+                "ica" in ret.get("tipo", "").lower()
+                or "reteica" in ret.get("tipo", "").lower()
+            ):
+                source_reteica = ret["valor"]
+                break
+        if source_reteica is not None and source_reteica > 0:
+            reteica_val = source_reteica.quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            logger.info("Tributario: reteICA from source doc = %s", reteica_val)
+        else:
+            reteica_val = (base_gravable * tasa_reteica_efectiva).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+
+        # IVA: priority order — (1) already in asientos, (2) source doc total_iva, (3) computed
         iva_presente, iva_val_existente = _has_iva_in_asientos(asientos)
         if iva_presente:
             iva_val = iva_val_existente
-            logger.info(f"Tributario: IVA found in asientos = {iva_val}")
+            logger.info("Tributario: IVA found in asientos = %s", iva_val)
         elif not iva_responsable:
             iva_val = Decimal("0.00")
             logger.info("Tributario: IVA skipped — company is not IVA responsable")
+        elif (
+            source_taxes.get("total_iva") is not None and source_taxes["total_iva"] > 0
+        ):
+            iva_val = source_taxes["total_iva"].quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            logger.info("Tributario: IVA from source doc = %s", iva_val)
         else:
             iva_val = (base_gravable * tasa_iva_efectiva).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
-            logger.info(f"Tributario: IVA calculated = {iva_val}")
+            logger.info("Tributario: IVA calculated = %s", iva_val)
 
         # ICA — applies when transaction contains income credits (PUC 4xxx)
         has_income, ingresos_brutos = _has_income_accounts(asientos)

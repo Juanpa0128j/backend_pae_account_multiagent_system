@@ -881,7 +881,7 @@ class TestReporteroAnalysis:
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.gemini_client": mock_gemini_module,
+            "app.core.llm_client": mock_gemini_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
@@ -906,7 +906,7 @@ class TestReporteroAnalysis:
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.gemini_client": mock_gemini_module,
+            "app.core.llm_client": mock_gemini_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
@@ -958,7 +958,7 @@ class TestReporteroAnalysis:
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.gemini_client": mock_gemini_module,
+            "app.core.llm_client": mock_gemini_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
@@ -986,7 +986,7 @@ class TestIncludeAnalysis:
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.gemini_client": mock_gemini_module,
+            "app.core.llm_client": mock_gemini_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)

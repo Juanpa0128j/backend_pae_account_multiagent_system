@@ -82,9 +82,9 @@ class FakeLlamaParse:
         ]
 
 
-class FakeGeminiClient:
+class FakeLLMClient:
     """
-    Doble determinístico de GeminiClient.
+    Doble determinístico de LLMClient.
     Todos los outputs cumplen los schemas Pydantic de app.models.agent_outputs.
     """
 
@@ -148,6 +148,8 @@ class FakeGeminiClient:
         raw_transactions: list[dict[str, Any]],
         rag_context: list[dict[str, Any]] | None = None,
         correction_feedback: str | None = None,
+        doc_type: str = "",
+        source_taxes: dict | None = None,
     ) -> dict[str, Any]:
         tx = raw_transactions[0] if raw_transactions else {}
         total = Decimal(str(tx.get("total") or "0"))
@@ -377,9 +379,7 @@ def _was_routed_to(agent_log: list[dict], next_agent: str) -> bool:
 def _invoke_ingest(pdf_path: str) -> dict[str, Any]:
     with (
         patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
-        patch(
-            "app.agents.ingest_agent.get_llm_client", return_value=FakeGeminiClient()
-        ),
+        patch("app.agents.ingest_agent.get_llm_client", return_value=FakeLLMClient()),
     ):
         return invoke_ingest_pipeline(pdf_path)
 
@@ -427,7 +427,7 @@ def _invoke_process_full_state(
     (no sólo result{}), para poder inspeccionar contador_output,
     tributario_output, auditor_output, agent_log, validation_history, etc.
     """
-    fake = FakeGeminiClient()
+    fake = FakeLLMClient()
     graph = create_agent_graph()
     state = _make_base_state()
     state.update(

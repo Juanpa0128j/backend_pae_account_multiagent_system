@@ -71,7 +71,7 @@ class FakeLlamaParse:
         return [_FakeParsedDocument(text)]
 
 
-class FakeGeminiClient:
+class FakeLLMClient:
     class _Justification:
         def __init__(
             self, referencias: list[str], justificacion: str, confirma_tasas: bool
@@ -136,8 +136,9 @@ class FakeGeminiClient:
         rag_context: list[dict[str, Any]] | None = None,
         correction_feedback: str | None = None,
         doc_type: str = "",
+        source_taxes: dict | None = None,
     ) -> dict[str, Any]:
-        _ = (rag_context, correction_feedback, doc_type)
+        _ = (rag_context, correction_feedback, doc_type, source_taxes)
         tx = raw_transactions[0] if raw_transactions else {}
         total = Decimal(str(tx.get("total") or "0"))
         fecha = str(tx.get("fecha") or datetime.now(timezone.utc).date().isoformat())
@@ -278,9 +279,7 @@ def _ensure_minimum_puc() -> None:
 def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
     with (
         patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
-        patch(
-            "app.agents.ingest_agent.get_llm_client", return_value=FakeGeminiClient()
-        ),
+        patch("app.agents.ingest_agent.get_llm_client", return_value=FakeLLMClient()),
     ):
         return invoke_ingest_pipeline(pdf_path)
 
@@ -312,7 +311,7 @@ def _create_context_from_ingest(
 
 
 def _run_process_pipeline(ctx: SupabaseE2EContext) -> dict[str, Any]:
-    fake_client = FakeGeminiClient()
+    fake_client = FakeLLMClient()
     with (
         patch("app.agents.contador_agent.get_llm_client", return_value=fake_client),
         patch("app.agents.tributario_agent.get_llm_client", return_value=fake_client),
