@@ -359,13 +359,13 @@ def test_schema_valid(mock_rag_cls, mock_gemini_fn):
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_gemini_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
-    """Node completes when GeminiClient returns a static fallback response."""
+    """Node completes when LLMClient returns a static fallback response."""
     mock_rag = MagicMock()
     mock_rag.search_normativo.return_value = []
     mock_rag_cls.return_value = mock_rag
 
     # Simulate the built-in fallback path: justify_tax_analysis returns a static
-    # TaxJustification (as GeminiClient does internally when the API call fails).
+    # TaxJustification (as LLMClient does internally when the API call fails).
     mock_gc = MagicMock()
     mock_gc.justify_tax_analysis.return_value = TaxJustification(
         referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],

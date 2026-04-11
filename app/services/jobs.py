@@ -124,6 +124,48 @@ async def run_process_job(process_id: str) -> None:
             },
         )
 
+        doc_type = ingest_job.document_type or ""
+        source_document = (
+            raw_transactions[0].get("raw_data", {}) if raw_transactions else {}
+        )
+
+        # Via B documents are already-processed financial statements.
+        # They do not require journal entry generation — skip the accounting pipeline.
+        _VIA_B_DOC_TYPES = {
+            "balance_general",
+            "estado_resultados",
+            "libro_auxiliar",
+            "flujo_de_caja",
+            "cambios_patrimonio",
+            "notas_estados_financieros",
+            "libro_diario",
+            # Tax ledger registers — already-processed data, no new journal entries needed
+            "auxiliar_iva",
+            # Non-accounting documents (regulatory decrees, legal texts)
+            "otro",
+        }
+        if doc_type in _VIA_B_DOC_TYPES:
+            logger.info(
+                "Jobs: doc_type=%s is Via B — skipping accounting pipeline, marking COMPLETED",
+                doc_type,
+            )
+            db_service.update_process_job(
+                db,
+                process_id=process_id,
+                status=ProcessStatus.COMPLETED,
+                current_stage="completed",
+                current_agent="supervisor",
+                progress=100,
+                agent_log_entry={
+                    "timestamp": _utc_iso(),
+                    "agent": "supervisor",
+                    "stage": "completed",
+                    "event": "completed",
+                    "message": f"Documento Via B ({doc_type}) no requiere procesamiento contable",
+                },
+            )
+            return
+
         result = await asyncio.wait_for(
             asyncio.to_thread(
                 invoke_accounting_pipeline,
@@ -131,6 +173,8 @@ async def run_process_job(process_id: str) -> None:
                 raw_transactions=raw_transactions,
                 pending_transaction_id=pending_id,
                 process_id=process_id,
+                doc_type=doc_type,
+                source_document=source_document,
             ),
             timeout=MAX_PROCESS_SECONDS,
         )

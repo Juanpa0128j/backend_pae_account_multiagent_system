@@ -18,6 +18,79 @@ from app.core.llm_client import get_llm_client
 logger = logging.getLogger(__name__)
 
 
+def _extract_source_taxes_summary(source_doc: dict) -> dict | None:
+    """Extract a tax summary dict from a structured ingest extraction document.
+
+    Returns None when no tax-relevant fields are found (so callers can skip
+    the optional prompt section entirely).
+    """
+    result: dict = {}
+
+    # Top-level totals (FacturaVentaContent / FacturaCompraContent use a nested `totales` dict)
+    totales = source_doc.get("totales") or {}
+    if isinstance(totales, dict):
+        for key in (
+            "total_iva",
+            "total_retenciones",
+            "total_inc",
+            "total_otros_impuestos",
+        ):
+            val = totales.get(key)
+            if val is not None:
+                result[key] = float(val)
+
+    # Flat top-level IVA fields (some schemas put it at root)
+    for key in ("total_iva", "total_nota_credito", "total_nota_debito"):
+        if key not in result and source_doc.get(key) is not None:
+            result[key] = float(source_doc[key])
+
+    # Retenciones aplicadas (list of {tipo, base, tarifa, valor})
+    retenciones = source_doc.get("retenciones_aplicadas") or []
+    if isinstance(retenciones, list) and retenciones:
+
+        def _safe_float(val: object, default: float = 0.0) -> float:
+            try:
+                return float(val) if val is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        result["retenciones_aplicadas"] = [
+            {
+                "tipo": str(r.get("tipo", "")),
+                "base": _safe_float(r.get("base")),
+                "tarifa": _safe_float(r.get("tarifa")),
+                "valor": _safe_float(r.get("valor")),
+            }
+            for r in retenciones
+            if isinstance(r, dict)
+        ]
+
+    # Item-level tax flags — summarise gravado/excluido/exento counts
+    items = source_doc.get("items") or []
+    if isinstance(items, list) and items:
+        gravado = sum(
+            1 for it in items if isinstance(it, dict) and it.get("es_gravado")
+        )
+        excluido = sum(
+            1 for it in items if isinstance(it, dict) and it.get("es_excluido")
+        )
+        exento = sum(1 for it in items if isinstance(it, dict) and it.get("es_exento"))
+        if gravado or excluido or exento:
+            result["items_gravado"] = gravado
+            result["items_excluido"] = excluido
+            result["items_exento"] = exento
+            # Base gravable = sum of totals for gravado items only
+            base_items = sum(
+                float(it.get("valor_total_sin_impuesto") or it.get("valor_total") or 0)
+                for it in items
+                if isinstance(it, dict) and it.get("es_gravado")
+            )
+            if base_items > 0:
+                result["base_gravable_from_items"] = base_items
+
+    return result if result else None
+
+
 def contador_node(state: AgentState) -> AgentState:
     """
     Contador node: classifies raw transactions into PUC-coded journal entries.
@@ -81,11 +154,18 @@ def contador_node(state: AgentState) -> AgentState:
 
         doc_type = (state.get("document_classification") or {}).get("doc_type", "")
 
+        # Extract tax summary from the rich source document (populated by ingest pipeline)
+        source_doc = state.get("source_document") or {}
+        source_taxes: dict | None = None
+        if source_doc:
+            source_taxes = _extract_source_taxes_summary(source_doc)
+
         contador_output = gemini.extract_contador_output(
             raw_transactions=raw_transactions,
             doc_type=doc_type,
             rag_context=rag_context,
             correction_feedback=state.get("correction_feedback") if is_retry else None,
+            source_taxes=source_taxes,
         )
 
         # Clear correction feedback after consuming it

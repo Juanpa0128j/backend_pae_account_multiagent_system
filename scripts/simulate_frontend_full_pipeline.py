@@ -790,7 +790,7 @@ def _print_second_level_detail(statements: list) -> None:
                 print(f"  Nota {nota.get('numero_nota')}: {nota.get('titulo')}")
                 print(f"    Categoria: {nota.get('categoria')}")
                 print(f"    {nota.get('contenido_resumido', '')[:120]}")
-                for cifra in (nota.get("cifras_relevantes") or []):
+                for cifra in nota.get("cifras_relevantes") or []:
                     print(f"    {cifra.get('concepto')}: {cifra.get('valor'):,.2f}")
 
         elif stype == "libro_diario":
