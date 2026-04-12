@@ -2,10 +2,7 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-<<<<<<< Updated upstream
-=======
 from fastapi.responses import StreamingResponse
->>>>>>> Stashed changes
 
 from app.agents.graph import invoke_reporting_pipeline
 from app.core.database import SessionLocal
