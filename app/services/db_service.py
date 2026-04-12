@@ -178,11 +178,14 @@ def get_transactions_by_status(
     status: TransactionStatus = None,
     limit: int = 50,
     offset: int = 0,
+    company_nit: str = None,
 ) -> List[TransactionPending]:
-    """Get transactions optionally filtered by status."""
+    """Get transactions optionally filtered by status and company NIT."""
     query = db.query(TransactionPending)
     if status:
         query = query.filter(TransactionPending.status == status)
+    if company_nit:
+        query = query.filter(TransactionPending.company_nit == company_nit)
     return (
         query.order_by(TransactionPending.created_at.desc())
         .offset(offset)
@@ -824,6 +827,11 @@ def get_or_create_third_party(
 def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
     """Return the CompanySettings row for the given NIT, or None if not found."""
     return db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
+
+
+def list_companies(db: Session) -> list[CompanySettings]:
+    """Return all CompanySettings rows ordered by NIT."""
+    return db.query(CompanySettings).order_by(CompanySettings.nit).all()
 
 
 def upsert_company_settings(

@@ -99,3 +99,4 @@ class AgentState(TypedDict):
     company_nit: Optional[
         str
     ]  # Explicitly set by API caller; overrides auto-detected entity_nit
+    source_document: dict  # Full structured extraction dict from ingest pipeline (raw_data from TransactionPending)

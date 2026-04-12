@@ -150,6 +150,7 @@ def _base_state() -> AgentState:
         "pathway": None,
         "parsed_content": None,
         "company_nit": None,
+        "source_document": {},
     }
 
 
@@ -212,9 +213,17 @@ def invoke_accounting_pipeline(
     raw_transactions: list[dict],
     pending_transaction_id: str,
     process_id: str | None = None,
+    doc_type: str = "",
+    source_document: dict | None = None,
 ) -> dict:
     """
     Invoke the accounting process pipeline starting from staged transactions.
+
+    Args:
+        doc_type: DocumentType value from the originating IngestJob (e.g. "factura_venta").
+        source_document: Full structured extraction dict persisted as raw_data by the
+            ingest pipeline. Gives contador/tributario access to explicit tax fields
+            (retenciones_aplicadas, total_iva, item-level flags) from the source document.
     """
     graph = create_agent_graph()
 
@@ -225,6 +234,9 @@ def invoke_accounting_pipeline(
     state["pending_transaction_id"] = pending_transaction_id
     state["process_id"] = process_id
     state["current_stage"] = "queued"
+    if doc_type:
+        state["document_classification"] = {"doc_type": doc_type}
+    state["source_document"] = source_document or {}
 
     final_state = graph.invoke(state)
     result = final_state["result"]
