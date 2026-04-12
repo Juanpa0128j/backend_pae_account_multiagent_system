@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 # ---------------------------------------------------------------------------
 # Ingest / transaction extraction
 # ---------------------------------------------------------------------------
@@ -256,6 +255,9 @@ class PrediccionPeriodoGemini(BaseModel):
     ingresos_estimados: float = Field(description="Projected revenue for the month")
     gastos_estimados: float = Field(description="Projected expenses for the month")
     utilidad_estimada: float = Field(description="Projected net profit for the month")
+    flujo_caja_estimado: float = Field(
+        description="Projected net cash flow for the month (based on historical cash movements)"
+    )
     confianza: Literal["alta", "media", "baja"] = Field(
         description="Confidence level based on data volume and trend consistency"
     )
@@ -266,9 +268,13 @@ class InterpretacionRatioGemini(BaseModel):
 
     ratio: str = Field(description="Ratio name in Spanish")
     valor: Optional[float] = Field(None, description="Numeric value")
-    interpretacion: str = Field(description="What this ratio means for the business")
+    interpretacion: str = Field(
+        default="",
+        description="What this ratio means for the business",
+    )
     que_significa: str = Field(
-        description="Plain-language explanation for non-accountants"
+        default="",
+        description="Plain-language explanation for non-accountants",
     )
 
 
@@ -288,16 +294,36 @@ class ReporteroAnalysisGemini(BaseModel):
         description="Narrative of how revenue, expenses, profit evolved over recent months"
     )
     predicciones: List[PrediccionPeriodoGemini] = Field(
-        description="3-month financial projections"
+        default_factory=list,
+        description="3-month financial projections",
     )
+
+    @field_validator("predicciones", mode="before")
+    @classmethod
+    def _coerce_predicciones(cls, v):  # noqa: N805
+        if isinstance(v, str):
+            return []
+        return v
+
     predicciones_narrativa: str = Field(
         description="Plain-language interpretation of predictions: where the company is headed, risks, inflection points"
     )
     alertas: List[str] = Field(description="Risk alerts and early warning signals")
     recomendaciones: List[str] = Field(description="3-5 actionable recommendations")
-    nivel_salud_financiera: Literal["bueno", "aceptable", "preocupante", "critico"] = (
-        Field(description="Overall financial health assessment")
+    nivel_salud_financiera: str = Field(
+        description="Overall financial health assessment: bueno, aceptable, preocupante, or critico"
     )
+
+    @field_validator("nivel_salud_financiera", mode="before")
+    @classmethod
+    def _normalize_salud(cls, v):  # noqa: N805
+        import unicodedata
+
+        if isinstance(v, str):
+            v = unicodedata.normalize("NFD", v)
+            v = "".join(c for c in v if unicodedata.category(c) != "Mn")
+            v = v.lower().strip()
+        return v
 
 
 class ReporteroBriefAnalysisGemini(BaseModel):
@@ -308,6 +334,52 @@ class ReporteroBriefAnalysisGemini(BaseModel):
     alertas: List[str] = Field(default_factory=list, description="Risk alerts if any")
     recomendaciones: List[str] = Field(
         default_factory=list, description="1-3 recommendations"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chatbot schemas
+# ---------------------------------------------------------------------------
+
+
+class ChatIntentClassification(BaseModel):
+    """LLM structured output for classifying a user's financial question."""
+
+    intent: Literal[
+        "balance",
+        "pnl",
+        "cashflow",
+        "iva",
+        "withholdings",
+        "analysis",
+        "top_accounts",
+        "ratios",
+        "general_question",
+        "explanation",
+        "dashboard",
+    ] = Field(description="Classified intent of the user's question")
+    needs_data: bool = Field(
+        description="Whether financial data from DB is required to answer"
+    )
+    rag_query: Optional[str] = Field(
+        None,
+        description="If RAG normative search would help, the Spanish query to use",
+    )
+    explanation: str = Field(description="Brief reason for this classification")
+
+
+class ChatbotResponseGemini(BaseModel):
+    """LLM structured output for the non-streaming chat response."""
+
+    respuesta: str = Field(
+        description="Conversational response in Spanish, Markdown allowed"
+    )
+    puntos_clave: List[str] = Field(
+        default_factory=list, description="Key points highlighted"
+    )
+    referencias_normativas: List[str] = Field(
+        default_factory=list,
+        description="Legal/normative references cited (e.g. Art. 383 ET)",
     )
 
 
@@ -345,5 +417,7 @@ __all__ = [
     "InterpretacionRatioGemini",
     "ReporteroAnalysisGemini",
     "ReporteroBriefAnalysisGemini",
+    "ChatIntentClassification",
+    "ChatbotResponseGemini",
     "GENERAL_EXTRACTION_INSTRUCTIONS",
 ]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Iterator
 
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -41,3 +41,9 @@ class GeminiProvider:
 
     def invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
         return self._get_model(schema_cls).invoke([HumanMessage(content=prompt)])
+
+    def stream(self, prompt: str) -> Iterator[str]:
+        """Stream raw text tokens from the base model (no structured output)."""
+        for chunk in self._base.stream([HumanMessage(content=prompt)]):
+            if chunk.content:
+                yield chunk.content

@@ -38,7 +38,9 @@ async def list_transactions(
         except ValueError:
             pass
 
-    txns = db_service.get_transactions_by_status(db, txn_status, limit, offset, company_nit)
+    txns = db_service.get_transactions_by_status(
+        db, txn_status, limit, offset, company_nit
+    )
 
     return [
         TransactionListItem(

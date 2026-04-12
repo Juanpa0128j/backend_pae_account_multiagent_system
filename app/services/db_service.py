@@ -1268,6 +1268,7 @@ def get_top_accounts(
     end_date: datetime = None,
     by: str = "debit",
     limit: int = 5,
+    company_nit: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Return top N accounts ranked by total debit or credit volume."""
     order_col = (
@@ -1283,6 +1284,8 @@ def get_top_accounts(
         func.sum(JournalEntryLine.credito).label("total_credit"),
     ).group_by(JournalEntryLine.cuenta_puc, JournalEntryLine.cuenta_nombre)
 
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
@@ -1391,6 +1394,7 @@ def get_monthly_totals_by_class(
         "1": "activos",
         "2": "pasivos",
         "3": "patrimonio",
+        "11": "caja",
     }
     result = {}
     for prefix, name in class_map.items():
@@ -1398,13 +1402,14 @@ def get_monthly_totals_by_class(
     return result
 
 
-def get_transaction_counts_by_status(db: Session) -> Dict[str, int]:
+def get_transaction_counts_by_status(
+    db: Session, company_nit: str | None = None
+) -> Dict[str, int]:
     """Return a dict mapping each TransactionStatus to its count."""
-    rows = (
-        db.query(TransactionPending.status, func.count(TransactionPending.id))
-        .group_by(TransactionPending.status)
-        .all()
-    )
+    query = db.query(TransactionPending.status, func.count(TransactionPending.id))
+    if company_nit:
+        query = query.filter(TransactionPending.company_nit == company_nit)
+    rows = query.group_by(TransactionPending.status).all()
     return {str(status.value): count for status, count in rows}
 
 

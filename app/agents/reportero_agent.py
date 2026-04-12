@@ -119,7 +119,8 @@ interpretaciones profundas, predicciones fundamentadas y recomendaciones acciona
 4. **tendencias**: Describe cómo evolucionaron ingresos, gastos y utilidad mes a mes.
 5. **predicciones**: Basándote en la tendencia mensual y las predicciones numéricas (regresión lineal)
    que recibes, proyecta 3 meses futuros con:
-   - Ingresos, gastos y utilidad estimados por mes
+   - Ingresos, gastos, utilidad y flujo de caja estimados por mes
+   - El flujo de caja se proyecta a partir de movimientos históricos de caja (clase 11)
    - Nivel de confianza (alta si hay 4+ meses de datos consistentes, media si hay 2-3, baja si hay menos)
 6. **predicciones_narrativa**: Explica en lenguaje natural hacia dónde va la empresa,
    cuándo podría haber problemas, y qué inflexiones se observan en los datos.
@@ -302,11 +303,15 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
 
 
 def _linear_regression_predict(
-    data_points: list[float], n_predict: int = 3
+    data_points: list[float],
+    n_predict: int = 3,
+    *,
+    allow_negative: bool = False,
 ) -> list[float]:
     """Simple linear regression on data_points, predict next n_predict values.
 
     Returns empty list if fewer than 2 data points.
+    Set allow_negative=True for metrics that can go below zero (e.g. cash flow).
     """
     n = len(data_points)
     if n < 2:
@@ -320,31 +325,41 @@ def _linear_regression_predict(
         return [y_mean] * n_predict
     slope = numerator / denominator
     intercept = y_mean - slope * x_mean
-    return [max(0, round(slope * (n + i) + intercept, 2)) for i in range(n_predict)]
+    raw = [round(slope * (n + i) + intercept, 2) for i in range(n_predict)]
+    if allow_negative:
+        return raw
+    return [max(0, v) for v in raw]
 
 
 def _compute_predictions(monthly_data: dict) -> list[dict]:
     """Compute 3-month predictions from monthly trend data.
 
-    monthly_data: dict with keys like 'ingresos', 'gastos' containing
+    monthly_data: dict with keys like 'ingresos', 'gastos', 'caja' containing
     lists of {month, net, ...} dicts.
     """
     ingresos_trend = monthly_data.get("ingresos", [])
     gastos_trend = monthly_data.get("gastos", [])
+    caja_trend = monthly_data.get("caja", [])
 
     # Extract net values (for ingresos, credit nature: use total_credit - total_debit)
     ingresos_vals = [abs(m.get("net", 0)) for m in ingresos_trend]
     gastos_vals = [abs(m.get("net", 0)) for m in gastos_trend]
+    caja_vals = [m.get("net", 0) for m in caja_trend]
 
     pred_ingresos = _linear_regression_predict(ingresos_vals, 3)
     pred_gastos = _linear_regression_predict(gastos_vals, 3)
+    pred_caja = (
+        _linear_regression_predict(caja_vals, 3, allow_negative=True)
+        if caja_vals
+        else []
+    )
 
     if not pred_ingresos and not pred_gastos:
         return []
 
     # Determine next months from last data point
     last_month = None
-    for data in [ingresos_trend, gastos_trend]:
+    for data in [ingresos_trend, gastos_trend, caja_trend]:
         if data:
             last_month = data[-1].get("month")
             break
@@ -361,12 +376,16 @@ def _compute_predictions(monthly_data: dict) -> list[dict]:
             year += 1
         ing = pred_ingresos[i] if i < len(pred_ingresos) else 0
         gas = pred_gastos[i] if i < len(pred_gastos) else 0
+        utilidad = round(ing - gas, 2)
+        # Use cash flow regression if available, otherwise derive from utilidad
+        flujo = pred_caja[i] if i < len(pred_caja) else utilidad
         predictions.append(
             {
                 "periodo": f"{year}-{month:02d}",
                 "ingresos_estimados": ing,
                 "gastos_estimados": gas,
-                "utilidad_estimada": round(ing - gas, 2),
+                "utilidad_estimada": utilidad,
+                "flujo_caja_estimado": round(flujo, 2),
             }
         )
 
