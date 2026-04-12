@@ -14,6 +14,8 @@ from app.models.llm_schemas import (  # noqa: F401
     AsientoContableGemini,
     AuditorHallazgoGemini,
     AuditorOutputGemini,
+    ChatbotResponseGemini,
+    ChatIntentClassification,
     ContadorOutputGemini,
     ExplicacionResultadoGemini,
     InterpretacionRatioGemini,
@@ -77,10 +79,10 @@ INSTRUCCIONES GENERALES DE EXTRACCIÓN:
 """
 
 # Backward-compatibility aliases — use app.core.llm_client directly instead
-from app.core.llm_client import (
+from app.core.llm_client import (  # noqa: F401, E402
     LLMClient as GeminiClient,
     get_llm_client,
-)  # noqa: F401, E402
+)
 
 
 def get_gemini_client() -> GeminiClient:

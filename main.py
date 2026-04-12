@@ -14,6 +14,7 @@ from app.api.v1 import (
     dashboard,
     books,
     settings as settings_router_mod,
+    chat,
 )
 from app.core.config import settings
 from app.core.database import check_db_connection
@@ -129,6 +130,7 @@ app.include_router(books.router, prefix="/api/v1/books", tags=["Libros"])
 app.include_router(
     settings_router_mod.router, prefix="/api/v1/settings", tags=["Configuración"]
 )
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat Financiero"])
 
 if __name__ == "__main__":
     import uvicorn

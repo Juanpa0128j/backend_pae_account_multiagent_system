@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Any, TypeVar
+from typing import Any, Iterator, TypeVar
 
 from pydantic import BaseModel
 
@@ -1124,6 +1124,62 @@ Responde en español."""
         except Exception as e:
             logger.warning("Brief report analysis failed (non-fatal): %s", e)
             return {"error": f"Análisis LLM no disponible: {e}"}
+
+    # ------------------------------------------------------------------
+    # Chatbot methods
+    # ------------------------------------------------------------------
+
+    def classify_chat_intent(self, prompt: str) -> dict:
+        """Classify a chat message intent using structured output."""
+        from app.core.gemini_client import ChatIntentClassification
+
+        return self._as_dict(self._invoke(ChatIntentClassification, prompt))
+
+    def generate_chat_response(self, prompt: str) -> dict:
+        """Generate a structured (non-streaming) chatbot response."""
+        from app.core.gemini_client import ChatbotResponseGemini
+
+        return self._as_dict(self._invoke(ChatbotResponseGemini, prompt))
+
+    def stream_chat_response(self, prompt: str) -> Iterator[str]:
+        """Stream raw text tokens via the provider fallback chain.
+
+        Uses the base model (no structured output) so tokens can be
+        yielded progressively.  Fallback only on quota errors, same
+        semantics as ``_invoke``.
+        """
+        providers: list[tuple[str, Any]] = []
+        if self._openai is not None:
+            providers.append(("OpenAI", self._openai))
+        if self._gemini_key:
+            providers.append(("Gemini", self._get_gemini()))
+        if self._groq_key:
+            providers.append(("Groq", self._get_groq()))
+
+        last_exc: Exception | None = None
+        failure_trace: list[str] = []
+        for idx, (name, provider) in enumerate(providers):
+            try:
+                yield from provider.stream(prompt)
+                return
+            except Exception as exc:
+                last_exc = exc
+                failure_trace.append(
+                    f"{name}: {exc.__class__.__name__}: {_compact_error_message(exc)}"
+                )
+                has_next = idx < (len(providers) - 1)
+                if not has_next:
+                    break
+                if _is_quota_error(exc):
+                    logger.warning("%s quota exceeded — falling back for stream", name)
+                else:
+                    raise
+
+        trace_summary = " | ".join(failure_trace) if failure_trace else str(last_exc)
+        raise RuntimeError(
+            f"All configured LLM providers failed for chat stream. "
+            f"Attempts: {trace_summary}"
+        )
 
 
 @lru_cache(maxsize=1)

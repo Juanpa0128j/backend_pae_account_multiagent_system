@@ -9,6 +9,7 @@ Revises: 8fb1b0855393
 Create Date: 2026-04-11
 
 """
+
 from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
