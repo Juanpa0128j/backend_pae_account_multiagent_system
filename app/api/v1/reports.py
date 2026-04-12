@@ -54,6 +54,19 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
     return result.get("report", {})
 
 
+def _build_export_filename(
+    base_name: str,
+    extension: str,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+) -> str:
+    """Build deterministic export filenames without empty date segments."""
+    resolved_end_date = end_date or date.today()
+    if start_date:
+        return f"{base_name}_{start_date}_{resolved_end_date}.{extension}"
+    return f"{base_name}_all_{resolved_end_date}.{extension}"
+
+
 @router.get("/balance", response_model=BalanceSheetOutput)
 async def get_balance_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
@@ -160,15 +173,9 @@ async def get_financial_statement_by_id(statement_id: str):
             "id": stmt.id,
             "ingest_id": stmt.ingest_id,
             "statement_type": stmt.statement_type,
-<<<<<<< Updated upstream
             "period_start": (
                 stmt.period_start.isoformat() if stmt.period_start else None
             ),
-=======
-            "period_start": stmt.period_start.isoformat()
-            if stmt.period_start
-            else None,
->>>>>>> Stashed changes
             "period_end": stmt.period_end.isoformat() if stmt.period_end else None,
             "entity_nit": stmt.entity_nit,
             "source_mode": stmt.source_mode,
@@ -202,7 +209,9 @@ async def download_balance_pdf(
     report = _run_report("balance", _build_params(start_date, end_date), company_nit)
     pdf_bytes = BalanceSheetExporter.to_pdf(report, company_name)
 
-    filename = f"balance_general_{end_date or date.today()}.pdf"
+    filename = _build_export_filename(
+        "balance_general", "pdf", start_date=start_date, end_date=end_date
+    )
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
@@ -228,7 +237,9 @@ async def download_balance_excel(
     report = _run_report("balance", _build_params(start_date, end_date), company_nit)
     excel_bytes = BalanceSheetExporter.to_excel(report, company_name)
 
-    filename = f"balance_general_{end_date or date.today()}.xlsx"
+    filename = _build_export_filename(
+        "balance_general", "xlsx", start_date=start_date, end_date=end_date
+    )
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -254,7 +265,9 @@ async def download_pnl_pdf(
     report = _run_report("pnl", _build_params(start_date, end_date), company_nit)
     pdf_bytes = PnLExporter.to_pdf(report, company_name)
 
-    filename = f"estado_resultados_{start_date or ''}_{end_date or date.today()}.pdf"
+    filename = _build_export_filename(
+        "estado_resultados", "pdf", start_date=start_date, end_date=end_date
+    )
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
@@ -280,7 +293,9 @@ async def download_pnl_excel(
     report = _run_report("pnl", _build_params(start_date, end_date), company_nit)
     excel_bytes = PnLExporter.to_excel(report, company_name)
 
-    filename = f"estado_resultados_{start_date or ''}_{end_date or date.today()}.xlsx"
+    filename = _build_export_filename(
+        "estado_resultados", "xlsx", start_date=start_date, end_date=end_date
+    )
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -306,7 +321,9 @@ async def download_cashflow_pdf(
     report = _run_report("cashflow", _build_params(start_date, end_date), company_nit)
     pdf_bytes = CashFlowExporter.to_pdf(report, company_name)
 
-    filename = f"flujo_caja_{start_date or ''}_{end_date or date.today()}.pdf"
+    filename = _build_export_filename(
+        "flujo_caja", "pdf", start_date=start_date, end_date=end_date
+    )
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
@@ -332,7 +349,9 @@ async def download_cashflow_excel(
     report = _run_report("cashflow", _build_params(start_date, end_date), company_nit)
     excel_bytes = CashFlowExporter.to_excel(report, company_name)
 
-    filename = f"flujo_caja_{start_date or ''}_{end_date or date.today()}.xlsx"
+    filename = _build_export_filename(
+        "flujo_caja", "xlsx", start_date=start_date, end_date=end_date
+    )
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

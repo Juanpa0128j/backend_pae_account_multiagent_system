@@ -281,7 +281,6 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
         "prueba_acida": _safe_divide(
             activos_corrientes - inventarios, pasivos_corrientes
         ),
-<<<<<<< Updated upstream
         "margen_neto": (
             round(_safe_divide(utilidad, ingresos) * 100, 2)
             if ingresos and _safe_divide(utilidad, ingresos) is not None
@@ -292,14 +291,6 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
             if activos and _safe_divide(utilidad, activos) is not None
             else None
         ),
-=======
-        "margen_neto": round(_safe_divide(utilidad, ingresos) * 100, 2)
-        if ingresos and _safe_divide(utilidad, ingresos) is not None
-        else None,
-        "roa": round(_safe_divide(utilidad, activos) * 100, 2)
-        if activos and _safe_divide(utilidad, activos) is not None
-        else None,
->>>>>>> Stashed changes
         "razon_endeudamiento": _safe_divide(pasivos, activos) if activos else None,
         "deuda_patrimonio": _safe_divide(pasivos, patrimonio) if patrimonio else None,
         "rotacion_activos": _safe_divide(ingresos, activos) if activos else None,

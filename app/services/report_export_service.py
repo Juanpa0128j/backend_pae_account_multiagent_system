@@ -165,11 +165,7 @@ class BalanceSheetExporter:
         else:
             assets_data = [
                 ["Concepto", "Valor (COP)"],
-                ["Activos Corrientes", ""],
-                ["  - Caja y Bancos", _format_currency(activos * 0.4)],
-                ["  - Clientes", _format_currency(activos * 0.3)],
-                ["Activos No Corrientes", ""],
-                ["  - Propiedad, Planta y Equipo", _format_currency(activos * 0.3)],
+                ["Detalle no disponible", ""],
                 ["TOTAL ACTIVOS", _format_currency(activos)],
             ]
             story.append(_build_table_2cols(assets_data, "#e8f0f7"))
@@ -192,11 +188,7 @@ class BalanceSheetExporter:
         else:
             liab_data = [
                 ["Concepto", "Valor (COP)"],
-                ["Pasivos Corrientes", ""],
-                ["  - Proveedores", _format_currency(pasivos * 0.6)],
-                ["  - Impuestos por Pagar", _format_currency(pasivos * 0.2)],
-                ["Pasivos No Corrientes", ""],
-                ["  - Obligaciones Financieras L.P.", _format_currency(pasivos * 0.2)],
+                ["Detalle no disponible", ""],
                 ["TOTAL PASIVOS", _format_currency(pasivos)],
             ]
             story.append(_build_table_2cols(liab_data, "#fff4e6"))
@@ -244,8 +236,7 @@ class BalanceSheetExporter:
         else:
             equity_data = [
                 ["Concepto", "Valor (COP)"],
-                ["Capital Social", _format_currency(patrimonio * 0.6)],
-                ["Reservas Legales", _format_currency(patrimonio * 0.2)],
+                ["Detalle no disponible", ""],
                 ["Ganancias del Ejercicio", _format_currency(utilidad)],
                 ["TOTAL PATRIMONIO", _format_currency(patrimonio + utilidad)],
             ]
