@@ -23,6 +23,8 @@ Coverage:
    16.  GET /tax/withholdings → 200
    17.  Date query params forwarded correctly
    18.  Pipeline error → 500
+    19.  GET /reports/*/download/{pdf,excel} → 200 with expected media/header
+    20.  Download routes forward query params to invoke_reporting_pipeline
 
 Notes:
   - reportero_agent imports db_service and SessionLocal lazily (inside reportero_node)
@@ -543,6 +545,101 @@ class TestReportsAPI:
         assert resp.status_code == 500
         assert "DB unavailable" in resp.json()["detail"]
 
+    @pytest.mark.parametrize(
+        "path,report_type,pipeline_report,exporter_patch,expected_media,expected_filename",
+        [
+            (
+                "/api/v1/reports/balance/download/pdf",
+                "balance",
+                _MOCK_BALANCE_RESULT,
+                "app.api.v1.reports.BalanceSheetExporter.to_pdf",
+                "application/pdf",
+                "balance_general_2026-01-01_2026-01-31.pdf",
+            ),
+            (
+                "/api/v1/reports/balance/download/excel",
+                "balance",
+                _MOCK_BALANCE_RESULT,
+                "app.api.v1.reports.BalanceSheetExporter.to_excel",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "balance_general_2026-01-01_2026-01-31.xlsx",
+            ),
+            (
+                "/api/v1/reports/pnl/download/pdf",
+                "pnl",
+                _MOCK_PNL_RESULT,
+                "app.api.v1.reports.PnLExporter.to_pdf",
+                "application/pdf",
+                "estado_resultados_2026-01-01_2026-01-31.pdf",
+            ),
+            (
+                "/api/v1/reports/pnl/download/excel",
+                "pnl",
+                _MOCK_PNL_RESULT,
+                "app.api.v1.reports.PnLExporter.to_excel",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "estado_resultados_2026-01-01_2026-01-31.xlsx",
+            ),
+            (
+                "/api/v1/reports/cashflow/download/pdf",
+                "cashflow",
+                _MOCK_CASHFLOW_RESULT,
+                "app.api.v1.reports.CashFlowExporter.to_pdf",
+                "application/pdf",
+                "flujo_caja_2026-01-01_2026-01-31.pdf",
+            ),
+            (
+                "/api/v1/reports/cashflow/download/excel",
+                "cashflow",
+                _MOCK_CASHFLOW_RESULT,
+                "app.api.v1.reports.CashFlowExporter.to_excel",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "flujo_caja_2026-01-01_2026-01-31.xlsx",
+            ),
+        ],
+    )
+    def test_download_endpoints_forward_params_and_headers(
+        self,
+        client,
+        path,
+        report_type,
+        pipeline_report,
+        exporter_patch,
+        expected_media,
+        expected_filename,
+    ):
+        payload = b"fake-binary-content"
+        with (
+            patch(
+                "app.api.v1.reports.invoke_reporting_pipeline",
+                return_value=_pipeline_ok(pipeline_report),
+            ) as mock_pipeline,
+            patch(exporter_patch, return_value=payload),
+        ):
+            resp = client.get(
+                path,
+                params={
+                    "start_date": _START,
+                    "end_date": _END,
+                    "company_nit": "900.123.456-7",
+                    "company_name": "Empresa Demo",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == expected_media
+        assert (
+            resp.headers["content-disposition"]
+            == f"attachment; filename={expected_filename}"
+        )
+        assert resp.content == payload
+
+        _, kwargs = mock_pipeline.call_args
+        assert kwargs["report_type"] == report_type
+        assert kwargs["company_nit"] == "900123456-7"
+        assert kwargs["report_params"]["start_date"] == _START
+        assert kwargs["report_params"]["end_date"] == _END
+
 
 class TestTaxAPI:
     def test_get_iva_returns_200(self, client):
@@ -816,9 +913,9 @@ class TestReporteroNodeRAGEnrichment:
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
 
-        assert result_state.get("error") is None, (
-            f"RAG failure set error for report_type={report_type!r}"
-        )
+        assert (
+            result_state.get("error") is None
+        ), f"RAG failure set error for report_type={report_type!r}"
         assert result_state["result"]["status"] == "ok"
 
 

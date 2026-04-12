@@ -111,12 +111,12 @@ uv run python scripts/simulate_frontend_full_pipeline.py \
 Los reportes descargados se guardan en:
 ```
 storage/downloads/reports/
-├── balance_general_800999888-2.pdf
-├── balance_general_800999888-2.xlsx
-├── estado_resultados_800999888-2.pdf
-├── estado_resultados_800999888-2.xlsx
-├── flujo_caja_800999888-2.pdf
-└── flujo_caja_800999888-2.xlsx
+├── balance_800999888-2.pdf
+├── balance_800999888-2.xlsx
+├── pnl_800999888-2.pdf
+├── pnl_800999888-2.xlsx
+├── cashflow_800999888-2.pdf
+└── cashflow_800999888-2.xlsx
 ```
 
 ---

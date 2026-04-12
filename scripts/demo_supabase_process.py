@@ -30,7 +30,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.agents.graph import invoke_ingest_pipeline, invoke_accounting_pipeline  # noqa: E402
+from app.agents.graph import (
+    invoke_ingest_pipeline,
+    invoke_accounting_pipeline,
+)  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.core.database import SessionLocal, check_db_connection  # noqa: E402
 from app.models.database import (  # noqa: E402
