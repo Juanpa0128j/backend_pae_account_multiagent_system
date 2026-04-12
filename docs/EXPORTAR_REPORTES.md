@@ -160,7 +160,7 @@ resp = requests.get(
     }
 )
 if resp.status_code == 200:
-    with open(OUTPUT_DIR / "pyl.xlsx", "wb") as f:
+    with open(OUTPUT_DIR / "pnl.xlsx", "wb") as f:
         f.write(resp.content)
     print("✓ P&L Excel descargado")
 ```
