@@ -445,7 +445,6 @@ def _detect_anomalies(
 
 
 def _build_balance(db, params: dict, svc) -> dict:
-    start_date = _parse_date_param(params.get("start_date"))
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
     company_nit = params.get("company_nit")
     data = svc.get_balance_sheet(db, cutoff_date=end_date, company_nit=company_nit)
