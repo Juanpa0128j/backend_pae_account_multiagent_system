@@ -769,16 +769,9 @@ def _build_analysis(db, params: dict, svc) -> dict:
 
     # --- Phase 2: LLM Analysis (non-fatal) ---
     try:
-<<<<<<< Updated upstream
         from app.core.llm_client import get_llm_client  # noqa: PLC0415
 
         gemini = get_llm_client()
-=======
-        from app.core.gemini_client import get_gemini_client  # noqa: PLC0415
-
-        gemini = get_gemini_client()
->>>>>>> Stashed changes
-
         rag_text = _fetch_rag_context_text(
             "análisis financiero indicadores NIIF Colombia ratios liquidez rentabilidad"
         )
