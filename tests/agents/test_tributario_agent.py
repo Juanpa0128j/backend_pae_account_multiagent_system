@@ -298,9 +298,9 @@ def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_gemini_fn):
     # contador already covers it. Check that the IVA sub-account (240802) is absent.
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
     new_iva_entries = [a for a in enriquecidos if a.get("cuenta_puc") == "240802"]
-    assert (
-        len(new_iva_entries) == 0
-    ), "Tributario must not add IVA when already in asientos"
+    assert len(new_iva_entries) == 0, (
+        "Tributario must not add IVA when already in asientos"
+    )
 
 
 @patch("app.agents.tributario_agent.get_llm_client")
@@ -359,13 +359,13 @@ def test_schema_valid(mock_rag_cls, mock_gemini_fn):
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_gemini_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
-    """Node completes when GeminiClient returns a static fallback response."""
+    """Node completes when LLMClient returns a static fallback response."""
     mock_rag = MagicMock()
     mock_rag.search_normativo.return_value = []
     mock_rag_cls.return_value = mock_rag
 
     # Simulate the built-in fallback path: justify_tax_analysis returns a static
-    # TaxJustification (as GeminiClient does internally when the API call fails).
+    # TaxJustification (as LLMClient does internally when the API call fails).
     mock_gc = MagicMock()
     mock_gc.justify_tax_analysis.return_value = TaxJustification(
         referencias=["Art. 383 ET", "Art. 401 ET", "Art. 477 ET", "Decreto 2048/1992"],
@@ -420,9 +420,9 @@ def test_journal_entries_enriched_with_tax_accounts(mock_rag_cls, mock_gemini_fn
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
     cuentas = [a["cuenta_puc"] for a in enriquecidos]
 
-    assert (
-        "240815" in cuentas
-    ), "Retefuente account 240815 missing from enriched asientos"
+    assert "240815" in cuentas, (
+        "Retefuente account 240815 missing from enriched asientos"
+    )
     assert "236540" in cuentas, "ReteICA account 236540 missing from enriched asientos"
     assert "240802" in cuentas, "IVA account 240802 missing from enriched asientos"
 
@@ -586,12 +586,12 @@ def test_ica_applied_for_income_transaction(mock_gemini_fn, mock_rag_cls):
     assert Decimal(ica_entry["valor_impuesto"]) > Decimal("0")
 
     puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
-    assert (
-        "540101" in puc_codes
-    ), "Gasto ICA (540101) missing from asientos_enriquecidos"
-    assert (
-        "240808" in puc_codes
-    ), "ICA por Pagar (240808) missing from asientos_enriquecidos"
+    assert "540101" in puc_codes, (
+        "Gasto ICA (540101) missing from asientos_enriquecidos"
+    )
+    assert "240808" in puc_codes, (
+        "ICA por Pagar (240808) missing from asientos_enriquecidos"
+    )
 
 
 @patch("app.services.db_service.get_company_settings")

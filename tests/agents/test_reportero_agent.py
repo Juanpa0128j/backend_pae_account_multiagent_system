@@ -913,9 +913,9 @@ class TestReporteroNodeRAGEnrichment:
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
 
-        assert (
-            result_state.get("error") is None
-        ), f"RAG failure set error for report_type={report_type!r}"
+        assert result_state.get("error") is None, (
+            f"RAG failure set error for report_type={report_type!r}"
+        )
         assert result_state["result"]["status"] == "ok"
 
 

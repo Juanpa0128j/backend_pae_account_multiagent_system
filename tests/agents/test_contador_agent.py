@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 from app.agents.contador_agent import contador_node
 from app.agents.state import AgentState
 from app.agents.supervisor import validate_contador_output_node
-from app.core.llm_client import LLMClient as GeminiClient
+from app.core.llm_client import LLMClient
 
 
 def _base_state(**overrides) -> AgentState:
@@ -188,7 +188,7 @@ def test_contador_example_unbalanced_output_triggers_validation_retry() -> None:
 
 def test_contador_prompt_includes_transaction_fields_and_rag_context() -> None:
     """Example: Gemini prompt should include tx details and provided RAG snippets."""
-    client = GeminiClient.__new__(GeminiClient)
+    client = LLMClient.__new__(LLMClient)
 
     captured: list[str] = []
     mock_response = MagicMock()
@@ -228,7 +228,7 @@ def test_contador_prompt_includes_transaction_fields_and_rag_context() -> None:
 
 def test_contador_prompt_uses_fallback_when_rag_context_is_empty() -> None:
     """Example: prompt should still be coherent if no RAG context is available."""
-    client = GeminiClient.__new__(GeminiClient)
+    client = LLMClient.__new__(LLMClient)
 
     captured: list[str] = []
     mock_response = MagicMock()
