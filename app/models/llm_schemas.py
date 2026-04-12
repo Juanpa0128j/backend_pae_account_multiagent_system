@@ -268,9 +268,13 @@ class InterpretacionRatioGemini(BaseModel):
 
     ratio: str = Field(description="Ratio name in Spanish")
     valor: Optional[float] = Field(None, description="Numeric value")
-    interpretacion: str = Field(description="What this ratio means for the business")
+    interpretacion: str = Field(
+        default="",
+        description="What this ratio means for the business",
+    )
     que_significa: str = Field(
-        description="Plain-language explanation for non-accountants"
+        default="",
+        description="Plain-language explanation for non-accountants",
     )
 
 
@@ -290,16 +294,36 @@ class ReporteroAnalysisGemini(BaseModel):
         description="Narrative of how revenue, expenses, profit evolved over recent months"
     )
     predicciones: List[PrediccionPeriodoGemini] = Field(
-        description="3-month financial projections"
+        default_factory=list,
+        description="3-month financial projections",
     )
+
+    @field_validator("predicciones", mode="before")
+    @classmethod
+    def _coerce_predicciones(cls, v):  # noqa: N805
+        if isinstance(v, str):
+            return []
+        return v
+
     predicciones_narrativa: str = Field(
         description="Plain-language interpretation of predictions: where the company is headed, risks, inflection points"
     )
     alertas: List[str] = Field(description="Risk alerts and early warning signals")
     recomendaciones: List[str] = Field(description="3-5 actionable recommendations")
-    nivel_salud_financiera: Literal["bueno", "aceptable", "preocupante", "critico"] = (
-        Field(description="Overall financial health assessment")
+    nivel_salud_financiera: str = Field(
+        description="Overall financial health assessment: bueno, aceptable, preocupante, or critico"
     )
+
+    @field_validator("nivel_salud_financiera", mode="before")
+    @classmethod
+    def _normalize_salud(cls, v):  # noqa: N805
+        import unicodedata
+
+        if isinstance(v, str):
+            v = unicodedata.normalize("NFD", v)
+            v = "".join(c for c in v if unicodedata.category(c) != "Mn")
+            v = v.lower().strip()
+        return v
 
 
 class ReporteroBriefAnalysisGemini(BaseModel):
