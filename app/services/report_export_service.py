@@ -408,8 +408,9 @@ class PnLExporter:
                     f"{pct:.1f}%",
                 ]
             )
+        total_ingresos_pct = "100.0%" if ingresos_total > 0 else "0.0%"
         ingresos_data.append(
-            ["TOTAL INGRESOS", _format_currency(ingresos_total), "100.0%"]
+            ["TOTAL INGRESOS", _format_currency(ingresos_total), total_ingresos_pct]
         )
 
         ingresos_table = Table(
