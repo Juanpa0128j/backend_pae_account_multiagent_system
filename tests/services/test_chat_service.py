@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 from app.models.chat_schemas import ChatRequest, ChatResponse, FinancialDataCard
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -79,7 +79,10 @@ INSTRUCCIONES GENERALES DE EXTRACCIÓN:
 """
 
 # Backward-compatibility aliases — use app.core.llm_client directly instead
-from app.core.llm_client import LLMClient as GeminiClient, get_llm_client  # noqa: F401, E402
+from app.core.llm_client import (  # noqa: F401, E402
+    LLMClient as GeminiClient,
+    get_llm_client,
+)
 
 
 def get_gemini_client() -> GeminiClient:

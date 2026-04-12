@@ -13,6 +13,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
+from sqlalchemy import func
+
 from app.models.chat_schemas import (
     ChatRequest,
     ChatResponse,
@@ -170,10 +172,11 @@ def save_message(
             sources=sources,
         )
         db.add(msg)
-        # Update session title from first user message
-        if role == "user":
-            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-            if session and not session.title:
+        # Always bump updated_at; set title from first user message
+        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        if session:
+            session.updated_at = func.now()
+            if role == "user" and not session.title:
                 session.title = content[:100]
         db.commit()
         return msg_id
@@ -414,9 +417,21 @@ def gather_financial_data(
             title = "Análisis Financiero"
 
         elif intent_name == "top_accounts":
-            top_debit = db_service.get_top_accounts(db, None, None, by="debit", limit=5)
+            top_debit = db_service.get_top_accounts(
+                db,
+                request.start_date,
+                request.end_date,
+                by="debit",
+                limit=5,
+                company_nit=request.company_nit,
+            )
             top_credit = db_service.get_top_accounts(
-                db, None, None, by="credit", limit=5
+                db,
+                request.start_date,
+                request.end_date,
+                by="credit",
+                limit=5,
+                company_nit=request.company_nit,
             )
             data = {"top_debit": top_debit, "top_credit": top_credit}
             title = "Cuentas con Mayor Movimiento"
@@ -431,7 +446,9 @@ def gather_financial_data(
 
         elif intent_name == "dashboard":
             balance = db_service.get_balance_sheet(db, company_nit=request.company_nit)
-            txn_counts = db_service.get_transaction_counts_by_status(db)
+            txn_counts = db_service.get_transaction_counts_by_status(
+                db, company_nit=request.company_nit
+            )
             data = {**balance, "transacciones_por_estado": txn_counts}
             title = "Resumen General"
 
@@ -501,6 +518,18 @@ def _build_response_prompt(
 
 
 # ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_session(session_id: str | None, company_nit: str | None) -> str:
+    """Return an existing session_id or create a new session."""
+    if session_id and _session_exists(session_id):
+        return session_id
+    return create_session(company_nit)
+
+
+# ---------------------------------------------------------------------------
 # Streaming chat handler (yields SSE-ready dicts)
 # ---------------------------------------------------------------------------
 
@@ -513,11 +542,7 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     from app.core.llm_client import get_llm_client
 
     # 1. Resolve or create session
-    session_id = request.session_id
-    if session_id and _session_exists(session_id):
-        pass  # reuse existing
-    else:
-        session_id = create_session(request.company_nit)
+    session_id = _resolve_session(request.session_id, request.company_nit)
 
     # 2. Persist user message
     save_message(session_id, "user", request.message)
@@ -541,25 +566,26 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     )
     llm = get_llm_client()
 
-    full_response = ""
+    response_chunks: list[str] = []
     try:
         for token in llm.stream_chat_response(prompt):
-            full_response += token
+            response_chunks.append(token)
             yield {
                 "event": "token",
                 "data": json.dumps({"content": token}, ensure_ascii=False),
             }
     except Exception as exc:
         logger.error("Chat stream error: %s", exc)
-        error_msg = f"Lo siento, hubo un error generando la respuesta: {exc}"
-        full_response = error_msg
+        error_msg = "Lo siento, hubo un error generando la respuesta."
+        response_chunks = [error_msg]
         yield {
             "event": "token",
             "data": json.dumps({"content": error_msg}, ensure_ascii=False),
         }
+    full_response = "".join(response_chunks)
 
     # 8. Send structured data event
-    sources = intent.get("referencias_normativas", [])
+    sources: list[str] = []  # Streaming has no structured output for normative refs
     yield {
         "event": "data",
         "data": json.dumps(
@@ -601,11 +627,7 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     from app.core.llm_client import get_llm_client
 
     # Session
-    session_id = request.session_id
-    if session_id and _session_exists(session_id):
-        pass
-    else:
-        session_id = create_session(request.company_nit)
+    session_id = _resolve_session(request.session_id, request.company_nit)
 
     save_message(session_id, "user", request.message)
     history = load_recent_messages(session_id, limit=10)

@@ -1,6 +1,6 @@
 """add chat_sessions and chat_messages tables
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: 5bc6243a55b2
 Revises: f3a4b5c6d7e8
 Create Date: 2026-04-04 12:00:00.000000
 
@@ -12,8 +12,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
-
-revision: str = "a1b2c3d4e5f6"
+revision: str = "5bc6243a55b2"
 down_revision: Union[str, Sequence[str], None] = "f3a4b5c6d7e8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

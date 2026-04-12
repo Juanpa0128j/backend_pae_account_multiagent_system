@@ -11,11 +11,12 @@ Endpoints:
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import iterate_in_threadpool
 
 from app.models.chat_schemas import ChatRequest, ChatResponse, SessionSummary
 from app.services import chat_service
@@ -54,7 +55,9 @@ async def chat(request: ChatRequest):
         return chat_service.handle_chat_message(request)
     except Exception as exc:
         logger.error("Chat endpoint error: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error procesando consulta: {exc}")
+        raise HTTPException(
+            status_code=500, detail="Error interno procesando la consulta"
+        )
 
 
 @router.post("/stream")
@@ -71,17 +74,17 @@ async def chat_stream(request: ChatRequest):
     """
     request = _normalize_request_nit(request)
 
-    def event_generator():
+    async def event_generator():
         try:
-            for event in chat_service.handle_chat_stream(request):
+            async for event in iterate_in_threadpool(
+                chat_service.handle_chat_stream(request)
+            ):
                 yield event
         except Exception as exc:
             logger.error("Chat stream error: %s", exc, exc_info=True)
-            import json
-
             yield {
                 "event": "error",
-                "data": json.dumps({"message": f"Error: {exc}"}),
+                "data": json.dumps({"message": "Error interno del servidor"}),
             }
 
     return EventSourceResponse(event_generator())
@@ -94,7 +97,7 @@ async def chat_stream(request: ChatRequest):
 
 @router.get("/sessions", response_model=list[SessionSummary])
 async def get_sessions(
-    company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+    company_nit: str | None = Query(None, description="Filter by company NIT"),
 ):
     """List chat sessions, optionally filtered by company NIT."""
     nit = None
