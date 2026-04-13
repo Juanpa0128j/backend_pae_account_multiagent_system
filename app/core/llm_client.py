@@ -43,10 +43,10 @@ from app.models.ingest_schemas import (
 )
 from app.models.llm_schemas import (
     GENERAL_EXTRACTION_INSTRUCTIONS,
-    AuditorOutputGemini,
-    ContadorOutputGemini,
-    ReporteroBriefAnalysisGemini,
-    ReporteroAnalysisGemini,
+    AuditorOutput,
+    ContadorOutput,
+    ReporteroBriefAnalysis,
+    ReporteroAnalysis,
     TaxJustification,
     TaxRateLookup,
 )
@@ -461,7 +461,7 @@ IMPORTANTE: Estos valores son informativos. NO los incluyas como asientos contab
 Corrige los errores indicados y regenera el asiento contable."""
 
         try:
-            response = self._invoke(ContadorOutputGemini, prompt)
+            response = self._invoke(ContadorOutput, prompt)
             data = self._as_dict(response)
             logger.debug("Contador output generated: %s", data)
             return data
@@ -527,7 +527,7 @@ Si detectas errores graves, marca aprobado=false y explica claramente en resumen
 Corrige los errores de esquema y regenera la auditoria."""
 
         try:
-            response = self._invoke(AuditorOutputGemini, prompt)
+            response = self._invoke(AuditorOutput, prompt)
             data = self._as_dict(response)
             logger.debug("Auditor output generated: %s", data)
             return data
@@ -1071,7 +1071,7 @@ Documento:
             system_prompt: The reportero system prompt constant.
 
         Returns:
-            Dict from ReporteroAnalysisGemini structured output.
+            Dict from ReporteroAnalysis structured output.
         """
         import json
 
@@ -1087,7 +1087,7 @@ Genera el análisis financiero completo siguiendo la estructura requerida.
 Todas las respuestas deben ser en español."""
 
         try:
-            result = self._invoke(ReporteroAnalysisGemini, prompt)
+            result = self._invoke(ReporteroAnalysis, prompt)
             data = self._as_dict(result)
             logger.info("Reportero financial analysis generated successfully")
             return data
@@ -1124,7 +1124,7 @@ Analiza el siguiente reporte de tipo '{report_type}' y proporciona:
 Responde en español."""
 
         try:
-            result = self._invoke(ReporteroBriefAnalysisGemini, prompt)
+            result = self._invoke(ReporteroBriefAnalysis, prompt)
             return self._as_dict(result)
         except Exception as e:
             logger.warning("Brief report analysis failed (non-fatal): %s", e)
@@ -1142,9 +1142,9 @@ Responde en español."""
 
     def generate_chat_response(self, prompt: str) -> dict:
         """Generate a structured (non-streaming) chatbot response."""
-        from app.models.llm_schemas import ChatbotResponseGemini
+        from app.models.llm_schemas import ChatbotResponse
 
-        return self._as_dict(self._invoke(ChatbotResponseGemini, prompt))
+        return self._as_dict(self._invoke(ChatbotResponse, prompt))
 
     def stream_chat_response(self, prompt: str) -> Iterator[str]:
         """Stream raw text tokens via the provider fallback chain.

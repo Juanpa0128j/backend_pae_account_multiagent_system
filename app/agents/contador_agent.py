@@ -144,7 +144,7 @@ def contador_node(state: AgentState) -> AgentState:
         logger.warning("contador: RAG lookup failed (non-fatal): %s", rag_err)
 
     try:
-        gemini = get_llm_client()
+        llm = get_llm_client()
 
         if is_retry:
             logger.info(
@@ -160,7 +160,7 @@ def contador_node(state: AgentState) -> AgentState:
         if source_doc:
             source_taxes = _extract_source_taxes_summary(source_doc)
 
-        contador_output = gemini.extract_contador_output(
+        contador_output = llm.extract_contador_output(
             raw_transactions=raw_transactions,
             doc_type=doc_type,
             rag_context=rag_context,

@@ -187,9 +187,9 @@ class TestAuditorNode:
 
     @patch("app.agents.auditor_agent.get_llm_client")
     def test_successful_approved_audit(self, mock_factory):
-        mock_gemini = MagicMock()
-        mock_gemini.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
-        mock_factory.return_value = mock_gemini
+        mock_llm = MagicMock()
+        mock_llm.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
+        mock_factory.return_value = mock_llm
 
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT))
         result = auditor_node(state)
@@ -203,9 +203,9 @@ class TestAuditorNode:
 
     @patch("app.agents.auditor_agent.get_llm_client")
     def test_rejected_audit_stored_in_state(self, mock_factory):
-        mock_gemini = MagicMock()
-        mock_gemini.extract_auditor_output.return_value = dict(REJECTED_AUDITOR_OUTPUT)
-        mock_factory.return_value = mock_gemini
+        mock_llm = MagicMock()
+        mock_llm.extract_auditor_output.return_value = dict(REJECTED_AUDITOR_OUTPUT)
+        mock_factory.return_value = mock_llm
 
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT))
         result = auditor_node(state)
@@ -219,9 +219,9 @@ class TestAuditorNode:
     @patch("app.agents.auditor_agent.get_llm_client")
     def test_retry_clears_correction_feedback(self, mock_factory):
         """After a successful call, correction_feedback must be cleared."""
-        mock_gemini = MagicMock()
-        mock_gemini.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
-        mock_factory.return_value = mock_gemini
+        mock_llm = MagicMock()
+        mock_llm.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
+        mock_factory.return_value = mock_llm
 
         state = _base_state(
             contador_output=dict(VALID_CONTADOR_OUTPUT),
@@ -236,9 +236,9 @@ class TestAuditorNode:
     @patch("app.agents.auditor_agent.get_llm_client")
     def test_retry_passes_feedback_to_gemini(self, mock_factory):
         """On retry, correction_feedback must be forwarded to Gemini."""
-        mock_gemini = MagicMock()
-        mock_gemini.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
-        mock_factory.return_value = mock_gemini
+        mock_llm = MagicMock()
+        mock_llm.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
+        mock_factory.return_value = mock_llm
 
         feedback = "Corrige el formato del campo nivel_riesgo."
         state = _base_state(
@@ -248,16 +248,16 @@ class TestAuditorNode:
         )
         auditor_node(state)
 
-        call_kwargs = mock_gemini.extract_auditor_output.call_args.kwargs
+        call_kwargs = mock_llm.extract_auditor_output.call_args.kwargs
         assert call_kwargs.get("correction_feedback") == feedback
 
     @patch("app.agents.auditor_agent.get_llm_client")
     def test_gemini_exception_captures_error(self, mock_factory):
-        mock_gemini = MagicMock()
-        mock_gemini.extract_auditor_output.side_effect = RuntimeError(
+        mock_llm = MagicMock()
+        mock_llm.extract_auditor_output.side_effect = RuntimeError(
             "Gemini quota exceeded"
         )
-        mock_factory.return_value = mock_gemini
+        mock_factory.return_value = mock_llm
 
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT))
         result = auditor_node(state)
@@ -285,9 +285,9 @@ class TestContadorNode:
 
     @patch("app.agents.contador_agent.get_llm_client")
     def test_successful_classification(self, mock_factory):
-        mock_gemini = MagicMock()
-        mock_gemini.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
-        mock_factory.return_value = mock_gemini
+        mock_llm = MagicMock()
+        mock_llm.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
+        mock_factory.return_value = mock_llm
 
         state = _base_state()
         with patch(
@@ -305,9 +305,9 @@ class TestContadorNode:
     @patch("app.agents.contador_agent.get_llm_client")
     def test_rag_failure_is_non_fatal(self, mock_factory):
         """RAG lookup errors must not abort the node; Gemini proceeds without context."""
-        mock_gemini = MagicMock()
-        mock_gemini.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
-        mock_factory.return_value = mock_gemini
+        mock_llm = MagicMock()
+        mock_llm.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
+        mock_factory.return_value = mock_llm
 
         state = _base_state()
         with patch(
@@ -318,14 +318,14 @@ class TestContadorNode:
 
         assert result["error"] is None
         # Gemini must still have been called (with empty rag_context)
-        call_kwargs = mock_gemini.extract_contador_output.call_args.kwargs
+        call_kwargs = mock_llm.extract_contador_output.call_args.kwargs
         assert call_kwargs.get("rag_context") == []
 
     @patch("app.agents.contador_agent.get_llm_client")
     def test_retry_forwards_feedback_and_clears_it(self, mock_factory):
-        mock_gemini = MagicMock()
-        mock_gemini.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
-        mock_factory.return_value = mock_gemini
+        mock_llm = MagicMock()
+        mock_llm.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
+        mock_factory.return_value = mock_llm
 
         feedback = "PUC 5135 no existe. Usa un código válido."
         state = _base_state(correction_feedback=feedback, retry_count=1)
@@ -335,15 +335,15 @@ class TestContadorNode:
         ):
             result = contador_node(state)
 
-        call_kwargs = mock_gemini.extract_contador_output.call_args.kwargs
+        call_kwargs = mock_llm.extract_contador_output.call_args.kwargs
         assert call_kwargs.get("correction_feedback") == feedback
         assert result["correction_feedback"] is None  # cleared after consume
 
     @patch("app.agents.contador_agent.get_llm_client")
     def test_gemini_exception_captures_error(self, mock_factory):
-        mock_gemini = MagicMock()
-        mock_gemini.extract_contador_output.side_effect = RuntimeError("timeout")
-        mock_factory.return_value = mock_gemini
+        mock_llm = MagicMock()
+        mock_llm.extract_contador_output.side_effect = RuntimeError("timeout")
+        mock_factory.return_value = mock_llm
 
         state = _base_state()
         with patch(

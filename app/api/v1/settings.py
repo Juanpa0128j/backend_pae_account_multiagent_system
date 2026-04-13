@@ -116,8 +116,8 @@ def setup_company_tax_profile(
             logger.warning(f"Tax profile setup: RAG lookup failed ({rag_err})")
 
         try:
-            gemini = get_llm_client()
-            rate_lookup = gemini.compute_tax_rates_from_profile(
+            llm = get_llm_client()
+            rate_lookup = llm.compute_tax_rates_from_profile(
                 ciudad=body.ciudad,
                 codigo_ciiu=body.codigo_ciiu,
                 iva_responsable=body.iva_responsable,

@@ -139,7 +139,7 @@ def _make_state(contador_output=None, error=None) -> AgentState:
     }
 
 
-def _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn):
+def _mock_llm_and_rag(mock_rag_cls, mock_llm_fn):
     """Configure standard mocks for RAG and Gemini."""
     mock_rag = MagicMock()
     mock_rag.search_normativo.return_value = []
@@ -151,7 +151,7 @@ def _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn):
         justificacion="Retenciones aplicadas según tasas vigentes ET.",
         confirma_tasas=True,
     )
-    mock_gemini_fn.return_value = mock_gc
+    mock_llm_fn.return_value = mock_gc
     return mock_rag, mock_gc
 
 
@@ -228,9 +228,9 @@ def test_has_iva_in_asientos_absent():
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_node_replaces_stub(mock_rag_cls, mock_gemini_fn):
+def test_node_replaces_stub(mock_rag_cls, mock_llm_fn):
     """Node populates tributario_output — no longer a stub."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -242,9 +242,9 @@ def test_node_replaces_stub(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_retefuente_servicios_11_percent(mock_rag_cls, mock_gemini_fn):
+def test_retefuente_servicios_11_percent(mock_rag_cls, mock_llm_fn):
     """Retefuente = 11% for PUC 5xxx (servicios), base 1,500,000."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -256,9 +256,9 @@ def test_retefuente_servicios_11_percent(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_reteica_applied(mock_rag_cls, mock_gemini_fn):
+def test_reteica_applied(mock_rag_cls, mock_llm_fn):
     """ReteICA = 0.69% applied, cuenta 2368."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -270,9 +270,9 @@ def test_reteica_applied(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_iva_calculated_when_not_in_asientos(mock_rag_cls, mock_gemini_fn):
+def test_iva_calculated_when_not_in_asientos(mock_rag_cls, mock_llm_fn):
     """IVA 19% calculated when not present in contador asientos."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -283,9 +283,9 @@ def test_iva_calculated_when_not_in_asientos(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_gemini_fn):
+def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_llm_fn):
     """IVA from contador asientos is captured, not recalculated."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT_WITH_IVA)
     result = tributario_node(state)
 
@@ -305,9 +305,9 @@ def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_retefuente_bienes_3_percent(mock_rag_cls, mock_gemini_fn):
+def test_retefuente_bienes_3_percent(mock_rag_cls, mock_llm_fn):
     """Retefuente = 3% for bienes (non-5xxx PUC), base 1,000,000."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT_BIENES)
     result = tributario_node(state)
 
@@ -318,22 +318,22 @@ def test_retefuente_bienes_3_percent(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_upstream_error_passthrough(mock_rag_cls, mock_gemini_fn):
+def test_upstream_error_passthrough(mock_rag_cls, mock_llm_fn):
     """Node skips processing if upstream error is set."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT, error="Upstream failure")
     result = tributario_node(state)
 
     assert result["error"] == "Upstream failure"
     assert result.get("tributario_output") == {}
-    mock_gemini_fn.return_value.justify_tax_analysis.assert_not_called()
+    mock_llm_fn.return_value.justify_tax_analysis.assert_not_called()
 
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_missing_contador_output_sets_error(mock_rag_cls, mock_gemini_fn):
+def test_missing_contador_output_sets_error(mock_rag_cls, mock_llm_fn):
     """Missing contador_output results in an error being set."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(contador_output={})
     result = tributario_node(state)
 
@@ -343,9 +343,9 @@ def test_missing_contador_output_sets_error(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_schema_valid(mock_rag_cls, mock_gemini_fn):
+def test_schema_valid(mock_rag_cls, mock_llm_fn):
     """tributario_output validates against TributarioOutput Pydantic schema."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -358,7 +358,7 @@ def test_schema_valid(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_gemini_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
+def test_gemini_fallback_on_failure(mock_rag_cls, mock_llm_fn):
     """Node completes when LLMClient returns a static fallback response."""
     mock_rag = MagicMock()
     mock_rag.search_normativo.return_value = []
@@ -375,7 +375,7 @@ def test_gemini_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
         ),
         confirma_tasas=True,
     )
-    mock_gemini_fn.return_value = mock_gc
+    mock_llm_fn.return_value = mock_gc
 
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
@@ -388,7 +388,7 @@ def test_gemini_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_rag_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
+def test_rag_fallback_on_failure(mock_rag_cls, mock_llm_fn):
     """Node completes when RAG lookup raises exception."""
     mock_rag = MagicMock()
     mock_rag.search_normativo.side_effect = Exception("ChromaDB unavailable")
@@ -400,7 +400,7 @@ def test_rag_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
         justificacion="Tasas aplicadas según ET.",
         confirma_tasas=True,
     )
-    mock_gemini_fn.return_value = mock_gc
+    mock_llm_fn.return_value = mock_gc
 
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
@@ -411,9 +411,9 @@ def test_rag_fallback_on_failure(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_journal_entries_enriched_with_tax_accounts(mock_rag_cls, mock_gemini_fn):
+def test_journal_entries_enriched_with_tax_accounts(mock_rag_cls, mock_llm_fn):
     """Enriched asientos contain tax liability accounts (240815, 236540, 240802)."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -429,9 +429,9 @@ def test_journal_entries_enriched_with_tax_accounts(mock_rag_cls, mock_gemini_fn
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_referencias_legales_in_output(mock_rag_cls, mock_gemini_fn):
+def test_referencias_legales_in_output(mock_rag_cls, mock_llm_fn):
     """Legal references from Gemini are stored in tributario_output."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -442,9 +442,9 @@ def test_referencias_legales_in_output(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_total_impuestos_matches_sum(mock_rag_cls, mock_gemini_fn):
+def test_total_impuestos_matches_sum(mock_rag_cls, mock_llm_fn):
     """total_impuestos equals the sum of individual impuesto values."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -457,9 +457,9 @@ def test_total_impuestos_matches_sum(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_agent_log_entries_written(mock_rag_cls, mock_gemini_fn):
+def test_agent_log_entries_written(mock_rag_cls, mock_llm_fn):
     """node_start and node_complete are written to agent_log."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -470,12 +470,12 @@ def test_agent_log_entries_written(mock_rag_cls, mock_gemini_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_smoke_1500000_servicios(mock_rag_cls, mock_gemini_fn):
+def test_smoke_1500000_servicios(mock_rag_cls, mock_llm_fn):
     """
     Smoke test: $1,500,000 servicios.
     Expected: retefuente=165,000, reteica=10,350, iva=285,000, total=460,350
     """
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -516,12 +516,12 @@ def test_process_mode_fails_when_company_settings_missing(
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_process_mode_uses_company_settings_when_present(
     mock_rag_cls,
-    mock_gemini_fn,
+    mock_llm_fn,
     mock_session_local,
     mock_get_settings,
 ):
     """Process mode should continue successfully when company settings exist."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
 
     mock_db = MagicMock()
     mock_session_local.return_value = mock_db
@@ -572,8 +572,8 @@ INCOME_CONTADOR_OUTPUT = {
 
 @patch("app.agents.tributario_agent.get_rag_service")
 @patch("app.agents.tributario_agent.get_llm_client")
-def test_ica_applied_for_income_transaction(mock_gemini_fn, mock_rag_cls):
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+def test_ica_applied_for_income_transaction(mock_llm_fn, mock_rag_cls):
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(INCOME_CONTADOR_OUTPUT)
     result = tributario_node(state)
 
@@ -600,12 +600,12 @@ def test_ica_applied_for_income_transaction(mock_gemini_fn, mock_rag_cls):
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_process_mode_without_taxes_does_not_crash(
     mock_rag_cls,
-    mock_gemini_fn,
+    mock_llm_fn,
     mock_session_local,
     mock_get_settings,
 ):
     """When no tax applies, tributario must keep total_impuestos=0 without quantize errors."""
-    _mock_gemini_and_rag(mock_rag_cls, mock_gemini_fn)
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
 
     mock_db = MagicMock()
     mock_session_local.return_value = mock_db
