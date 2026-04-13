@@ -875,13 +875,13 @@ class TestReporteroAnalysis:
         self._setup_analysis_mocks(svc)
 
         # Mock out LLM (non-fatal, will fail gracefully)
-        mock_gemini_module = MagicMock()
-        mock_gemini_module.get_llm_client.side_effect = RuntimeError("no LLM")
+        mock_llm_module = MagicMock()
+        mock_llm_module.get_llm_client.side_effect = RuntimeError("no LLM")
 
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.llm_client": mock_gemini_module,
+            "app.core.llm_client": mock_llm_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
@@ -900,13 +900,13 @@ class TestReporteroAnalysis:
         svc = MagicMock()
         self._setup_analysis_mocks(svc)
 
-        mock_gemini_module = MagicMock()
-        mock_gemini_module.get_llm_client.side_effect = RuntimeError("no LLM")
+        mock_llm_module = MagicMock()
+        mock_llm_module.get_llm_client.side_effect = RuntimeError("no LLM")
 
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.llm_client": mock_gemini_module,
+            "app.core.llm_client": mock_llm_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
@@ -923,13 +923,13 @@ class TestReporteroAnalysis:
         svc = MagicMock()
         self._setup_analysis_mocks(svc)
 
-        mock_gemini_module = MagicMock()
-        mock_gemini_module.get_llm_client.side_effect = RuntimeError("quota exhausted")
+        mock_llm_module = MagicMock()
+        mock_llm_module.get_llm_client.side_effect = RuntimeError("quota exhausted")
 
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.llm_client": mock_gemini_module,
+            "app.core.llm_client": mock_llm_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
@@ -952,13 +952,13 @@ class TestReporteroAnalysis:
         svc = MagicMock()
         self._setup_analysis_mocks(svc)
 
-        mock_gemini_module = MagicMock()
-        mock_gemini_module.get_llm_client.side_effect = RuntimeError("no LLM")
+        mock_llm_module = MagicMock()
+        mock_llm_module.get_llm_client.side_effect = RuntimeError("no LLM")
 
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.llm_client": mock_gemini_module,
+            "app.core.llm_client": mock_llm_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
@@ -980,13 +980,13 @@ class TestIncludeAnalysis:
         svc = MagicMock()
         svc.get_balance_sheet.return_value = _BALANCE_DATA
 
-        mock_gemini_module = MagicMock()
-        mock_gemini_module.get_llm_client.side_effect = RuntimeError("no LLM")
+        mock_llm_module = MagicMock()
+        mock_llm_module.get_llm_client.side_effect = RuntimeError("no LLM")
 
         all_mocks = {
             **_mock_db_modules(svc),
             **_mock_rag_modules([]),
-            "app.core.llm_client": mock_gemini_module,
+            "app.core.llm_client": mock_llm_module,
         }
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)

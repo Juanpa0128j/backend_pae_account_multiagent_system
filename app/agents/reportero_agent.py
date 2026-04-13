@@ -751,7 +751,7 @@ def _build_analysis(db, params: dict, svc) -> dict:
     try:
         from app.core.llm_client import get_llm_client  # noqa: PLC0415
 
-        gemini = get_llm_client()
+        llm = get_llm_client()
 
         rag_text = _fetch_rag_context_text(
             "análisis financiero indicadores NIIF Colombia ratios liquidez rentabilidad"
@@ -769,7 +769,7 @@ def _build_analysis(db, params: dict, svc) -> dict:
             "anomalies": anomalies,
         }
 
-        analysis = gemini.generate_financial_analysis(
+        analysis = llm.generate_financial_analysis(
             financial_data=llm_input,
             rag_context=rag_text,
             system_prompt=_SYSTEM_PROMPT_ANALISIS,
@@ -803,11 +803,11 @@ def _enrich_with_brief_analysis(report_data: dict, report_type: str) -> dict:
     try:
         from app.core.llm_client import get_llm_client  # noqa: PLC0415
 
-        gemini = get_llm_client()
+        llm = get_llm_client()
         rag_text = _fetch_rag_context_text(
             f"{report_type} análisis financiero NIIF Colombia"
         )
-        analysis = gemini.generate_brief_report_analysis(
+        analysis = llm.generate_brief_report_analysis(
             report_type=report_type,
             report_data=report_data,
             rag_context=rag_text,

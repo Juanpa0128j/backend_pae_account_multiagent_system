@@ -146,7 +146,7 @@ def _mock_llama(text: str = SAMPLE_TEXT):
     return MagicMock(return_value=parser)
 
 
-def _mock_gemini(data: dict):
+def _mock_llm(data: dict):
     client = MagicMock()
     client.extract_transactions.return_value = data
     return MagicMock(return_value=client)
@@ -255,11 +255,11 @@ class TestPipeline1HappyPath:
     @patch(MOCK_GEMINI)
     @patch(MOCK_LLAMA_PARSE)
     def test_full_ingesta_pipeline_no_error(
-        self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
+        self, mock_llama, mock_llm, mock_session, mock_db_svc, dummy_pdf
     ):
         _setup_db(mock_session, mock_db_svc)
         mock_llama.return_value = _mock_llama().return_value
-        mock_gemini.return_value = _mock_gemini(VALID_DATA).return_value
+        mock_llm.return_value = _mock_llm(VALID_DATA).return_value
 
         from app.agents.graph import create_agent_graph
 
@@ -272,11 +272,11 @@ class TestPipeline1HappyPath:
     @patch(MOCK_GEMINI)
     @patch(MOCK_LLAMA_PARSE)
     def test_agent_log_contains_routing_and_validation(
-        self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
+        self, mock_llama, mock_llm, mock_session, mock_db_svc, dummy_pdf
     ):
         _setup_db(mock_session, mock_db_svc)
         mock_llama.return_value = _mock_llama().return_value
-        mock_gemini.return_value = _mock_gemini(VALID_DATA).return_value
+        mock_llm.return_value = _mock_llm(VALID_DATA).return_value
 
         from app.agents.graph import create_agent_graph
 
@@ -291,11 +291,11 @@ class TestPipeline1HappyPath:
     @patch(MOCK_GEMINI)
     @patch(MOCK_LLAMA_PARSE)
     def test_agent_log_entry_schema(
-        self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
+        self, mock_llama, mock_llm, mock_session, mock_db_svc, dummy_pdf
     ):
         _setup_db(mock_session, mock_db_svc)
         mock_llama.return_value = _mock_llama().return_value
-        mock_gemini.return_value = _mock_gemini(VALID_DATA).return_value
+        mock_llm.return_value = _mock_llm(VALID_DATA).return_value
 
         from app.agents.graph import create_agent_graph
 
@@ -472,7 +472,7 @@ class TestRetryFlow:
     @patch(MOCK_GEMINI)
     @patch(MOCK_LLAMA_PARSE)
     def test_retry_once_then_success(
-        self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
+        self, mock_llama, mock_llm, mock_session, mock_db_svc, dummy_pdf
     ):
         """First Gemini call returns invalid, second returns valid → retry succeeds."""
         _setup_db(mock_session, mock_db_svc)
@@ -486,7 +486,7 @@ class TestRetryFlow:
 
         client = MagicMock()
         client.extract_transactions.side_effect = side_effect
-        mock_gemini.return_value = client
+        mock_llm.return_value = client
 
         from app.agents.graph import create_agent_graph
 
@@ -503,10 +503,10 @@ class TestRetryFlow:
 
     @patch(MOCK_GEMINI)
     @patch(MOCK_LLAMA_PARSE)
-    def test_exhausted_retries_sets_error(self, mock_llama, mock_gemini, dummy_pdf):
+    def test_exhausted_retries_sets_error(self, mock_llama, mock_llm, dummy_pdf):
         """3 invalid outputs → error set, validation_exhausted in agent_log."""
         mock_llama.return_value = _mock_llama().return_value
-        mock_gemini.return_value = _mock_gemini(INVALID_DATA).return_value
+        mock_llm.return_value = _mock_llm(INVALID_DATA).return_value
 
         from app.agents.graph import create_agent_graph
 
@@ -517,12 +517,10 @@ class TestRetryFlow:
 
     @patch(MOCK_GEMINI)
     @patch(MOCK_LLAMA_PARSE)
-    def test_exhausted_retries_does_not_call_db(
-        self, mock_llama, mock_gemini, dummy_pdf
-    ):
+    def test_exhausted_retries_does_not_call_db(self, mock_llama, mock_llm, dummy_pdf):
         """On error path, should_retry_agent returns 'error' → graph goes to END."""
         mock_llama.return_value = _mock_llama().return_value
-        mock_gemini.return_value = _mock_gemini(INVALID_DATA).return_value
+        mock_llm.return_value = _mock_llm(INVALID_DATA).return_value
 
         from app.agents.graph import create_agent_graph
 
@@ -542,11 +540,11 @@ class TestInvokeAgent:
     @patch(MOCK_GEMINI)
     @patch(MOCK_LLAMA_PARSE)
     def test_result_includes_agent_log(
-        self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
+        self, mock_llama, mock_llm, mock_session, mock_db_svc, dummy_pdf
     ):
         _setup_db(mock_session, mock_db_svc)
         mock_llama.return_value = _mock_llama().return_value
-        mock_gemini.return_value = _mock_gemini(VALID_DATA).return_value
+        mock_llm.return_value = _mock_llm(VALID_DATA).return_value
 
         from app.agents.graph import invoke_ingest_pipeline
 
@@ -560,11 +558,11 @@ class TestInvokeAgent:
     @patch(MOCK_GEMINI)
     @patch(MOCK_LLAMA_PARSE)
     def test_result_includes_validation_history(
-        self, mock_llama, mock_gemini, mock_session, mock_db_svc, dummy_pdf
+        self, mock_llama, mock_llm, mock_session, mock_db_svc, dummy_pdf
     ):
         _setup_db(mock_session, mock_db_svc)
         mock_llama.return_value = _mock_llama().return_value
-        mock_gemini.return_value = _mock_gemini(VALID_DATA).return_value
+        mock_llm.return_value = _mock_llm(VALID_DATA).return_value
 
         from app.agents.graph import invoke_ingest_pipeline
 

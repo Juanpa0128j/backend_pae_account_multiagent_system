@@ -72,7 +72,7 @@ def auditor_node(state: AgentState) -> AgentState:
     )
 
     try:
-        gemini = get_llm_client()
+        llm = get_llm_client()
 
         if is_retry:
             logger.info(
@@ -80,7 +80,7 @@ def auditor_node(state: AgentState) -> AgentState:
                 state.get("retry_count", 1),
             )
 
-        auditor_output = gemini.extract_auditor_output(
+        auditor_output = llm.extract_auditor_output(
             contador_output=contador_output,
             raw_transactions=raw_transactions,
             correction_feedback=state.get("correction_feedback") if is_retry else None,

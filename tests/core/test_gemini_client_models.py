@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.models.llm_schemas import AuditorOutputGemini, ContadorOutputGemini
+from app.models.llm_schemas import AuditorOutput, ContadorOutput
 
 
 def test_contador_output_backfills_missing_totals_from_asientos():
@@ -27,7 +27,7 @@ def test_contador_output_backfills_missing_totals_from_asientos():
         "total_creditos": None,
     }
 
-    out = ContadorOutputGemini.model_validate(payload)
+    out = ContadorOutput.model_validate(payload)
     assert out.total_debitos == Decimal("100000")
     assert out.total_creditos == Decimal("100000")
 
@@ -50,6 +50,6 @@ def test_auditor_output_tolerates_partial_hallazgo_payload():
         "resumen": "Se detectaron hallazgos.",
     }
 
-    out = AuditorOutputGemini.model_validate(payload)
+    out = AuditorOutput.model_validate(payload)
     assert len(out.hallazgos) == 1
     assert out.hallazgos[0].recomendacion == ""

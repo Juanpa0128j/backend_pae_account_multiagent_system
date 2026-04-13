@@ -43,10 +43,10 @@ from app.models.ingest_schemas import (
 )
 from app.models.llm_schemas import (
     GENERAL_EXTRACTION_INSTRUCTIONS,
-    AuditorOutputGemini,
-    ContadorOutputGemini,
-    ReporteroBriefAnalysisGemini,
-    ReporteroAnalysisGemini,
+    AuditorOutput,
+    ContadorOutput,
+    ReporteroBriefAnalysis,
+    ReporteroAnalysis,
     TaxJustification,
     TaxRateLookup,
 )
@@ -124,8 +124,8 @@ class LLMClient:
             self._groq = GroqProvider()
         return self._groq
 
-    def _invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
-        """Invoke with OpenAI → Gemini → Groq fallback chain."""
+    def _get_providers(self) -> list[tuple[str, Any]]:
+        """Build the ordered provider fallback list (OpenAI → Gemini → Groq)."""
         providers: list[tuple[str, Any]] = []
         openai_provider = self._get_openai()
         if openai_provider is not None:
@@ -134,6 +134,11 @@ class LLMClient:
             providers.append(("Gemini", self._get_gemini()))
         if self._groq_key:
             providers.append(("Groq", self._get_groq()))
+        return providers
+
+    def _invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
+        """Invoke with OpenAI → Gemini → Groq fallback chain."""
+        providers = self._get_providers()
 
         last_exc: Exception | None = None
         failure_trace: list[str] = []
@@ -456,7 +461,7 @@ IMPORTANTE: Estos valores son informativos. NO los incluyas como asientos contab
 Corrige los errores indicados y regenera el asiento contable."""
 
         try:
-            response = self._invoke(ContadorOutputGemini, prompt)
+            response = self._invoke(ContadorOutput, prompt)
             data = self._as_dict(response)
             logger.debug("Contador output generated: %s", data)
             return data
@@ -522,7 +527,7 @@ Si detectas errores graves, marca aprobado=false y explica claramente en resumen
 Corrige los errores de esquema y regenera la auditoria."""
 
         try:
-            response = self._invoke(AuditorOutputGemini, prompt)
+            response = self._invoke(AuditorOutput, prompt)
             data = self._as_dict(response)
             logger.debug("Auditor output generated: %s", data)
             return data
@@ -1066,7 +1071,7 @@ Documento:
             system_prompt: The reportero system prompt constant.
 
         Returns:
-            Dict from ReporteroAnalysisGemini structured output.
+            Dict from ReporteroAnalysis structured output.
         """
         import json
 
@@ -1082,7 +1087,7 @@ Genera el análisis financiero completo siguiendo la estructura requerida.
 Todas las respuestas deben ser en español."""
 
         try:
-            result = self._invoke(ReporteroAnalysisGemini, prompt)
+            result = self._invoke(ReporteroAnalysis, prompt)
             data = self._as_dict(result)
             logger.info("Reportero financial analysis generated successfully")
             return data
@@ -1119,7 +1124,7 @@ Analiza el siguiente reporte de tipo '{report_type}' y proporciona:
 Responde en español."""
 
         try:
-            result = self._invoke(ReporteroBriefAnalysisGemini, prompt)
+            result = self._invoke(ReporteroBriefAnalysis, prompt)
             return self._as_dict(result)
         except Exception as e:
             logger.warning("Brief report analysis failed (non-fatal): %s", e)
@@ -1131,15 +1136,15 @@ Responde en español."""
 
     def classify_chat_intent(self, prompt: str) -> dict:
         """Classify a chat message intent using structured output."""
-        from app.core.gemini_client import ChatIntentClassification
+        from app.models.llm_schemas import ChatIntentClassification
 
         return self._as_dict(self._invoke(ChatIntentClassification, prompt))
 
     def generate_chat_response(self, prompt: str) -> dict:
         """Generate a structured (non-streaming) chatbot response."""
-        from app.core.gemini_client import ChatbotResponseGemini
+        from app.models.llm_schemas import ChatbotResponse
 
-        return self._as_dict(self._invoke(ChatbotResponseGemini, prompt))
+        return self._as_dict(self._invoke(ChatbotResponse, prompt))
 
     def stream_chat_response(self, prompt: str) -> Iterator[str]:
         """Stream raw text tokens via the provider fallback chain.
@@ -1148,13 +1153,7 @@ Responde en español."""
         yielded progressively.  Fallback only on quota errors, same
         semantics as ``_invoke``.
         """
-        providers: list[tuple[str, Any]] = []
-        if self._openai is not None:
-            providers.append(("OpenAI", self._openai))
-        if self._gemini_key:
-            providers.append(("Gemini", self._get_gemini()))
-        if self._groq_key:
-            providers.append(("Groq", self._get_groq()))
+        providers = self._get_providers()
 
         last_exc: Exception | None = None
         failure_trace: list[str] = []

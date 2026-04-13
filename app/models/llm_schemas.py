@@ -48,7 +48,7 @@ class RawTransactionsList(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class AsientoContableGemini(BaseModel):
+class AsientoContable(BaseModel):
     """Simplified journal entry schema for structured output."""
 
     cuenta_puc: str = Field(description="PUC account code (1-6 digits)")
@@ -68,7 +68,7 @@ class AsientoContableGemini(BaseModel):
         return v
 
 
-class ContadorOutputGemini(BaseModel):
+class ContadorOutput(BaseModel):
     """ContadorOutput-compatible schema for structured output."""
 
     fecha_registro: str = Field(description="Accounting registration date YYYY-MM-DD")
@@ -81,7 +81,7 @@ class ContadorOutputGemini(BaseModel):
     descripcion_general: str = Field(
         description="General description of the accounting event"
     )
-    asientos: List[AsientoContableGemini] = Field(
+    asientos: List[AsientoContable] = Field(
         description="Journal entries (at least one debit and one credit)"
     )
     total_debitos: Decimal = Field(
@@ -101,7 +101,7 @@ class ContadorOutputGemini(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def ensure_totals(self) -> "ContadorOutputGemini":
+    def ensure_totals(self) -> "ContadorOutput":
         """Backfill totals when LLM omits them but asientos are present."""
         if not self.asientos:
             return self
@@ -128,7 +128,7 @@ class ContadorOutputGemini(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class AuditorHallazgoGemini(BaseModel):
+class AuditorHallazgo(BaseModel):
     """Single audit finding."""
 
     codigo: str = Field(default="AUD-000", description="Finding code in format AUD-XXX")
@@ -144,7 +144,7 @@ class AuditorHallazgoGemini(BaseModel):
     )
 
 
-class AuditorOutputGemini(BaseModel):
+class AuditorOutput(BaseModel):
     """AuditorOutput-compatible schema for structured output."""
 
     fecha_auditoria: str = Field(
@@ -159,7 +159,7 @@ class AuditorOutputGemini(BaseModel):
     nivel_riesgo: Literal["bajo", "medio", "alto", "critico"] = Field(
         default="medio", description="Nivel de riesgo global de la transaccion"
     )
-    hallazgos: List[AuditorHallazgoGemini] = Field(
+    hallazgos: List[AuditorHallazgo] = Field(
         default_factory=list,
         description="Lista estructurada de hallazgos detectados",
     )
@@ -233,7 +233,7 @@ class TaxRateLookup(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ExplicacionResultadoGemini(BaseModel):
+class ExplicacionResultado(BaseModel):
     """Detailed explanation of a financial metric."""
 
     metrica: str = Field(
@@ -248,7 +248,7 @@ class ExplicacionResultadoGemini(BaseModel):
     )
 
 
-class PrediccionPeriodoGemini(BaseModel):
+class PrediccionPeriodo(BaseModel):
     """Single month financial prediction."""
 
     periodo: str = Field(description="Target month as YYYY-MM, e.g. '2026-04'")
@@ -263,7 +263,7 @@ class PrediccionPeriodoGemini(BaseModel):
     )
 
 
-class InterpretacionRatioGemini(BaseModel):
+class InterpretacionRatio(BaseModel):
     """Interpretation of a single financial ratio."""
 
     ratio: str = Field(description="Ratio name in Spanish")
@@ -278,22 +278,22 @@ class InterpretacionRatioGemini(BaseModel):
     )
 
 
-class ReporteroAnalysisGemini(BaseModel):
+class ReporteroAnalysis(BaseModel):
     """Full structured analysis output from the Reportero LLM call."""
 
     resumen_ejecutivo: str = Field(
         description="2-3 paragraph executive summary of financial health"
     )
-    explicaciones: List[ExplicacionResultadoGemini] = Field(
+    explicaciones: List[ExplicacionResultado] = Field(
         description="Detailed explanation of EACH major financial result"
     )
-    interpretacion_ratios: List[InterpretacionRatioGemini] = Field(
+    interpretacion_ratios: List[InterpretacionRatio] = Field(
         description="Interpretation of each financial ratio"
     )
     tendencias: str = Field(
         description="Narrative of how revenue, expenses, profit evolved over recent months"
     )
-    predicciones: List[PrediccionPeriodoGemini] = Field(
+    predicciones: List[PrediccionPeriodo] = Field(
         default_factory=list,
         description="3-month financial projections",
     )
@@ -326,7 +326,7 @@ class ReporteroAnalysisGemini(BaseModel):
         return v
 
 
-class ReporteroBriefAnalysisGemini(BaseModel):
+class ReporteroBriefAnalysis(BaseModel):
     """Brief analysis for individual report types (balance, pnl, etc.)."""
 
     resumen: str = Field(description="1-2 paragraph summary of this specific report")
@@ -368,7 +368,7 @@ class ChatIntentClassification(BaseModel):
     explanation: str = Field(description="Brief reason for this classification")
 
 
-class ChatbotResponseGemini(BaseModel):
+class ChatbotResponse(BaseModel):
     """LLM structured output for the non-streaming chat response."""
 
     respuesta: str = Field(
@@ -406,18 +406,18 @@ INSTRUCCIONES GENERALES DE EXTRACCIÓN:
 __all__ = [
     "RawTransaction",
     "RawTransactionsList",
-    "AsientoContableGemini",
-    "ContadorOutputGemini",
-    "AuditorHallazgoGemini",
-    "AuditorOutputGemini",
+    "AsientoContable",
+    "ContadorOutput",
+    "AuditorHallazgo",
+    "AuditorOutput",
     "TaxJustification",
     "TaxRateLookup",
-    "ExplicacionResultadoGemini",
-    "PrediccionPeriodoGemini",
-    "InterpretacionRatioGemini",
-    "ReporteroAnalysisGemini",
-    "ReporteroBriefAnalysisGemini",
+    "ExplicacionResultado",
+    "PrediccionPeriodo",
+    "InterpretacionRatio",
+    "ReporteroAnalysis",
+    "ReporteroBriefAnalysis",
     "ChatIntentClassification",
-    "ChatbotResponseGemini",
+    "ChatbotResponse",
     "GENERAL_EXTRACTION_INSTRUCTIONS",
 ]

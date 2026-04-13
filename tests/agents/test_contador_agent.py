@@ -85,11 +85,11 @@ def test_contador_example_service_expense_output_is_sensible() -> None:
         "total_creditos": 1190000,
     }
 
-    mock_gemini = MagicMock()
-    mock_gemini.extract_contador_output.return_value = expected_output
+    mock_llm = MagicMock()
+    mock_llm.extract_contador_output.return_value = expected_output
 
     with (
-        patch("app.agents.contador_agent.get_llm_client", return_value=mock_gemini),
+        patch("app.agents.contador_agent.get_llm_client", return_value=mock_llm),
         patch(
             "app.services.rag_service.get_rag_service",
             side_effect=Exception("rag unavailable"),
@@ -112,8 +112,8 @@ def test_contador_example_service_expense_output_is_sensible() -> None:
 
 def test_contador_example_retry_feedback_roundtrip() -> None:
     """Example: schema feedback should be forwarded to Gemini and then cleared."""
-    mock_gemini = MagicMock()
-    mock_gemini.extract_contador_output.return_value = {
+    mock_llm = MagicMock()
+    mock_llm.extract_contador_output.return_value = {
         "fecha_registro": "2026-03-01",
         "tipo_documento": "factura",
         "descripcion_general": "Asiento corregido",
@@ -139,7 +139,7 @@ def test_contador_example_retry_feedback_roundtrip() -> None:
     state = _base_state(correction_feedback=feedback, retry_count=1)
 
     with (
-        patch("app.agents.contador_agent.get_llm_client", return_value=mock_gemini),
+        patch("app.agents.contador_agent.get_llm_client", return_value=mock_llm),
         patch(
             "app.services.rag_service.get_rag_service",
             side_effect=Exception("rag unavailable"),
@@ -147,7 +147,7 @@ def test_contador_example_retry_feedback_roundtrip() -> None:
     ):
         result = contador_node(state)
 
-    kwargs = mock_gemini.extract_contador_output.call_args.kwargs
+    kwargs = mock_llm.extract_contador_output.call_args.kwargs
     assert kwargs["correction_feedback"] == feedback
     assert result["correction_feedback"] is None
 
