@@ -26,7 +26,7 @@ class ChatMessageSchema(BaseModel):
 class ChatRequest(BaseModel):
     """POST body for the chat endpoints."""
 
-    message: str = Field(..., min_length=1, max_length=2000)
+    message: str = Field(..., min_length=1)
     session_id: str | None = None  # None → create a new session
     company_nit: str | None = None
     start_date: date | None = None

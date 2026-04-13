@@ -124,8 +124,8 @@ class LLMClient:
             self._groq = GroqProvider()
         return self._groq
 
-    def _invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
-        """Invoke with OpenAI → Gemini → Groq fallback chain."""
+    def _get_providers(self) -> list[tuple[str, Any]]:
+        """Build the ordered provider fallback list (OpenAI → Gemini → Groq)."""
         providers: list[tuple[str, Any]] = []
         openai_provider = self._get_openai()
         if openai_provider is not None:
@@ -134,6 +134,11 @@ class LLMClient:
             providers.append(("Gemini", self._get_gemini()))
         if self._groq_key:
             providers.append(("Groq", self._get_groq()))
+        return providers
+
+    def _invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
+        """Invoke with OpenAI → Gemini → Groq fallback chain."""
+        providers = self._get_providers()
 
         last_exc: Exception | None = None
         failure_trace: list[str] = []
@@ -1131,13 +1136,13 @@ Responde en español."""
 
     def classify_chat_intent(self, prompt: str) -> dict:
         """Classify a chat message intent using structured output."""
-        from app.core.gemini_client import ChatIntentClassification
+        from app.models.llm_schemas import ChatIntentClassification
 
         return self._as_dict(self._invoke(ChatIntentClassification, prompt))
 
     def generate_chat_response(self, prompt: str) -> dict:
         """Generate a structured (non-streaming) chatbot response."""
-        from app.core.gemini_client import ChatbotResponseGemini
+        from app.models.llm_schemas import ChatbotResponseGemini
 
         return self._as_dict(self._invoke(ChatbotResponseGemini, prompt))
 
@@ -1148,13 +1153,7 @@ Responde en español."""
         yielded progressively.  Fallback only on quota errors, same
         semantics as ``_invoke``.
         """
-        providers: list[tuple[str, Any]] = []
-        if self._openai is not None:
-            providers.append(("OpenAI", self._openai))
-        if self._gemini_key:
-            providers.append(("Gemini", self._get_gemini()))
-        if self._groq_key:
-            providers.append(("Groq", self._get_groq()))
+        providers = self._get_providers()
 
         last_exc: Exception | None = None
         failure_trace: list[str] = []
