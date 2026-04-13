@@ -94,6 +94,15 @@ FastAPI (main.py) → /api/v1/* routers
 | `app/core/llm_client.py` | Multi-provider LLM client with OpenAI → Gemini → Groq fallback chain |
 | `data/` | Static seed data: 41 PUC accounts, 50 Estatuto Tributario articles, 16 Ley 43/1990 entries |
 
+### LLM Usage Convention
+
+Always use `LLMClient` (`app/core/llm_client.py`) as the single interface for all LLM calls. Never import or instantiate providers directly. The client handles the OpenAI → Gemini → Groq fallback chain automatically.
+
+- Get the client: `from app.core.llm_client import get_llm_client; llm = get_llm_client()`
+- Structured output schemas live in `app/models/llm_schemas.py` — do not add schemas to `gemini_client.py`
+- Name the client variable `llm`, not `gemini` or any provider-specific name
+- `app/core/gemini_client.py` is a backward-compat shim — do not add code there
+
 ### Tech Stack
 
 - **LLM:** Multi-provider fallback — OpenAI GPT-4o-mini (primary if key set) → Google Gemini 2.5 Flash → Groq (`langchain-openai`, `langchain-google-genai`, `langchain-groq`)
