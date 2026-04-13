@@ -21,13 +21,13 @@ router = APIRouter()
 
 def _build_params(
     start_date: Optional[date],
-    end_date: Optional[date],
+    resolved_end_date: date,
     include_analysis: bool = False,
 ) -> dict:
     params: dict = {}
     if start_date:
         params["start_date"] = start_date.isoformat()
-    params["end_date"] = (end_date or date.today()).isoformat()
+    params["end_date"] = resolved_end_date.isoformat()
     if include_analysis:
         params["include_analysis"] = True
     return params
@@ -57,11 +57,10 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
 def _build_export_filename(
     base_name: str,
     extension: str,
+    resolved_end_date: date,
     start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
 ) -> str:
     """Build deterministic export filenames without empty date segments."""
-    resolved_end_date = end_date or date.today()
     if start_date:
         return f"{base_name}_{start_date}_{resolved_end_date}.{extension}"
     return f"{base_name}_all_{resolved_end_date}.{extension}"
@@ -80,7 +79,10 @@ async def get_balance_report(
     Aggregates posted journal entries up to *end_date* grouped by PUC class.
     Returns assets, liabilities, equity, net profit and a balance-validation flag.
     """
-    return _run_report("balance", _build_params(start_date, end_date), company_nit)
+    resolved_end_date = end_date or date.today()
+    return _run_report(
+        "balance", _build_params(start_date, resolved_end_date), company_nit
+    )
 
 
 @router.get("/pnl", response_model=PnLOutput)
@@ -96,7 +98,8 @@ async def get_pnl_report(
     Aggregates revenue (class 4), COGS (class 6) and expenses (class 5)
     for the specified period. Optionally includes LLM-powered analysis.
     """
-    return _run_report("pnl", _build_params(start_date, end_date), company_nit)
+    resolved_end_date = end_date or date.today()
+    return _run_report("pnl", _build_params(start_date, resolved_end_date), company_nit)
 
 
 @router.get("/cashflow", response_model=CashFlowOutput)
@@ -112,7 +115,10 @@ async def get_cashflow_report(
     Returns net balances of cash and bank accounts (class 11XX) for the period.
     Optionally includes LLM-powered analysis.
     """
-    return _run_report("cashflow", _build_params(start_date, end_date), company_nit)
+    resolved_end_date = end_date or date.today()
+    return _run_report(
+        "cashflow", _build_params(start_date, resolved_end_date), company_nit
+    )
 
 
 @router.get("/statements")
@@ -206,11 +212,17 @@ async def download_balance_pdf(
     Generates a professional PDF Balance General in Colombian format
     with proper PUC classifications, currency formatting, and balance validation.
     """
-    report = _run_report("balance", _build_params(start_date, end_date), company_nit)
+    resolved_end_date = end_date or date.today()
+    report = _run_report(
+        "balance", _build_params(start_date, resolved_end_date), company_nit
+    )
     pdf_bytes = BalanceSheetExporter.to_pdf(report, company_name)
 
     filename = _build_export_filename(
-        "balance_general", "pdf", start_date=start_date, end_date=end_date
+        "balance_general",
+        "pdf",
+        resolved_end_date=resolved_end_date,
+        start_date=start_date,
     )
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -234,11 +246,17 @@ async def download_balance_excel(
     Generates an Excel workbook with proper formatting, currency formatting,
     and professional accounting layout.
     """
-    report = _run_report("balance", _build_params(start_date, end_date), company_nit)
+    resolved_end_date = end_date or date.today()
+    report = _run_report(
+        "balance", _build_params(start_date, resolved_end_date), company_nit
+    )
     excel_bytes = BalanceSheetExporter.to_excel(report, company_name)
 
     filename = _build_export_filename(
-        "balance_general", "xlsx", start_date=start_date, end_date=end_date
+        "balance_general",
+        "xlsx",
+        resolved_end_date=resolved_end_date,
+        start_date=start_date,
     )
     return StreamingResponse(
         iter([excel_bytes]),
@@ -262,11 +280,17 @@ async def download_pnl_pdf(
     Generates a professional Estado de Resultados PDF with detailed
     revenue, COGS, and expense breakdowns per PUC accounts.
     """
-    report = _run_report("pnl", _build_params(start_date, end_date), company_nit)
+    resolved_end_date = end_date or date.today()
+    report = _run_report(
+        "pnl", _build_params(start_date, resolved_end_date), company_nit
+    )
     pdf_bytes = PnLExporter.to_pdf(report, company_name)
 
     filename = _build_export_filename(
-        "estado_resultados", "pdf", start_date=start_date, end_date=end_date
+        "estado_resultados",
+        "pdf",
+        resolved_end_date=resolved_end_date,
+        start_date=start_date,
     )
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -290,11 +314,17 @@ async def download_pnl_excel(
     Generates an Excel workbook with Estado de Resultados formatted
     for professional accounting and audit purposes.
     """
-    report = _run_report("pnl", _build_params(start_date, end_date), company_nit)
+    resolved_end_date = end_date or date.today()
+    report = _run_report(
+        "pnl", _build_params(start_date, resolved_end_date), company_nit
+    )
     excel_bytes = PnLExporter.to_excel(report, company_name)
 
     filename = _build_export_filename(
-        "estado_resultados", "xlsx", start_date=start_date, end_date=end_date
+        "estado_resultados",
+        "xlsx",
+        resolved_end_date=resolved_end_date,
+        start_date=start_date,
     )
     return StreamingResponse(
         iter([excel_bytes]),
@@ -318,11 +348,17 @@ async def download_cashflow_pdf(
     Generates a professional Flujo de Caja report in direct method format
     showing cash and bank account movements.
     """
-    report = _run_report("cashflow", _build_params(start_date, end_date), company_nit)
+    resolved_end_date = end_date or date.today()
+    report = _run_report(
+        "cashflow", _build_params(start_date, resolved_end_date), company_nit
+    )
     pdf_bytes = CashFlowExporter.to_pdf(report, company_name)
 
     filename = _build_export_filename(
-        "flujo_caja", "pdf", start_date=start_date, end_date=end_date
+        "flujo_caja",
+        "pdf",
+        resolved_end_date=resolved_end_date,
+        start_date=start_date,
     )
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -346,11 +382,17 @@ async def download_cashflow_excel(
     Generates an Excel workbook with Flujo de Caja formatted for
     professional cash flow analysis and planning.
     """
-    report = _run_report("cashflow", _build_params(start_date, end_date), company_nit)
+    resolved_end_date = end_date or date.today()
+    report = _run_report(
+        "cashflow", _build_params(start_date, resolved_end_date), company_nit
+    )
     excel_bytes = CashFlowExporter.to_excel(report, company_name)
 
     filename = _build_export_filename(
-        "flujo_caja", "xlsx", start_date=start_date, end_date=end_date
+        "flujo_caja",
+        "xlsx",
+        resolved_end_date=resolved_end_date,
+        start_date=start_date,
     )
     return StreamingResponse(
         iter([excel_bytes]),

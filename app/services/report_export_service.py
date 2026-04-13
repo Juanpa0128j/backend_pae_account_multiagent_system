@@ -8,6 +8,7 @@ Provides presentation templates for:
 """
 
 import io
+from html import escape
 from datetime import datetime
 from typing import Any, Dict
 
@@ -89,6 +90,11 @@ def _build_table_3cols(data, total_row_color: str):
     return table
 
 
+def _escape_paragraph_text(value: Any) -> str:
+    """Escape dynamic text before interpolation into reportlab Paragraph markup."""
+    return escape(str(value))
+
+
 class BalanceSheetExporter:
     """Export Balance Sheet reports to PDF and Excel."""
 
@@ -135,8 +141,8 @@ class BalanceSheetExporter:
         story.append(Paragraph("Estado de Situacion Financiera", subtitle_style))
         story.append(
             Paragraph(
-                f"<b>Empresa:</b> {company_name} | "
-                f"<b>Periodo:</b> al {report.get('period_end', '--')} | "
+                f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
+                f"<b>Periodo:</b> al {_escape_paragraph_text(report.get('period_end', '--'))} | "
                 f"<b>Generado:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                 styles["Normal"],
             )
@@ -250,7 +256,7 @@ class BalanceSheetExporter:
         )
         story.append(
             Paragraph(
-                f"<b>Validacion de Cuadre:</b> {msg}",
+                f"<b>Validacion de Cuadre:</b> {_escape_paragraph_text(msg)}",
                 ParagraphStyle(
                     "Balance", parent=styles["Normal"], textColor=color_cuadre
                 ),
@@ -387,8 +393,9 @@ class PnLExporter:
         story.append(Paragraph("ESTADO DE RESULTADOS", title_style))
         story.append(
             Paragraph(
-                f"<b>Empresa:</b> {company_name} | "
-                f"<b>Periodo:</b> {report.get('period_start', '--')} a {report.get('period_end', '--')}",
+                f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
+                f"<b>Periodo:</b> {_escape_paragraph_text(report.get('period_start', '--'))} "
+                f"a {_escape_paragraph_text(report.get('period_end', '--'))}",
                 styles["Normal"],
             )
         )
@@ -606,8 +613,9 @@ class CashFlowExporter:
         story.append(Paragraph("FLUJO DE CAJA", title_style))
         story.append(
             Paragraph(
-                f"<b>Empresa:</b> {company_name} | "
-                f"<b>Periodo:</b> {report.get('period_start', '--')} a {report.get('period_end', '--')} | "
+                f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
+                f"<b>Periodo:</b> {_escape_paragraph_text(report.get('period_start', '--'))} "
+                f"a {_escape_paragraph_text(report.get('period_end', '--'))} | "
                 f"<b>Metodo:</b> Directo",
                 styles["Normal"],
             )
@@ -651,7 +659,10 @@ class CashFlowExporter:
         story.append(table)
         story.append(Spacer(1, 0.2 * inch))
         story.append(
-            Paragraph(f"<b>Metodologia:</b> {report.get('nota', '')}", styles["Normal"])
+            Paragraph(
+                f"<b>Metodologia:</b> {_escape_paragraph_text(report.get('nota', ''))}",
+                styles["Normal"],
+            )
         )
 
         doc.build(story)
