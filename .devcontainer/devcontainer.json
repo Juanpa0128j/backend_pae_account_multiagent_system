@@ -30,5 +30,10 @@
     },
     "postCreateCommand": "uv sync && uv run pre-commit install",
     "remoteUser": "vscode",
-    "remoteEnv": {}
+    "remoteEnv": {},
+    "mounts": [
+        "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.local/share/claude,target=/home/vscode/.local/share/claude,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.local/bin/claude,target=/usr/local/bin/claude,type=bind,consistency=cached"
+    ]
 }

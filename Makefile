@@ -1,4 +1,4 @@
-.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new
+.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new pipeline-test pipeline-setup-nit
 
 # Default target
 help:
@@ -12,6 +12,7 @@ help:
 	@echo "  server         Run development server with hot reload"
 	@echo ""
 	@echo "Testing"
+	@echo "  pipeline-test  Run full pipeline with a real doc: make pipeline-test FILE=path/to/doc.pdf [NIT=123]"
 	@echo "  test           Run all tests (excluding e2e)"
 	@echo "  test-e2e       Run e2e tests (tests/e2e/ + supabase pipeline)"
 	@echo "  test-file      Run a single test file: make test-file FILE=tests/test_foo.py"
@@ -63,6 +64,60 @@ test-class:
 	@test -n "$(FILE)" || (echo "Usage: make test-class FILE=tests/test_foo.py CLASS=TestBar" && exit 1)
 	@test -n "$(CLASS)" || (echo "Usage: make test-class FILE=tests/test_foo.py CLASS=TestBar" && exit 1)
 	uv run pytest $(FILE)::$(CLASS) $(PYTEST_OPTS)
+
+# ── Pipeline smoke test ───────────────────────────────────────────────────────
+
+BASE_URL ?= http://localhost:8000
+
+pipeline-test:
+	@test -n "$(FILE)" || (echo "Usage: make pipeline-test FILE=path/to/doc.pdf [NIT=123456]" && exit 1)
+	@echo ">>> [1/4] Uploading $(FILE)..."
+	$(eval INGEST_ID := $(shell \
+		if [ -n "$(NIT)" ]; then \
+			curl -sf -X POST $(BASE_URL)/api/v1/ingest/upload \
+				-F "file=@$(FILE)" \
+				-F "company_nit=$(NIT)" | python3 -c "import sys,json; d=sys.stdin.read(); print(json.loads(d)['ingest_id'])"; \
+		else \
+			curl -sf -X POST $(BASE_URL)/api/v1/ingest/upload \
+				-F "file=@$(FILE)" | python3 -c "import sys,json; d=sys.stdin.read(); print(json.loads(d)['ingest_id'])"; \
+		fi \
+	))
+	@test -n "$(INGEST_ID)" || (echo "ERROR: upload failed or server not running" && exit 1)
+	@echo ">>> ingest_id=$(INGEST_ID)"
+	@echo ">>> [2/4] Waiting for ingest to complete (polling every 5s)..."
+	@for i in $$(seq 1 24); do \
+		STATUS=$$(curl -sf $(BASE_URL)/api/v1/ingest/$(INGEST_ID) | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))"); \
+		echo "    status=$$STATUS"; \
+		if [ "$$STATUS" = "completed" ]; then break; fi; \
+		if [ "$$STATUS" = "failed" ]; then echo "ERROR: ingest failed" && exit 1; fi; \
+		sleep 5; \
+	done
+	$(eval PATHWAY := $(shell curl -sf $(BASE_URL)/api/v1/ingest/$(INGEST_ID) | python3 -c "import sys,json; d=sys.stdin.read(); print(json.loads(d).get('pathway',''))"))
+	@if [ "$(PATHWAY)" = "work_with_existing" ]; then \
+		echo ">>> [3/4] Via B doc (financial statement) — skipping accounting pipeline."; \
+		echo ">>> [4/4] Done. Ingest result:"; \
+		curl -sf $(BASE_URL)/api/v1/ingest/$(INGEST_ID) | python3 -m json.tool; \
+	else \
+		echo ">>> [3/4] Triggering accounting pipeline..."; \
+		PROCESS_ID=$$(curl -sf -X POST $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID) | python3 -c "import sys,json; d=sys.stdin.read(); print(json.loads(d)['process_id'])"); \
+		echo "    process_id=$$PROCESS_ID"; \
+		echo ">>> [4/4] Polling for result (up to 2min)..."; \
+		for i in $$(seq 1 24); do \
+			HTTP_CODE=$$(curl -s -o /tmp/pae_result.json -w "%{http_code}" $(BASE_URL)/api/v1/process/result/$$PROCESS_ID); \
+			if [ "$$HTTP_CODE" = "200" ]; then python3 -m json.tool /tmp/pae_result.json; break; fi; \
+			echo "    waiting... ($$i/24)"; \
+			sleep 5; \
+		done; \
+	fi
+
+pipeline-setup-nit:
+	@test -n "$(NIT)" || (echo "Usage: make pipeline-setup-nit NIT=123456789 [CIUDAD=Bogotá] [CIIU=4719] [IVA=true]" && exit 1)
+	@echo ">>> Seeding company settings for NIT=$(NIT)..."
+	@curl -sf -X POST $(BASE_URL)/api/v1/settings/company/$(NIT)/setup \
+		-H "Content-Type: application/json" \
+		-d '{"nombre":"Empresa Test","ciudad":"$(or $(CIUDAD),Bogotá)","codigo_ciiu":"$(or $(CIIU),4719)","iva_responsable":$(or $(IVA),true)}' \
+		| python3 -m json.tool
+	@echo ">>> Company NIT=$(NIT) ready."
 
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 

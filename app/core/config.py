@@ -56,6 +56,15 @@ class Settings(BaseSettings):
         "http://localhost:3000,http://localhost:5173", alias="ALLOWED_ORIGINS"
     )
 
+    # --- LangSmith (observability / tracing) -------------------------------
+    langsmith_tracing: bool = Field(False, alias="LANGSMITH_TRACING")
+    langsmith_api_key: str = Field("", alias="LANGSMITH_API_KEY")
+    langsmith_project: str = Field("PAE Agentes", alias="LANGSMITH_PROJECT")
+    langchain_project: str = Field("PAE Agentes", alias="LANGCHAIN_PROJECT")
+    langsmith_endpoint: str = Field(
+        "https://api.smith.langchain.com", alias="LANGSMITH_ENDPOINT"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
