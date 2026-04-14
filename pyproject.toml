@@ -36,6 +36,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "llama-parse>=0.5.20",
     "sse-starlette>=1.6.0",
+    "langsmith>=0.7.9",
 ]
 
 [tool.setuptools]

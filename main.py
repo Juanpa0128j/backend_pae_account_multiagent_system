@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
     # Startup
+    if settings.langsmith_tracing.lower() == "true" and settings.langsmith_api_key:
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+        os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
+        os.environ["LANGSMITH_ENDPOINT"] = settings.langsmith_endpoint
+        logger.info(f"LangSmith tracing enabled (project={settings.langsmith_project})")
     logger.info(f"Starting PAE Backend (env={settings.app_env})")
     db_ok = check_db_connection()
     if db_ok:
