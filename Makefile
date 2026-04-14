@@ -76,10 +76,10 @@ pipeline-test:
 		if [ -n "$(NIT)" ]; then \
 			curl -sf -X POST $(BASE_URL)/api/v1/ingest/upload \
 				-F "file=@$(FILE)" \
-				-F "company_nit=$(NIT)" | python3 -c "import sys,json; print(json.load(sys.stdin)['ingest_id'])"; \
+				-F "company_nit=$(NIT)" | python3 -c "import sys,json; d=sys.stdin.read(); print(json.loads(d)['ingest_id'])"; \
 		else \
 			curl -sf -X POST $(BASE_URL)/api/v1/ingest/upload \
-				-F "file=@$(FILE)" | python3 -c "import sys,json; print(json.load(sys.stdin)['ingest_id'])"; \
+				-F "file=@$(FILE)" | python3 -c "import sys,json; d=sys.stdin.read(); print(json.loads(d)['ingest_id'])"; \
 		fi \
 	))
 	@test -n "$(INGEST_ID)" || (echo "ERROR: upload failed or server not running" && exit 1)
