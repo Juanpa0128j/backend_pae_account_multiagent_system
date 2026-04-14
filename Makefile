@@ -1,4 +1,4 @@
-.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new
+.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new pipeline-test
 
 # Default target
 help:
@@ -12,6 +12,7 @@ help:
 	@echo "  server         Run development server with hot reload"
 	@echo ""
 	@echo "Testing"
+	@echo "  pipeline-test  Run full pipeline with a real doc: make pipeline-test FILE=path/to/doc.pdf [NIT=123]"
 	@echo "  test           Run all tests (excluding e2e)"
 	@echo "  test-e2e       Run e2e tests (tests/e2e/ + supabase pipeline)"
 	@echo "  test-file      Run a single test file: make test-file FILE=tests/test_foo.py"
@@ -63,6 +64,39 @@ test-class:
 	@test -n "$(FILE)" || (echo "Usage: make test-class FILE=tests/test_foo.py CLASS=TestBar" && exit 1)
 	@test -n "$(CLASS)" || (echo "Usage: make test-class FILE=tests/test_foo.py CLASS=TestBar" && exit 1)
 	uv run pytest $(FILE)::$(CLASS) $(PYTEST_OPTS)
+
+# ── Pipeline smoke test ───────────────────────────────────────────────────────
+
+BASE_URL ?= http://localhost:8000
+
+pipeline-test:
+	@test -n "$(FILE)" || (echo "Usage: make pipeline-test FILE=path/to/doc.pdf [NIT=123456]" && exit 1)
+	@echo ">>> [1/4] Uploading $(FILE)..."
+	$(eval INGEST_ID := $(shell \
+		if [ -n "$(NIT)" ]; then \
+			curl -sf -X POST $(BASE_URL)/api/v1/ingest/upload \
+				-F "file=@$(FILE)" \
+				-F "company_nit=$(NIT)" | python3 -c "import sys,json; print(json.load(sys.stdin)['ingest_id'])"; \
+		else \
+			curl -sf -X POST $(BASE_URL)/api/v1/ingest/upload \
+				-F "file=@$(FILE)" | python3 -c "import sys,json; print(json.load(sys.stdin)['ingest_id'])"; \
+		fi \
+	))
+	@test -n "$(INGEST_ID)" || (echo "ERROR: upload failed or server not running" && exit 1)
+	@echo ">>> ingest_id=$(INGEST_ID)"
+	@echo ">>> [2/4] Waiting for ingest to complete (polling every 5s)..."
+	@for i in $$(seq 1 24); do \
+		STATUS=$$(curl -sf $(BASE_URL)/api/v1/ingest/$(INGEST_ID) | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))"); \
+		echo "    status=$$STATUS"; \
+		if [ "$$STATUS" = "completed" ]; then break; fi; \
+		if [ "$$STATUS" = "failed" ]; then echo "ERROR: ingest failed" && exit 1; fi; \
+		sleep 5; \
+	done
+	@echo ">>> [3/4] Triggering accounting pipeline..."
+	@curl -sf -X POST $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID) | python3 -m json.tool
+	@echo ">>> [4/4] Fetching result..."
+	@sleep 10
+	@curl -sf $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID)/result | python3 -m json.tool
 
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 
