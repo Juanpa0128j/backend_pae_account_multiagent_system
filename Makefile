@@ -1,4 +1,4 @@
-.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new pipeline-test
+.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new pipeline-test pipeline-setup-nit
 
 # Default target
 help:
@@ -92,11 +92,31 @@ pipeline-test:
 		if [ "$$STATUS" = "failed" ]; then echo "ERROR: ingest failed" && exit 1; fi; \
 		sleep 5; \
 	done
-	@echo ">>> [3/4] Triggering accounting pipeline..."
-	@curl -sf -X POST $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID) | python3 -m json.tool
-	@echo ">>> [4/4] Fetching result..."
-	@sleep 10
-	@curl -sf $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID)/result | python3 -m json.tool
+	$(eval PATHWAY := $(shell curl -sf $(BASE_URL)/api/v1/ingest/$(INGEST_ID) | python3 -c "import sys,json; d=sys.stdin.read(); print(json.loads(d).get('pathway',''))"))
+	@if [ "$(PATHWAY)" = "work_with_existing" ]; then \
+		echo ">>> [3/4] Via B doc (financial statement) — skipping accounting pipeline."; \
+		echo ">>> [4/4] Done. Ingest result:"; \
+		curl -sf $(BASE_URL)/api/v1/ingest/$(INGEST_ID) | python3 -m json.tool; \
+	else \
+		echo ">>> [3/4] Triggering accounting pipeline..."; \
+		curl -sf -X POST $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID) | python3 -m json.tool; \
+		echo ">>> [4/4] Polling for result (up to 2min)..."; \
+		for i in $$(seq 1 24); do \
+			HTTP_CODE=$$(curl -s -o /tmp/pae_result.json -w "%{http_code}" $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID)/result); \
+			if [ "$$HTTP_CODE" = "200" ]; then python3 -m json.tool /tmp/pae_result.json; break; fi; \
+			echo "    waiting... ($$i/24)"; \
+			sleep 5; \
+		done; \
+	fi
+
+pipeline-setup-nit:
+	@test -n "$(NIT)" || (echo "Usage: make pipeline-setup-nit NIT=123456789 [CIUDAD=Bogotá] [CIIU=4719] [IVA=true]" && exit 1)
+	@echo ">>> Seeding company settings for NIT=$(NIT)..."
+	@curl -sf -X POST $(BASE_URL)/api/v1/settings/company/$(NIT)/setup \
+		-H "Content-Type: application/json" \
+		-d '{"nombre":"Empresa Test","ciudad":"$(or $(CIUDAD),Bogotá)","codigo_ciiu":"$(or $(CIIU),4719)","iva_responsable":$(or $(IVA),true)}' \
+		| python3 -m json.tool
+	@echo ">>> Company NIT=$(NIT) ready."
 
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 
