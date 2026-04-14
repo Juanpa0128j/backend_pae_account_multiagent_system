@@ -57,9 +57,10 @@ class Settings(BaseSettings):
     )
 
     # --- LangSmith (observability / tracing) -------------------------------
-    langsmith_tracing: str = Field("false", alias="LANGSMITH_TRACING")
+    langsmith_tracing: bool = Field(False, alias="LANGSMITH_TRACING")
     langsmith_api_key: str = Field("", alias="LANGSMITH_API_KEY")
     langsmith_project: str = Field("PAE Agentes", alias="LANGSMITH_PROJECT")
+    langchain_project: str = Field("PAE Agentes", alias="LANGCHAIN_PROJECT")
     langsmith_endpoint: str = Field(
         "https://api.smith.langchain.com", alias="LANGSMITH_ENDPOINT"
     )
