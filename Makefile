@@ -99,10 +99,11 @@ pipeline-test:
 		curl -sf $(BASE_URL)/api/v1/ingest/$(INGEST_ID) | python3 -m json.tool; \
 	else \
 		echo ">>> [3/4] Triggering accounting pipeline..."; \
-		curl -sf -X POST $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID) | python3 -m json.tool; \
+		PROCESS_ID=$$(curl -sf -X POST $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID) | python3 -c "import sys,json; d=sys.stdin.read(); print(json.loads(d)['process_id'])"); \
+		echo "    process_id=$$PROCESS_ID"; \
 		echo ">>> [4/4] Polling for result (up to 2min)..."; \
 		for i in $$(seq 1 24); do \
-			HTTP_CODE=$$(curl -s -o /tmp/pae_result.json -w "%{http_code}" $(BASE_URL)/api/v1/process/accounting/$(INGEST_ID)/result); \
+			HTTP_CODE=$$(curl -s -o /tmp/pae_result.json -w "%{http_code}" $(BASE_URL)/api/v1/process/result/$$PROCESS_ID); \
 			if [ "$$HTTP_CODE" = "200" ]; then python3 -m json.tool /tmp/pae_result.json; break; fi; \
 			echo "    waiting... ($$i/24)"; \
 			sleep 5; \
