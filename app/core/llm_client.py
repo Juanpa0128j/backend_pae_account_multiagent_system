@@ -42,8 +42,10 @@ from app.models.ingest_schemas import (
     TaxDeclarationContent,
 )
 from app.models.llm_schemas import (
+    CLASSIFICATION_PROMPT,
     GENERAL_EXTRACTION_INSTRUCTIONS,
     AuditorOutput,
+    ClassificationResponse,
     ContadorOutput,
     ReporteroBriefAnalysis,
     ReporteroAnalysis,
@@ -635,19 +637,15 @@ Y cita fuentes legales."""
         )
         return response
 
-    def classify_document(self, text_preview: str) -> Any:
-        """Classify a document based on its content using LLM."""
-        from app.services.doc_classifier import (
-            CLASSIFICATION_PROMPT,
-            _ClassificationResponse,
-        )
-
+    def classify_document(self, text_preview: str) -> ClassificationResponse:
+        """Classify a document based on its content using the LLM fallback chain."""
         prompt = CLASSIFICATION_PROMPT.format(text_preview=text_preview)
-        try:
-            return self._invoke(_ClassificationResponse, prompt)
-        except Exception as e:
-            logger.error("LLMClient.classify_document failed: %s", e)
-            raise
+        result = self._invoke(ClassificationResponse, prompt)
+        if not isinstance(result, ClassificationResponse):
+            result = ClassificationResponse.model_validate(
+                result.model_dump() if isinstance(result, BaseModel) else result
+            )
+        return result
 
     def extract_bank_statement(
         self, text: str, *, correction_feedback: str | None = None
