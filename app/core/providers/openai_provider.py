@@ -21,7 +21,10 @@ class OpenAIProvider:
         settings = get_settings()
         self._api_key = settings.openai_api_key
         self._model_name = settings.openai_model
+        self._classifier_model_name = settings.openai_classifier_model
         self._models: dict[type[BaseModel], Any] = {}
+        self._classifier_models: dict[type[BaseModel], Any] = {}
+        self._classifier_base: Any = None
 
         if not self._api_key:
             raise ValueError("OPENAI_API_KEY not set")
@@ -40,8 +43,33 @@ class OpenAIProvider:
             )
         return self._models[schema_cls]
 
+    def _get_classifier_model(self, schema_cls: type[BaseModel]) -> Any:
+        if self._classifier_base is None:
+            self._classifier_base = ChatOpenAI(
+                model=self._classifier_model_name,
+                api_key=self._api_key,
+                temperature=0,
+            )
+            logger.info(
+                "OpenAIProvider classifier initialised (%s)",
+                self._classifier_model_name,
+            )
+        if schema_cls not in self._classifier_models:
+            self._classifier_models[schema_cls] = (
+                self._classifier_base.with_structured_output(
+                    schema_cls, method="function_calling"
+                )
+            )
+        return self._classifier_models[schema_cls]
+
     def invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
         return self._get_model(schema_cls).invoke([HumanMessage(content=prompt)])
+
+    def classify(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
+        """Invoke with the classifier-specific model (stronger than extraction model)."""
+        return self._get_classifier_model(schema_cls).invoke(
+            [HumanMessage(content=prompt)]
+        )
 
     def stream(self, prompt: str) -> Iterator[str]:
         """Stream raw text tokens from the base model (no structured output)."""
