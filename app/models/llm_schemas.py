@@ -468,13 +468,33 @@ Contenido del documento:
 {text_preview}
 ---
 
-Clasifica el documento. Reglas clave:
-- Si tiene CUFE o resolución DIAN → factura_venta o factura_compra (electrónica)
-- Si tiene prefijo "DS" en el número o el proveedor es persona natural sin NIT → documento_soporte
-- Si tiene prefijo "CE" o "Comprobante de Egreso" → comprobante_egreso
-- Si tiene prefijo "RC" o "Recibo de Caja" → recibo_caja
-- Si contiene cuentas PUC con saldos organizados jerárquicamente → estado financiero existente (balance_general, estado_resultados, etc.)
-- Si contiene movimientos de IVA (cuentas 2408xx) → auxiliar_iva
+Clasifica el documento aplicando las reglas en ESTE ORDEN. La primera que coincida gana:
+
+REGLAS PRIORIDAD 1 — TÍTULO O ENCABEZADO EXPLÍCITO (buscar en las primeras líneas)
+- Título contiene "BALANCE GENERAL" o "ESTADO DE SITUACIÓN FINANCIERA" → balance_general
+- Título contiene "ESTADO DE RESULTADOS", "ESTADO DE PÉRDIDAS Y GANANCIAS", "PyG", "P y G" o "P&G" → estado_resultados
+- Título contiene "LIBRO AUXILIAR", "LIBRO MAYOR", "AUXILIAR POR CUENTA" o "MAYOR Y BALANCES" (sin calificador de impuesto) → libro_auxiliar. NOTA: si el documento lista movimientos con prefijos CE, RC o FV, esos son referencias a comprobantes DENTRO del libro — no cambian el tipo del documento.
+- Título contiene "LIBRO DIARIO" → libro_diario
+- Título contiene "FLUJO DE CAJA", "FLUJO DE EFECTIVO" o "ESTADO DE FLUJOS DE EFECTIVO" → flujo_de_caja
+- Título contiene "ESTADO DE CAMBIOS EN EL PATRIMONIO" → cambios_patrimonio
+- Título contiene "NOTAS A LOS ESTADOS FINANCIEROS" o "REVELACIONES" → notas_estados_financieros
+- Título contiene "CONCILIACIÓN BANCARIA" → conciliacion_bancaria
+- Título contiene "EXTRACTO BANCARIO" o "ESTADO DE CUENTA" bancario → extracto_bancario
+
+REGLAS PRIORIDAD 2 — PREFIJOS Y SEÑALES ESTRUCTURALES
+- Tiene CUFE o resolución DIAN → factura_venta (si es emitida) o factura_compra (si es recibida)
+- Prefijo "DS"/"DM" en el número o proveedor "No responsable de IVA" o "Generado por: Solución Gratuita DIAN" → documento_soporte
+- Prefijo "CE" o texto "Comprobante de Egreso" → comprobante_egreso
+- Prefijo "RC" o texto "Recibo de Caja" → recibo_caja
+- Movimientos de cuentas 2408xx (IVA) → auxiliar_iva
+- Cuentas de impuestos específicos (retención, ICA) en libro auxiliar → auxiliar_impuesto
+- Formulario 300 DIAN (IVA bimestral) → declaracion_iva
+
+REGLAS PRIORIDAD 3 — CONTENIDO
+- Activos + Pasivos + Patrimonio con saldos por cuenta PUC y sin título explícito → balance_general
+- Ingresos + Costos + Gastos con utilidad neta y sin título explícito → estado_resultados
+
+Clasifica como "otro" SOLO si ninguna de las reglas anteriores coincide. Si el documento claramente es un estado financiero pero no encaja en una regla específica, elige el tipo más cercano en lugar de "otro".
 
 Extrae también el NIT de la entidad, el nombre, y el período si están presentes."""
 
