@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Any, Iterator, TypeVar, cast
+from typing import Any, Iterator, TypeVar
 
 from pydantic import BaseModel
 
@@ -638,11 +638,20 @@ Y cita fuentes legales."""
         return response
 
     def classify_document(self, text_preview: str) -> ClassificationResponse:
-        """Classify a document based on its content using the LLM fallback chain."""
+        """Classify a document based on its content using the LLM fallback chain.
+
+        The defensive coercion below guards against providers that, in some
+        LangChain versions, return a dict or a sibling BaseModel instead of
+        the requested schema instance. Removing it caused CI Via-B to
+        misclassify balance_general as 'otro' — restoring the guard.
+        """
         prompt = CLASSIFICATION_PROMPT.format(text_preview=text_preview)
-        return cast(
-            ClassificationResponse, self._invoke(ClassificationResponse, prompt)
-        )
+        result = self._invoke(ClassificationResponse, prompt)
+        if not isinstance(result, ClassificationResponse):
+            result = ClassificationResponse.model_validate(
+                result.model_dump() if isinstance(result, BaseModel) else result
+            )
+        return result
 
     def extract_bank_statement(
         self, text: str, *, correction_feedback: str | None = None
