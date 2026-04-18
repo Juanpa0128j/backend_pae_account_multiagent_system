@@ -120,3 +120,34 @@ The system handles 13+ Colombian financial document types (facturas, extractos b
 ### RAG System
 
 107 regulatory documents indexed at startup: 41 PUC accounts + 50 Estatuto Tributario articles + 16 Ley 43/1990 PCGA principles. Run `scripts/populate_rag.py` once to seed.
+
+## Code Conventions
+
+- **Imports:** stdlib → external → internal. Never wildcard imports.
+- **Error handling:** Fail fast. Set `state["error"]` and return early — do not swallow exceptions.
+- **State mutations:** All nodes receive and return `AgentState`. Never mutate shared objects outside the node.
+- **DB sessions:** Always open with `SessionLocal()`, wrap in try/except/finally, close in `finally`. Prefer a single `db.commit()` per operation — avoid partial transactions.
+- **LLM calls:** Use `get_llm_client()` for all LLM invocations; it handles provider fallback (OpenAI → Gemini → Groq) automatically.
+- **NIT validation:** Colombian NITs must be cleaned (strip `.` and spaces) before storing. Reject empty strings.
+- **PUC fallback:** When defaulting to account `519595`, emit an explicit `logger.warning`.
+
+## Testing
+
+- Tests live in `tests/` organized by layer:
+  - `tests/agents/` — unit tests per agent node
+  - `tests/features/` — integration tests per feature slice
+  - `tests/core/` — unit tests for core modules (LLM client, Gemini client)
+  - `tests/services/` — unit tests for service modules
+  - `tests/e2e/` — end-to-end tests (excluded from `make test`; run via `make test-e2e`)
+- Fixtures are in `tests/conftest.py`.
+- External dependencies (DB, Gemini, LlamaParse) must be mocked in unit tests. Mock `app.agents.persist_node._auto_derive_statements` in process pipeline tests to avoid hitting the real DB for financial statement derivation.
+- Run `make test` and confirm all tests pass before marking work complete.
+- Do not add tests for behavior that doesn't exist yet (no speculative coverage).
+
+## Git Rules
+
+- Never commit unless explicitly asked. Show `git diff --stat` and a draft message first.
+- Never push unless explicitly asked.
+- Never force-push, `git reset --hard`, or `git clean -f` without explicit instruction.
+- Never commit `.env`, secrets, or API keys.
+- One concern per commit.
