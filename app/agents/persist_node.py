@@ -703,15 +703,13 @@ def _run_persist(state: AgentState) -> AgentState:
             nit_emisor = _as_str(tx_data.get("nit_emisor"), "").strip()
             nit_receptor = _as_str(tx_data.get("nit_receptor"), "").strip()
             company_nit = _resolve_company_nit(state, tx_data)
-            if company_nit is None:
-                msg = (
-                    "db_persist: cannot persist transaction without a company NIT "
-                    "(state/classification/tx_data all missing nit_receptor)"
+            if not company_nit:
+                logger.warning(
+                    "db_persist: company_nit unresolved; persisting transaction "
+                    "with NULL tenant for manual triage (ingest_id=%s)",
+                    ingest_id,
                 )
-                logger.error(msg)
-                state["error"] = msg
-                raise RuntimeError(msg)
-            if not nit_receptor:
+            if not nit_receptor and company_nit:
                 nit_receptor = company_nit
                 logger.warning(
                     "db_persist: nit_receptor missing in extracted transaction; using company_nit=%s",
