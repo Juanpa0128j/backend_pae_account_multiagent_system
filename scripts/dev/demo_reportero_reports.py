@@ -5,10 +5,10 @@ Muestra todos los reportes generados por el Agente Reportero consultando el
 Libro Mayor (SQL) y enriqueciendo las referencias con el RAG Normativo.
 
 Cómo ejecutar:
-    uv run python scripts/demo_reportero_reports.py
+    uv run python scripts/dev/demo_reportero_reports.py
 
     # Con rango de fechas personalizado:
-    uv run python scripts/demo_reportero_reports.py --start 2026-01-01 --end 2026-03-31
+    uv run python scripts/dev/demo_reportero_reports.py --start 2026-01-01 --end 2026-03-31
 
 Prerequisitos:
     1. DATABASE_URL configurado en .env (Supabase/PostgreSQL)
@@ -22,7 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
