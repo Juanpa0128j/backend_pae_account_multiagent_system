@@ -42,8 +42,10 @@ from app.models.ingest_schemas import (
     TaxDeclarationContent,
 )
 from app.models.llm_schemas import (
+    CLASSIFICATION_PROMPT,
     GENERAL_EXTRACTION_INSTRUCTIONS,
     AuditorOutput,
+    ClassificationResponse,
     ContadorOutput,
     ReporteroBriefAnalysis,
     ReporteroAnalysis,
@@ -635,19 +637,55 @@ Y cita fuentes legales."""
         )
         return response
 
-    def classify_document(self, text_preview: str) -> Any:
-        """Classify a document based on its content using LLM."""
-        from app.services.doc_classifier import (
-            CLASSIFICATION_PROMPT,
-            _ClassificationResponse,
-        )
+    def classify_document(self, text_preview: str) -> ClassificationResponse:
+        """Classify a document using each provider's classifier-specific model.
 
+        Providers that expose a `classify()` method use a stronger model
+        dedicated to classification (e.g., OpenAI uses gpt-4o-mini instead of
+        the smaller gpt-4.1-nano used for extraction). This matches the
+        pre-refactor doc_classifier behaviour which hardcoded gpt-4o-mini.
+
+        The defensive coercion guards against providers that, in some
+        LangChain versions, return a dict or sibling BaseModel instead of
+        the requested schema instance.
+        """
         prompt = CLASSIFICATION_PROMPT.format(text_preview=text_preview)
-        try:
-            return self._invoke(_ClassificationResponse, prompt)
-        except Exception as e:
-            logger.error("LLMClient.classify_document failed: %s", e)
-            raise
+        providers = self._get_providers()
+
+        last_exc: Exception | None = None
+        failure_trace: list[str] = []
+        for idx, (name, provider) in enumerate(providers):
+            try:
+                classify_fn = getattr(provider, "classify", provider.invoke)
+                result = classify_fn(ClassificationResponse, prompt)
+                if not isinstance(result, ClassificationResponse):
+                    result = ClassificationResponse.model_validate(
+                        result.model_dump()
+                        if isinstance(result, BaseModel)
+                        else result
+                    )
+                return result
+            except Exception as exc:
+                last_exc = exc
+                failure_trace.append(
+                    f"{name}: {exc.__class__.__name__}: {_compact_error_message(exc)}"
+                )
+                has_next = idx < (len(providers) - 1)
+                if not has_next:
+                    break
+                if _is_quota_error(exc):
+                    logger.warning(
+                        "%s quota exceeded — falling back for classification",
+                        name,
+                    )
+                else:
+                    raise
+
+        trace_summary = " | ".join(failure_trace) if failure_trace else str(last_exc)
+        raise RuntimeError(
+            f"All configured LLM providers failed for classification. "
+            f"Attempts: {trace_summary}"
+        )
 
     def extract_bank_statement(
         self, text: str, *, correction_feedback: str | None = None

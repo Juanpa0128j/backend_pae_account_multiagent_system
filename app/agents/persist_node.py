@@ -545,6 +545,8 @@ def _run_persist(state: AgentState) -> AgentState:
     interpreted = state.get("interpreted_data", {}) or {}
     classification = state.get("document_classification") or {}
     doc_type = _as_str(classification.get("doc_type"), "")
+    contador_output: dict = {}
+    company_nit: Optional[str] = None
 
     # --- Vía B: persist existing financial statement directly ---
     if mode == "ingest" and pathway == "work_with_existing":
@@ -701,6 +703,12 @@ def _run_persist(state: AgentState) -> AgentState:
             nit_emisor = _as_str(tx_data.get("nit_emisor"), "").strip()
             nit_receptor = _as_str(tx_data.get("nit_receptor"), "").strip()
             company_nit = _resolve_company_nit(state, tx_data)
+            if not company_nit:
+                logger.warning(
+                    "db_persist: company_nit unresolved; persisting transaction "
+                    "with NULL tenant for manual triage (ingest_id=%s)",
+                    ingest_id,
+                )
             if not nit_receptor and company_nit:
                 nit_receptor = company_nit
                 logger.warning(
@@ -867,8 +875,8 @@ def _run_persist(state: AgentState) -> AgentState:
 
         auditor_out = state.get("auditor_output") or {}
         classification = state.get("document_classification") or {}
-        doc_type = classification.get("doc_type")
-        pathway_value = state.get("pathway")
+        doc_type = _as_str(classification.get("doc_type"), "")
+        pathway_value = _as_str(state.get("pathway"), "")
 
         if mode == "ingest":
             db_service.update_ingest_job(
@@ -948,8 +956,10 @@ def _run_persist(state: AgentState) -> AgentState:
                     IngestStatus.FAILED,
                     extraction_errors=[str(e)],
                 )
-            except Exception:
-                pass
+            except Exception as status_err:
+                logger.debug(
+                    "persist_node: failed to mark ingest job FAILED: %s", status_err
+                )
 
         if mode == "process":
             process_id = _as_str(state.get("process_id"), "")
@@ -969,8 +979,11 @@ def _run_persist(state: AgentState) -> AgentState:
                             "status": "failed",
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as status_err:
+                    logger.debug(
+                        "persist_node: failed to mark process job FAILED: %s",
+                        status_err,
+                    )
     finally:
         db.close()
 
@@ -1039,7 +1052,7 @@ def _persist_financial_statement(state: AgentState) -> None:
         # Populate routing metadata on the job
         if ingest_job:
             ingest_job.document_type = doc_type
-            ingest_job.pathway = state.get("pathway", "work_with_existing")
+            ingest_job.pathway = _as_str(state.get("pathway"), "work_with_existing")
 
         company_nit = _resolve_company_nit(state)
         if company_nit is None:
@@ -1060,6 +1073,17 @@ def _persist_financial_statement(state: AgentState) -> None:
             # Keep persistence backward compatible: if no period is extractable,
             # anchor the statement to current timestamp as period end.
             period_end = datetime.now(timezone.utc)
+        if not period_start:
+            # Mirror period_end for schema consistency. Correct for point-in-time
+            # statements (balance_general); for period statements (estado_resultados,
+            # flujo_de_caja) equal start/end is flagged so downstream reviewers
+            # notice when the source lacks a proper period.
+            logger.warning(
+                "db_persist: period_start missing for %s; using period_end as fallback "
+                "(statement may lack a valid reporting period)",
+                doc_type or "unknown statement type",
+            )
+            period_start = period_end
 
         # Create FinancialStatement record
         stmt = db_service.create_financial_statement(

@@ -554,7 +554,7 @@ class TestValidateAuditorOutputNode:
 class TestValidateContadorOutputNode:
     def test_valid_output_advances_stage(self):
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT))
-        with patch("app.agents.supervisor._missing_puc_codes", return_value=[]):
+        with patch("app.agents.validation_rules._missing_puc_codes", return_value=[]):
             result = validate_contador_output_node(state)
         assert result["error"] is None
         assert result["correction_feedback"] is None
@@ -569,19 +569,23 @@ class TestValidateContadorOutputNode:
 
     def test_missing_puc_triggers_correction_feedback(self):
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT), retry_count=0)
-        with patch("app.agents.supervisor._missing_puc_codes", return_value=["9999"]):
+        with patch(
+            "app.agents.validation_rules._missing_puc_codes", return_value=["9999"]
+        ):
             result = validate_contador_output_node(state)
         assert result["correction_feedback"] is not None or result["error"] is not None
 
     def test_missing_puc_exhausted_retries_sets_error(self):
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT), retry_count=3)
-        with patch("app.agents.supervisor._missing_puc_codes", return_value=["9999"]):
+        with patch(
+            "app.agents.validation_rules._missing_puc_codes", return_value=["9999"]
+        ):
             result = validate_contador_output_node(state)
         assert result["error"] is not None
 
     def test_appends_to_validation_history(self):
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT))
-        with patch("app.agents.supervisor._missing_puc_codes", return_value=[]):
+        with patch("app.agents.validation_rules._missing_puc_codes", return_value=[]):
             result = validate_contador_output_node(state)
         history = result["validation_history"]
         assert len(history) >= 1
@@ -694,7 +698,7 @@ class TestProcessGraphE2E:
 
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
-    @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
+    @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_happy_path_approved(
         self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
@@ -725,7 +729,7 @@ class TestProcessGraphE2E:
     @patch("app.agents.tributario_agent.get_llm_client")
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
-    @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
+    @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_rejected_audit_triggers_self_correction_then_approves(
         self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory
@@ -767,13 +771,13 @@ class TestProcessGraphE2E:
         assert final.get("error") is None, final.get("error")
         assert final["audit_approved"] is True
         assert final["db_result"] is not None
-        assert audit_calls["n"] == 2, (
-            "Auditor should have been called twice (reject + approve)"
-        )
+        assert (
+            audit_calls["n"] == 2
+        ), "Auditor should have been called twice (reject + approve)"
 
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
-    @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
+    @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_contador_retry_then_success(
         self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
@@ -815,7 +819,7 @@ class TestProcessGraphE2E:
 
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
-    @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
+    @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_auditor_retry_then_success(
         self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
@@ -850,7 +854,7 @@ class TestProcessGraphE2E:
         assert aud_call_count["n"] >= 2, "Expected at least one retry of auditor"
 
     @patch("app.agents.contador_agent.get_llm_client")
-    @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
+    @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     def test_contador_exhausted_retries_sets_error(self, _mock_puc, mock_cnt_factory):
         """When all retries are exhausted, graph stops with a hard error."""
         mock_cnt = MagicMock()
@@ -867,7 +871,7 @@ class TestProcessGraphE2E:
 
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
-    @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
+    @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_audit_result_propagated_to_result_dict(
         self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
@@ -992,7 +996,7 @@ class TestProcessGraphDBIntegration:
 
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
-    @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
+    @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     def test_full_pipeline_persists_records(
         self, _mock_puc, mock_cnt_factory, mock_aud_factory
     ):
@@ -1049,9 +1053,9 @@ class TestProcessGraphDBIntegration:
 
             total_debito = sum(ln.debito for ln in lines)
             total_credito = sum(ln.credito for ln in lines)
-            assert total_debito == total_credito, (
-                f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
-            )
+            assert (
+                total_debito == total_credito
+            ), f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
 
             # Auditor output stored in agent_reasoning
             assert posted.agent_reasoning is not None
@@ -1062,7 +1066,7 @@ class TestProcessGraphDBIntegration:
     @patch("app.agents.tributario_agent.get_llm_client")
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
-    @patch("app.agents.supervisor._missing_puc_codes", return_value=[])
+    @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     def test_rejected_audit_stored_with_findings(
         self, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory
     ):

@@ -122,14 +122,14 @@ def get_ingest_job(db: Session, ingest_id: str) -> Optional[IngestJob]:
 def create_transaction_pending(
     db: Session,
     ingest_id: str,
-    fecha: datetime = None,
-    nit_emisor: str = None,
-    nit_receptor: str = None,
-    total: Decimal = None,
-    descripcion: str = None,
-    items: List[Dict] = None,
-    raw_data: Dict = None,
-    company_nit: str = None,
+    fecha: Optional[datetime] = None,
+    nit_emisor: Optional[str] = None,
+    nit_receptor: Optional[str] = None,
+    total: Optional[Decimal] = None,
+    descripcion: Optional[str] = None,
+    items: Optional[List[Dict]] = None,
+    raw_data: Optional[Dict] = None,
+    company_nit: Optional[str] = None,
     commit: bool = True,
 ) -> TransactionPending:
     """Create a pending transaction from extracted data."""
@@ -227,17 +227,17 @@ def create_transaction_posted(
     db: Session,
     transaction_pending_id: str,
     cuenta_puc: str,
-    puc_descripcion: str = None,
+    puc_descripcion: Optional[str] = None,
     retefuente: Decimal = Decimal("0"),
     reteica: Decimal = Decimal("0"),
     iva: Decimal = Decimal("0"),
     ica: Decimal = Decimal("0"),
     provision_renta: Decimal = Decimal("0"),
     neto_a_pagar: Decimal = Decimal("0"),
-    journal_entries_json: List[Dict] = None,
-    tax_references: List[str] = None,
-    agent_reasoning: Dict = None,
-    company_nit: str = None,
+    journal_entries_json: Optional[List[Dict]] = None,
+    tax_references: Optional[List[str]] = None,
+    agent_reasoning: Optional[Dict] = None,
+    company_nit: Optional[str] = None,
     commit: bool = True,
 ) -> TransactionPosted:
     """Create a fully processed posted transaction."""
@@ -312,7 +312,7 @@ def create_journal_entry_lines(
     transaction_posted_id: str,
     entries: List[Dict[str, Any]],
     commit: bool = True,
-    company_nit: str = None,
+    company_nit: Optional[str] = None,
 ) -> List[JournalEntryLine]:
     """Create normalized journal entry lines for a posted transaction."""
     lines = []

@@ -96,6 +96,7 @@ def _write_extracto_xlsx(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
     ws = wb.active
+    assert ws is not None  # Workbook() always has an active sheet
     ws.title = "Extracto"
     ws.append(["Fecha", "Descripcion", "Debito", "Credito", "Saldo"])
     ws.append(["2026-03-01", "Saldo inicial", 0, 0, 5000000])
@@ -794,7 +795,7 @@ def _print_second_level_detail(statements: list) -> None:
                     print(f"    {cifra.get('concepto')}: {cifra.get('valor'):,.2f}")
 
         elif stype == "libro_diario":
-            asientos = d.get("asientos", [])
+            asientos = d.get("asientos") or []
             print(f"Total asientos: {len(asientos)}")
             for entry in asientos[:5]:
                 print(
