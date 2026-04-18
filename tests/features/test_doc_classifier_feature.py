@@ -14,7 +14,7 @@ from app.models.document_types import (
 from app.services.doc_classifier import (
     DocumentClassification,
     classify_document,
-    _ClassificationResponse,
+    ClassificationResponse,
 )
 
 # ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ class TestClassifyDocument:
 
     @patch("app.services.doc_classifier._classify_with_llm")
     def test_llm_classifies_iva_declaration(self, mock_classify):
-        mock_classify.return_value = _ClassificationResponse(
+        mock_classify.return_value = ClassificationResponse(
             doc_type="declaracion_iva",
             confidence=0.92,
             period_start="2026-01-01",
@@ -132,7 +132,7 @@ class TestClassifyDocument:
 
     @patch("app.services.doc_classifier._classify_with_llm")
     def test_llm_classifies_balance_general(self, mock_classify):
-        mock_classify.return_value = _ClassificationResponse(
+        mock_classify.return_value = ClassificationResponse(
             doc_type="balance_general",
             confidence=0.88,
             entity_nit="800999888",
@@ -148,7 +148,7 @@ class TestClassifyDocument:
 
     @patch("app.services.doc_classifier._classify_with_llm")
     def test_unknown_doc_type_falls_back_to_otro(self, mock_classify):
-        mock_classify.return_value = _ClassificationResponse(
+        mock_classify.return_value = ClassificationResponse(
             doc_type="something_unknown",
             confidence=0.5,
         )
@@ -172,7 +172,7 @@ class TestClassifyDocument:
 
     @patch("app.services.doc_classifier._classify_with_llm")
     def test_classifies_factura_venta(self, mock_classify):
-        mock_classify.return_value = _ClassificationResponse(
+        mock_classify.return_value = ClassificationResponse(
             doc_type="factura_venta",
             confidence=0.95,
             entity_nit="900111222",
@@ -188,7 +188,7 @@ class TestClassifyDocument:
 
     @patch("app.services.doc_classifier._classify_with_llm")
     def test_classifies_auxiliar_impuesto(self, mock_classify):
-        mock_classify.return_value = _ClassificationResponse(
+        mock_classify.return_value = ClassificationResponse(
             doc_type="auxiliar_impuesto",
             confidence=0.87,
             period_end="2026-02-28",

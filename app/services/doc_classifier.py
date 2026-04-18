@@ -10,13 +10,7 @@ import logging
 from typing import Literal, Optional, cast
 
 from app.models.document_types import DocumentType, IngestPathway, get_pathway
-from app.models.llm_schemas import ClassificationResponse
-
-# Re-exported for tests and for the rare caller that needs the raw schema/prompt.
-from app.models.llm_schemas import (  # noqa: F401
-    CLASSIFICATION_PROMPT,
-    ClassificationResponse as _ClassificationResponse,
-)
+from app.models.llm_schemas import CLASSIFICATION_PROMPT, ClassificationResponse  # noqa: F401
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
