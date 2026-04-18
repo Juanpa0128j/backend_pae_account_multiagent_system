@@ -948,8 +948,10 @@ def _run_persist(state: AgentState) -> AgentState:
                     IngestStatus.FAILED,
                     extraction_errors=[str(e)],
                 )
-            except Exception:
-                pass
+            except Exception as status_err:
+                logger.debug(
+                    "persist_node: failed to mark ingest job FAILED: %s", status_err
+                )
 
         if mode == "process":
             process_id = _as_str(state.get("process_id"), "")
@@ -969,8 +971,11 @@ def _run_persist(state: AgentState) -> AgentState:
                             "status": "failed",
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as status_err:
+                    logger.debug(
+                        "persist_node: failed to mark process job FAILED: %s",
+                        status_err,
+                    )
     finally:
         db.close()
 
