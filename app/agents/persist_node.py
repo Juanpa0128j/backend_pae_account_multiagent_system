@@ -1074,8 +1074,15 @@ def _persist_financial_statement(state: AgentState) -> None:
             # anchor the statement to current timestamp as period end.
             period_end = datetime.now(timezone.utc)
         if not period_start:
-            # Mirror period_end behaviour for schema consistency; downstream
-            # derivations tolerate equal start/end.
+            # Mirror period_end for schema consistency. Correct for point-in-time
+            # statements (balance_general); for period statements (estado_resultados,
+            # flujo_de_caja) equal start/end is flagged so downstream reviewers
+            # notice when the source lacks a proper period.
+            logger.warning(
+                "db_persist: period_start missing for %s; using period_end as fallback "
+                "(statement may lack a valid reporting period)",
+                doc_type or "unknown statement type",
+            )
             period_start = period_end
 
         # Create FinancialStatement record

@@ -11,10 +11,10 @@ from app.models.document_types import (
     get_pathway,
     PATHWAY_MAP,
 )
+from app.models.llm_schemas import ClassificationResponse
 from app.services.doc_classifier import (
     DocumentClassification,
     classify_document,
-    ClassificationResponse,
 )
 
 # ---------------------------------------------------------------------------

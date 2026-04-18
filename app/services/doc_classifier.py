@@ -10,7 +10,7 @@ import logging
 from typing import Literal, Optional, cast
 
 from app.models.document_types import DocumentType, IngestPathway, get_pathway
-from app.models.llm_schemas import CLASSIFICATION_PROMPT, ClassificationResponse  # noqa: F401
+from app.models.llm_schemas import ClassificationResponse
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Any, Iterator, TypeVar
+from typing import Any, Iterator, TypeVar, cast
 
 from pydantic import BaseModel
 
@@ -640,12 +640,9 @@ Y cita fuentes legales."""
     def classify_document(self, text_preview: str) -> ClassificationResponse:
         """Classify a document based on its content using the LLM fallback chain."""
         prompt = CLASSIFICATION_PROMPT.format(text_preview=text_preview)
-        result = self._invoke(ClassificationResponse, prompt)
-        if not isinstance(result, ClassificationResponse):
-            result = ClassificationResponse.model_validate(
-                result.model_dump() if isinstance(result, BaseModel) else result
-            )
-        return result
+        return cast(
+            ClassificationResponse, self._invoke(ClassificationResponse, prompt)
+        )
 
     def extract_bank_statement(
         self, text: str, *, correction_feedback: str | None = None
