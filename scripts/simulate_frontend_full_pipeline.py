@@ -794,7 +794,7 @@ def _print_second_level_detail(statements: list) -> None:
                     print(f"    {cifra.get('concepto')}: {cifra.get('valor'):,.2f}")
 
         elif stype == "libro_diario":
-            asientos = d.get("asientos", [])
+            asientos = d.get("asientos") or []
             print(f"Total asientos: {len(asientos)}")
             for entry in asientos[:5]:
                 print(
