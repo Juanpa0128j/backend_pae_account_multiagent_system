@@ -545,6 +545,8 @@ def _run_persist(state: AgentState) -> AgentState:
     interpreted = state.get("interpreted_data", {}) or {}
     classification = state.get("document_classification") or {}
     doc_type = _as_str(classification.get("doc_type"), "")
+    contador_output: dict = {}
+    company_nit: Optional[str] = None
 
     # --- Vía B: persist existing financial statement directly ---
     if mode == "ingest" and pathway == "work_with_existing":
@@ -701,7 +703,15 @@ def _run_persist(state: AgentState) -> AgentState:
             nit_emisor = _as_str(tx_data.get("nit_emisor"), "").strip()
             nit_receptor = _as_str(tx_data.get("nit_receptor"), "").strip()
             company_nit = _resolve_company_nit(state, tx_data)
-            if not nit_receptor and company_nit:
+            if company_nit is None:
+                msg = (
+                    "db_persist: cannot persist transaction without a company NIT "
+                    "(state/classification/tx_data all missing nit_receptor)"
+                )
+                logger.error(msg)
+                state["error"] = msg
+                raise RuntimeError(msg)
+            if not nit_receptor:
                 nit_receptor = company_nit
                 logger.warning(
                     "db_persist: nit_receptor missing in extracted transaction; using company_nit=%s",
@@ -867,8 +877,8 @@ def _run_persist(state: AgentState) -> AgentState:
 
         auditor_out = state.get("auditor_output") or {}
         classification = state.get("document_classification") or {}
-        doc_type = classification.get("doc_type")
-        pathway_value = state.get("pathway")
+        doc_type = _as_str(classification.get("doc_type"), "")
+        pathway_value = _as_str(state.get("pathway"), "")
 
         if mode == "ingest":
             db_service.update_ingest_job(
@@ -1044,7 +1054,7 @@ def _persist_financial_statement(state: AgentState) -> None:
         # Populate routing metadata on the job
         if ingest_job:
             ingest_job.document_type = doc_type
-            ingest_job.pathway = state.get("pathway", "work_with_existing")
+            ingest_job.pathway = _as_str(state.get("pathway"), "work_with_existing")
 
         company_nit = _resolve_company_nit(state)
         if company_nit is None:
@@ -1065,6 +1075,10 @@ def _persist_financial_statement(state: AgentState) -> None:
             # Keep persistence backward compatible: if no period is extractable,
             # anchor the statement to current timestamp as period end.
             period_end = datetime.now(timezone.utc)
+        if not period_start:
+            # Mirror period_end behaviour for schema consistency; downstream
+            # derivations tolerate equal start/end.
+            period_start = period_end
 
         # Create FinancialStatement record
         stmt = db_service.create_financial_statement(
