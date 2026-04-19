@@ -37,8 +37,8 @@ from app.models.ingest_schemas import (  # noqa: F401
     BalanceGeneralContent,
     BankStatementContent,
     CambiosPatrimonioContent,
-    ConciliacionBancariaContent,
     ComprobanteEgresoContent,
+    ConciliacionBancariaContent,
     CuentaCobroContent,
     DeclaracionICAContent,
     DocumentoSoporteContent,
@@ -56,6 +56,23 @@ from app.models.ingest_schemas import (  # noqa: F401
     ReciboCajaContent,
     ReciboPagoImpuestoContent,
     TaxDeclarationContent,
+)
+from app.models.llm_schemas import (  # noqa: F401
+    AsientoContableGemini,
+    AuditorHallazgoGemini,
+    AuditorOutputGemini,
+    ChatbotResponseGemini,
+    ChatIntentClassification,
+    ContadorOutputGemini,
+    ExplicacionResultadoGemini,
+    InterpretacionRatioGemini,
+    PrediccionPeriodoGemini,
+    RawTransaction,
+    RawTransactionsList,
+    ReporteroAnalysisGemini,
+    ReporteroBriefAnalysisGemini,
+    TaxJustification,
+    TaxRateLookup,
 )
 
 # Extraction instructions constant (used by some tests/scripts)

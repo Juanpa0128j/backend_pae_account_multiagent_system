@@ -448,6 +448,35 @@ def _build_balance(db, params: dict, svc) -> dict:
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
     company_nit = params.get("company_nit")
     data = svc.get_balance_sheet(db, cutoff_date=end_date, company_nit=company_nit)
+    # Balance sheet totals are cumulative up to `end_date`, so detalle must use
+    # the same cutoff-based basis to remain reconcilable. Intentionally ignore
+    # any provided `start_date` for this report.
+    ledger = svc.get_general_ledger(
+        db,
+        start_date=None,
+        end_date=end_date,
+        company_nit=company_nit,
+    )
+
+    def _to_cuenta(row: dict, balance: Decimal) -> dict:
+        return {
+            "codigo": row["account"],
+            "nombre": row["name"],
+            "saldo": float(balance),
+        }
+
+    activos_detalle = [
+        _to_cuenta(r, _debit_nature_balance(r))
+        for r in _ledger_by_prefix(ledger, _CLASS_ACTIVOS)
+    ]
+    pasivos_detalle = [
+        _to_cuenta(r, _credit_nature_balance(r))
+        for r in _ledger_by_prefix(ledger, _CLASS_PASIVOS)
+    ]
+    patrimonio_detalle = [
+        _to_cuenta(r, _credit_nature_balance(r))
+        for r in _ledger_by_prefix(ledger, _CLASS_PATRIMONIO)
+    ]
 
     activos = Decimal(str(data["assets"]))
     pasivos = Decimal(str(data["liabilities"]))
@@ -482,6 +511,9 @@ def _build_balance(db, params: dict, svc) -> dict:
         "activos": float(activos),
         "pasivos": float(pasivos),
         "patrimonio": float(patrimonio),
+        "activos_detalle": activos_detalle,
+        "pasivos_detalle": pasivos_detalle,
+        "patrimonio_detalle": patrimonio_detalle,
         "utilidad_neta": float(utilidad_neta),
         "patrimonio_total": float(patrimonio_total),
         "cuadre": cuadre,
