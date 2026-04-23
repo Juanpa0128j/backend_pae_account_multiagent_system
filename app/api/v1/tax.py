@@ -193,11 +193,17 @@ async def get_renta_provision(
 # ---------------------------------------------------------------------------
 
 from app.services.tax_declaration_service import (  # noqa: E402
+    FieldNotEditableError,
+    FieldNotFoundError,
     generate_declaration_draft,
     get_draft,
     update_draft_field,
 )
-from app.services.tax_calendar_service import list_obligations  # noqa: E402
+from app.services.tax_calendar_service import (  # noqa: E402
+    SUPPORTED_IVA_REGIMES,
+    SUPPORTED_YEARS,
+    list_obligations,
+)
 from app.services.certificate_service import generate_f220_certificates  # noqa: E402
 from app.services.exogena_service import (  # noqa: E402
     generate_formato_1001,
@@ -294,7 +300,13 @@ def api_update_draft_field(
     Accountant updates a field value (requires_review=True fields).
     After update the field is marked requires_review=False.
     """
-    draft = update_draft_field(db, draft_id, body.renglon, body.value)
+    try:
+        draft = update_draft_field(db, draft_id, body.renglon, body.value)
+    except FieldNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except FieldNotEditableError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     if not draft:
         raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
 
@@ -322,14 +334,31 @@ def api_tax_calendar(
 
     Source: Calendario Tributario DIAN 2026.
     """
+    if year not in SUPPORTED_YEARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported year: {year}. Supported: {sorted(SUPPORTED_YEARS)}",
+        )
+    if iva_regime not in SUPPORTED_IVA_REGIMES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported iva_regime: {iva_regime!r}. "
+                f"Must be one of {sorted(SUPPORTED_IVA_REGIMES)}"
+            ),
+        )
+
     today = date.today()
-    entries = list_obligations(
-        nit=nit,
-        year=year,
-        iva_regime=iva_regime,
-        alert_days=alert_days,
-        today=today,
-    )
+    try:
+        entries = list_obligations(
+            nit=nit,
+            year=year,
+            iva_regime=iva_regime,
+            alert_days=alert_days,
+            today=today,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     return {
         "nit": nit,

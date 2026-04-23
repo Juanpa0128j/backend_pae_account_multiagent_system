@@ -298,3 +298,63 @@ class TestFormato2276:
 
         rows = generate_formato_2276(db, "900123456", 2025)
         assert rows == []
+
+
+class TestFormato1001Aggregation:
+    @patch("app.services.exogena_service.sql_text")
+    def test_aggregates_multiple_pucs_same_concepto(self, mock_sql_text):
+        """511505 and 511510 both map to concepto 5001 — should aggregate to one row."""
+        settings = _make_settings()
+        db = _mock_db(settings)
+
+        # Same tercero, two different PUCs under servicios (51xx → 5001)
+        row1 = _make_db_row(
+            tercero_nit="800111222",
+            tercero_nombre="PROVEEDOR SAS",
+            cuenta_puc="511505",
+            total_pagos=2_000_000,
+            total_retefuente=80_000,
+        )
+        row2 = _make_db_row(
+            tercero_nit="800111222",
+            tercero_nombre="PROVEEDOR SAS",
+            cuenta_puc="511510",
+            total_pagos=1_500_000,
+            total_retefuente=60_000,
+        )
+        db.execute.return_value.fetchall.return_value = [row1, row2]
+
+        rows = generate_formato_1001(db, "900123456", 2025)
+
+        # Must collapse to one row with summed totals
+        assert len(rows) == 1
+        assert rows[0]["concepto_dian"] == "5001"
+        assert rows[0]["total_pagos"] == 3_500_000
+        assert rows[0]["total_retefuente"] == 140_000
+
+    @patch("app.services.exogena_service.sql_text")
+    def test_different_conceptos_stay_separate(self, mock_sql_text):
+        """Same tercero with both servicios (51xx) and compras (6xx) must remain 2 rows."""
+        settings = _make_settings()
+        db = _mock_db(settings)
+
+        row1 = _make_db_row(
+            tercero_nit="800111222",
+            tercero_nombre="PROVEEDOR SAS",
+            cuenta_puc="511505",
+            total_pagos=1_000_000,
+            total_retefuente=40_000,
+        )
+        row2 = _make_db_row(
+            tercero_nit="800111222",
+            tercero_nombre="PROVEEDOR SAS",
+            cuenta_puc="6135",
+            total_pagos=500_000,
+            total_retefuente=12_500,
+        )
+        db.execute.return_value.fetchall.return_value = [row1, row2]
+
+        rows = generate_formato_1001(db, "900123456", 2025)
+        assert len(rows) == 2
+        conceptos = {r["concepto_dian"] for r in rows}
+        assert conceptos == {"5001", "5002"}

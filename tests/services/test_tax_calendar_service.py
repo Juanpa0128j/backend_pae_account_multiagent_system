@@ -2,6 +2,7 @@
 
 from datetime import date
 
+import pytest
 
 from app.services.tax_calendar_service import (
     CalendarEntry,
@@ -124,3 +125,43 @@ class TestListObligations:
         entries = list_obligations(_NIT, alert_days=10, today=date(2026, 2, 10))
         alerts = [e for e in entries if e.alert]
         assert len(alerts) > 0
+
+
+class TestInputValidation:
+    def test_unsupported_year_raises(self):
+        with pytest.raises(ValueError, match="Unsupported year"):
+            list_obligations(_NIT, year=2025)
+
+    def test_unsupported_iva_regime_raises(self):
+        with pytest.raises(ValueError, match="Unsupported iva_regime"):
+            list_obligations(_NIT, iva_regime="mensual")
+
+
+class TestLastDigitWithDV:
+    def test_strips_dv_appended_with_dash(self):
+        from app.services.tax_calendar_service import _last_digit
+
+        # Base NIT ends in 6, DV is 7 — must return 6 not 7
+        assert _last_digit("900123456-7") == 6
+
+    def test_strips_dots_and_dv(self):
+        from app.services.tax_calendar_service import _last_digit
+
+        assert _last_digit("900.123.456-7") == 6
+
+    def test_no_dv_returns_last_digit(self):
+        from app.services.tax_calendar_service import _last_digit
+
+        assert _last_digit("900123456") == 6
+
+    def test_empty_raises(self):
+        from app.services.tax_calendar_service import _last_digit
+
+        with pytest.raises(ValueError):
+            _last_digit("")
+
+    def test_non_digit_raises(self):
+        from app.services.tax_calendar_service import _last_digit
+
+        with pytest.raises(ValueError):
+            _last_digit("abc")

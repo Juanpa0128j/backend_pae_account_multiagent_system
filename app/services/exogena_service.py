@@ -168,15 +168,18 @@ def generate_formato_1001(
     nit_norm_retenedor = normalize_nit_dian(company_nit)
     nombre_norm_retenedor = normalize_nombre_dian(settings.nombre or "")
 
-    result: List[Dict[str, Any]] = []
+    # Aggregate by (tercero_nit, concepto_dian) — multiple PUCs can map to the
+    # same DIAN concept code, so we sum them into one row per concept.
+    aggregated: Dict[tuple, Dict[str, Any]] = {}
     for row in rows:
-        tercero_norm = validate_and_normalize_tercero(
-            row.tercero_nit,
-            row.tercero_nombre,
-        )
         concepto = _classify_puc_concepto(row.cuenta_puc)
-        result.append(
-            {
+        key = (row.tercero_nit, concepto)
+        if key not in aggregated:
+            tercero_norm = validate_and_normalize_tercero(
+                row.tercero_nit,
+                row.tercero_nombre,
+            )
+            aggregated[key] = {
                 "formato": "1001",
                 "year": year,
                 "retenedor_nit": nit_norm_retenedor,
@@ -184,13 +187,15 @@ def generate_formato_1001(
                 "tercero_nit": tercero_norm["nit"],
                 "tercero_nombre": tercero_norm["nombre"],
                 "concepto_dian": concepto,
-                "total_pagos": int(round(float(row.total_pagos))),
-                "total_retefuente": int(round(float(row.total_retefuente))),
+                "total_pagos": 0,
+                "total_retefuente": 0,
                 "submission_ready": tercero_norm["submission_ready"],
                 "validation_errors": tercero_norm["errors"],
             }
-        )
-    return result
+        aggregated[key]["total_pagos"] += int(round(float(row.total_pagos)))
+        aggregated[key]["total_retefuente"] += int(round(float(row.total_retefuente)))
+
+    return list(aggregated.values())
 
 
 # ---------------------------------------------------------------------------

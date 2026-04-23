@@ -115,7 +115,8 @@ def _build_f300(
 
     iva_generado_19 = _exact_credit(ledger, "240808")
     iva_descontable = _exact_debit(ledger, "240802")
-    iva_neto = max(0.0, iva_generado_19 - iva_descontable)
+    # Preserve sign: positive = IVA a pagar, negative = saldo a favor del período
+    iva_neto = iva_generado_19 - iva_descontable
 
     fields.append(
         DraftField(
@@ -147,16 +148,29 @@ def _build_f300(
             True,
         )
     )
+    label_89 = (
+        "Total IVA a pagar (calculado)"
+        if iva_neto >= 0
+        else "Saldo a favor del período (calculado)"
+    )
     fields.append(
         DraftField(
             "89",
-            "Total IVA a pagar (calculado)",
+            label_89,
             round(iva_neto, 2),
             "calculado",
             "high",
             False,
         )
     )
+    if iva_neto < 0:
+        warnings.append(
+            DraftWarning(
+                "89",
+                f"Saldo a favor de ${abs(iva_neto):,.2f} — IVA descontable excede al generado. "
+                "Verifique si aplica devolución o imputación al siguiente período.",
+            )
+        )
     fields.append(
         DraftField("97", "Sanciones (si aplica)", 0.0, "input_manual", "low", True)
     )
@@ -289,12 +303,16 @@ def _build_f110(
     ica_deducible = _exact_debit(ledger, "511505") + _exact_debit(ledger, "521505")
     retenciones_favor = _exact_debit(ledger, "135518") + _exact_debit(ledger, "135515")
 
-    renta_liquida = max(
-        0.0, ingresos_brutos - costos_venta - gastos_operacionales - ica_deducible
+    # Renta líquida: clamp at 0 because negative accounting profit does not
+    # generate income tax (pérdida fiscal — carries forward, handled separately).
+    renta_liquida_raw = (
+        ingresos_brutos - costos_venta - gastos_operacionales - ica_deducible
     )
+    renta_liquida = max(0.0, renta_liquida_raw)
     tasa_renta = float(settings.tasa_renta) if settings.tasa_renta else 0.35
     impuesto_basico = round(renta_liquida * tasa_renta, 2)
-    total_a_cargo = max(0.0, impuesto_basico - retenciones_favor)
+    # Preserve sign of saldo: negative = saldo a favor (retenciones exceed tax)
+    total_a_cargo = impuesto_basico - retenciones_favor
 
     fields.extend(
         [
@@ -357,7 +375,11 @@ def _build_f110(
             ),
             DraftField(
                 "88",
-                "Total impuesto a cargo",
+                (
+                    "Total impuesto a cargo"
+                    if total_a_cargo >= 0
+                    else "Saldo a favor (retenciones exceden impuesto)"
+                ),
                 round(total_a_cargo, 2),
                 "calculado",
                 "medium",
@@ -377,6 +399,23 @@ def _build_f110(
             DraftField("97", "Sanciones (si aplica)", 0.0, "input_manual", "low", True),
         ]
     )
+
+    if renta_liquida_raw < 0:
+        warnings.append(
+            DraftWarning(
+                "72",
+                f"Pérdida fiscal estimada de ${abs(renta_liquida_raw):,.2f} — renta líquida gravable clamped a $0. "
+                "Consulte Art. 147 ET sobre compensación de pérdidas.",
+            )
+        )
+    if total_a_cargo < 0:
+        warnings.append(
+            DraftWarning(
+                "88",
+                f"Saldo a favor de ${abs(total_a_cargo):,.2f} — retenciones exceden el impuesto. "
+                "Verifique si aplica devolución o compensación (Art. 815 ET).",
+            )
+        )
 
     warnings.extend(
         [
@@ -424,7 +463,8 @@ def _build_ica(
     ica_a_pagar = round(ingresos_brutos * tasa_ica, 2)
     avisos_tableros = round(ica_a_pagar * 0.15, 2)
     reteica_favor = _exact_debit(ledger, "2368")
-    total_a_pagar = max(0.0, ica_a_pagar + avisos_tableros - reteica_favor)
+    # Preserve sign: negative = saldo a favor (reteica excedió ICA+avisos)
+    total_a_pagar = ica_a_pagar + avisos_tableros - reteica_favor
 
     fields.extend(
         [
@@ -468,7 +508,11 @@ def _build_ica(
             ),
             DraftField(
                 "10",
-                "Total ICA a pagar (estimado)",
+                (
+                    "Total ICA a pagar (estimado)"
+                    if total_a_pagar >= 0
+                    else "Saldo a favor (reteica excede ICA+avisos)"
+                ),
                 round(total_a_pagar, 2),
                 "calculado",
                 "medium",
@@ -476,6 +520,15 @@ def _build_ica(
             ),
         ]
     )
+
+    if total_a_pagar < 0:
+        warnings.append(
+            DraftWarning(
+                "10",
+                f"Saldo a favor de ${abs(total_a_pagar):,.2f} — ReteICA recibida excede ICA+avisos. "
+                "Verifique si aplica devolución municipal o imputación al siguiente período.",
+            )
+        )
 
     warnings.extend(
         [
@@ -597,6 +650,18 @@ def get_draft(db: Session, draft_id: str) -> Optional[TaxDeclarationDraft]:
     )
 
 
+class FieldNotFoundError(ValueError):
+    """Raised when attempting to update a renglon that does not exist on the draft."""
+
+
+class FieldNotEditableError(ValueError):
+    """Raised when attempting to update a field that is not flagged requires_review."""
+
+
+# Renglones that must never be edited through this endpoint.
+_RESERVED_RENGLONES = frozenset({"_disclaimer"})
+
+
 def update_draft_field(
     db: Session,
     draft_id: str,
@@ -606,10 +671,27 @@ def update_draft_field(
     """
     Accountant updates a requires_review field value.
     Marks the field requires_review=False and confidence=high after update.
+
+    Raises:
+        FieldNotFoundError: if `renglon` is not on the draft
+        FieldNotEditableError: if field is reserved or not flagged for review
     """
+    if renglon in _RESERVED_RENGLONES:
+        raise FieldNotEditableError(
+            f"Renglon {renglon!r} is reserved and cannot be edited"
+        )
+
     draft = get_draft(db, draft_id)
     if not draft:
         return None
+
+    target = next((f for f in draft.fields_json if f["renglon"] == renglon), None)
+    if target is None:
+        raise FieldNotFoundError(f"Renglon {renglon!r} not found on draft {draft_id!r}")
+    if not target.get("requires_review", False):
+        raise FieldNotEditableError(
+            f"Renglon {renglon!r} is not flagged requires_review=True and cannot be edited"
+        )
 
     updated_fields = []
     for f in draft.fields_json:

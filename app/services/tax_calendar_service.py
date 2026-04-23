@@ -31,10 +31,28 @@ from typing import Optional
 
 
 def _last_digit(nit: str) -> int:
-    """Return the last digit of a NIT (stripped of dots, spaces, DV)."""
-    clean = nit.strip().replace(".", "").replace("-", "").replace(" ", "")
-    # Strip verification digit if present (format 'NIT-DV' already handled above)
-    return int(clean[-1])
+    """
+    Return the last digit of the base NIT (DV excluded).
+
+    Accepts formats like "900123456", "900.123.456", "900.123.456-7".
+    If a verification digit is appended via '-', it is dropped before
+    taking the last digit of the base NIT.
+    """
+    if not nit or not nit.strip():
+        raise ValueError("NIT is empty")
+
+    raw = nit.strip().replace(".", "").replace(" ", "")
+
+    # NIT-DV format: drop the DV segment
+    if "-" in raw:
+        base = raw.split("-", 1)[0]
+    else:
+        base = raw
+
+    if not base or not base.isdigit():
+        raise ValueError(f"Invalid NIT: {nit!r}")
+
+    return int(base[-1])
 
 
 # deadline_map: last_digit (0-9) -> day of month
@@ -320,6 +338,10 @@ def get_deadline(
     return None
 
 
+SUPPORTED_YEARS = frozenset({2026})
+SUPPORTED_IVA_REGIMES = frozenset({"bimestral", "cuatrimestral"})
+
+
 def list_obligations(
     nit: str,
     year: int = 2026,
@@ -339,7 +361,20 @@ def list_obligations(
 
     Returns:
         List of CalendarEntry sorted ascending by deadline
+
+    Raises:
+        ValueError: if year or iva_regime is not supported
     """
+    if year not in SUPPORTED_YEARS:
+        raise ValueError(
+            f"Unsupported year: {year}. Supported: {sorted(SUPPORTED_YEARS)}"
+        )
+    if iva_regime not in SUPPORTED_IVA_REGIMES:
+        raise ValueError(
+            f"Unsupported iva_regime: {iva_regime!r}. "
+            f"Must be one of {sorted(SUPPORTED_IVA_REGIMES)}"
+        )
+
     today = today or date.today()
     entries: list[CalendarEntry] = []
 

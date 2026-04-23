@@ -439,3 +439,119 @@ class TestUpdateDraftField:
         db.query.return_value.filter.return_value.first.return_value = None
         result = update_draft_field(db, "nonexistent", "84", 100.0)
         assert result is None
+
+    def test_raises_on_missing_renglon(self):
+        from app.services.tax_declaration_service import FieldNotFoundError
+
+        draft = MagicMock()
+        draft.fields_json = [
+            {
+                "renglon": "84",
+                "label": "x",
+                "value": 0.0,
+                "source": "x",
+                "confidence": "low",
+                "requires_review": True,
+            }
+        ]
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = draft
+
+        with pytest.raises(FieldNotFoundError):
+            update_draft_field(db, "some-id", "999", 100.0)
+
+    def test_raises_on_non_editable_field(self):
+        from app.services.tax_declaration_service import FieldNotEditableError
+
+        draft = MagicMock()
+        draft.fields_json = [
+            {
+                "renglon": "89",
+                "label": "Calculated",
+                "value": 1_000.0,
+                "source": "calculado",
+                "confidence": "high",
+                "requires_review": False,
+            }
+        ]
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = draft
+
+        with pytest.raises(FieldNotEditableError):
+            update_draft_field(db, "some-id", "89", 500.0)
+
+    def test_raises_on_reserved_disclaimer(self):
+        from app.services.tax_declaration_service import FieldNotEditableError
+
+        db = MagicMock()
+        with pytest.raises(FieldNotEditableError):
+            update_draft_field(db, "some-id", "_disclaimer", 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Saldo a favor preservation (Copilot review fix)
+# ---------------------------------------------------------------------------
+
+
+class TestSaldoAFavor:
+    def _make_saldo_ledger_f300(self):
+        """Ledger where IVA descontable > IVA generado → saldo a favor."""
+        return [
+            {
+                "account": "240808",
+                "name": "IVA Generado",
+                "total_debit": 0.0,
+                "total_credit": 500_000.0,
+                "net_balance": -500_000.0,
+            },
+            {
+                "account": "240802",
+                "name": "IVA Descontable",
+                "total_debit": 2_000_000.0,
+                "total_credit": 0.0,
+                "net_balance": 2_000_000.0,
+            },
+        ]
+
+    @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
+    def test_f300_preserves_negative_saldo_a_favor(self, mock_ledger):
+        settings = _make_settings()
+        mock_ledger.return_value = self._make_saldo_ledger_f300()
+        draft = generate_declaration_draft(
+            _mock_db(settings), "900123456", "F300", date(2026, 1, 1), date(2026, 2, 28)
+        )
+        fields = {f["renglon"]: f for f in draft.fields_json}
+        # 500k - 2000k = -1.5M saldo a favor, must NOT be clamped to 0
+        assert fields["89"]["value"] == pytest.approx(-1_500_000.0)
+        assert "Saldo a favor" in fields["89"]["label"]
+        # Warning emitted
+        warning_fields = {w["field"] for w in draft.warnings_json}
+        assert "89" in warning_fields
+
+    @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
+    def test_ica_preserves_negative_saldo_a_favor(self, mock_ledger):
+        settings = _make_settings()
+        ledger = [
+            {
+                "account": "4135",
+                "name": "Ingresos",
+                "total_debit": 0.0,
+                "total_credit": 100_000.0,
+                "net_balance": -100_000.0,
+            },
+            {
+                "account": "2368",
+                "name": "ReteICA recibida",
+                "total_debit": 500_000.0,  # excess ReteICA
+                "total_credit": 0.0,
+                "net_balance": 500_000.0,
+            },
+        ]
+        mock_ledger.return_value = ledger
+        draft = generate_declaration_draft(
+            _mock_db(settings), "900123456", "ICA", date(2026, 1, 1), date(2026, 3, 31)
+        )
+        fields = {f["renglon"]: f for f in draft.fields_json}
+        # total_a_pagar = ICA + avisos - reteica_favor → negative
+        assert fields["10"]["value"] < 0
+        assert "Saldo a favor" in fields["10"]["label"]

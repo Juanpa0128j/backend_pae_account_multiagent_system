@@ -146,6 +146,44 @@ def _get_conceptos_by_tercero(
     ]
 
 
+def _get_all_conceptos(
+    db: Session,
+    company_nit: str,
+    year: int,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Single-query monthly breakdown for all terceros. Returns a dict keyed by
+    tercero_nit with the list of monthly rows, avoiding the N+1 pattern.
+    """
+    query = sql_text("""
+        SELECT
+            j.tercero_nit,
+            TO_CHAR(j.fecha, 'YYYY-MM') AS mes,
+            COALESCE(SUM(CASE WHEN j.cuenta_puc ~ '^[56]' THEN j.debito ELSE 0 END), 0) AS pagos,
+            COALESCE(SUM(CASE WHEN j.cuenta_puc = '2365' THEN j.credito ELSE 0 END), 0) AS retefuente,
+            COALESCE(SUM(CASE WHEN j.cuenta_puc = '2368' THEN j.credito ELSE 0 END), 0) AS reteica
+        FROM journal_entry_lines j
+        WHERE j.company_nit = :company_nit
+          AND EXTRACT(YEAR FROM j.fecha) = :year
+          AND j.tercero_nit IS NOT NULL
+          AND j.tercero_nit != ''
+        GROUP BY j.tercero_nit, mes
+        ORDER BY j.tercero_nit, mes
+        """)
+    rows = db.execute(query, {"company_nit": company_nit, "year": year}).fetchall()
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row.tercero_nit), []).append(
+            {
+                "mes": row.mes,
+                "pagos": float(row.pagos),
+                "retefuente": float(row.retefuente),
+                "reteica": float(row.reteica),
+            }
+        )
+    return grouped
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -181,6 +219,8 @@ def generate_f220_certificates(
         raise ValueError(f"CompanySettings not found for NIT: {company_nit}")
 
     rows = _get_payments_by_tercero(db, company_nit, year)
+    # Batch fetch all monthly breakdowns in one query to avoid N+1
+    all_conceptos = _get_all_conceptos(db, company_nit, year)
     certs: List[F220Certificate] = []
 
     for row in rows:
@@ -191,7 +231,7 @@ def generate_f220_certificates(
             if needs_review
             else None
         )
-        conceptos = _get_conceptos_by_tercero(db, company_nit, tercero_nit, year)
+        conceptos = all_conceptos.get(tercero_nit, [])
 
         certs.append(
             F220Certificate(
