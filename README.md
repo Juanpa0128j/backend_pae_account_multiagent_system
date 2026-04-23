@@ -41,6 +41,9 @@ Key features:
   16 Ley 43/1990 PCGA principles, all indexed with 1024-dim BGE-M3 embeddings.
 - **Supervisor FSM**: Routes three pipelines (ingest / process / reporting) with structured
   `agent_log` execution traces at every node.
+- **Tax declaration drafts**: Pre-filled F300 (IVA), F350 (Retefuente), F110 (Renta PJ),
+  and ICA municipal forms generated from journal entries for accountant review before filing.
+- **DIAN 2026 calendar**: Obligation deadlines computed per NIT last digit with 30-day alerts.
 
 ---
 
@@ -394,6 +397,7 @@ alembic downgrade -1
 | `8fb1b0855393` | Initial schema |
 | `c3f8a2d91b5e` | `vector_documents` table + HNSW index + B-tree index on `collection_name` |
 | `d4e5f6a7b8c9` | `content_tsv` GENERATED tsvector column + GIN index (enables hybrid search) |
+| `85397898945d` | `tax_declaration_drafts` table + `es_declarante` column on `company_settings` |
 
 ---
 

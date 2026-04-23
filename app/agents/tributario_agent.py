@@ -6,12 +6,14 @@ Role (docs/Diseño de arquitectura de agente):
   - Calculates Retefuente, ReteICA, IVA using deterministic Python functions.
   - Queries RAG normativo for relevant legal articles.
   - Calls Gemini to validate rates and produce legal justification (TaxJustification).
-  - Returns TributarioOutput enriched with tax liability accounts (240815 Retefuente, 236540 ReteICA, 240802 IVA descontable).
+  - Returns TributarioOutput enriched with tax liability accounts (2365 Retefuente, 2368 ReteICA, 240802 IVA descontable).
 
-Tax rates (Colombian legislation):
-  - Retefuente: 11% servicios (Art. 383 ET), 3% bienes (Art. 401 ET), 10% arrendamiento
-  - ReteICA:    0.69% default Cali (Decreto 2048/1992)
-  - IVA:        19% general (Art. 477 ET), 5% reducida, 0% exento
+Tax rates (Colombian legislation, UVT 2026 = $52.374):
+  - Retefuente servicios: 4% declarantes, 6% no declarantes (Art. 401 ET)
+  - Retefuente compras:   2.5% declarantes, 3.5% no declarantes (Art. 401 ET)
+  - Retefuente honorarios/comisiones PJ: 11%; no declarantes: 10%
+  - ReteICA:    0.69% default (Decreto 2048/1992)
+  - IVA:        19% general (Art. 468 ET), 5% reducida, 0% exento
 """
 
 import logging
@@ -30,9 +32,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 TASA_RETEFUENTE: dict[str, Decimal] = {
-    "servicios": Decimal("0.11"),  # Art. 383 ET — servicios generales
-    "bienes": Decimal("0.03"),  # Art. 401 ET — compras de bienes
-    "arrendamiento": Decimal("0.10"),  # Art. 401 ET — arrendamientos
+    # Servicios generales — Art. 401 ET, tarifa depende de si es declarante
+    "servicios": Decimal("0.04"),  # declarantes de renta (default)
+    "servicios_no_declarante": Decimal("0.06"),  # no declarantes
+    # Compras generales — Art. 401 ET
+    "bienes": Decimal("0.025"),  # declarantes
+    "bienes_no_declarante": Decimal("0.035"),  # no declarantes
+    # Honorarios y comisiones — Art. 392 ET
+    "honorarios": Decimal("0.11"),  # personas jurídicas o PN contratos >3.300 UVT
+    "honorarios_no_declarante": Decimal("0.10"),  # no declarantes
+    # Arrendamientos
+    "arrendamiento_muebles": Decimal("0.04"),  # bienes muebles
+    "arrendamiento": Decimal("0.035"),  # bienes inmuebles declarantes
+    "arrendamiento_no_declarante": Decimal("0.035"),  # bienes inmuebles no declarantes
 }
 TASA_RETEICA_DEFAULT = Decimal("0.0069")  # Tarifa Cali / default municipal
 
@@ -44,7 +56,9 @@ TASA_IVA: dict[str, Decimal] = {
 
 # ICA — Impuesto de Industria y Comercio (Ley 14/1983, Decreto 1333/1986)
 TASA_ICA_DEFAULT = Decimal("0.00690")  # 6.9‰ — conservative national reference
-CUENTA_ICA_GASTO = "540101"  # Gasto ICA
+CUENTA_ICA_GASTO_ADMIN = "511505"  # Gasto ICA administración
+CUENTA_ICA_GASTO_VENTAS = "521505"  # Gasto ICA ventas
+CUENTA_ICA_GASTO = "511505"  # alias for backward compat — default to admin
 CUENTA_ICA_PASIVO = "240808"  # ICA por Pagar
 
 # Renta — Art. 240 ET (Ley 2277/2022, vigente año fiscal 2023+)
@@ -58,10 +72,13 @@ PUC_SERVICIOS_END = 5999
 PUC_INGRESOS_START = 4000
 PUC_INGRESOS_END = 4999
 
-# Tax liability PUC sub-accounts — aligned with persist_node._build_journal_entries
-CUENTA_RETEFUENTE = "240815"  # Retención en la Fuente - Servicios
-CUENTA_RETEICA = "236540"  # ReteICA por pagar
-CUENTA_IVA = "240802"  # IVA descontable
+# Tax liability PUC accounts — corrected per Carolina García, Contadora Pública
+CUENTA_RETEFUENTE = "2365"  # Retención en la Fuente por pagar (pasivo)
+CUENTA_RETEICA = "2368"  # Retención ICA por pagar (pasivo)
+CUENTA_IVA = "240802"  # IVA descontable (activo)
+# Retenciones recibidas (que nos practicaron) — activo corriente
+CUENTA_RETEFTE_RECIBIDA = "135518"  # Anticipo impuesto renta (retenciones a favor)
+CUENTA_RETEFTE_RECIBIDA_ALT = "135515"  # Autorretenciones a favor
 
 
 # ---------------------------------------------------------------------------

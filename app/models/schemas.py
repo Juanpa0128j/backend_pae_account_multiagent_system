@@ -104,9 +104,12 @@ class CompanySettingsRequest(BaseModel):
     ciudad: Optional[str] = None
     codigo_ciiu: Optional[str] = None
     iva_responsable: bool = True
-    tasa_retefuente_servicios: float = 0.11
-    tasa_retefuente_bienes: float = 0.03
-    tasa_retefuente_arrendamiento: float = 0.10
+    es_declarante: bool = True  # True=declarante de renta → lower retefuente rates
+    tasa_retefuente_servicios: float = (
+        0.04  # 4% servicios declarantes (Art. 401 ET, 2026)
+    )
+    tasa_retefuente_bienes: float = 0.025  # 2.5% compras declarantes
+    tasa_retefuente_arrendamiento: float = 0.035  # 3.5% inmuebles declarantes
     tasa_reteica: float = 0.0069
     tasa_iva_general: float = 0.19
     tasa_ica: float = 0.00690  # ICA on gross income — Ley 14/1983
