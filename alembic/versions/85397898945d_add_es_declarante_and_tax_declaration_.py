@@ -96,9 +96,9 @@ def upgrade() -> None:
         ["id"],
         unique=False,
     )
-    op.drop_index(op.f("ix_chat_messages_created_at"), table_name="chat_messages")
+    op.execute("DROP INDEX IF EXISTS ix_chat_messages_created_at")
     op.create_index(op.f("ix_chat_messages_id"), "chat_messages", ["id"], unique=False)
-    op.drop_index(op.f("ix_chat_sessions_created_at"), table_name="chat_sessions")
+    op.execute("DROP INDEX IF EXISTS ix_chat_sessions_created_at")
     op.create_index(op.f("ix_chat_sessions_id"), "chat_sessions", ["id"], unique=False)
     op.add_column(
         "company_settings",
@@ -135,27 +135,18 @@ def upgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'direct'::character varying"),
     )
-    op.drop_index(
-        op.f("ix_financial_statements_entity_nit"), table_name="financial_statements"
-    )
-    op.drop_index(
-        op.f("ix_financial_statements_entity_type_period"),
-        table_name="financial_statements",
-    )
-    op.drop_index(
-        op.f("ix_vector_documents_content_tsv"),
-        table_name="vector_documents",
-        postgresql_using="gin",
-    )
-    op.drop_index(
-        op.f("ix_vector_documents_embedding_hnsw"),
-        table_name="vector_documents",
-        postgresql_ops={"embedding": "vector_cosine_ops"},
-        postgresql_with={"m": "16", "ef_construction": "64"},
-        postgresql_using="hnsw",
-    )
-    op.drop_column("vector_documents", "content_tsv")
-    op.drop_column("vector_documents", "embedding")
+    op.execute("DROP INDEX IF EXISTS ix_financial_statements_entity_nit")
+    op.execute("DROP INDEX IF EXISTS ix_financial_statements_entity_type_period")
+    op.execute("DROP INDEX IF EXISTS ix_vector_documents_content_tsv")
+    op.execute("DROP INDEX IF EXISTS ix_vector_documents_embedding_hnsw")
+    # Columns may already be absent on a fresh CI database — drop only if present
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    vd_cols = {c["name"] for c in inspector.get_columns("vector_documents")}
+    if "content_tsv" in vd_cols:
+        op.drop_column("vector_documents", "content_tsv")
+    if "embedding" in vd_cols:
+        op.drop_column("vector_documents", "embedding")
     # ### end Alembic commands ###
 
 
