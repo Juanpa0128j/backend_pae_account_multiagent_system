@@ -36,7 +36,6 @@ from sqlalchemy.orm import Session
 from app.services import db_service
 from app.models.database import CompanySettings, TaxDeclarationDraft
 
-
 # ---------------------------------------------------------------------------
 # Internal data structures
 # ---------------------------------------------------------------------------

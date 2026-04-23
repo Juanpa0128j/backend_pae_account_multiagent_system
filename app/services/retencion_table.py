@@ -19,7 +19,6 @@ from decimal import Decimal
 from enum import Enum
 from typing import Optional
 
-
 UVT_2026: int = 52_374
 
 

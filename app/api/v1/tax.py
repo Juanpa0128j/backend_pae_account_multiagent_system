@@ -198,6 +198,11 @@ from app.services.tax_declaration_service import (  # noqa: E402
     update_draft_field,
 )
 from app.services.tax_calendar_service import list_obligations  # noqa: E402
+from app.services.certificate_service import generate_f220_certificates  # noqa: E402
+from app.services.exogena_service import (  # noqa: E402
+    generate_formato_1001,
+    generate_formato_2276,
+)
 
 
 class GenerateDraftRequest(BaseModel):
@@ -342,4 +347,86 @@ def api_tax_calendar(
             }
             for e in entries
         ],
+    }
+
+
+@router.post(
+    "/certificates/f220",
+    summary="Generate F220 retention certificates for all terceros",
+)
+def api_generate_f220(
+    company_nit: str = Query(..., description="Company NIT (retenedor)"),
+    year: int = Query(..., description="Tax year (e.g. 2025)"),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Generate F220 Certificado de Retención en la Fuente for every tercero
+    that received payments subject to Retefuente or ReteICA during the year.
+
+    Returns one certificate per tercero. Fields marked requires_review=True
+    need accountant action before delivery (Art. 381 ET, Ley 43/1990).
+    """
+    try:
+        certs = generate_f220_certificates(db=db, company_nit=company_nit, year=year)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "company_nit": company_nit,
+        "year": year,
+        "total_certificates": len(certs),
+        "certificates": [c.to_dict() for c in certs],
+    }
+
+
+_EXOGENA_GENERATORS = {
+    "1001": generate_formato_1001,
+    "2276": generate_formato_2276,
+}
+
+
+@router.get(
+    "/exogena/{formato}",
+    summary="Generate DIAN exógena (medios magnéticos) data",
+)
+def api_exogena(
+    formato: str,
+    company_nit: str = Query(..., description="Reporting company NIT"),
+    year: int = Query(..., description="Tax year (e.g. 2025)"),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Generate normalized exógena data for DIAN medios magnéticos.
+
+    Supported formats:
+      - 1001: Pagos o abonos en cuenta y retenciones practicadas
+      - 2276: Ingresos recibidos por personas naturales/jurídicas
+
+    All NIT values are digit-only; names are UPPERCASE with accents removed
+    and Ñ→N per DIAN strict normalization (Resolución 000162/2023).
+    Amounts are integer pesos.
+
+    Fields with submission_ready=False have validation_errors that must be
+    corrected before DIAN submission.
+    """
+    generator = _EXOGENA_GENERATORS.get(formato)
+    if not generator:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Formato '{formato}' no soportado. Use: {list(_EXOGENA_GENERATORS)}",
+        )
+
+    try:
+        rows = generator(db=db, company_nit=company_nit, year=year)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    invalid_count = sum(1 for r in rows if not r.get("submission_ready", True))
+    return {
+        "formato": formato,
+        "company_nit": company_nit,
+        "year": year,
+        "total_rows": len(rows),
+        "invalid_rows": invalid_count,
+        "rows": rows,
     }
