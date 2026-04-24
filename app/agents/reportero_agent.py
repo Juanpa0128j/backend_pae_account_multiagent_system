@@ -11,7 +11,7 @@ Supported report types (state["report_type"]):
   - "pnl"          → Estado de Resultados (Profit & Loss)
   - "cashflow"     → Flujo de Caja (Cash Flow — direct method, class 11 accounts)
   - "iva"          → Reporte IVA (accounts 240808 / 240802)
-  - "withholdings" → Retenciones (accounts 240815 / 236540)
+  - "withholdings" → Retenciones (accounts 2365 / 2368)
   - "analysis"     → Análisis Financiero Integral (ratios, predicciones, LLM narrative)
 
 Filter params (state["report_params"]):
@@ -52,11 +52,11 @@ _PREFIX_PASIVOS_CORRIENTES = (
 )  # Obligaciones, Proveedores, Cuentas por pagar
 _PREFIX_INVENTARIOS = "14"  # Inventarios (excluded from acid test)
 
-# Specific tax retention accounts
+# Specific tax retention accounts — corrected per Carolina García, Contadora Pública
 _CUENTA_IVA_GENERADO = "240808"
 _CUENTA_IVA_DESCONTABLE = "240802"
-_CUENTA_RETEFUENTE = "240815"
-_CUENTA_RETEICA = "236540"
+_CUENTA_RETEFUENTE = "2365"  # Retención en la Fuente por pagar (pasivo)
+_CUENTA_RETEICA = "2368"  # Retención ICA por pagar (pasivo)
 
 _VALID_REPORT_TYPES = frozenset(
     {"balance", "pnl", "cashflow", "iva", "withholdings", "analysis"}

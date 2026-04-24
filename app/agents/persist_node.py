@@ -1192,8 +1192,8 @@ def _build_journal_entries(
     - DEBIT the expense account (PUC) for base (total - IVA)
     - DEBIT IVA descontable (240802) if IVA > 0
     - CREDIT vendor payable (220505) for base + IVA - retenciones
-    - CREDIT retefuente (240815) if retention > 0
-    - CREDIT reteICA (236540) if reteica > 0
+    - CREDIT retefuente (2365) if retention > 0
+    - CREDIT reteICA (2368) if reteica > 0
     """
 
     entries = []
@@ -1244,8 +1244,8 @@ def _build_journal_entries(
         entries.append(
             {
                 "fecha": fecha_iso,
-                "cuenta": "240815",
-                "descripcion": "Retencion en la Fuente - Servicios",
+                "cuenta": "2365",
+                "descripcion": "Retencion en la Fuente por pagar",
                 "tercero_nit": nit,
                 "detalle": f"Retefuente {descripcion}",
                 "debito": "0",
@@ -1257,8 +1257,8 @@ def _build_journal_entries(
         entries.append(
             {
                 "fecha": fecha_iso,
-                "cuenta": "236540",
-                "descripcion": "ReteICA por pagar",
+                "cuenta": "2368",
+                "descripcion": "Retencion ICA por pagar",
                 "tercero_nit": nit,
                 "detalle": f"ReteICA {descripcion}",
                 "debito": "0",

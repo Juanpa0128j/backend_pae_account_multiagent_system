@@ -21,9 +21,7 @@ class Settings(BaseSettings):
     # Document classifier uses a stronger model — the pre-refactor
     # doc_classifier hardcoded gpt-4o-mini for this task and classification
     # accuracy regressed when the main extraction model (nano) took over.
-    openai_classifier_model: str = Field(
-        "gpt-4o-mini", alias="OPENAI_CLASSIFIER_MODEL"
-    )
+    openai_classifier_model: str = Field("gpt-4o-mini", alias="OPENAI_CLASSIFIER_MODEL")
 
     # --- Groq (second fallback) --------------------------------------------
     groq_api_key: str = Field("", alias="GROQ_API_KEY")

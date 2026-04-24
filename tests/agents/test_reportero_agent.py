@@ -7,7 +7,7 @@ Coverage:
     2.  P&L report — aggregates class 4/5/6 PUC accounts correctly
     3.  Cash flow report — filters class 11XX accounts
     4.  IVA report — reads accounts 240808 / 240802
-    5.  Withholdings report — reads accounts 240815 / 236540
+    5.  Withholdings report — reads accounts 2365 / 2368
     6.  Missing report_type sets error
     7.  Invalid report_type sets error
     8.  Upstream error passthrough — node returns without touching result
@@ -119,14 +119,14 @@ _LEDGER = [
     },
     # Retenciones
     {
-        "account": "240815",
+        "account": "2365",
         "name": "Retefuente por Pagar",
         "total_debit": 0.0,
         "total_credit": 235_000.0,
         "net_balance": -235_000.0,
     },
     {
-        "account": "236540",
+        "account": "2368",
         "name": "ReteICA por Pagar",
         "total_debit": 0.0,
         "total_credit": 65_000.0,
@@ -816,9 +816,9 @@ class TestReporteroNodeRAGEnrichment:
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
 
-        assert (
-            result_state.get("error") is None
-        ), f"RAG failure set error for report_type={report_type!r}"
+        assert result_state.get("error") is None, (
+            f"RAG failure set error for report_type={report_type!r}"
+        )
         assert result_state["result"]["status"] == "ok"
 
 

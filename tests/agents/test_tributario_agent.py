@@ -159,18 +159,21 @@ def _mock_llm_and_rag(mock_rag_cls, mock_llm_fn):
 
 
 def test_calc_retefuente_servicios():
+    # 4% servicios declarantes — Art. 401 ET, tabla 2026
     result = _calc_retefuente(Decimal("1500000"), "servicios")
-    assert result == Decimal("165000.00")
+    assert result == Decimal("60000.00")
 
 
 def test_calc_retefuente_bienes():
+    # 2.5% compras declarantes — Art. 401 ET, tabla 2026
     result = _calc_retefuente(Decimal("1000000"), "bienes")
-    assert result == Decimal("30000.00")
+    assert result == Decimal("25000.00")
 
 
 def test_calc_retefuente_arrendamiento():
+    # 3.5% arrendamiento inmuebles — Art. 401 ET, tabla 2026
     result = _calc_retefuente(Decimal("1000000"), "arrendamiento")
-    assert result == Decimal("100000.00")
+    assert result == Decimal("35000.00")
 
 
 def test_calc_reteica():
@@ -250,8 +253,8 @@ def test_retefuente_servicios_11_percent(mock_rag_cls, mock_llm_fn):
 
     impuestos = result["tributario_output"]["impuestos"]
     retefuente = next(i for i in impuestos if i["tipo_impuesto"] == "retefuente")
-    assert Decimal(retefuente["valor_impuesto"]) == Decimal("165000.00")
-    assert retefuente["cuenta_puc"] == "240815"
+    assert Decimal(retefuente["valor_impuesto"]) == Decimal("60000.00")
+    assert retefuente["cuenta_puc"] == "2365"
 
 
 @patch("app.agents.tributario_agent.get_llm_client")
@@ -265,7 +268,7 @@ def test_reteica_applied(mock_rag_cls, mock_llm_fn):
     impuestos = result["tributario_output"]["impuestos"]
     reteica = next(i for i in impuestos if i["tipo_impuesto"] == "reteica")
     assert Decimal(reteica["valor_impuesto"]) == Decimal("10350.00")
-    assert reteica["cuenta_puc"] == "236540"
+    assert reteica["cuenta_puc"] == "2368"
 
 
 @patch("app.agents.tributario_agent.get_llm_client")
@@ -298,22 +301,22 @@ def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_llm_fn):
     # contador already covers it. Check that the IVA sub-account (240802) is absent.
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
     new_iva_entries = [a for a in enriquecidos if a.get("cuenta_puc") == "240802"]
-    assert (
-        len(new_iva_entries) == 0
-    ), "Tributario must not add IVA when already in asientos"
+    assert len(new_iva_entries) == 0, (
+        "Tributario must not add IVA when already in asientos"
+    )
 
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_retefuente_bienes_3_percent(mock_rag_cls, mock_llm_fn):
-    """Retefuente = 3% for bienes (non-5xxx PUC), base 1,000,000."""
+def test_retefuente_bienes_2_5_percent(mock_rag_cls, mock_llm_fn):
+    """Retefuente = 2.5% for bienes declarantes (non-5xxx PUC), base 1,000,000."""
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT_BIENES)
     result = tributario_node(state)
 
     impuestos = result["tributario_output"]["impuestos"]
     retefuente = next(i for i in impuestos if i["tipo_impuesto"] == "retefuente")
-    assert Decimal(retefuente["valor_impuesto"]) == Decimal("30000.00")
+    assert Decimal(retefuente["valor_impuesto"]) == Decimal("25000.00")
 
 
 @patch("app.agents.tributario_agent.get_llm_client")
@@ -412,7 +415,7 @@ def test_rag_fallback_on_failure(mock_rag_cls, mock_llm_fn):
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_journal_entries_enriched_with_tax_accounts(mock_rag_cls, mock_llm_fn):
-    """Enriched asientos contain tax liability accounts (240815, 236540, 240802)."""
+    """Enriched asientos contain tax liability accounts (2365, 2368, 240802)."""
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
     result = tributario_node(state)
@@ -420,10 +423,8 @@ def test_journal_entries_enriched_with_tax_accounts(mock_rag_cls, mock_llm_fn):
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
     cuentas = [a["cuenta_puc"] for a in enriquecidos]
 
-    assert (
-        "240815" in cuentas
-    ), "Retefuente account 240815 missing from enriched asientos"
-    assert "236540" in cuentas, "ReteICA account 236540 missing from enriched asientos"
+    assert "2365" in cuentas, "Retefuente account 2365 missing from enriched asientos"
+    assert "2368" in cuentas, "ReteICA account 2368 missing from enriched asientos"
     assert "240802" in cuentas, "IVA account 240802 missing from enriched asientos"
 
 
@@ -473,7 +474,7 @@ def test_agent_log_entries_written(mock_rag_cls, mock_llm_fn):
 def test_smoke_1500000_servicios(mock_rag_cls, mock_llm_fn):
     """
     Smoke test: $1,500,000 servicios.
-    Expected: retefuente=165,000, reteica=10,350, iva=285,000, total=460,350
+    Expected: retefuente=60,000 (4%), reteica=10,350 (0.69%), iva=285,000 (19%), total=355,350
     """
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
@@ -484,10 +485,10 @@ def test_smoke_1500000_servicios(mock_rag_cls, mock_llm_fn):
         i["tipo_impuesto"]: Decimal(i["valor_impuesto"]) for i in output["impuestos"]
     }
 
-    assert impuestos["retefuente"] == Decimal("165000.00")
+    assert impuestos["retefuente"] == Decimal("60000.00")
     assert impuestos["reteica"] == Decimal("10350.00")
     assert impuestos["IVA"] == Decimal("285000.00")
-    assert Decimal(output["total_impuestos"]) == Decimal("460350.00")
+    assert Decimal(output["total_impuestos"]) == Decimal("355350.00")
 
 
 @patch("app.services.db_service.get_company_settings", return_value=None)
@@ -586,12 +587,12 @@ def test_ica_applied_for_income_transaction(mock_llm_fn, mock_rag_cls):
     assert Decimal(ica_entry["valor_impuesto"]) > Decimal("0")
 
     puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
-    assert (
-        "540101" in puc_codes
-    ), "Gasto ICA (540101) missing from asientos_enriquecidos"
-    assert (
-        "240808" in puc_codes
-    ), "ICA por Pagar (240808) missing from asientos_enriquecidos"
+    assert "511505" in puc_codes, (
+        "Gasto ICA admin (511505) missing from asientos_enriquecidos"
+    )
+    assert "240808" in puc_codes, (
+        "ICA por Pagar (240808) missing from asientos_enriquecidos"
+    )
 
 
 @patch("app.services.db_service.get_company_settings")

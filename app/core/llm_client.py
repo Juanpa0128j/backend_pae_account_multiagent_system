@@ -660,9 +660,7 @@ Y cita fuentes legales."""
                 result = classify_fn(ClassificationResponse, prompt)
                 if not isinstance(result, ClassificationResponse):
                     result = ClassificationResponse.model_validate(
-                        result.model_dump()
-                        if isinstance(result, BaseModel)
-                        else result
+                        result.model_dump() if isinstance(result, BaseModel) else result
                     )
                 return result
             except Exception as exc:

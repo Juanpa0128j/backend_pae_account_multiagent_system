@@ -92,6 +92,9 @@ FastAPI (main.py) → /api/v1/* routers
 | `app/services/financial_statement_service.py` | Derives `FinancialStatement` rows from journal entries; `list_financial_statements`, `derive_financial_statements` |
 | `app/services/nit_utils.py` | Colombian NIT normalization helpers: `normalize_nit`, `normalize_optional_nit` |
 | `app/core/llm_client.py` | Multi-provider LLM client with OpenAI → Gemini → Groq fallback chain |
+| `app/services/retencion_table.py` | Full 2026 retention table (UVT=$52.374, 28 concepts). Source: Carolina García, H&G Abogados |
+| `app/services/tax_declaration_service.py` | Generates pre-filled F300/F350/F110/ICA drafts from journal entries; persists as `TaxDeclarationDraft` |
+| `app/services/tax_calendar_service.py` | DIAN 2026 deadlines per NIT last digit; `list_obligations()` returns sorted `CalendarEntry` list |
 | `data/` | Static seed data: 41 PUC accounts, 50 Estatuto Tributario articles, 16 Ley 43/1990 entries |
 
 ### LLM Usage Convention
@@ -130,6 +133,7 @@ The system handles 13+ Colombian financial document types (facturas, extractos b
 - **LLM calls:** Use `get_llm_client()` for all LLM invocations; it handles provider fallback (OpenAI → Gemini → Groq) automatically.
 - **NIT validation:** Colombian NITs must be cleaned (strip `.` and spaces) before storing. Reject empty strings.
 - **PUC fallback:** When defaulting to account `519595`, emit an explicit `logger.warning`.
+- **Corrected tax liability accounts (2026):** Retefuente por pagar = `2365` (not `240815`); ReteICA por pagar = `2368` (not `236540`); ICA gasto administración = `511505`; ICA gasto ventas = `521505`; Retenciones recibidas = `135518`/`135515`.
 
 ## Testing
 
