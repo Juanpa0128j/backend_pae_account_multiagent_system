@@ -192,12 +192,18 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
     """Build a PipelineTrace from an IngestJob's AuditLog entries.
 
     Returns None if the ingest_job is not found.
+    Returns None for non-terminal states (PENDING_PROCESSING, PROCESSING)
+    so the endpoint can return 409 Conflict.
     Never raises — returns a best-effort trace.
     """
     from app.models.database import AuditLog, IngestStatus
 
     ingest_job = db_service.get_ingest_job(db, ingest_id)
     if not ingest_job:
+        return None
+
+    # Only return traces for terminal states
+    if ingest_job.status not in (IngestStatus.COMPLETED, IngestStatus.FAILED):
         return None
 
     # Query audit logs directly related to this ingest OR related via details->>ingest_id
@@ -211,13 +217,11 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
         .all()
     )
 
-    # Handle all possible statuses correctly
+    # Handle terminal statuses
     if ingest_job.status == IngestStatus.FAILED:
         overall_status = "failed"
-    elif ingest_job.status == IngestStatus.COMPLETED:
-        overall_status = "completed"
     else:
-        overall_status = "running"
+        overall_status = "completed"
 
     steps: list[TraceStep] = []
     total = len(audit_logs)

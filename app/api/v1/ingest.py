@@ -279,8 +279,30 @@ async def get_ingest_status(
 
 @router.get("/{ingest_id}/trace", response_model=PipelineTrace)
 async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
-    """Accountant-facing trace for an ingest job."""
+    """Accountant-facing trace for an ingest job.
+
+    Returns 404 if the job is not found.
+    Returns 409 if the job is still running (not in a terminal state).
+    """
+    from app.models.database import IngestStatus
     from app.services.pipeline_trace_service import build_ingest_trace
+
+    # Check if job exists first
+    job = db_service.get_ingest_job(db, ingest_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+
+    # Check if job is in a terminal state
+    if job.status not in (IngestStatus.COMPLETED, IngestStatus.FAILED):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_category": "job_not_ready",
+                "error_code": "INGEST_NOT_COMPLETE",
+                "message": f"Ingest job {ingest_id} is still processing (status: {job.status.value}).",
+                "remediation": "Wait for the ingest to complete and try again.",
+            },
+        )
 
     trace = build_ingest_trace(ingest_id, db)
     if trace is None:
