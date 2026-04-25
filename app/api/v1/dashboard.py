@@ -110,8 +110,12 @@ async def get_dashboard_stats(
     iva_por_pagar = iva_generado - iva_descontable
 
     # Total retenciones
-    retfte_row = next((r for r in ledger if r["account"] == "240815"), None)
-    retica_row = next((r for r in ledger if r["account"] == "236540"), None)
+    retfte_row = next(
+        (r for r in ledger if r["account"] == "2365"), None
+    )  # Retefuente por pagar — PUC 2026
+    retica_row = next(
+        (r for r in ledger if r["account"] == "2368"), None
+    )  # ReteICA por pagar — PUC 2026
     retfte = (
         float(retfte_row["total_credit"] - retfte_row["total_debit"])
         if retfte_row
@@ -170,8 +174,12 @@ async def get_financial_summary(
     )
 
     # Retenciones
-    retfte_row = next((r for r in ledger if r["account"] == "240815"), None)
-    retica_row = next((r for r in ledger if r["account"] == "236540"), None)
+    retfte_row = next(
+        (r for r in ledger if r["account"] == "2365"), None
+    )  # Retefuente por pagar — PUC 2026
+    retica_row = next(
+        (r for r in ledger if r["account"] == "2368"), None
+    )  # ReteICA por pagar — PUC 2026
     retfte = (
         float(retfte_row["total_credit"] - retfte_row["total_debit"])
         if retfte_row
