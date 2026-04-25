@@ -6,7 +6,7 @@ Replaces mock data with real database queries.
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from app.models.database import (
     TransactionStatus,
 )
 from app.services import db_service
+from app.services.nit_utils import normalize_nit
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,12 @@ async def get_dashboard_stats(
     Returns aggregated top-level metrics for the Dashboard view.
     Queries real data from the database.
     """
+    if company_nit:
+        try:
+            company_nit = normalize_nit(company_nit)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
     # Pending documents
     pending_count = (
         db.query(func.count(TransactionPending.id))
@@ -110,8 +117,12 @@ async def get_dashboard_stats(
     iva_por_pagar = iva_generado - iva_descontable
 
     # Total retenciones
-    retfte_row = next((r for r in ledger if r["account"] == "240815"), None)
-    retica_row = next((r for r in ledger if r["account"] == "236540"), None)
+    retfte_row = next(
+        (r for r in ledger if r["account"] == "2365"), None
+    )  # Retefuente por pagar — PUC 2026
+    retica_row = next(
+        (r for r in ledger if r["account"] == "2368"), None
+    )  # ReteICA por pagar — PUC 2026
     retfte = (
         float(retfte_row["total_credit"] - retfte_row["total_debit"])
         if retfte_row
@@ -149,6 +160,12 @@ async def get_financial_summary(
     Complete financial summary for the dashboard.
     Includes balance sheet totals, P&L, cash position, taxes, and recent activity.
     """
+    if company_nit:
+        try:
+            company_nit = normalize_nit(company_nit)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
     balance = db_service.get_balance_sheet(db, company_nit=company_nit)
     ledger = db_service.get_general_ledger(db, company_nit=company_nit)
 
@@ -170,8 +187,12 @@ async def get_financial_summary(
     )
 
     # Retenciones
-    retfte_row = next((r for r in ledger if r["account"] == "240815"), None)
-    retica_row = next((r for r in ledger if r["account"] == "236540"), None)
+    retfte_row = next(
+        (r for r in ledger if r["account"] == "2365"), None
+    )  # Retefuente por pagar — PUC 2026
+    retica_row = next(
+        (r for r in ledger if r["account"] == "2368"), None
+    )  # ReteICA por pagar — PUC 2026
     retfte = (
         float(retfte_row["total_credit"] - retfte_row["total_debit"])
         if retfte_row

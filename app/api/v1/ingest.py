@@ -10,6 +10,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     status,
 )
@@ -19,6 +20,7 @@ from app.agents.graph import invoke_ingest_pipeline
 from app.core.database import SessionLocal, get_db
 from app.models.database import IngestStatus
 from app.models.schemas import IngestDetailResponse, IngestResponse
+from app.models.trace import PipelineTrace
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
 
@@ -210,7 +212,9 @@ async def upload_file(
 
 
 @router.get("/{ingest_id}", response_model=IngestDetailResponse)
-async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
+async def get_ingest_status(
+    ingest_id: str, request: Request, db: Session = Depends(get_db)
+):
     """Get the status of an ingest job."""
     job = db_service.get_ingest_job(db, ingest_id)
     if not job:
@@ -260,4 +264,47 @@ async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
         "completed_at": job.completed_at,
         "extraction_errors": job.extraction_errors or [],
         "raw_transactions": raw_txs,
+        "error_category": "extraction_error" if job.extraction_errors else None,
+        "error_code": None,
+        "remediation": (
+            "Revisa el formato del archivo. "
+            + " ".join(str(e) for e in job.extraction_errors)
+            if job.extraction_errors
+            else None
+        ),
+        "has_warnings": False,
+        "trace_url": f"{str(request.base_url).rstrip('/')}/api/v1/ingest/{job.id}/trace",
     }
+
+
+@router.get("/{ingest_id}/trace", response_model=PipelineTrace)
+async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
+    """Accountant-facing trace for an ingest job.
+
+    Returns 404 if the job is not found.
+    Returns 409 if the job is still running (not in a terminal state).
+    """
+    from app.models.database import IngestStatus
+    from app.services.pipeline_trace_service import build_ingest_trace
+
+    # Check if job exists first
+    job = db_service.get_ingest_job(db, ingest_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+
+    # Check if job is in a terminal state
+    if job.status not in (IngestStatus.COMPLETED, IngestStatus.FAILED):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_category": "job_not_ready",
+                "error_code": "INGEST_NOT_COMPLETE",
+                "message": f"Ingest job {ingest_id} is still processing (status: {job.status.value}).",
+                "remediation": "Wait for the ingest to complete and try again.",
+            },
+        )
+
+    trace = build_ingest_trace(ingest_id, db)
+    if trace is None:
+        raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+    return trace

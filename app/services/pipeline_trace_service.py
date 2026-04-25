@@ -186,3 +186,90 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
         blockers=blockers,
         give_up=give_up,
     )
+
+
+def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
+    """Build a PipelineTrace from an IngestJob's AuditLog entries.
+
+    Returns None if the ingest_job is not found.
+    Returns None for non-terminal states (PENDING_PROCESSING, PROCESSING)
+    so the endpoint can return 409 Conflict.
+    Never raises — returns a best-effort trace.
+    """
+    from app.models.database import AuditLog, IngestStatus
+
+    ingest_job = db_service.get_ingest_job(db, ingest_id)
+    if not ingest_job:
+        return None
+
+    # Only return traces for terminal states
+    if ingest_job.status not in (IngestStatus.COMPLETED, IngestStatus.FAILED):
+        return None
+
+    # Query audit logs directly related to this ingest OR related via details->>ingest_id
+    audit_logs = (
+        db.query(AuditLog)
+        .filter(
+            (AuditLog.entity_id == ingest_id)
+            | (AuditLog.details["ingest_id"].as_string() == ingest_id)
+        )
+        .order_by(AuditLog.created_at.asc())
+        .all()
+    )
+
+    # Handle terminal statuses
+    if ingest_job.status == IngestStatus.FAILED:
+        overall_status = "failed"
+    else:
+        overall_status = "completed"
+
+    steps: list[TraceStep] = []
+    total = len(audit_logs)
+    for idx, log in enumerate(audit_logs):
+        details = log.details or {}
+        agent = details.get("agent", "ingesta")
+        is_last_and_failed = overall_status == "failed" and idx == total - 1
+        step_status = "failed" if is_last_and_failed else "ok"
+        detail_text = details.get("message") or details.get("summary") or ""
+        ts = log.created_at or datetime.now(timezone.utc)
+        steps.append(
+            TraceStep(
+                agent=agent,
+                started_at=ts,
+                ended_at=ts,
+                status=step_status,
+                summary_es=get_agent_summary_es(agent, failed=is_last_and_failed),
+                details_es=[detail_text] if detail_text else [],
+                suggested_action_es=details.get("suggested_action_es"),
+                technical_ref=f"audit-log-{log.id}",
+            )
+        )
+
+    blockers: list[AuditFinding] = []
+    if ingest_job.extraction_errors:
+        from app.models.audit import AuditTarget, Severity
+
+        msg, action = get_message("INGEST_ERROR", {})
+        for err in ingest_job.extraction_errors:
+            err_str = str(err) or msg
+            blockers.append(
+                AuditFinding(
+                    target=AuditTarget.INGEST,
+                    rule_id="INGEST_ERROR",
+                    severity=Severity.BLOCKER,
+                    fixable=False,
+                    responsible_agent="ingest",
+                    technical_message=err_str,
+                    user_message_es=err_str,
+                    suggested_action_es=action,
+                    evidence={"ingest_id": ingest_id},
+                )
+            )
+
+    return PipelineTrace(
+        process_id=ingest_id,
+        overall_status=overall_status,
+        steps=steps,
+        blockers=blockers,
+        give_up=None,
+    )

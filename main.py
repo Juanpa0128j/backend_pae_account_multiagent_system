@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,15 @@ from app.api.v1 import (
 from app.core.config import settings
 from app.core.database import check_db_connection
 from app.core.exceptions import PAEException, DatabaseException
+
+# Configure default thread pool executor for the event loop.
+# This ensures health checks and other requests remain responsive
+# even when the server is busy processing documents.
+# The default executor is used by asyncio.to_thread() and other operations.
+_loop = asyncio.get_event_loop()
+_loop.set_default_executor(
+    ThreadPoolExecutor(max_workers=20, thread_name_prefix="api_worker")
+)
 
 # Configure logging
 logging.basicConfig(
