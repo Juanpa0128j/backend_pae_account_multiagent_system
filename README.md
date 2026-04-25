@@ -41,6 +41,14 @@ Key features:
   16 Ley 43/1990 PCGA principles, all indexed with 1024-dim BGE-M3 embeddings.
 - **Supervisor FSM**: Routes three pipelines (ingest / process / reporting) with structured
   `agent_log` execution traces at every node.
+- **Deterministic stage auditors**: Ingest, Contador, and Tributario now run rule-based
+  audits that emit structured findings before/alongside LLM evaluation.
+- **Self-improvement loop with guardrails**: Per-agent retry budgets and a global
+  circuit breaker prevent infinite correction loops and produce an explicit give-up record.
+- **Pre-persist integrity gate**: Process-mode persistence is blocked when pre-persist
+  audit findings include `BLOCKER` severity, returning structured `audit_blocker` errors.
+- **Accountant-facing trace endpoint**: `GET /api/v1/process/{process_id}/trace`
+  returns a Spanish pipeline timeline with findings, blockers, and give-up context.
 - **Tax declaration drafts**: Pre-filled F300 (IVA), F350 (Retefuente), F110 (Renta PJ),
   and ICA municipal forms generated from journal entries for accountant review before filing.
 - **DIAN 2026 calendar**: Obligation deadlines computed per NIT last digit with 30-day alerts.
@@ -180,8 +188,9 @@ supervisor
   │                                       tributario → supervisor
   │                                           ↓
   │                                       auditor → supervisor
-  │                                           ├─[approved]─→ db_persist → END
-  │                                           └─[rejected]─→ contador (with feedback)
+  │                                           ├─[approved]──────────────→ db_persist → END
+  │                                           ├─[fixable findings]──────→ responsible agent (budgeted retry)
+  │                                           └─[unfixable/budget hit]──→ error_terminal → END
   └─[mode=reporting]─────────────────────→ reportero → END
 ```
 
@@ -189,7 +198,12 @@ supervisor
 PDF upload → LlamaParse extraction → Gemini interpretation → schema validation (max 3 retries) → database persistence.
 
 ### Pipeline 2 — Process (`mode="process"`)
-Staged transactions → Contador (PUC classification) → Tributario (tax calc) → Auditor (double-entry review) → feedback loop or persistence.
+Staged transactions → Contador (PUC classification) → Tributario (tax calc) → Auditor (double-entry review) → budgeted correction loop or persistence.
+
+Persist behavior in process mode:
+- Before writing `TransactionPosted` and `JournalEntryLine`, `pre_persist_auditor` validates process integrity.
+- If any `BLOCKER` finding exists, persistence is refused and process status is marked failed.
+- API status/result surfaces structured error payloads with `error_category="audit_blocker"`.
 
 ### Pipeline 3 — Reporting (`mode="reporting"`)
 Generates balance / P&L reports via the Reportero agent.

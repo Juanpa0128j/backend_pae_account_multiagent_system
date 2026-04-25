@@ -70,9 +70,9 @@ def _extract_findings_from_log(log_entries: list[dict]) -> list[AuditFinding]:
 
 
 def _extract_giveup_from_log(log_entries: list[dict]) -> Optional[GiveUpRecord]:
-    """Extract GiveUpRecord stored as give_up log event (Phase 4+)."""
+    """Extract GiveUpRecord stored as give-up log event (Phase 4+)."""
     for entry in reversed(log_entries):
-        if entry.get("event") == "give_up":
+        if entry.get("event") in {"give_up", "audit_giveup"}:
             try:
                 return GiveUpRecord.model_validate(entry.get("details", {}))
             except Exception:
@@ -127,7 +127,13 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
         ended_at = max(timestamps)
 
         events = [e.get("event", "") for e in entries]
-        run_findings = [f for f in all_findings if f.responsible_agent == agent]
+        agent_aliases = {agent}
+        if agent == "ingesta":
+            agent_aliases.add("ingest")
+        elif agent == "db_persist":
+            agent_aliases.add("persist")
+
+        run_findings = [f for f in all_findings if f.responsible_agent in agent_aliases]
         status = _derive_step_status(events, bool(run_findings))
 
         summary_es = get_agent_summary_es(agent, failed=(status == "failed"))

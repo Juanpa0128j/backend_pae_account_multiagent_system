@@ -68,6 +68,13 @@ def _classify_process_error(
             "Ensure staged transactions contain nit_receptor before processing.",
         )
 
+    if "audit_blocker" in msg or "unfixable audit blockers" in msg:
+        return (
+            "audit_blocker",
+            "AUDIT_BLOCKER",
+            "Review auditor findings and correct blocking accounting issues before retrying.",
+        )
+
     return (
         "system_error",
         "PROCESS_EXECUTION_ERROR",
@@ -208,7 +215,7 @@ async def get_process_status(
     )
 
 
-@router.get("/trace/{process_id}", response_model=PipelineTrace)
+@router.get("/{process_id}/trace", response_model=PipelineTrace)
 async def get_process_trace(process_id: str, db: Session = Depends(get_db)):
     """Accountant-facing trace for a process run.
 

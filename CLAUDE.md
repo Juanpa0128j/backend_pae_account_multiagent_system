@@ -74,8 +74,14 @@ FastAPI (main.py) → /api/v1/* routers
 ### Three Pipelines
 
 1. **Ingesta:** PDF/XLSX upload → LlamaParse → Gemini extraction → schema validation (3 retries) → DB persist
-2. **Procesamiento:** Pending transactions → Contador (PUC classification) → Tributario (IVA/retención) → Auditor (double-entry) → feedback loop or persist
+2. **Procesamiento:** Pending transactions → Contador (PUC classification) → Tributario (IVA/retención) → Auditor (double-entry) → budgeted feedback loop or persist
 3. **Reportería:** Balance sheets, P&L, cash flow via Reportero agent
+
+### Accountant Trace
+
+- `GET /api/v1/process/status/{process_id}` now exposes `has_warnings` and `trace_url`
+- `GET /api/v1/process/{process_id}/trace` returns a Spanish `PipelineTrace`
+- Process persistence is blocked on pre-persist `BLOCKER` findings and surfaces `error_category="audit_blocker"`
 
 ### Key Module Roles
 
@@ -92,6 +98,10 @@ FastAPI (main.py) → /api/v1/* routers
 | `app/services/financial_statement_service.py` | Derives `FinancialStatement` rows from journal entries; `list_financial_statements`, `derive_financial_statements` |
 | `app/services/nit_utils.py` | Colombian NIT normalization helpers: `normalize_nit`, `normalize_optional_nit` |
 | `app/core/llm_client.py` | Multi-provider LLM client with OpenAI → Gemini → Groq fallback chain |
+| `app/models/audit.py` | Structured audit schemas: `AuditFinding`, `AuditReport`, `GiveUpRecord` |
+| `app/models/trace.py` | Accountant-facing `PipelineTrace` / `TraceStep` response models |
+| `app/services/audit_messages_es.py` | Spanish copy for accountant-visible audit findings and step summaries |
+| `app/services/pipeline_trace_service.py` | Read-only derivation of `PipelineTrace` from `ProcessJob.agent_log` |
 | `app/services/retencion_table.py` | Full 2026 retention table (UVT=$52.374, 28 concepts). Source: Carolina García, H&G Abogados |
 | `app/services/tax_declaration_service.py` | Generates pre-filled F300/F350/F110/ICA drafts from journal entries; persists as `TaxDeclarationDraft` |
 | `app/services/tax_calendar_service.py` | DIAN 2026 deadlines per NIT last digit; `list_obligations()` returns sorted `CalendarEntry` list |

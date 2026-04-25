@@ -11,6 +11,7 @@ IngestJob -> TransactionPending -> TransactionPosted -> JournalEntryLines.
 # SQLAlchemy model attributes are runtime values on instances; static typing
 # can mis-infer them as Column[...] in service/pipeline code.
 
+import json
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
@@ -402,7 +403,42 @@ def db_persist_node(state: AgentState) -> AgentState:
                 append_log(state, "db_persist", "node_error", {"error": str(e)})
                 return state
         except Exception:
-            # Non-transient — fall through to original error handling below
+            # Non-transient — if this is a structured audit blocker, do not retry.
+            if state.get("error") and "audit_blocker" in str(state.get("error")):
+                if state.get("mode") == "process":
+                    process_id = _as_str(state.get("process_id"), "")
+                    if process_id:
+                        db = SessionLocal()
+                        try:
+                            db_service.update_process_job(
+                                db,
+                                process_id,
+                                status=ProcessStatus.FAILED,
+                                current_stage="failed",
+                                current_agent="db_persist",
+                                error_message=str(state.get("error")),
+                                progress=100,
+                                agent_log_entry={
+                                    "agent": "db_persist",
+                                    "stage": "failed",
+                                    "status": "failed",
+                                },
+                            )
+                        except Exception as status_err:
+                            logger.debug(
+                                "persist_node: failed to mark process job FAILED for audit blocker: %s",
+                                status_err,
+                            )
+                        finally:
+                            db.close()
+                append_log(
+                    state,
+                    "db_persist",
+                    "node_error",
+                    {"error": state.get("error")},
+                )
+                return state
+            # Fall through to original error handling below
             break
 
     # Non-retry path: wrap in try/except to handle non-transient exceptions
@@ -424,6 +460,32 @@ def db_persist_node(state: AgentState) -> AgentState:
             f"db_persist: Non-transient exception in cleanup path: {e}", exc_info=True
         )
         state["error"] = f"DB persist error: {str(e)}"
+        if state.get("mode") == "process":
+            process_id = _as_str(state.get("process_id"), "")
+            if process_id:
+                db = SessionLocal()
+                try:
+                    db_service.update_process_job(
+                        db,
+                        process_id,
+                        status=ProcessStatus.FAILED,
+                        current_stage="failed",
+                        current_agent="db_persist",
+                        error_message=state["error"],
+                        progress=100,
+                        agent_log_entry={
+                            "agent": "db_persist",
+                            "stage": "failed",
+                            "status": "failed",
+                        },
+                    )
+                except Exception as status_err:
+                    logger.debug(
+                        "persist_node: failed to mark process job FAILED in cleanup path: %s",
+                        status_err,
+                    )
+                finally:
+                    db.close()
         append_log(state, "db_persist", "node_error", {"error": str(e)})
 
     return state
@@ -557,6 +619,60 @@ def _run_persist(state: AgentState) -> AgentState:
     if mode == "ingest" and pathway == "work_with_existing":
         _persist_financial_statement(state)
         return state
+
+    if mode == "process":
+        from app.agents.audit_utils import append_audit_report
+        from app.agents.auditors import pre_persist_auditor
+        from app.models.audit import Severity
+
+        pre_persist_report = pre_persist_auditor.run(state)
+        append_audit_report(state, pre_persist_report)
+
+        report_blockers = [
+            f for f in pre_persist_report.findings if f.severity == Severity.BLOCKER
+        ]
+        state_blockers = [
+            f
+            for f in (state.get("unfixable_findings") or [])
+            if isinstance(f, dict) and str(f.get("severity", "")).lower() == "blocker"
+        ]
+
+        if report_blockers or state_blockers:
+            first = report_blockers[0] if report_blockers else state_blockers[0]
+            first_rule = (
+                first.rule_id
+                if report_blockers
+                else str(first.get("rule_id", "AUDIT-BLOCKER"))
+            )
+            first_message = (
+                first.user_message_es
+                if report_blockers
+                else str(
+                    first.get("user_message_es", "Se detectó un bloqueo de auditoría.")
+                )
+            )
+            first_action = (
+                first.suggested_action_es
+                if report_blockers
+                else str(first.get("suggested_action_es", ""))
+            )
+
+            remediation = first_message
+            if first_action:
+                remediation = f"{remediation} {first_action}".strip()
+
+            payload = {
+                "error_category": "audit_blocker",
+                "error_code": first_rule,
+                "remediation": remediation,
+                "message": "Persist blocked due to pre-persist audit blocker.",
+            }
+            state["error"] = json.dumps(payload, ensure_ascii=False)
+            logger.error(
+                "db_persist: refusing persist due to blocker findings rule_id=%s",
+                first_rule,
+            )
+            raise RuntimeError(state["error"])
 
     if mode == "process":
         contador_output = state.get("contador_output") or interpreted
@@ -965,7 +1081,11 @@ def _run_persist(state: AgentState) -> AgentState:
         raise
     except Exception as e:
         logger.error(f"db_persist: Error persisting data: {e}", exc_info=True)
-        state["error"] = f"DB persist error: {str(e)}"
+        raw_error = str(e)
+        if raw_error.lstrip().startswith("{"):
+            state["error"] = raw_error
+        else:
+            state["error"] = f"DB persist error: {raw_error}"
         append_log(state, "db_persist", "node_error", {"error": str(e)})
 
         if mode == "ingest" and ingest_id:
@@ -991,7 +1111,7 @@ def _run_persist(state: AgentState) -> AgentState:
                         status=ProcessStatus.FAILED,
                         current_stage="failed",
                         current_agent="db_persist",
-                        error_message=str(e),
+                        error_message=state.get("error") or str(e),
                         progress=100,
                         agent_log_entry={
                             "agent": "db_persist",

@@ -468,3 +468,66 @@ def test_get_process_status_falls_back_when_structured_payload_invalid_json(
     assert body["error_code"] == "MISSING_COMPANY_SETTINGS"
 
     app.dependency_overrides.clear()
+
+
+def test_get_process_status_audit_blocker_structured_error(monkeypatch):
+    app.dependency_overrides[get_db] = _override_db
+    client = TestClient(app)
+
+    structured_error = (
+        '{"error_category":"audit_blocker",'
+        '"error_code":"PREP-PARTIDA-DOBLE-MISMATCH",'
+        '"remediation":"Corregir asientos antes de persistir.",'
+        '"message":"Persist blocked due to audit blocker."}'
+    )
+
+    monkeypatch.setattr(
+        db_service,
+        "get_process_job",
+        lambda db, process_id: SimpleNamespace(
+            id=process_id,
+            ingest_id="ing_001",
+            status=ProcessStatus.FAILED,
+            current_stage="failed",
+            current_agent="db_persist",
+            progress=100,
+            error_message=structured_error,
+            agent_log=[],
+            created_at=datetime.now(timezone.utc),
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    response = client.get("/api/v1/process/status/proc_audit_block")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error_category"] == "audit_blocker"
+    assert body["error_code"] == "PREP-PARTIDA-DOBLE-MISMATCH"
+    assert body["remediation"] == "Corregir asientos antes de persistir."
+
+    app.dependency_overrides.clear()
+
+
+def test_get_process_trace_endpoint(monkeypatch):
+    app.dependency_overrides[get_db] = _override_db
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        "app.api.v1.process.build_trace",
+        lambda process_id, db: {
+            "process_id": process_id,
+            "overall_status": "completed_with_warnings",
+            "steps": [],
+            "blockers": [],
+            "give_up": None,
+        },
+    )
+
+    response = client.get("/api/v1/process/proc_trace_001/trace")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["process_id"] == "proc_trace_001"
+    assert body["overall_status"] == "completed_with_warnings"
+
+    app.dependency_overrides.clear()

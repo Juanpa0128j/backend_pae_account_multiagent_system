@@ -137,6 +137,26 @@ class TestExtractGiveupFromLog:
         assert record.target == "contador"
         assert record.attempts == 2
 
+    def test_audit_giveup_entry_parsed(self):
+        giveup_details = {
+            "target": "contador",
+            "attempts": 2,
+            "last_findings": [],
+            "explanation_es": "No se pudo corregir.",
+        }
+        log = [
+            {
+                "timestamp": "2026-04-25T12:00:00+00:00",
+                "agent": "contador",
+                "event": "audit_giveup",
+                "details": giveup_details,
+            }
+        ]
+        record = _extract_giveup_from_log(log)
+        assert record is not None
+        assert record.target == "contador"
+        assert record.attempts == 2
+
 
 @pytest.mark.unit
 class TestBuildTrace:
@@ -263,3 +283,37 @@ class TestBuildTrace:
             mock_svc.get_process_job.return_value = job
             trace = build_trace("proc-test-001", db)
         assert trace.overall_status == "completed_with_warnings"
+
+    def test_db_persist_step_includes_persist_findings(self):
+        db = MagicMock()
+        finding_details = {
+            "target": "pre_persist",
+            "rule_id": "PERS-DOUBLE-ENTRY-FAIL",
+            "severity": "blocker",
+            "fixable": False,
+            "responsible_agent": "persist",
+            "technical_message": "debits != credits",
+            "user_message_es": "Los asientos no están balanceados.",
+            "suggested_action_es": "Corrija el asiento antes de persistir.",
+            "evidence": {"total_debits": "1000", "total_credits": "900"},
+        }
+        log = [
+            _log_entry("db_persist", "node_start", "2026-04-25T12:00:00+00:00"),
+            {
+                "timestamp": "2026-04-25T12:00:01+00:00",
+                "agent": "persist",
+                "event": "audit_finding",
+                "details": finding_details,
+            },
+            _log_entry("db_persist", "node_failed", "2026-04-25T12:00:02+00:00"),
+        ]
+        job = _make_process_job(ProcessStatus.FAILED, agent_log=log)
+        with patch("app.services.pipeline_trace_service.db_service") as mock_svc:
+            mock_svc.get_process_job.return_value = job
+            trace = build_trace("proc-test-001", db)
+
+        persist_step = next(step for step in trace.steps if step.agent == "db_persist")
+        assert len(persist_step.details_es) == 1
+        assert "no están balanceados" in persist_step.details_es[0]
+        assert persist_step.suggested_action_es
+        assert "desbalance" in persist_step.suggested_action_es.lower()
