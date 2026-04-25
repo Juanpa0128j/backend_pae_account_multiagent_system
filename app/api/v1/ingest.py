@@ -261,6 +261,16 @@ async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
         "completed_at": job.completed_at,
         "extraction_errors": job.extraction_errors or [],
         "raw_transactions": raw_txs,
+        "error_category": "extraction_error" if job.extraction_errors else None,
+        "error_code": None,
+        "remediation": (
+            "Revisa el formato del archivo. "
+            + " ".join(str(e) for e in job.extraction_errors)
+            if job.extraction_errors
+            else None
+        ),
+        "has_warnings": False,
+        "trace_url": f"/api/v1/ingest/{job.id}/trace",
     }
 
 

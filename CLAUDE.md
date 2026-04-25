@@ -81,6 +81,7 @@ FastAPI (main.py) → /api/v1/* routers
 
 - `GET /api/v1/process/status/{process_id}` now exposes `has_warnings` and `trace_url`
 - `GET /api/v1/process/{process_id}/trace` returns a Spanish `PipelineTrace`
+- `GET /api/v1/ingest/{ingest_id}/trace` returns an ingest-focused Spanish `PipelineTrace`
 - Process persistence is blocked on pre-persist `BLOCKER` findings and surfaces `error_category="audit_blocker"`
 
 ### Key Module Roles

@@ -43,6 +43,16 @@ async def get_books(
         except ValueError as e:
             raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
 
+    valid_tipos = {"diario", "mayor", "auxiliar", "balance"}
+    if tipo not in valid_tipos:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Tipo inválido '{tipo}'. Valores válidos: "
+                f"{', '.join(sorted(valid_tipos))}"
+            ),
+        )
+
     if tipo == "diario":
         lines = db_service.get_daily_journal(db, fi, ff, normalized_company_nit)
         return [
@@ -80,8 +90,3 @@ async def get_books(
 
     elif tipo == "balance":
         return db_service.get_balance_sheet(db, ff, normalized_company_nit)
-
-    else:
-        return {
-            "error": f"Unknown book type: {tipo}. Use diario, mayor, auxiliar, or balance."
-        }
