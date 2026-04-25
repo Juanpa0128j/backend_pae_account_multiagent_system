@@ -9,6 +9,23 @@ from app.models.audit import AuditFinding, AuditReport, GiveUpRecord, Severity
 logger = logging.getLogger(__name__)
 
 
+_TARGET_TO_NODE_AGENT: dict[str, str] = {
+    "ingest": "ingesta",
+    "contador": "contador",
+    "tributario": "tributario",
+    "pre_persist": "db_persist",
+    "persist": "db_persist",
+}
+
+
+def _log_agent_for_state(state: AgentState, fallback: str) -> str:
+    """Return the node agent name to use in agent_log for audit events."""
+    current_agent = str(state.get("current_agent") or "").strip()
+    if current_agent:
+        return current_agent
+    return _TARGET_TO_NODE_AGENT.get(fallback, fallback)
+
+
 def append_finding(state: AgentState, finding: AuditFinding) -> None:
     """Route a finding into the appropriate state bucket and emit an audit_finding log event.
 
@@ -28,7 +45,12 @@ def append_finding(state: AgentState, finding: AuditFinding) -> None:
     else:
         state["pipeline_warnings"].append(payload)
 
-    append_log(state, finding.responsible_agent, "audit_finding", payload)
+    append_log(
+        state,
+        _log_agent_for_state(state, finding.responsible_agent),
+        "audit_finding",
+        payload,
+    )
 
 
 def append_audit_report(state: AgentState, report: AuditReport) -> None:
@@ -45,7 +67,7 @@ def append_audit_report(state: AgentState, report: AuditReport) -> None:
 
     append_log(
         state,
-        report.target.value,
+        _log_agent_for_state(state, report.target.value),
         "audit_report",
         {
             "target": report.target.value,
@@ -124,12 +146,7 @@ def record_giveup(
     )
     append_log(
         state,
-        target,
+        _log_agent_for_state(state, target),
         "audit_giveup",
-        {
-            "target": target,
-            "attempts": record.attempts,
-            "rule_ids": rule_ids,
-            "explanation_es": explanation_es,
-        },
+        record.model_dump(),
     )

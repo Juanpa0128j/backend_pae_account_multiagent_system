@@ -502,13 +502,13 @@ def _db_persist_inner_with_cleanup(state: AgentState) -> AgentState:
     return state
 
 
-def _auto_derive_statements(db, company_nit: str) -> None:
+def _auto_derive_statements(db, company_nit: str) -> Optional[bool]:
     """Build first-level statements from JournalEntryLines then derive second-level.
 
     Non-fatal: logs warnings on failure but never raises.
     """
     if not company_nit:
-        return
+        return None
 
     period = get_journal_entry_period(db, company_nit=company_nit)
     if period is None:
@@ -516,7 +516,7 @@ def _auto_derive_statements(db, company_nit: str) -> None:
             "[persist] No JournalEntryLines for %s — skipping statement derivation",
             company_nit,
         )
-        return
+        return None
 
     period_start, period_end = period
 
@@ -527,7 +527,7 @@ def _auto_derive_statements(db, company_nit: str) -> None:
             type(period_start).__name__,
             type(period_end).__name__,
         )
-        return
+        return None
 
     logger.info(
         "[persist] Building first-level statements for %s (%s -> %s)",
@@ -566,13 +566,15 @@ def _auto_derive_statements(db, company_nit: str) -> None:
     return True
 
 
-def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) -> None:
+def _try_via_b_auto_derive(
+    db, *, company_nit: str, period_start, period_end
+) -> Optional[bool]:
     """After a Via B upload, check if all 3 source docs are present and derive if so.
 
     Non-fatal: logs but never raises.
     """
     if not company_nit or period_start is None or period_end is None:
-        return
+        return None
 
     required = ["balance_general", "estado_resultados", "libro_auxiliar"]
     if not financial_statements_exist(
@@ -586,7 +588,7 @@ def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) ->
             "[persist] Via B: not all 3 source docs present yet for %s — skipping auto-derive",
             company_nit,
         )
-        return False
+        return None
 
     logger.info(
         "[persist] Via B: all 3 source docs present for %s — triggering derivation",
@@ -1026,7 +1028,8 @@ def _run_persist(state: AgentState) -> AgentState:
 
         # Auto-derive financial statements after process completes (non-fatal)
         if mode == "process" and company_nit:
-            if not _auto_derive_statements(db, company_nit):
+            derive_result = _auto_derive_statements(db, company_nit)
+            if derive_result is False:
                 from app.agents.audit_utils import append_finding
                 from app.models.audit import AuditFinding, AuditTarget, Severity
 
@@ -1249,12 +1252,13 @@ def _persist_financial_statement(state: AgentState) -> None:
             doc_type in ("balance_general", "estado_resultados", "libro_auxiliar")
             and company_nit
         ):
-            if not _try_via_b_auto_derive(
+            derive_result = _try_via_b_auto_derive(
                 db,
                 company_nit=company_nit,
                 period_start=period_start,
                 period_end=period_end,
-            ):
+            )
+            if derive_result is False:
                 from app.agents.audit_utils import append_finding
                 from app.models.audit import AuditFinding, AuditTarget, Severity
 

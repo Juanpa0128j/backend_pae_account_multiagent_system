@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.agents.audit_utils import append_finding
-from app.models.audit import AuditFinding, AuditTarget, Severity
+from app.agents.audit_utils import append_audit_report, append_finding
+from app.models.audit import AuditFinding, AuditReport, AuditTarget, Severity
 
 
 def _make_state():
@@ -86,3 +86,34 @@ class TestAppendFinding:
         append_finding(state, _make_finding(Severity.WARNING, rule_id="RULE-2"))
         assert len(state["pipeline_warnings"]) == 2
         assert len(state["agent_log"]) == 2
+
+    def test_logs_under_current_node_agent_when_present(self):
+        state = _make_state()
+        state["current_agent"] = "ingesta"
+        finding = AuditFinding(
+            target=AuditTarget.INGEST,
+            rule_id="ING-EXTRACTION-PARTIAL",
+            severity=Severity.WARNING,
+            fixable=False,
+            responsible_agent="ingest",
+            technical_message="partial extraction",
+            user_message_es="mensaje de prueba",
+        )
+        append_finding(state, finding)
+        assert state["agent_log"][0]["agent"] == "ingesta"
+
+
+@pytest.mark.unit
+class TestAppendAuditReport:
+    def test_logs_report_under_current_node_agent(self):
+        state = _make_state()
+        state["current_agent"] = "db_persist"
+        report = AuditReport(
+            target=AuditTarget.PRE_PERSIST,
+            approved=False,
+            findings=[],
+            attempt=1,
+            duration_ms=5.0,
+        )
+        append_audit_report(state, report)
+        assert state["agent_log"][0]["agent"] == "db_persist"

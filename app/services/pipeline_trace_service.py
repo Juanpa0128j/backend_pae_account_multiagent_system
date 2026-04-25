@@ -27,7 +27,7 @@ from app.services.audit_messages_es import get_agent_summary_es, get_message
 logger = logging.getLogger(__name__)
 
 _FAILURE_EVENTS = frozenset(
-    {"node_failed", "error", "agent_error", "validation_failed_final"}
+    {"node_failed", "node_error", "error", "agent_error", "validation_failed_final"}
 )
 _WARNING_EVENTS = frozenset({"audit_finding", "warning", "non_fatal_error"})
 _RETRY_EVENTS = frozenset({"retry", "correction_applied", "validation_retry"})
@@ -109,7 +109,7 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
 
     all_findings: list[AuditFinding] = _extract_findings_from_log(raw_log)
     blockers: list[AuditFinding] = [
-        f for f in all_findings if f.severity.value == "blocker"
+        f for f in all_findings if f.severity.value == "blocker" and not f.fixable
     ]
 
     if blockers:
@@ -127,13 +127,20 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
         ended_at = max(timestamps)
 
         events = [e.get("event", "") for e in entries]
-        agent_aliases = {agent}
-        if agent == "ingesta":
-            agent_aliases.add("ingest")
-        elif agent == "db_persist":
-            agent_aliases.add("persist")
-
-        run_findings = [f for f in all_findings if f.responsible_agent in agent_aliases]
+        run_finding_payloads = [
+            entry.get("details", {})
+            for entry in entries
+            if entry.get("event") == "audit_finding"
+        ]
+        run_findings: list[AuditFinding] = []
+        for payload in run_finding_payloads:
+            try:
+                run_findings.append(AuditFinding.model_validate(payload))
+            except Exception:
+                logger.debug(
+                    "pipeline_trace: could not parse run audit_finding entry: %r",
+                    payload,
+                )
         status = _derive_step_status(events, bool(run_findings))
 
         summary_es = get_agent_summary_es(agent, failed=(status == "failed"))

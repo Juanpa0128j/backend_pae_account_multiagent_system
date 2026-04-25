@@ -69,7 +69,7 @@ def run(state: AgentState, attempt: int = 1) -> AuditReport:
                         "Corrija la tarifa de IVA al valor correspondiente "
                         "(0%, 5% o 19%) según el Art. 468 ET."
                     ),
-                    evidence={"tarifa": str(tarifa), "tipo": tipo},
+                    evidence={"declared_rate": str(tarifa * 100), "tipo": tipo},
                 )
             )
 

@@ -93,7 +93,7 @@ class TestTributarioAuditor:
             == 1
         )
 
-    def test_evidence_contains_tarifa(self):
+    def test_evidence_contains_declared_rate(self):
         state = _state(
             tributario_output={"impuestos": [{"tipo": "iva", "tarifa": 0.15}]}
         )
@@ -101,7 +101,7 @@ class TestTributarioAuditor:
         finding = next(
             f for f in report.findings if f.rule_id == "TRIB-IVA-RATE-INVALID"
         )
-        assert "tarifa" in finding.evidence
+        assert "declared_rate" in finding.evidence
 
     def test_report_duration_and_attempt(self):
         state = _state(tributario_output={"impuestos": []})
