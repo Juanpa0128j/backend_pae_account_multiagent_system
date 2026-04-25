@@ -771,9 +771,9 @@ class TestProcessGraphE2E:
         assert final.get("error") is None, final.get("error")
         assert final["audit_approved"] is True
         assert final["db_result"] is not None
-        assert audit_calls["n"] == 2, (
-            "Auditor should have been called twice (reject + approve)"
-        )
+        assert (
+            audit_calls["n"] == 2
+        ), "Auditor should have been called twice (reject + approve)"
 
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
@@ -1053,9 +1053,9 @@ class TestProcessGraphDBIntegration:
 
             total_debito = sum(ln.debito for ln in lines)
             total_credito = sum(ln.credito for ln in lines)
-            assert total_debito == total_credito, (
-                f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
-            )
+            assert (
+                total_debito == total_credito
+            ), f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
 
             # Auditor output stored in agent_reasoning
             assert posted.agent_reasoning is not None
@@ -1070,10 +1070,12 @@ class TestProcessGraphDBIntegration:
     def test_rejected_audit_stored_with_findings(
         self, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory
     ):
-        """A rejected audit must persist with aprobado=False recorded in agent_reasoning."""
-        from app.core.database import SessionLocal
-        from app.models.database import TransactionPosted
+        """Phase 4: repeated audit rejection exhausts budget → error_terminal, no DB persist.
 
+        The old behavior (persist with aprobado=False) was replaced by the pinpointed
+        self-improvement loop: budget exhaustion routes to error_terminal and records
+        a giveup_record instead of blindly persisting a bad result.
+        """
         mock_cnt = MagicMock()
         mock_cnt.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
         mock_cnt_factory.return_value = mock_cnt
@@ -1088,7 +1090,6 @@ class TestProcessGraphDBIntegration:
         )
         mock_trib_factory.return_value = mock_trib
 
-        # Provide company settings so tributario precondition passes
         mock_company_row = MagicMock()
         mock_company_row.tasa_retefuente_servicios = 0.11
         mock_company_row.tasa_retefuente_bienes = 0.025
@@ -1117,20 +1118,11 @@ class TestProcessGraphDBIntegration:
                 pending_transaction_id=self._pending_id,
             )
 
+        # Phase 4: budget exhaustion routes to error_terminal — no DB persist.
+        assert result.get("audit_approved") is False
+        assert (
+            result.get("giveup_record") is not None
+        ), "giveup_record must be set after retry budget exhaustion"
+        # persist was refused — db_result should not contain a posted transaction
         db_res = result.get("db_result") or {}
-        assert db_res.get("audit_approved") is False
-        assert db_res.get("audit_hallazgos_count", 0) >= 1
-
-        if db_res.get("transaction_posted_id"):
-            db = SessionLocal()
-            try:
-                posted = (
-                    db.query(TransactionPosted)
-                    .filter(TransactionPosted.id == db_res["transaction_posted_id"])
-                    .first()
-                )
-                if posted and posted.agent_reasoning:
-                    auditor_rec = posted.agent_reasoning.get("auditor", {})
-                    assert auditor_rec.get("aprobado") is False
-            finally:
-                db.close()
+        assert db_res.get("transaction_posted_id") is None

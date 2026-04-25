@@ -984,6 +984,14 @@ def tributario_node(state: AgentState) -> AgentState:
             f"Tributario: complete — total_impuestos={total_impuestos}, "
             f"aplica={aplica_impuestos}"
         )
+
+        # Phase 3: deterministic tributario audit
+        from app.agents.audit_utils import append_audit_report
+        from app.agents.auditors import tributario_auditor
+
+        _trib_report = tributario_auditor.run(state)
+        append_audit_report(state, _trib_report)
+
         return state
 
     except Exception as e:

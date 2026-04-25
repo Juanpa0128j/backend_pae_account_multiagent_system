@@ -373,6 +373,13 @@ def ingest_node(state: AgentState) -> AgentState:
 
         logger.info(f"Ingest: Processing complete for {file_path}")
 
+        # Phase 3: deterministic ingest audit
+        from app.agents.audit_utils import append_audit_report
+        from app.agents.auditors import ingest_auditor
+
+        _ingest_report = ingest_auditor.run(state)
+        append_audit_report(state, _ingest_report)
+
     except Exception as e:
         state["error"] = f"Ingest error: {str(e)}"
         logger.error(state["error"], exc_info=True)
