@@ -186,3 +186,72 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
         blockers=blockers,
         give_up=give_up,
     )
+
+
+def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
+    """Build a PipelineTrace from an IngestJob's AuditLog entries.
+
+    Returns None if the ingest_job is not found.
+    Never raises — returns a best-effort trace.
+    """
+    from app.models.database import AuditLog, IngestStatus
+
+    ingest_job = db_service.get_ingest_job(db, ingest_id)
+    if not ingest_job:
+        return None
+
+    audit_logs = (
+        db.query(AuditLog)
+        .filter(AuditLog.entity_id == ingest_id, AuditLog.entity_type == "ingest")
+        .order_by(AuditLog.created_at.asc())
+        .all()
+    )
+
+    overall_status = (
+        "failed" if ingest_job.status == IngestStatus.FAILED else "completed"
+    )
+
+    steps: list[TraceStep] = []
+    total = len(audit_logs)
+    for idx, log in enumerate(audit_logs):
+        details = log.details or {}
+        agent = details.get("agent", "ingesta")
+        is_last_and_failed = overall_status == "failed" and idx == total - 1
+        step_status = "failed" if is_last_and_failed else "success"
+        detail_text = details.get("message") or details.get("summary") or ""
+        steps.append(
+            TraceStep(
+                agent=agent,
+                started_at=log.created_at,
+                ended_at=log.created_at,
+                status=step_status,
+                summary_es=get_agent_summary_es(agent, failed=is_last_and_failed),
+                details_es=[detail_text] if detail_text else [],
+                suggested_action_es=details.get("suggested_action_es"),
+                technical_ref=f"audit-log-{log.id}",
+            )
+        )
+
+    blockers: list[AuditFinding] = []
+    if ingest_job.extraction_errors:
+        from app.models.audit import AuditSeverity
+
+        for err in ingest_job.extraction_errors:
+            blockers.append(
+                AuditFinding(
+                    rule_id="INGEST_ERROR",
+                    severity=AuditSeverity.BLOCKER,
+                    fixable=False,
+                    user_message_es=str(err),
+                    suggested_action_es="Revisa el formato del archivo e intenta nuevamente.",
+                    evidence={},
+                )
+            )
+
+    return PipelineTrace(
+        process_id=ingest_id,
+        overall_status=overall_status,
+        steps=steps,
+        blockers=blockers,
+        give_up=None,
+    )

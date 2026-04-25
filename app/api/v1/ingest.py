@@ -19,6 +19,7 @@ from app.agents.graph import invoke_ingest_pipeline
 from app.core.database import SessionLocal, get_db
 from app.models.database import IngestStatus
 from app.models.schemas import IngestDetailResponse, IngestResponse
+from app.models.trace import PipelineTrace
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
 
@@ -261,3 +262,14 @@ async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
         "extraction_errors": job.extraction_errors or [],
         "raw_transactions": raw_txs,
     }
+
+
+@router.get("/{ingest_id}/trace", response_model=PipelineTrace)
+async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
+    """Accountant-facing trace for an ingest job."""
+    from app.services.pipeline_trace_service import build_ingest_trace
+
+    trace = build_ingest_trace(ingest_id, db)
+    if trace is None:
+        raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+    return trace
