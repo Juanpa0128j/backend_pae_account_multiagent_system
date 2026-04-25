@@ -639,10 +639,10 @@ class WithholdingsOutput(BaseModel):
     )
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
     retencion_en_la_fuente: float = Field(
-        ..., ge=0, description="Retefuente balance (account 240815)"
+        ..., ge=0, description="Retefuente balance (account 2365)"
     )
     retencion_ica: float = Field(
-        ..., ge=0, description="ReteICA balance (account 236540)"
+        ..., ge=0, description="ReteICA balance (account 2368)"
     )
     total_retenciones: float = Field(..., ge=0, description="Total withholdings")
     referencias: List[str] = Field(

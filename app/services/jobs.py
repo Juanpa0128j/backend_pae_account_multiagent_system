@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from app.agents.graph import invoke_accounting_pipeline
@@ -19,6 +20,12 @@ from app.services import db_service
 logger = logging.getLogger(__name__)
 
 MAX_PROCESS_SECONDS = 300  # 5 minutes
+
+# Dedicated thread pool for CPU-intensive graph operations.
+# This prevents blocking the default event loop thread pool,
+# ensuring health checks and other requests remain responsive.
+# 20 workers allows ~20 concurrent pipeline invocations.
+_GRAPH_EXECUTOR = ThreadPoolExecutor(max_workers=20, thread_name_prefix="graph_worker")
 
 
 def _utc_iso() -> str:
@@ -166,15 +173,19 @@ async def run_process_job(process_id: str) -> None:
             )
             return
 
+        # Use dedicated thread pool to avoid blocking the default executor
+        loop = asyncio.get_event_loop()
         result = await asyncio.wait_for(
-            asyncio.to_thread(
-                invoke_accounting_pipeline,
-                ingest_id=process_job.ingest_id,
-                raw_transactions=raw_transactions,
-                pending_transaction_id=pending_id,
-                process_id=process_id,
-                doc_type=doc_type,
-                source_document=source_document,
+            loop.run_in_executor(
+                _GRAPH_EXECUTOR,
+                lambda: invoke_accounting_pipeline(
+                    ingest_id=process_job.ingest_id,
+                    raw_transactions=raw_transactions,
+                    pending_transaction_id=pending_id,
+                    process_id=process_id,
+                    doc_type=doc_type,
+                    source_document=source_document,
+                ),
             ),
             timeout=MAX_PROCESS_SECONDS,
         )

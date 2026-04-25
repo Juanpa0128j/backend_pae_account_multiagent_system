@@ -200,16 +200,24 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
     if not ingest_job:
         return None
 
+    # Query audit logs directly related to this ingest OR related via details->>ingest_id
     audit_logs = (
         db.query(AuditLog)
-        .filter(AuditLog.entity_id == ingest_id, AuditLog.entity_type == "ingest")
+        .filter(
+            (AuditLog.entity_id == ingest_id)
+            | (AuditLog.details["ingest_id"].as_string() == ingest_id)
+        )
         .order_by(AuditLog.created_at.asc())
         .all()
     )
 
-    overall_status = (
-        "failed" if ingest_job.status == IngestStatus.FAILED else "completed"
-    )
+    # Handle all possible statuses correctly
+    if ingest_job.status == IngestStatus.FAILED:
+        overall_status = "failed"
+    elif ingest_job.status == IngestStatus.COMPLETED:
+        overall_status = "completed"
+    else:
+        overall_status = "running"
 
     steps: list[TraceStep] = []
     total = len(audit_logs)
@@ -235,18 +243,22 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
 
     blockers: list[AuditFinding] = []
     if ingest_job.extraction_errors:
-        from app.models.audit import AuditSeverity
+        from app.models.audit import AuditTarget, Severity
 
         msg, action = get_message("INGEST_ERROR", {})
         for err in ingest_job.extraction_errors:
+            err_str = str(err) or msg
             blockers.append(
                 AuditFinding(
+                    target=AuditTarget.INGEST,
                     rule_id="INGEST_ERROR",
-                    severity=AuditSeverity.BLOCKER,
+                    severity=Severity.BLOCKER,
                     fixable=False,
-                    user_message_es=str(err) or msg,
+                    responsible_agent="ingest",
+                    technical_message=err_str,
+                    user_message_es=err_str,
                     suggested_action_es=action,
-                    evidence={},
+                    evidence={"ingest_id": ingest_id},
                 )
             )
 

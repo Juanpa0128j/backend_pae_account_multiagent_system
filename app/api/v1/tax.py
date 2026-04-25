@@ -84,7 +84,7 @@ async def get_withholdings_report(
 ):
     """
     Reporte Retenciones.
-    Returns Retefuente (account 240815) and ReteICA (account 236540) balances
+    Returns Retefuente (account 2365) and ReteICA (account 2368) balances
     with applicable legal references.
     Optionally includes LLM-powered analysis when include_analysis=true.
     """

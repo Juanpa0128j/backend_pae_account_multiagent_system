@@ -33,6 +33,12 @@ class IngestDetailResponse(BaseModel):
     completed_at: Optional[datetime] = None
     extraction_errors: Optional[List[str]] = None
     raw_transactions: List[RawTransaction] = Field(default_factory=list)
+    # Audit metadata (mirrors ProcessStatusResponse for frontend parity)
+    error_category: Optional[str] = None
+    error_code: Optional[str] = None
+    remediation: Optional[str] = None
+    has_warnings: bool = False
+    trace_url: Optional[str] = None
 
 
 class ProcessResponse(BaseModel):

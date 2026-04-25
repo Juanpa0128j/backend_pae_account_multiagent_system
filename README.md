@@ -49,6 +49,8 @@ Key features:
   audit findings include `BLOCKER` severity, returning structured `audit_blocker` errors.
 - **Accountant-facing trace endpoint**: `GET /api/v1/process/{process_id}/trace`
   returns a Spanish pipeline timeline with findings, blockers, and give-up context.
+- **Ingest trace endpoint**: `GET /api/v1/ingest/{ingest_id}/trace`
+  returns an ingest-focused Spanish timeline and extraction blockers when present.
 - **Tax declaration drafts**: Pre-filled F300 (IVA), F350 (Retefuente), F110 (Renta PJ),
   and ICA municipal forms generated from journal entries for accountant review before filing.
 - **DIAN 2026 calendar**: Obligation deadlines computed per NIT last digit with 30-day alerts.

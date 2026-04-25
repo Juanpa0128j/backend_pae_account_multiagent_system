@@ -89,8 +89,8 @@ interpretaciones profundas, predicciones fundamentadas y recomendaciones acciona
 ## CUENTAS FISCALES ESPECÍFICAS
 - 240808: IVA Generado (pasivo, crédito) — IVA cobrado en ventas
 - 240802: IVA Descontable (activo, débito) — IVA pagado en compras
-- 240815: Retención en la Fuente por pagar (pasivo, crédito)
-- 236540: Retención ICA por pagar (pasivo, crédito)
+- 2365: Retención en la Fuente por pagar (pasivo, crédito)
+- 2368: Retención ICA por pagar (pasivo, crédito)
 
 ## TABLAS DE LA BASE DE DATOS (contexto de los datos que recibes)
 - **journal_entry_lines**: fecha, comprobante, cuenta_puc, cuenta_nombre, tercero_nit, descripcion, debito, credito

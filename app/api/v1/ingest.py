@@ -10,6 +10,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     status,
 )
@@ -211,7 +212,9 @@ async def upload_file(
 
 
 @router.get("/{ingest_id}", response_model=IngestDetailResponse)
-async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
+async def get_ingest_status(
+    ingest_id: str, request: Request, db: Session = Depends(get_db)
+):
     """Get the status of an ingest job."""
     job = db_service.get_ingest_job(db, ingest_id)
     if not job:
@@ -261,6 +264,16 @@ async def get_ingest_status(ingest_id: str, db: Session = Depends(get_db)):
         "completed_at": job.completed_at,
         "extraction_errors": job.extraction_errors or [],
         "raw_transactions": raw_txs,
+        "error_category": "extraction_error" if job.extraction_errors else None,
+        "error_code": None,
+        "remediation": (
+            "Revisa el formato del archivo. "
+            + " ".join(str(e) for e in job.extraction_errors)
+            if job.extraction_errors
+            else None
+        ),
+        "has_warnings": False,
+        "trace_url": f"{str(request.base_url).rstrip('/')}/api/v1/ingest/{job.id}/trace",
     }
 
 
