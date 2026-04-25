@@ -11,8 +11,8 @@ Entry format:
     }
 
 Placeholder substitution: call get_message(rule_id, evidence) which will
-.format(**evidence) against both strings. Missing keys fall back to generic
-phrases and emit a logger.warning so gaps are visible.
+.format(**evidence) against both strings. Missing keys keep the unformatted
+template and emit a logger.warning so gaps are visible.
 """
 
 from __future__ import annotations
@@ -193,13 +193,25 @@ def get_message(
     if evidence:
         try:
             user_msg = user_msg.format(**evidence)
-        except (KeyError, IndexError):
-            pass
+        except (KeyError, IndexError) as exc:
+            logger.warning(
+                "audit_messages_es: could not format user_message_es for rule_id=%r "
+                "with evidence=%r: %s",
+                rule_id,
+                evidence,
+                exc,
+            )
         if action:
             try:
                 action = action.format(**evidence)
-            except (KeyError, IndexError):
-                pass
+            except (KeyError, IndexError) as exc:
+                logger.warning(
+                    "audit_messages_es: could not format suggested_action_es for "
+                    "rule_id=%r with evidence=%r: %s",
+                    rule_id,
+                    evidence,
+                    exc,
+                )
 
     return user_msg, action
 

@@ -1,6 +1,7 @@
 """Unit tests for app/services/audit_messages_es.py."""
 
 import pytest
+from unittest.mock import patch
 
 from app.services.audit_messages_es import (
     MESSAGES,
@@ -38,6 +39,16 @@ class TestGetMessage:
     def test_partial_evidence_does_not_raise(self):
         msg, action = get_message("TRIB-RETENCION-MISMATCH", evidence={})
         assert isinstance(msg, str)
+
+    def test_partial_evidence_logs_warning(self):
+        with patch("app.services.audit_messages_es.logger.warning") as mock_warning:
+            msg, action = get_message(
+                "ING-DUPLICATE-DETECTED",
+                evidence={"nit": "900123456"},
+            )
+
+        assert isinstance(msg, str)
+        assert mock_warning.called
 
     def test_all_registered_rule_ids_have_user_message(self):
         for rule_id, entry in MESSAGES.items():

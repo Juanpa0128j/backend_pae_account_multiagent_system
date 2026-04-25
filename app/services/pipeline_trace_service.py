@@ -148,7 +148,18 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
         details_es: list[str] = []
         suggested_action_es: Optional[str] = None
         for finding in run_findings:
-            msg, action = get_message(finding.rule_id, finding.evidence)
+            msg = finding.user_message_es
+            action = finding.suggested_action_es
+
+            if not msg or not action:
+                fallback_msg, fallback_action = get_message(
+                    finding.rule_id, finding.evidence
+                )
+                if not msg:
+                    msg = fallback_msg
+                if not action:
+                    action = fallback_action
+
             details_es.append(msg)
             if action and suggested_action_es is None:
                 suggested_action_es = action
