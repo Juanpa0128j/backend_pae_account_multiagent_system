@@ -217,13 +217,14 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
         details = log.details or {}
         agent = details.get("agent", "ingesta")
         is_last_and_failed = overall_status == "failed" and idx == total - 1
-        step_status = "failed" if is_last_and_failed else "success"
+        step_status = "failed" if is_last_and_failed else "ok"
         detail_text = details.get("message") or details.get("summary") or ""
+        ts = log.created_at or datetime.now(timezone.utc)
         steps.append(
             TraceStep(
                 agent=agent,
-                started_at=log.created_at,
-                ended_at=log.created_at,
+                started_at=ts,
+                ended_at=ts,
                 status=step_status,
                 summary_es=get_agent_summary_es(agent, failed=is_last_and_failed),
                 details_es=[detail_text] if detail_text else [],
@@ -236,14 +237,15 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
     if ingest_job.extraction_errors:
         from app.models.audit import AuditSeverity
 
+        msg, action = get_message("INGEST_ERROR", {})
         for err in ingest_job.extraction_errors:
             blockers.append(
                 AuditFinding(
                     rule_id="INGEST_ERROR",
                     severity=AuditSeverity.BLOCKER,
                     fixable=False,
-                    user_message_es=str(err),
-                    suggested_action_es="Revisa el formato del archivo e intenta nuevamente.",
+                    user_message_es=str(err) or msg,
+                    suggested_action_es=action,
                     evidence={},
                 )
             )

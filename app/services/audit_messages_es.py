@@ -169,6 +169,10 @@ MESSAGES: dict[str, dict[str, Optional[str]]] = {
             "registrado en el catálogo de cuentas de la empresa."
         ),
     },
+    "INGEST_ERROR": {
+        "user_message_es": "Error al procesar el archivo durante la ingesta.",
+        "suggested_action_es": "Revisa el formato del archivo e intenta nuevamente.",
+    },
 }
 
 
