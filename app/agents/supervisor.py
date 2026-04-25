@@ -17,9 +17,12 @@ from pathlib import Path
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
+from app.agents.audit_utils import build_pinpointed_prompt, record_giveup
 from app.agents.validation_rules import (
+    GLOBAL_AUDIT_FAILURES,
     MAX_AUDITOR_RETRIES,
     MAX_CONTADOR_RETRIES,
+    RETRY_BUDGETS,
     _hydrate_contador_account_names,
     _missing_puc_codes,
     _normalize_contador_puc_codes,
@@ -28,6 +31,7 @@ from app.agents.validation_rules import (
     validate_contador_output_node,
     validate_output_node,
 )
+from app.models.audit import AuditFinding, Severity
 from app.core.database import SessionLocal
 from app.core.logger import get_logger
 from app.models.database import IngestStatus
@@ -538,43 +542,172 @@ def supervisor_node(state: AgentState) -> AgentState:
                     },
                 )
             elif state.get("audit_approved") is False:
-                rejection_count = state.get("audit_rejection_count", 0) + 1
-                state["audit_rejection_count"] = rejection_count
-                if rejection_count > 2:
-                    # Max audit retries exceeded — persist with rejection flags.
-                    state["current_agent"] = "db_persist"
-                    logger.warning(
-                        "Supervisor: Audit rejection retry limit reached — persisting with rejection"
+                # --- Phase 4: pinpointed self-improvement loop ---
+                reports = state.get("audit_reports") or []
+                last_report = reports[-1] if reports else {}
+                raw_findings = (
+                    last_report.get("findings", [])
+                    if isinstance(last_report, dict)
+                    else []
+                )
+                findings = [
+                    AuditFinding(**f) for f in raw_findings if isinstance(f, dict)
+                ]
+
+                fixable = [
+                    f
+                    for f in findings
+                    if f.fixable and f.severity in {Severity.ERROR, Severity.BLOCKER}
+                ]
+                blockers = [
+                    f
+                    for f in findings
+                    if not f.fixable and f.severity == Severity.BLOCKER
+                ]
+
+                if blockers:
+                    # Unfixable BLOCKER — cannot auto-recover, go to error terminal.
+                    if state.get("unfixable_findings") is None:
+                        state["unfixable_findings"] = []
+                    state["unfixable_findings"].extend(
+                        [b.model_dump() for b in blockers]
+                    )
+                    rule_ids = [b.rule_id for b in blockers]
+                    state["error"] = f"Unfixable audit blockers: {rule_ids}"
+                    state["current_agent"] = "error_terminal"
+                    logger.error(
+                        "Supervisor: Unfixable audit blockers detected — %s", rule_ids
                     )
                     append_log(
                         state,
                         "supervisor",
                         "routing_complete",
                         {
-                            "next_agent": "db_persist",
-                            "reason": "audit_rejected_max_retries",
+                            "next_agent": "error_terminal",
+                            "reason": "unfixable_blockers",
+                            "rule_ids": rule_ids,
                         },
                     )
+
+                elif not fixable:
+                    # LLM-level rejection without deterministic findings — fall back to
+                    # contador re-route with per-agent retry budget + global cap.
+                    rejection_count = state.get("audit_rejection_count", 0) + 1
+                    state["audit_rejection_count"] = rejection_count
+                    retry_budget = state.get("retry_budget") or {}
+                    if "contador" not in retry_budget:
+                        retry_budget["contador"] = RETRY_BUDGETS.get("contador", 1)
+                    retry_budget["contador"] -= 1
+                    state["retry_budget"] = retry_budget
+
+                    global_failures = sum(
+                        1 for r in reports if not r.get("approved", True)
+                    )
+                    if (
+                        retry_budget["contador"] < 0
+                        or global_failures >= GLOBAL_AUDIT_FAILURES
+                        or rejection_count > MAX_AUDITOR_RETRIES
+                    ):
+                        record_giveup(state, "contador", [])
+                        state["current_agent"] = "error_terminal"
+                        logger.warning(
+                            "Supervisor: Audit give-up (no fixable findings), remaining_budget=%d rejection_count=%d",
+                            retry_budget["contador"],
+                            rejection_count,
+                        )
+                        append_log(
+                            state,
+                            "supervisor",
+                            "routing_complete",
+                            {
+                                "next_agent": "error_terminal",
+                                "reason": "audit_giveup_no_fixable_findings",
+                                "rejection_count": rejection_count,
+                                "remaining_budget": retry_budget["contador"],
+                            },
+                        )
+                    else:
+                        state["current_agent"] = "contador"
+                        state["correction_feedback"] = (
+                            state.get("audit_rejection_reason")
+                            or state.get("audit_feedback")
+                            or "Audit rejected - please reclassify"
+                        )
+                        logger.warning(
+                            "Supervisor: Auditor rejected (LLM) — re-routing to Contador (remaining budget=%d)",
+                            retry_budget["contador"],
+                        )
+                        append_log(
+                            state,
+                            "supervisor",
+                            "routing_complete",
+                            {
+                                "next_agent": "contador",
+                                "reason": "audit_rejected_llm",
+                                "rejection_count": rejection_count,
+                                "remaining_budget": retry_budget["contador"],
+                            },
+                        )
+
                 else:
-                    state["current_agent"] = "contador"
-                    state["correction_feedback"] = (
-                        state.get("audit_rejection_reason")
-                        or state.get("audit_feedback")
-                        or "Audit rejected - please reclassify"
+                    # Deterministic fixable findings — route to the responsible agent.
+                    target = fixable[0].responsible_agent
+                    routing_target = {
+                        "ingest": "ingesta",
+                        "persist": "db_persist",
+                    }.get(target, target)
+                    retry_budget = state.get("retry_budget") or {}
+                    if target not in retry_budget:
+                        retry_budget[target] = RETRY_BUDGETS.get(target, 1)
+                    retry_budget[target] -= 1
+                    state["retry_budget"] = retry_budget
+
+                    global_failures = sum(
+                        1 for r in reports if not r.get("approved", True)
                     )
-                    logger.warning(
-                        "Supervisor: Auditor rejected — re-routing to Contador (rejection %d/2)",
-                        rejection_count,
-                    )
-                    append_log(
-                        state,
-                        "supervisor",
-                        "routing_complete",
-                        {
-                            "next_agent": "contador",
-                            "reason": "audit_rejected",
-                        },
-                    )
+                    if (
+                        retry_budget[target] < 0
+                        or global_failures >= GLOBAL_AUDIT_FAILURES
+                    ):
+                        record_giveup(state, target, fixable)
+                        state["current_agent"] = "error_terminal"
+                        logger.warning(
+                            "Supervisor: Retry budget exhausted for target=%s global_failures=%d",
+                            target,
+                            global_failures,
+                        )
+                        append_log(
+                            state,
+                            "supervisor",
+                            "routing_complete",
+                            {
+                                "next_agent": "error_terminal",
+                                "reason": "retry_budget_exhausted",
+                                "target": target,
+                                "remaining_budget": retry_budget[target],
+                                "global_failures": global_failures,
+                            },
+                        )
+                    else:
+                        state["correction_feedback"] = build_pinpointed_prompt(fixable)
+                        state["current_agent"] = routing_target
+                        logger.warning(
+                            "Supervisor: Routing to %s for self-correction (budget=%d)",
+                            routing_target,
+                            retry_budget[target],
+                        )
+                        append_log(
+                            state,
+                            "supervisor",
+                            "routing_complete",
+                            {
+                                "next_agent": routing_target,
+                                "reason": "audit_pinpointed_retry",
+                                "rule_ids": [f.rule_id for f in fixable],
+                                "responsible_agent": target,
+                                "remaining_budget": retry_budget[target],
+                            },
+                        )
             else:
                 state["current_agent"] = "db_persist"
                 append_log(
@@ -726,11 +859,13 @@ def route_after_supervisor(state: AgentState) -> str:
     agent = state.get("current_agent", "ingesta")
     routing_map = {
         "ingesta": "ingesta",
+        "ingest": "ingesta",
         "import_existing": "import_existing",
         "contador": "contador",
         "tributario": "tributario",
         "auditor": "auditor",
         "db_persist": "db_persist",
+        "persist": "db_persist",
         "reportero": "reportero",
     }
     return routing_map.get(agent, "error_terminal")

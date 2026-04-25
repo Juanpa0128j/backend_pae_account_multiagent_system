@@ -11,6 +11,7 @@ IngestJob -> TransactionPending -> TransactionPosted -> JournalEntryLines.
 # SQLAlchemy model attributes are runtime values on instances; static typing
 # can mis-infer them as Column[...] in service/pipeline code.
 
+import json
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
@@ -402,7 +403,42 @@ def db_persist_node(state: AgentState) -> AgentState:
                 append_log(state, "db_persist", "node_error", {"error": str(e)})
                 return state
         except Exception:
-            # Non-transient — fall through to original error handling below
+            # Non-transient — if this is a structured audit blocker, do not retry.
+            if state.get("error") and "audit_blocker" in str(state.get("error")):
+                if state.get("mode") == "process":
+                    process_id = _as_str(state.get("process_id"), "")
+                    if process_id:
+                        db = SessionLocal()
+                        try:
+                            db_service.update_process_job(
+                                db,
+                                process_id,
+                                status=ProcessStatus.FAILED,
+                                current_stage="failed",
+                                current_agent="db_persist",
+                                error_message=str(state.get("error")),
+                                progress=100,
+                                agent_log_entry={
+                                    "agent": "db_persist",
+                                    "stage": "failed",
+                                    "status": "failed",
+                                },
+                            )
+                        except Exception as status_err:
+                            logger.debug(
+                                "persist_node: failed to mark process job FAILED for audit blocker: %s",
+                                status_err,
+                            )
+                        finally:
+                            db.close()
+                append_log(
+                    state,
+                    "db_persist",
+                    "node_error",
+                    {"error": state.get("error")},
+                )
+                return state
+            # Fall through to original error handling below
             break
 
     # Non-retry path: wrap in try/except to handle non-transient exceptions
@@ -424,6 +460,32 @@ def db_persist_node(state: AgentState) -> AgentState:
             f"db_persist: Non-transient exception in cleanup path: {e}", exc_info=True
         )
         state["error"] = f"DB persist error: {str(e)}"
+        if state.get("mode") == "process":
+            process_id = _as_str(state.get("process_id"), "")
+            if process_id:
+                db = SessionLocal()
+                try:
+                    db_service.update_process_job(
+                        db,
+                        process_id,
+                        status=ProcessStatus.FAILED,
+                        current_stage="failed",
+                        current_agent="db_persist",
+                        error_message=state["error"],
+                        progress=100,
+                        agent_log_entry={
+                            "agent": "db_persist",
+                            "stage": "failed",
+                            "status": "failed",
+                        },
+                    )
+                except Exception as status_err:
+                    logger.debug(
+                        "persist_node: failed to mark process job FAILED in cleanup path: %s",
+                        status_err,
+                    )
+                finally:
+                    db.close()
         append_log(state, "db_persist", "node_error", {"error": str(e)})
 
     return state
@@ -440,13 +502,13 @@ def _db_persist_inner_with_cleanup(state: AgentState) -> AgentState:
     return state
 
 
-def _auto_derive_statements(db, company_nit: str) -> None:
+def _auto_derive_statements(db, company_nit: str) -> Optional[bool]:
     """Build first-level statements from JournalEntryLines then derive second-level.
 
     Non-fatal: logs warnings on failure but never raises.
     """
     if not company_nit:
-        return
+        return None
 
     period = get_journal_entry_period(db, company_nit=company_nit)
     if period is None:
@@ -454,7 +516,7 @@ def _auto_derive_statements(db, company_nit: str) -> None:
             "[persist] No JournalEntryLines for %s — skipping statement derivation",
             company_nit,
         )
-        return
+        return None
 
     period_start, period_end = period
 
@@ -465,7 +527,7 @@ def _auto_derive_statements(db, company_nit: str) -> None:
             type(period_start).__name__,
             type(period_end).__name__,
         )
-        return
+        return None
 
     logger.info(
         "[persist] Building first-level statements for %s (%s -> %s)",
@@ -487,7 +549,7 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         logger.warning(
             "[persist] build_first_level failed (non-fatal): %s", exc, exc_info=True
         )
-        return
+        return False
 
     try:
         _derive_financial_statements(
@@ -497,17 +559,22 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         )
     except BusinessRuleError as exc:
         logger.warning("[persist] derive skipped (missing source inputs): %s", exc)
+        return False
     except Exception as exc:
         logger.warning("[persist] derive failed (non-fatal): %s", exc, exc_info=True)
+        return False
+    return True
 
 
-def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) -> None:
+def _try_via_b_auto_derive(
+    db, *, company_nit: str, period_start, period_end
+) -> Optional[bool]:
     """After a Via B upload, check if all 3 source docs are present and derive if so.
 
     Non-fatal: logs but never raises.
     """
     if not company_nit or period_start is None or period_end is None:
-        return
+        return None
 
     required = ["balance_general", "estado_resultados", "libro_auxiliar"]
     if not financial_statements_exist(
@@ -521,7 +588,7 @@ def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) ->
             "[persist] Via B: not all 3 source docs present yet for %s — skipping auto-derive",
             company_nit,
         )
-        return
+        return None
 
     logger.info(
         "[persist] Via B: all 3 source docs present for %s — triggering derivation",
@@ -536,6 +603,8 @@ def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) ->
         )
     except BusinessRuleError as exc:
         logger.warning("[persist] Via B derive skipped: %s", exc)
+        return False
+    return True
 
 
 def _run_persist(state: AgentState) -> AgentState:
@@ -552,6 +621,60 @@ def _run_persist(state: AgentState) -> AgentState:
     if mode == "ingest" and pathway == "work_with_existing":
         _persist_financial_statement(state)
         return state
+
+    if mode == "process":
+        from app.agents.audit_utils import append_audit_report
+        from app.agents.auditors import pre_persist_auditor
+        from app.models.audit import Severity
+
+        pre_persist_report = pre_persist_auditor.run(state)
+        append_audit_report(state, pre_persist_report)
+
+        report_blockers = [
+            f for f in pre_persist_report.findings if f.severity == Severity.BLOCKER
+        ]
+        state_blockers = [
+            f
+            for f in (state.get("unfixable_findings") or [])
+            if isinstance(f, dict) and str(f.get("severity", "")).lower() == "blocker"
+        ]
+
+        if report_blockers or state_blockers:
+            first = report_blockers[0] if report_blockers else state_blockers[0]
+            first_rule = (
+                first.rule_id
+                if report_blockers
+                else str(first.get("rule_id", "AUDIT-BLOCKER"))
+            )
+            first_message = (
+                first.user_message_es
+                if report_blockers
+                else str(
+                    first.get("user_message_es", "Se detectó un bloqueo de auditoría.")
+                )
+            )
+            first_action = (
+                first.suggested_action_es
+                if report_blockers
+                else str(first.get("suggested_action_es", ""))
+            )
+
+            remediation = first_message
+            if first_action:
+                remediation = f"{remediation} {first_action}".strip()
+
+            payload = {
+                "error_category": "audit_blocker",
+                "error_code": first_rule,
+                "remediation": remediation,
+                "message": "Persist blocked due to pre-persist audit blocker.",
+            }
+            state["error"] = json.dumps(payload, ensure_ascii=False)
+            logger.error(
+                "db_persist: refusing persist due to blocker findings rule_id=%s",
+                first_rule,
+            )
+            raise RuntimeError(state["error"])
 
     if mode == "process":
         contador_output = state.get("contador_output") or interpreted
@@ -905,7 +1028,23 @@ def _run_persist(state: AgentState) -> AgentState:
 
         # Auto-derive financial statements after process completes (non-fatal)
         if mode == "process" and company_nit:
-            _auto_derive_statements(db, company_nit)
+            derive_result = _auto_derive_statements(db, company_nit)
+            if derive_result is False:
+                from app.agents.audit_utils import append_finding
+                from app.models.audit import AuditFinding, AuditTarget, Severity
+
+                append_finding(
+                    state,
+                    AuditFinding(
+                        target=AuditTarget.PRE_PERSIST,
+                        rule_id="PERS-STATEMENT-DERIVATION-FAIL",
+                        severity=Severity.WARNING,
+                        fixable=False,
+                        responsible_agent="persist",
+                        technical_message="Financial statement derivation failed after persist.",
+                        user_message_es="No se pudieron generar los estados financieros automáticamente. Puede generarlos manualmente.",
+                    ),
+                )
 
         state["db_result"] = {
             "ingest_id": ingest_id,
@@ -945,7 +1084,11 @@ def _run_persist(state: AgentState) -> AgentState:
         raise
     except Exception as e:
         logger.error(f"db_persist: Error persisting data: {e}", exc_info=True)
-        state["error"] = f"DB persist error: {str(e)}"
+        raw_error = str(e)
+        if raw_error.lstrip().startswith("{"):
+            state["error"] = raw_error
+        else:
+            state["error"] = f"DB persist error: {raw_error}"
         append_log(state, "db_persist", "node_error", {"error": str(e)})
 
         if mode == "ingest" and ingest_id:
@@ -971,7 +1114,7 @@ def _run_persist(state: AgentState) -> AgentState:
                         status=ProcessStatus.FAILED,
                         current_stage="failed",
                         current_agent="db_persist",
-                        error_message=str(e),
+                        error_message=state.get("error") or str(e),
                         progress=100,
                         agent_log_entry={
                             "agent": "db_persist",
@@ -1109,12 +1252,28 @@ def _persist_financial_statement(state: AgentState) -> None:
             doc_type in ("balance_general", "estado_resultados", "libro_auxiliar")
             and company_nit
         ):
-            _try_via_b_auto_derive(
+            derive_result = _try_via_b_auto_derive(
                 db,
                 company_nit=company_nit,
                 period_start=period_start,
                 period_end=period_end,
             )
+            if derive_result is False:
+                from app.agents.audit_utils import append_finding
+                from app.models.audit import AuditFinding, AuditTarget, Severity
+
+                append_finding(
+                    state,
+                    AuditFinding(
+                        target=AuditTarget.PRE_PERSIST,
+                        rule_id="PERS-VIA-B-PARTIAL",
+                        severity=Severity.WARNING,
+                        fixable=False,
+                        responsible_agent="persist",
+                        technical_message="Via B: not all 3 source statements uploaded yet.",
+                        user_message_es="Vía B: faltan documentos fuente. Cargue balance general, estado de resultados y libro auxiliar para generar los estados financieros derivados.",
+                    ),
+                )
 
         state["db_result"] = {
             "ingest_id": ingest_id,

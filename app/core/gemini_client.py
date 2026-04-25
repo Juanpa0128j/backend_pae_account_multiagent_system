@@ -62,17 +62,12 @@ from app.models.llm_schemas import (  # noqa: F401
     AuditorHallazgoGemini,
     AuditorOutputGemini,
     ChatbotResponseGemini,
-    ChatIntentClassification,
     ContadorOutputGemini,
     ExplicacionResultadoGemini,
     InterpretacionRatioGemini,
     PrediccionPeriodoGemini,
-    RawTransaction,
-    RawTransactionsList,
     ReporteroAnalysisGemini,
     ReporteroBriefAnalysisGemini,
-    TaxJustification,
-    TaxRateLookup,
 )
 
 # Extraction instructions constant (used by some tests/scripts)

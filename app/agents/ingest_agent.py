@@ -245,6 +245,22 @@ def ingest_node(state: AgentState) -> AgentState:
                 "short_text_warning",
                 {"text_chars": len(stripped_text)},
             )
+            from app.agents.audit_utils import append_finding
+            from app.models.audit import AuditFinding, AuditTarget, Severity
+
+            append_finding(
+                state,
+                AuditFinding(
+                    target=AuditTarget.INGEST,
+                    rule_id="ING-EXTRACTION-PARTIAL",
+                    severity=Severity.WARNING,
+                    fixable=False,
+                    responsible_agent="ingest",
+                    technical_message=f"Extracted text is very short ({len(stripped_text)} chars) — extraction quality may be low.",
+                    user_message_es="La extracción del documento fue parcial. Verifique que el archivo no esté dañado o sea legible.",
+                    evidence={"text_chars": len(stripped_text)},
+                ),
+            )
 
         append_log(
             state,
@@ -356,6 +372,13 @@ def ingest_node(state: AgentState) -> AgentState:
         }
 
         logger.info(f"Ingest: Processing complete for {file_path}")
+
+        # Phase 3: deterministic ingest audit
+        from app.agents.audit_utils import append_audit_report
+        from app.agents.auditors import ingest_auditor
+
+        _ingest_report = ingest_auditor.run(state)
+        append_audit_report(state, _ingest_report)
 
     except Exception as e:
         state["error"] = f"Ingest error: {str(e)}"

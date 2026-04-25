@@ -16,6 +16,7 @@ from app.agents.persist_node import (
     _build_structured_transactions,
     db_persist_node,
 )
+from app.models.audit import AuditFinding, AuditReport, AuditTarget, Severity
 
 
 def _build_state() -> dict:
@@ -295,3 +296,74 @@ def test_build_preview_is_doc_type_aware_when_concept_missing():
 
     assert preview["concepto"] == "Extracto bancario"
     assert preview["items_count"] == 2
+
+
+@patch("app.agents.persist_node.db_service.update_process_job")
+@patch("app.agents.persist_node.db_service.create_journal_entry_lines")
+@patch("app.agents.persist_node.db_service.create_transaction_posted")
+@patch("app.agents.persist_node.db_service.validate_puc_exists")
+@patch("app.agents.persist_node.db_service.check_duplicates", return_value=[])
+@patch("app.agents.persist_node.db_service.update_ingest_job")
+@patch("app.agents.persist_node.db_service.get_ingest_job")
+@patch("app.agents.persist_node.SessionLocal")
+@patch("app.agents.persist_node._auto_derive_statements")
+@patch("app.agents.auditors.pre_persist_auditor.run")
+def test_db_persist_refuses_when_pre_persist_blocker_present(
+    mock_pre_persist_run,
+    mock_auto_derive,
+    mock_session_local,
+    mock_get_ingest_job,
+    mock_update_ingest,
+    mock_check_duplicates,
+    mock_validate_puc,
+    mock_create_posted,
+    mock_create_journal,
+    mock_update_process,
+):
+    _ = (
+        mock_auto_derive,
+        mock_update_ingest,
+        mock_check_duplicates,
+        mock_validate_puc,
+        mock_create_journal,
+    )
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_ingest_job.return_value = SimpleNamespace(id="ing_001")
+
+    mock_pending = SimpleNamespace(
+        id="pending_001",
+        fecha=datetime(2026, 3, 7, tzinfo=timezone.utc),
+        total=Decimal("1500000.00"),
+        nit_emisor="900123456",
+        nit_receptor="800999888",
+        descripcion="Servicios profesionales marzo 2026",
+    )
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_pending
+
+    mock_pre_persist_run.return_value = AuditReport(
+        target=AuditTarget.PRE_PERSIST,
+        approved=False,
+        findings=[
+            AuditFinding(
+                target=AuditTarget.PRE_PERSIST,
+                rule_id="PREP-PARTIDA-DOBLE-MISMATCH",
+                severity=Severity.BLOCKER,
+                fixable=False,
+                responsible_agent="persist",
+                technical_message="Partida doble mismatch.",
+                user_message_es="La transacción no está balanceada.",
+                suggested_action_es="Corregir asientos antes de persistir.",
+            )
+        ],
+        attempt=1,
+        duration_ms=1.0,
+    )
+
+    out = db_persist_node(_build_state())
+
+    assert out.get("error") is not None
+    assert "audit_blocker" in out["error"]
+    assert mock_create_posted.call_count == 0
+    assert mock_update_process.called

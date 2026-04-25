@@ -57,6 +57,8 @@ class ProcessStatusResponse(BaseModel):
     created_at: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+    has_warnings: bool = False
+    trace_url: Optional[str] = None
 
 
 class ProcessResultResponse(BaseModel):

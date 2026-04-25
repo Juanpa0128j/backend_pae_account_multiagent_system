@@ -72,6 +72,13 @@ def auditor_node(state: AgentState) -> AgentState:
     )
 
     try:
+        # Phase 3: deterministic contador audit before LLM semantic audit
+        from app.agents.audit_utils import append_audit_report
+        from app.agents.auditors import contador_auditor
+
+        _contador_report = contador_auditor.run(state)
+        append_audit_report(state, _contador_report)
+
         llm = get_llm_client()
 
         if is_retry:

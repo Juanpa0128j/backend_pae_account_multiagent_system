@@ -25,6 +25,14 @@ logger = get_logger("app.agents.validation_rules")
 MAX_CONTADOR_RETRIES = 3
 MAX_AUDITOR_RETRIES = 3
 
+# Phase 4 — per-agent retry budgets and global circuit breaker
+RETRY_BUDGETS: dict[str, int] = {
+    "ingest": 1,
+    "contador": 2,
+    "tributario": 2,
+}
+GLOBAL_AUDIT_FAILURES = 5
+
 
 # ---------------------------------------------------------------------------
 # PUC helpers (used by contador validation)

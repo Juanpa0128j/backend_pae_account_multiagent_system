@@ -142,6 +142,21 @@ def contador_node(state: AgentState) -> AgentState:
         rag_context = rag_results if isinstance(rag_results, list) else []
     except Exception as rag_err:
         logger.warning("contador: RAG lookup failed (non-fatal): %s", rag_err)
+        from app.agents.audit_utils import append_finding
+        from app.models.audit import AuditFinding, AuditTarget, Severity
+
+        append_finding(
+            state,
+            AuditFinding(
+                target=AuditTarget.CONTADOR,
+                rule_id="CONT-RAG-MISS",
+                severity=Severity.WARNING,
+                fixable=False,
+                responsible_agent="contador",
+                technical_message=f"RAG lookup failed: {rag_err}",
+                user_message_es="No se encontró la cuenta en el catálogo PUC. La clasificación puede ser imprecisa.",
+            ),
+        )
 
     try:
         llm = get_llm_client()
