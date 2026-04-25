@@ -35,6 +35,7 @@ from app.agents.supervisor import (
     validate_output_node,
 )
 from app.agents.tributario_agent import tributario_node
+from app.agents.validation_rules import RETRY_BUDGETS
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +155,7 @@ def _base_state() -> AgentState:
         "pipeline_warnings": [],
         "unfixable_findings": [],
         "audit_reports": [],
-        "retry_budget": {},
+        "retry_budget": dict(RETRY_BUDGETS),
         "giveup_record": None,
     }
 
@@ -249,6 +250,7 @@ def invoke_accounting_pipeline(
     result["db_result"] = final_state.get("db_result")
     result["error"] = final_state.get("error")
     result["agent_log"] = final_state.get("agent_log", [])
+    result["giveup_record"] = final_state.get("giveup_record")
     return result
 
 
