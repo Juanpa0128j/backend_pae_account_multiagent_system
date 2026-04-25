@@ -487,7 +487,7 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         logger.warning(
             "[persist] build_first_level failed (non-fatal): %s", exc, exc_info=True
         )
-        return
+        return False
 
     try:
         _derive_financial_statements(
@@ -497,8 +497,11 @@ def _auto_derive_statements(db, company_nit: str) -> None:
         )
     except BusinessRuleError as exc:
         logger.warning("[persist] derive skipped (missing source inputs): %s", exc)
+        return False
     except Exception as exc:
         logger.warning("[persist] derive failed (non-fatal): %s", exc, exc_info=True)
+        return False
+    return True
 
 
 def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) -> None:
@@ -521,7 +524,7 @@ def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) ->
             "[persist] Via B: not all 3 source docs present yet for %s — skipping auto-derive",
             company_nit,
         )
-        return
+        return False
 
     logger.info(
         "[persist] Via B: all 3 source docs present for %s — triggering derivation",
@@ -536,6 +539,8 @@ def _try_via_b_auto_derive(db, *, company_nit: str, period_start, period_end) ->
         )
     except BusinessRuleError as exc:
         logger.warning("[persist] Via B derive skipped: %s", exc)
+        return False
+    return True
 
 
 def _run_persist(state: AgentState) -> AgentState:
@@ -905,7 +910,22 @@ def _run_persist(state: AgentState) -> AgentState:
 
         # Auto-derive financial statements after process completes (non-fatal)
         if mode == "process" and company_nit:
-            _auto_derive_statements(db, company_nit)
+            if not _auto_derive_statements(db, company_nit):
+                from app.agents.audit_utils import append_finding
+                from app.models.audit import AuditFinding, AuditTarget, Severity
+
+                append_finding(
+                    state,
+                    AuditFinding(
+                        target=AuditTarget.PRE_PERSIST,
+                        rule_id="PERS-STATEMENT-DERIVATION-FAIL",
+                        severity=Severity.WARNING,
+                        fixable=False,
+                        responsible_agent="persist",
+                        technical_message="Financial statement derivation failed after persist.",
+                        user_message_es="No se pudieron generar los estados financieros automáticamente. Puede generarlos manualmente.",
+                    ),
+                )
 
         state["db_result"] = {
             "ingest_id": ingest_id,
@@ -1109,12 +1129,27 @@ def _persist_financial_statement(state: AgentState) -> None:
             doc_type in ("balance_general", "estado_resultados", "libro_auxiliar")
             and company_nit
         ):
-            _try_via_b_auto_derive(
+            if not _try_via_b_auto_derive(
                 db,
                 company_nit=company_nit,
                 period_start=period_start,
                 period_end=period_end,
-            )
+            ):
+                from app.agents.audit_utils import append_finding
+                from app.models.audit import AuditFinding, AuditTarget, Severity
+
+                append_finding(
+                    state,
+                    AuditFinding(
+                        target=AuditTarget.PRE_PERSIST,
+                        rule_id="PERS-VIA-B-PARTIAL",
+                        severity=Severity.WARNING,
+                        fixable=False,
+                        responsible_agent="persist",
+                        technical_message="Via B: not all 3 source statements uploaded yet.",
+                        user_message_es="Vía B: faltan documentos fuente. Cargue balance general, estado de resultados y libro auxiliar para generar los estados financieros derivados.",
+                    ),
+                )
 
         state["db_result"] = {
             "ingest_id": ingest_id,

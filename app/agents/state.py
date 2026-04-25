@@ -100,3 +100,9 @@ class AgentState(TypedDict):
         str
     ]  # Explicitly set by API caller; overrides auto-detected entity_nit
     source_document: dict  # Full structured extraction dict from ingest pipeline (raw_data from TransactionPending)
+    # Phase 2 — audit finding buckets (append-only during pipeline run)
+    pipeline_warnings: List[dict]  # WARNING/INFO AuditFinding dicts
+    unfixable_findings: List[dict]  # BLOCKER AuditFinding dicts with fixable=False
+    audit_reports: List[dict]  # AuditReport dicts (populated in Phase 3+)
+    retry_budget: dict  # per-target remaining retries, e.g. {"contador": 2}
+    giveup_record: Optional[dict]  # GiveUpRecord dict when loop gives up (Phase 4+)

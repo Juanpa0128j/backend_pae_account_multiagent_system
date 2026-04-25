@@ -151,6 +151,11 @@ def _base_state() -> AgentState:
         "parsed_content": None,
         "company_nit": None,
         "source_document": {},
+        "pipeline_warnings": [],
+        "unfixable_findings": [],
+        "audit_reports": [],
+        "retry_budget": {},
+        "giveup_record": None,
     }
 
 

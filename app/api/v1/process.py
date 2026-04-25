@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -11,7 +11,9 @@ from app.models.schemas import (
     ProcessStatusResponse,
     ProcessResultResponse,
 )
+from app.models.trace import PipelineTrace
 from app.services import db_service, jobs
+from app.services.pipeline_trace_service import build_trace
 
 router = APIRouter()
 
@@ -158,7 +160,9 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/status/{process_id}", response_model=ProcessStatusResponse)
-async def get_process_status(process_id: str, db: Session = Depends(get_db)):
+async def get_process_status(
+    process_id: str, request: Request, db: Session = Depends(get_db)
+):
     """Polling endpoint for async process job status and progress."""
     process_job = db_service.get_process_job(db, process_id)
     if not process_job:
@@ -170,6 +174,15 @@ async def get_process_status(process_id: str, db: Session = Depends(get_db)):
         process_job.error_message
     )
 
+    raw_log = process_job.agent_log or []
+    has_warnings = any(
+        e.get("event") in {"audit_finding", "warning", "non_fatal_error"}
+        for e in raw_log
+    )
+
+    base_url = str(request.base_url).rstrip("/")
+    trace_url = f"{base_url}/api/v1/process/{process_id}/trace"
+
     return ProcessStatusResponse(
         process_id=process_job.id,
         status=process_job.status.value,
@@ -180,7 +193,7 @@ async def get_process_status(process_id: str, db: Session = Depends(get_db)):
         error_category=error_category,
         error_code=error_code,
         remediation=remediation,
-        agent_log=process_job.agent_log or [],
+        agent_log=raw_log,
         created_at=(
             process_job.created_at.isoformat() if process_job.created_at else None
         ),
@@ -190,7 +203,24 @@ async def get_process_status(process_id: str, db: Session = Depends(get_db)):
         completed_at=(
             process_job.completed_at.isoformat() if process_job.completed_at else None
         ),
+        has_warnings=has_warnings,
+        trace_url=trace_url,
     )
+
+
+@router.get("/trace/{process_id}", response_model=PipelineTrace)
+async def get_process_trace(process_id: str, db: Session = Depends(get_db)):
+    """Accountant-facing trace for a process run.
+
+    Returns a structured Spanish-language timeline of each pipeline step,
+    any audit findings, and the reason auto-fix gave up (if applicable).
+    """
+    trace = build_trace(process_id, db)
+    if trace is None:
+        raise HTTPException(
+            status_code=404, detail=f"Process job {process_id} not found"
+        )
+    return trace
 
 
 @router.get("/result/{process_id}", response_model=ProcessResultResponse)
