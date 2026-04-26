@@ -23,6 +23,17 @@ from app.services.report_export_service import (
 router = APIRouter()
 
 
+_REPORT_TYPE_ALIASES: dict[str, set[str]] = {
+    "balance": {"balance", "balance_general"},
+    "pnl": {"pnl", "estado_resultados"},
+    "cashflow": {"cashflow", "flujo_de_caja"},
+    "libro_diario": {"libro_diario"},
+    "libro_auxiliar": {"libro_auxiliar"},
+    "cambios_patrimonio": {"cambios_patrimonio"},
+    "notas_eeff": {"notas_eeff", "notas_estados_financieros"},
+}
+
+
 def _build_params(
     start_date: Optional[date],
     resolved_end_date: date,
@@ -314,6 +325,18 @@ def _resolve_report(
     resolved_end_date = end_date or date.today()
 
     if statement_id:
+        if not company_nit:
+            raise HTTPException(
+                status_code=422,
+                detail="company_nit is required when statement_id is provided",
+            )
+        try:
+            normalized_company_nit = normalize_nit(company_nit)
+        except ValueError as nit_err:
+            raise HTTPException(
+                status_code=422, detail=f"Invalid company_nit: {nit_err}"
+            )
+
         db = SessionLocal()
         try:
             stmt = (
@@ -325,6 +348,31 @@ def _resolve_report(
                 raise HTTPException(
                     status_code=404, detail=f"Statement {statement_id} not found"
                 )
+
+            expected_types = _REPORT_TYPE_ALIASES.get(report_type, {report_type})
+            if stmt.statement_type not in expected_types:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Statement type mismatch: "
+                        f"expected one of {sorted(expected_types)}, "
+                        f"got {stmt.statement_type}"
+                    ),
+                )
+
+            stmt_nit_normalized = None
+            if stmt.entity_nit:
+                try:
+                    stmt_nit_normalized = normalize_nit(stmt.entity_nit)
+                except ValueError:
+                    stmt_nit_normalized = stmt.entity_nit.strip()
+
+            if stmt_nit_normalized and stmt_nit_normalized != normalized_company_nit:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Statement does not belong to provided company_nit",
+                )
+
             raw = stmt.data or {}
             if stmt.period_end:
                 resolved_end_date = stmt.period_end.date()
@@ -349,6 +397,16 @@ def _build_export_filename(
     if start_date:
         return f"{base_name}_{start_date}_{resolved_end_date}.{extension}"
     return f"{base_name}_all_{resolved_end_date}.{extension}"
+
+
+def _build_attachment_headers(
+    base_name: str,
+    extension: str,
+    resolved_end_date: date,
+    start_date: Optional[date] = None,
+) -> dict[str, str]:
+    filename = _build_export_filename(base_name, extension, resolved_end_date, start_date)
+    return {"Content-Disposition": f"attachment; filename={filename}"}
 
 
 @router.get("/balance", response_model=BalanceSheetOutput)
@@ -501,7 +559,7 @@ async def download_balance_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=balance_general_{resolved_end_date}.pdf"},
+        headers=_build_attachment_headers("balance_general", "pdf", resolved_end_date, start_date),
     )
 
 
@@ -524,7 +582,7 @@ async def download_balance_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=balance_general_{resolved_end_date}.xlsx"},
+        headers=_build_attachment_headers("balance_general", "xlsx", resolved_end_date, start_date),
     )
 
 
@@ -547,7 +605,7 @@ async def download_pnl_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=estado_resultados_{resolved_end_date}.pdf"},
+        headers=_build_attachment_headers("estado_resultados", "pdf", resolved_end_date, start_date),
     )
 
 
@@ -570,7 +628,7 @@ async def download_pnl_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=estado_resultados_{resolved_end_date}.xlsx"},
+        headers=_build_attachment_headers("estado_resultados", "xlsx", resolved_end_date, start_date),
     )
 
 
@@ -593,7 +651,7 @@ async def download_cashflow_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=flujo_caja_{resolved_end_date}.pdf"},
+        headers=_build_attachment_headers("flujo_caja", "pdf", resolved_end_date, start_date),
     )
 
 
@@ -616,7 +674,7 @@ async def download_cashflow_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=flujo_caja_{resolved_end_date}.xlsx"},
+        headers=_build_attachment_headers("flujo_caja", "xlsx", resolved_end_date, start_date),
     )
 
 
@@ -639,7 +697,7 @@ async def download_libro_diario_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=libro_diario_{resolved_end_date}.pdf"},
+        headers=_build_attachment_headers("libro_diario", "pdf", resolved_end_date, start_date),
     )
 
 
@@ -662,7 +720,7 @@ async def download_libro_diario_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=libro_diario_{resolved_end_date}.xlsx"},
+        headers=_build_attachment_headers("libro_diario", "xlsx", resolved_end_date, start_date),
     )
 
 
@@ -685,7 +743,7 @@ async def download_libro_auxiliar_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=libro_auxiliar_{resolved_end_date}.pdf"},
+        headers=_build_attachment_headers("libro_auxiliar", "pdf", resolved_end_date, start_date),
     )
 
 
@@ -708,7 +766,7 @@ async def download_libro_auxiliar_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=libro_auxiliar_{resolved_end_date}.xlsx"},
+        headers=_build_attachment_headers("libro_auxiliar", "xlsx", resolved_end_date, start_date),
     )
 
 
@@ -731,7 +789,7 @@ async def download_cambios_patrimonio_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=cambios_patrimonio_{resolved_end_date}.pdf"},
+        headers=_build_attachment_headers("cambios_patrimonio", "pdf", resolved_end_date, start_date),
     )
 
 
@@ -754,7 +812,7 @@ async def download_cambios_patrimonio_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=cambios_patrimonio_{resolved_end_date}.xlsx"},
+        headers=_build_attachment_headers("cambios_patrimonio", "xlsx", resolved_end_date, start_date),
     )
 
 
@@ -777,7 +835,7 @@ async def download_notas_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=notas_estados_financieros_{resolved_end_date}.pdf"},
+        headers=_build_attachment_headers("notas_estados_financieros", "pdf", resolved_end_date, start_date),
     )
 
 
@@ -800,5 +858,5 @@ async def download_notas_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=notas_estados_financieros_{resolved_end_date}.xlsx"},
+        headers=_build_attachment_headers("notas_estados_financieros", "xlsx", resolved_end_date, start_date),
     )
