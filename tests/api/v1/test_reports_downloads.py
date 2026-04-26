@@ -96,7 +96,7 @@ def test_resolve_report_rejects_invalid_company_nit_with_statement_id():
             statement_id="stmt-1",
             start_date=None,
             end_date=None,
-            company_nit="nit-invalido",
+            company_nit="   ",
         )
 
     assert exc.value.status_code == 422
