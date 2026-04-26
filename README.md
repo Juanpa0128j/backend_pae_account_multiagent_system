@@ -210,6 +210,14 @@ Persist behavior in process mode:
 ### Pipeline 3 — Reporting (`mode="reporting"`)
 Generates balance / P&L reports via the Reportero agent.
 
+The chat endpoint (`POST /api/v1/chat/stream`) emits Server-Sent Events for
+each step of the pipeline so the frontend can render an inline reasoning
+panel similar to OpenAI / Anthropic / Gemini. Each `thinking` event carries
+a `phase` (`intent` → `params` → `gathering_data` → `rag` → `generating` →
+`complete`), a short Spanish label, optional detail and `duration_ms`. The
+full trace is also persisted on `chat_messages.reasoning` (JSONB) so loaded
+sessions reproduce the panel.
+
 ### Financial Statements Matrix (Direct vs Derived)
 
 | Source document | Target statement | Mode |

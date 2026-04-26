@@ -12,6 +12,24 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+class ChatReasoningStep(BaseModel):
+    """A single step in the agent's visible reasoning trace."""
+
+    phase: Literal[
+        "intent",
+        "params",
+        "gathering_data",
+        "rag",
+        "generating",
+        "complete",
+    ]
+    label: str
+    detail: str | None = None
+    duration_ms: int | None = None
+    status: Literal["running", "done", "error"] = "done"
+    timestamp: str | None = None
+
+
 class ChatMessageSchema(BaseModel):
     """A single message in the conversation (for API display)."""
 
@@ -20,6 +38,7 @@ class ChatMessageSchema(BaseModel):
     data_cards: list[FinancialDataCard] | None = None
     intent: str | None = None
     sources: list[str] | None = None
+    reasoning: list[ChatReasoningStep] | None = None
     created_at: str | None = None
 
 
@@ -49,6 +68,7 @@ class ChatResponse(BaseModel):
     data_cards: list[FinancialDataCard] = Field(default_factory=list)
     intent_detected: str
     sources: list[str] = Field(default_factory=list)
+    reasoning: list[ChatReasoningStep] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):

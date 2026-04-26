@@ -16,6 +16,7 @@ from typing import Any, Iterator
 from sqlalchemy import func
 
 from app.models.chat_schemas import (
+    ChatReasoningStep,
     ChatRequest,
     ChatResponse,
     FinancialDataCard,
@@ -156,6 +157,7 @@ def save_message(
     data_cards: list[dict] | None = None,
     intent: str | None = None,
     sources: list[str] | None = None,
+    reasoning: list[dict] | None = None,
 ) -> str:
     from app.models.database import ChatMessageRecord, ChatSession
 
@@ -170,6 +172,7 @@ def save_message(
             data_cards=data_cards,
             intent=intent,
             sources=sources,
+            reasoning=reasoning,
         )
         db.add(msg)
         # Always bump updated_at; set title from first user message
@@ -254,6 +257,7 @@ def get_session_messages(session_id: str) -> list[dict]:
                 "data_cards": r.data_cards,
                 "intent": r.intent,
                 "sources": r.sources,
+                "reasoning": r.reasoning,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in rows
@@ -534,11 +538,51 @@ def _resolve_session(session_id: str | None, company_nit: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _thinking_step(
+    phase: str,
+    label: str,
+    detail: str | None = None,
+    duration_ms: int | None = None,
+    status: str = "done",
+) -> dict:
+    """Build a single reasoning trace step with current UTC timestamp."""
+    from datetime import datetime, timezone
+
+    return {
+        "phase": phase,
+        "label": label,
+        "detail": detail,
+        "duration_ms": duration_ms,
+        "status": status,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _intent_label(intent_name: str) -> str:
+    """Human-friendly label for an intent (used in reasoning detail)."""
+    return {
+        "balance": "Balance General",
+        "pnl": "Estado de Resultados",
+        "cashflow": "Flujo de Caja",
+        "iva": "Reporte IVA",
+        "withholdings": "Retenciones",
+        "analysis": "Análisis Financiero",
+        "top_accounts": "Cuentas con mayor movimiento",
+        "ratios": "Ratios Financieros",
+        "dashboard": "Resumen del Dashboard",
+        "general_question": "Consulta general",
+    }.get(intent_name, intent_name)
+
+
 def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     """Full pipeline: session → intent → data → stream → persist.
 
     Yields dicts with ``event`` and ``data`` keys suitable for SSE.
+    Emits ``thinking`` events with the agent's step-by-step trace so the
+    frontend can render a reasoning panel similar to OpenAI/Anthropic/Gemini.
     """
+    import time
+
     from app.core.llm_client import get_llm_client
 
     # 1. Resolve or create session
@@ -550,23 +594,94 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     # 3. Load conversation memory
     history = load_recent_messages(session_id, limit=10)
 
+    reasoning_steps: list[dict] = []
+
+    def _emit(step: dict) -> dict:
+        """Append step to trace and return the SSE event payload."""
+        reasoning_steps.append(step)
+        return {
+            "event": "thinking",
+            "data": json.dumps({"thinking": step}, ensure_ascii=False, default=str),
+        }
+
+    pipeline_start = time.perf_counter()
+
     # 4. Classify intent
+    t0 = time.perf_counter()
     intent = classify_intent(request.message, history)
     intent_name = intent.get("intent", "general_question")
+    needs_data = bool(intent.get("needs_data"))
+    yield _emit(
+        _thinking_step(
+            phase="intent",
+            label=f"Intención detectada: {_intent_label(intent_name)}",
+            detail=f"intent={intent_name}, needs_data={needs_data}",
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    )
 
-    # 5. Gather financial data
+    # 5. Show resolved parameters (NIT, fechas)
+    params_summary_parts: list[str] = []
+    if request.company_nit:
+        params_summary_parts.append(f"NIT={request.company_nit}")
+    if request.start_date:
+        params_summary_parts.append(f"desde={request.start_date.isoformat()}")
+    if request.end_date:
+        params_summary_parts.append(f"hasta={request.end_date.isoformat()}")
+    yield _emit(
+        _thinking_step(
+            phase="params",
+            label="Parámetros aplicados",
+            detail=", ".join(params_summary_parts) or "sin filtros adicionales",
+        )
+    )
+
+    # 6. Gather financial data
+    t0 = time.perf_counter()
     financial_data, data_cards = gather_financial_data(intent, request)
+    yield _emit(
+        _thinking_step(
+            phase="gathering_data",
+            label="Datos financieros recolectados"
+            if needs_data
+            else "Sin recolección de datos (consulta general)",
+            detail=f"tarjetas={len(data_cards)}"
+            if needs_data
+            else "no se requirieron datos",
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    )
 
-    # 6. Fetch RAG context
-    rag_context = fetch_rag_context(intent.get("rag_query"))
+    # 7. Fetch RAG context
+    t0 = time.perf_counter()
+    rag_query = intent.get("rag_query")
+    rag_context = fetch_rag_context(rag_query)
+    yield _emit(
+        _thinking_step(
+            phase="rag",
+            label="Contexto normativo (RAG)",
+            detail=f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
+            if rag_query
+            else "sin consulta normativa",
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    )
 
-    # 7. Build prompt and stream
+    # 8. Build prompt and stream
     prompt = _build_response_prompt(
         request.message, history, financial_data, rag_context
     )
     llm = get_llm_client()
+    yield _emit(
+        _thinking_step(
+            phase="generating",
+            label="Generando respuesta",
+            detail=f"modelo={getattr(llm, 'name', 'desconocido')}",
+        )
+    )
 
     response_chunks: list[str] = []
+    t0 = time.perf_counter()
     try:
         for token in llm.stream_chat_response(prompt):
             response_chunks.append(token)
@@ -584,7 +699,7 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
         }
     full_response = "".join(response_chunks)
 
-    # 8. Send structured data event
+    # 9. Send structured data event
     sources: list[str] = []  # Streaming has no structured output for normative refs
     yield {
         "event": "data",
@@ -599,7 +714,17 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
         ),
     }
 
-    # 9. Persist assistant message
+    # 10. Final reasoning step + total duration
+    yield _emit(
+        _thinking_step(
+            phase="complete",
+            label="Respuesta entregada",
+            detail=f"tokens={len(response_chunks)}",
+            duration_ms=int((time.perf_counter() - pipeline_start) * 1000),
+        )
+    )
+
+    # 11. Persist assistant message (including the reasoning trace)
     save_message(
         session_id,
         "assistant",
@@ -607,9 +732,10 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
         data_cards=[c.model_dump() for c in data_cards] if data_cards else None,
         intent=intent_name,
         sources=sources or None,
+        reasoning=reasoning_steps or None,
     )
 
-    # 10. Done event
+    # 12. Done event
     yield {"event": "done", "data": json.dumps({"session_id": session_id})}
 
 
@@ -624,7 +750,12 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     Internally runs the same pipeline as the streaming handler but
     collects the full response before returning.
     """
+    import time
+
     from app.core.llm_client import get_llm_client
+
+    reasoning_steps: list[dict] = []
+    pipeline_start = time.perf_counter()
 
     # Session
     session_id = _resolve_session(request.session_id, request.company_nit)
@@ -633,18 +764,77 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     history = load_recent_messages(session_id, limit=10)
 
     # Intent
+    t0 = time.perf_counter()
     intent = classify_intent(request.message, history)
     intent_name = intent.get("intent", "general_question")
+    needs_data = bool(intent.get("needs_data"))
+    reasoning_steps.append(
+        _thinking_step(
+            phase="intent",
+            label=f"Intención detectada: {_intent_label(intent_name)}",
+            detail=f"intent={intent_name}, needs_data={needs_data}",
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    )
+
+    # Params summary
+    params_summary_parts: list[str] = []
+    if request.company_nit:
+        params_summary_parts.append(f"NIT={request.company_nit}")
+    if request.start_date:
+        params_summary_parts.append(f"desde={request.start_date.isoformat()}")
+    if request.end_date:
+        params_summary_parts.append(f"hasta={request.end_date.isoformat()}")
+    reasoning_steps.append(
+        _thinking_step(
+            phase="params",
+            label="Parámetros aplicados",
+            detail=", ".join(params_summary_parts) or "sin filtros adicionales",
+        )
+    )
 
     # Data + RAG
+    t0 = time.perf_counter()
     financial_data, data_cards = gather_financial_data(intent, request)
-    rag_context = fetch_rag_context(intent.get("rag_query"))
+    reasoning_steps.append(
+        _thinking_step(
+            phase="gathering_data",
+            label="Datos financieros recolectados"
+            if needs_data
+            else "Sin recolección de datos (consulta general)",
+            detail=f"tarjetas={len(data_cards)}"
+            if needs_data
+            else "no se requirieron datos",
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    )
+
+    t0 = time.perf_counter()
+    rag_query = intent.get("rag_query")
+    rag_context = fetch_rag_context(rag_query)
+    reasoning_steps.append(
+        _thinking_step(
+            phase="rag",
+            label="Contexto normativo (RAG)",
+            detail=f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
+            if rag_query
+            else "sin consulta normativa",
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    )
 
     # Generate response (structured, non-streaming)
     prompt = _build_response_prompt(
         request.message, history, financial_data, rag_context
     )
     llm = get_llm_client()
+    reasoning_steps.append(
+        _thinking_step(
+            phase="generating",
+            label="Generando respuesta",
+            detail=f"modelo={getattr(llm, 'name', 'desconocido')}",
+        )
+    )
 
     try:
         result = llm.generate_chat_response(prompt)
@@ -655,7 +845,16 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
         reply = f"Lo siento, hubo un error generando la respuesta: {exc}"
         sources = []
 
-    # Persist
+    reasoning_steps.append(
+        _thinking_step(
+            phase="complete",
+            label="Respuesta entregada",
+            detail=f"caracteres={len(reply)}",
+            duration_ms=int((time.perf_counter() - pipeline_start) * 1000),
+        )
+    )
+
+    # Persist (including reasoning trace)
     save_message(
         session_id,
         "assistant",
@@ -663,6 +862,7 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
         data_cards=[c.model_dump() for c in data_cards] if data_cards else None,
         intent=intent_name,
         sources=sources or None,
+        reasoning=reasoning_steps or None,
     )
 
     return ChatResponse(
@@ -671,4 +871,5 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
         data_cards=data_cards,
         intent_detected=intent_name,
         sources=sources,
+        reasoning=[ChatReasoningStep(**step) for step in reasoning_steps],
     )
