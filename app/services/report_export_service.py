@@ -1081,7 +1081,7 @@ class LibroAuxiliarExporter:
             row += 1
 
             saldo = 0.0
-            for mov in cuenta.get("movimientos", [])[:50]:
+            for mov in cuenta.get("movimientos", []):
                 debito = float(mov.get("debito") or 0)
                 credito = float(mov.get("credito") or 0)
                 saldo += debito - credito
