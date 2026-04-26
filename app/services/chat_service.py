@@ -681,7 +681,7 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     )
 
     response_chunks: list[str] = []
-    t0 = time.perf_counter()
+    generation_start = time.perf_counter()
     try:
         for token in llm.stream_chat_response(prompt):
             response_chunks.append(token)
@@ -697,6 +697,7 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
             "event": "token",
             "data": json.dumps({"content": error_msg}, ensure_ascii=False),
         }
+    generation_ms = int((time.perf_counter() - generation_start) * 1000)
     full_response = "".join(response_chunks)
 
     # 9. Send structured data event
@@ -719,7 +720,7 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
         _thinking_step(
             phase="complete",
             label="Respuesta entregada",
-            detail=f"tokens={len(response_chunks)}",
+            detail=f"tokens={len(response_chunks)} | generation_ms={generation_ms}",
             duration_ms=int((time.perf_counter() - pipeline_start) * 1000),
         )
     )
