@@ -152,34 +152,68 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
     if report_type == "libro_auxiliar":
         raw_accounts = data.get("accounts") or data.get("cuentas") or []
         cuentas = []
-        for acc in raw_accounts:
-            if not isinstance(acc, dict):
-                continue
-            total_debito = _to_float(
-                acc.get("total_debito") or acc.get("debito_total") or acc.get("total_debit")
-            )
-            total_credito = _to_float(
-                acc.get("total_credito") or acc.get("credito_total") or acc.get("total_credit")
-            )
-            saldo = _to_float(
-                acc.get("saldo") or acc.get("saldo_neto") or acc.get("net_balance")
-            )
-            movimientos = acc.get("movimientos") or []
-            if not movimientos and (total_debito or total_credito):
-                movimientos = [{
-                    "fecha": data.get("periodo_fin", ""),
-                    "descripcion": "Saldo acumulado del periodo",
-                    "debito": total_debito,
-                    "credito": total_credito,
-                }]
-            cuentas.append({
-                "cuenta": acc.get("cuenta_puc") or acc.get("account") or acc.get("cuenta") or "",
-                "nombre": acc.get("nombre") or acc.get("name") or "",
-                "total_debito": total_debito,
-                "total_credito": total_credito,
-                "saldo": saldo,
-                "movimientos": movimientos,
-            })
+
+        # Case 1: accounts/cuentas array (already grouped by account)
+        if raw_accounts:
+            for acc in raw_accounts:
+                if not isinstance(acc, dict):
+                    continue
+                total_debito = _to_float(
+                    acc.get("total_debito") or acc.get("debito_total") or acc.get("total_debit")
+                )
+                total_credito = _to_float(
+                    acc.get("total_credito") or acc.get("credito_total") or acc.get("total_credit")
+                )
+                saldo = _to_float(
+                    acc.get("saldo") or acc.get("saldo_neto") or acc.get("net_balance")
+                )
+                movimientos = acc.get("movimientos") or []
+                if not movimientos and (total_debito or total_credito):
+                    movimientos = [{
+                        "fecha": data.get("periodo_fin", ""),
+                        "descripcion": "Saldo acumulado del periodo",
+                        "debito": total_debito,
+                        "credito": total_credito,
+                    }]
+                cuentas.append({
+                    "cuenta": acc.get("cuenta_puc") or acc.get("account") or acc.get("cuenta") or "",
+                    "nombre": acc.get("nombre") or acc.get("name") or "",
+                    "total_debito": total_debito,
+                    "total_credito": total_credito,
+                    "saldo": saldo,
+                    "movimientos": movimientos,
+                })
+        else:
+            # Case 2: AuxiliaryLedgerContent — flat lines[], group by cuenta_puc
+            flat_lines = data.get("lines") or []
+            grouped: dict = {}
+            for line in flat_lines:
+                if not isinstance(line, dict):
+                    continue
+                code = line.get("cuenta_puc") or "SIN_CUENTA"
+                if code not in grouped:
+                    grouped[code] = {
+                        "cuenta": code,
+                        "nombre": line.get("cuenta_nombre") or "",
+                        "movimientos": [],
+                        "total_debito": 0.0,
+                        "total_credito": 0.0,
+                        "saldo": 0.0,
+                    }
+                deb = _to_float(line.get("debito"))
+                cred = _to_float(line.get("credito"))
+                grouped[code]["movimientos"].append({
+                    "fecha": line.get("fecha", ""),
+                    "comprobante": line.get("comprobante", ""),
+                    "descripcion": line.get("detalle") or line.get("descripcion") or "",
+                    "debito": deb,
+                    "credito": cred,
+                })
+                grouped[code]["total_debito"] += deb
+                grouped[code]["total_credito"] += cred
+                grouped[code]["saldo"] = grouped[code]["total_debito"] - grouped[code]["total_credito"]
+            cuentas = list(grouped.values())
+
         return {
             "period_start": data.get("periodo_inicio"),
             "period_end": data.get("periodo_fin"),

@@ -780,15 +780,41 @@ class LibroDiarioExporter:
         total_debito = 0.0
         total_credito = 0.0
 
-        # Support both builder key ("transacciones") and stored-statement key ("asientos")
-        transacciones = report.get("transacciones") or report.get("asientos") or []
-        for trans in transacciones:
+        # Support builder key ("transacciones") and stored-statement key ("asientos").
+        # Stored asientos are grouped vouchers; each may have nested "lineas" or "cuentas".
+        raw_entries = report.get("transacciones") or report.get("asientos") or []
+
+        def _iter_lines(entries):
+            """Flatten grouped asientos into individual accounting lines."""
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                # Flat line (from live pipeline builder)
+                if entry.get("cuenta_puc") or entry.get("debito") or entry.get("credito"):
+                    yield entry
+                    continue
+                # Grouped voucher (from stored LibroDiarioContent)
+                fecha_grupo = entry.get("fecha") or entry.get("fecha_comprobante") or ""
+                comp = entry.get("comprobante") or entry.get("numero_comprobante") or ""
+                desc_grupo = entry.get("descripcion") or entry.get("descripcion_general") or ""
+                for linea in entry.get("lineas") or entry.get("cuentas") or entry.get("detalle") or []:
+                    if isinstance(linea, dict):
+                        yield {
+                            "fecha": linea.get("fecha") or fecha_grupo,
+                            "comprobante": linea.get("comprobante") or comp,
+                            "cuenta_puc": linea.get("cuenta_puc") or linea.get("codigo_cuenta") or "",
+                            "cuenta_nombre": linea.get("nombre_cuenta") or linea.get("cuenta_nombre") or "",
+                            "descripcion": linea.get("descripcion") or desc_grupo,
+                            "debito": linea.get("debito") or 0,
+                            "credito": linea.get("credito") or 0,
+                        }
+
+        for trans in _iter_lines(raw_entries):
             debito = float(trans.get("debito") or 0)
             credito = float(trans.get("credito") or 0)
             total_debito += debito
             total_credito += credito
 
-            # Truncate ISO datetime to date-only to avoid column overflow
             fecha_raw = trans.get("fecha", "--") or "--"
             fecha = fecha_raw[:10] if fecha_raw and len(fecha_raw) > 10 else fecha_raw
 
@@ -862,9 +888,31 @@ class LibroDiarioExporter:
         total_debito = 0.0
         total_credito = 0.0
 
-        # Support both builder key ("transacciones") and stored-statement key ("asientos")
-        transacciones = report.get("transacciones") or report.get("asientos") or []
-        for trans in transacciones:
+        raw_entries = report.get("transacciones") or report.get("asientos") or []
+
+        def _iter_lines_xl(entries):
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("cuenta_puc") or entry.get("debito") or entry.get("credito"):
+                    yield entry
+                    continue
+                fecha_g = entry.get("fecha") or entry.get("fecha_comprobante") or ""
+                comp = entry.get("comprobante") or entry.get("numero_comprobante") or ""
+                desc_g = entry.get("descripcion") or entry.get("descripcion_general") or ""
+                for linea in entry.get("lineas") or entry.get("cuentas") or entry.get("detalle") or []:
+                    if isinstance(linea, dict):
+                        yield {
+                            "fecha": linea.get("fecha") or fecha_g,
+                            "comprobante": linea.get("comprobante") or comp,
+                            "cuenta_puc": linea.get("cuenta_puc") or linea.get("codigo_cuenta") or "",
+                            "cuenta_nombre": linea.get("nombre_cuenta") or linea.get("cuenta_nombre") or "",
+                            "descripcion": linea.get("descripcion") or desc_g,
+                            "debito": linea.get("debito") or 0,
+                            "credito": linea.get("credito") or 0,
+                        }
+
+        for trans in _iter_lines_xl(raw_entries):
             debito = float(trans.get("debito") or 0)
             credito = float(trans.get("credito") or 0)
             total_debito += debito
