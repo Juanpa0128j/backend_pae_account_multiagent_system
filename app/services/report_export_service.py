@@ -1004,8 +1004,9 @@ class LibroAuxiliarExporter:
 
             data = [["Fecha", "Descripcion", "Debito", "Credito", "Saldo"]]
             saldo = 0.0
+            movimientos = cuenta.get("movimientos", []) or []
 
-            for mov in cuenta.get("movimientos", [])[:20]:
+            for mov in movimientos:
                 debito = float(mov.get("debito") or 0)
                 credito = float(mov.get("credito") or 0)
                 saldo += debito - credito
