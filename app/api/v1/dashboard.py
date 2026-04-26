@@ -69,30 +69,30 @@ async def get_dashboard_stats(
             raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
 
     # Pending documents
-    pending_count = (
-        db.query(func.count(TransactionPending.id))
-        .filter(TransactionPending.status == TransactionStatus.PENDING)
-        .scalar()
-        or 0
+    pending_q = db.query(func.count(TransactionPending.id)).filter(
+        TransactionPending.status == TransactionStatus.PENDING
     )
+    if company_nit:
+        pending_q = pending_q.filter(TransactionPending.company_nit == company_nit)
+    pending_count = pending_q.scalar() or 0
 
     # Transactions processed this month
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    processed_month = (
-        db.query(func.count(TransactionPosted.id))
-        .filter(TransactionPosted.created_at >= month_start)
-        .scalar()
-        or 0
+    processed_q = db.query(func.count(TransactionPosted.id)).filter(
+        TransactionPosted.created_at >= month_start
     )
+    if company_nit:
+        processed_q = processed_q.filter(TransactionPosted.company_nit == company_nit)
+    processed_month = processed_q.scalar() or 0
 
     # Active alerts (recent rejected transactions)
-    alerts_count = (
-        db.query(func.count(TransactionPending.id))
-        .filter(TransactionPending.status == TransactionStatus.REJECTED)
-        .scalar()
-        or 0
+    alerts_q = db.query(func.count(TransactionPending.id)).filter(
+        TransactionPending.status == TransactionStatus.REJECTED
     )
+    if company_nit:
+        alerts_q = alerts_q.filter(TransactionPending.company_nit == company_nit)
+    alerts_count = alerts_q.scalar() or 0
 
     # Balance sheet for financial totals
     balance = db_service.get_balance_sheet(db, company_nit=company_nit)
@@ -135,7 +135,9 @@ async def get_dashboard_stats(
     )
 
     # Transaction counts by status
-    txn_counts = db_service.get_transaction_counts_by_status(db)
+    txn_counts = db_service.get_transaction_counts_by_status(
+        db, company_nit=company_nit
+    )
 
     return DashboardStatsResponse(
         documentos_pendientes=pending_count,
@@ -216,8 +218,10 @@ async def get_financial_summary(
         if r["account"].startswith("5")
     )
 
-    txn_counts = db_service.get_transaction_counts_by_status(db)
-    recent = db_service.get_recent_activity(db, limit=10)
+    txn_counts = db_service.get_transaction_counts_by_status(
+        db, company_nit=company_nit
+    )
+    recent = db_service.get_recent_activity(db, limit=10, company_nit=company_nit)
 
     return DashboardFinancialSummaryResponse(
         total_activos=balance["assets"],

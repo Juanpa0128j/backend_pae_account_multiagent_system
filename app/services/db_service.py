@@ -158,6 +158,7 @@ def create_transaction_pending(
             "total": str(total) if total else None,
         },
         commit=False,
+        company_nit=company_nit,
     )
     _commit_or_flush(db, commit)
     db.refresh(txn)
@@ -280,6 +281,7 @@ def create_transaction_posted(
             "pending_id": transaction_pending_id,
         },
         commit=False,
+        company_nit=company_nit,
     )
     _commit_or_flush(db, commit)
     db.refresh(posted)
@@ -704,12 +706,14 @@ def create_audit_log(
     entity_type: str = None,
     details: Dict = None,
     commit: bool = True,
+    company_nit: str | None = None,
 ) -> AuditLog:
     """Create an immutable audit log entry."""
     log = AuditLog(
         action=action,
         entity_id=entity_id,
         entity_type=entity_type,
+        company_nit=company_nit,
         details=details,
     )
     db.add(log)
@@ -1170,6 +1174,7 @@ def get_balance_sheet_for_period(
     db: Session,
     start_date: datetime = None,
     end_date: datetime = None,
+    company_nit: str | None = None,
 ) -> Dict:
     """Balance sheet scoped to a date range (not just cutoff).
 
@@ -1180,6 +1185,8 @@ def get_balance_sheet_for_period(
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
         query = query.filter(JournalEntryLine.fecha <= end_date)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
 
     lines = query.all()
     totals = {
@@ -1308,6 +1315,7 @@ def get_top_terceros(
     start_date: datetime = None,
     end_date: datetime = None,
     limit: int = 5,
+    company_nit: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Return top N terceros by transaction volume (count + total amount)."""
     query = (
@@ -1324,6 +1332,8 @@ def get_top_terceros(
         .group_by(JournalEntryLine.tercero_nit)
     )
 
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
@@ -1345,6 +1355,7 @@ def get_monthly_trend(
     db: Session,
     account_prefix: str,
     months: int = 6,
+    company_nit: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Return monthly aggregated balances for a given account prefix.
 
@@ -1367,6 +1378,9 @@ def get_monthly_trend(
         .order_by("yr", "mo")
     )
 
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
+
     results = query.all()
     return [
         {
@@ -1382,6 +1396,7 @@ def get_monthly_trend(
 def get_monthly_totals_by_class(
     db: Session,
     months: int = 6,
+    company_nit: str | None = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Return monthly totals for each PUC class (1-6). Used for predictions.
 
@@ -1398,7 +1413,7 @@ def get_monthly_totals_by_class(
     }
     result = {}
     for prefix, name in class_map.items():
-        result[name] = get_monthly_trend(db, prefix, months)
+        result[name] = get_monthly_trend(db, prefix, months, company_nit=company_nit)
     return result
 
 
@@ -1413,9 +1428,18 @@ def get_transaction_counts_by_status(
     return {str(status.value): count for status, count in rows}
 
 
-def get_recent_activity(db: Session, limit: int = 10) -> List[Dict[str, Any]]:
-    """Return the N most recent audit log entries."""
-    logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).all()
+def get_recent_activity(
+    db: Session, limit: int = 10, company_nit: str | None = None
+) -> List[Dict[str, Any]]:
+    """Return the N most recent audit log entries, optionally scoped by NIT.
+
+    Rows with company_nit IS NULL (e.g. process / pre-tenant entries) are
+    excluded when company_nit is provided to avoid cross-tenant leakage.
+    """
+    query = db.query(AuditLog)
+    if company_nit:
+        query = query.filter(AuditLog.company_nit == company_nit)
+    logs = query.order_by(AuditLog.created_at.desc()).limit(limit).all()
     return [
         {
             "id": log.id,

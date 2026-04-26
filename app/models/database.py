@@ -479,6 +479,9 @@ class AuditLog(Base):
     entity_type = Column(
         String(50), nullable=True, comment="e.g. transaction, job, ingest"
     )
+    company_nit = Column(
+        String(20), nullable=True, index=True, comment="Owning company NIT (tenant)"
+    )
     details = Column(JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
