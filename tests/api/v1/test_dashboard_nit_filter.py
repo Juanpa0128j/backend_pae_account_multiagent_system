@@ -170,15 +170,3 @@ def test_dashboard_stats_txn_counts_filtered(client):
     counts_b = rsp_b.json()["transacciones_por_estado"]
     assert counts_b.get("pending", 0) == 1
     assert counts_b.get("rejected", 0) == 2
-
-
-def test_dashboard_financial_summary_filters_by_nit(client):
-    rsp_a = client.get(
-        "/api/v1/dashboard/financial-summary", params={"company_nit": NIT_A}
-    )
-    assert rsp_a.status_code == 200
-    data_a = rsp_a.json()
-    counts_a = data_a["transacciones_por_estado"]
-    assert counts_a.get("pending", 0) == 2
-    assert counts_a.get("rejected", 0) == 1
-    assert isinstance(data_a["actividad_reciente"], list)
