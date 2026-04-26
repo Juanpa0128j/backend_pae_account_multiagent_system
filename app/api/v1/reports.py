@@ -267,10 +267,26 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
         for n in notas_raw:
             for c in (n.get("cifras_relevantes") or []):
                 cifras[c.get("concepto", "")] = _to_float(c.get("valor"))
+        informacion_adicional = data.get("informacion_adicional") or {}
+        activos = cifras.get(
+            "total_activos",
+            _to_float(informacion_adicional.get("activos")),
+        )
+        pasivos = cifras.get(
+            "total_pasivos",
+            _to_float(informacion_adicional.get("pasivos")),
+        )
+        patrimonio = _to_float(
+            informacion_adicional.get("total_patrimonio")
+            if informacion_adicional.get("total_patrimonio") is not None
+            else informacion_adicional.get("patrimonio")
+        )
+        if patrimonio is None and activos is not None and pasivos is not None:
+            patrimonio = activos - pasivos
         resumen = {
-            "activos": cifras.get("total_activos", _to_float((data.get("informacion_adicional") or {}).get("activos"))),
-            "pasivos": cifras.get("total_pasivos", _to_float((data.get("informacion_adicional") or {}).get("pasivos"))),
-            "patrimonio": cifras.get("utilidad_neta", 0),
+            "activos": activos,
+            "pasivos": pasivos,
+            "patrimonio": patrimonio if patrimonio is not None else 0,
         }
         return {
             "period_end": data.get("periodo_fin"),
