@@ -59,7 +59,18 @@ _CUENTA_RETEFUENTE = "2365"  # Retención en la Fuente por pagar (pasivo)
 _CUENTA_RETEICA = "2368"  # Retención ICA por pagar (pasivo)
 
 _VALID_REPORT_TYPES = frozenset(
-    {"balance", "pnl", "cashflow", "iva", "withholdings", "analysis"}
+    {
+        "balance",
+        "pnl",
+        "cashflow",
+        "iva",
+        "withholdings",
+        "analysis",
+        "libro_diario",
+        "libro_auxiliar",
+        "cambios_patrimonio",
+        "notas_eeff",
+    }
 )
 
 # ---------------------------------------------------------------------------
@@ -815,6 +826,188 @@ def _build_analysis(db, params: dict, svc) -> dict:
     return report_data
 
 
+def _build_libro_diario(db, params: dict, svc) -> dict:
+    """Libro Diario: chronological journal of all transactions."""
+    start_date = _parse_date_param(params.get("start_date"))
+    end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
+    company_nit = params.get("company_nit")
+
+    # get_daily_journal: company_nit optional, returns ORM objects
+    rows = svc.get_daily_journal(
+        db, start_date=start_date, end_date=end_date, company_nit=company_nit
+    )
+    lines = [
+        {
+            "fecha": r.fecha.isoformat() if r.fecha else None,
+            "comprobante": r.comprobante or "",
+            "cuenta_puc": r.cuenta_puc or "",
+            "cuenta_nombre": r.cuenta_nombre or "",
+            "tercero_nit": r.tercero_nit or "",
+            "descripcion": r.descripcion or "",
+            "debito": float(r.debito or 0),
+            "credito": float(r.credito or 0),
+        }
+        for r in rows
+    ]
+
+    notas_normativas = _fetch_rag_referencias(
+        "Libro Diario registro transacciones PUC débito crédito comprobante",
+        n_results=2,
+    )
+
+    return {
+        "report_type": "libro_diario",
+        "period_start": params.get("start_date"),
+        "period_end": params.get("end_date") or _today_iso(),
+        "company_nit": company_nit,
+        "generated_at": _now_iso(),
+        "transacciones": lines,
+        "total_transacciones": len(lines),
+        "notas_normativas": notas_normativas,
+    }
+
+
+def _build_libro_auxiliar(db, params: dict, svc) -> dict:
+    """Libro Auxiliar: ledger per account (detail by account)."""
+    start_date = _parse_date_param(params.get("start_date"))
+    end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
+    company_nit = params.get("company_nit")
+
+    # get_daily_journal: company_nit optional, returns ORM objects
+    rows = svc.get_daily_journal(
+        db, start_date=start_date, end_date=end_date, company_nit=company_nit
+    )
+
+    # Group by account code
+    cuentas_detalle: dict = {}
+    for r in rows:
+        cuenta = r.cuenta_puc or "SIN_CUENTA"
+        nombre = r.cuenta_nombre or r.descripcion or ""
+        if cuenta not in cuentas_detalle:
+            cuentas_detalle[cuenta] = {
+                "cuenta": cuenta,
+                "nombre": nombre,
+                "movimientos": [],
+                "total_debito": 0.0,
+                "total_credito": 0.0,
+                "saldo": 0.0,
+            }
+        elif not cuentas_detalle[cuenta]["nombre"] and nombre:
+            cuentas_detalle[cuenta]["nombre"] = nombre
+
+        debito = float(r.debito or 0)
+        credito = float(r.credito or 0)
+        cuentas_detalle[cuenta]["movimientos"].append(
+            {
+                "fecha": r.fecha.isoformat() if r.fecha else None,
+                "comprobante": r.comprobante or "",
+                "descripcion": r.descripcion or "",
+                "debito": debito,
+                "credito": credito,
+            }
+        )
+        cuentas_detalle[cuenta]["total_debito"] += debito
+        cuentas_detalle[cuenta]["total_credito"] += credito
+        cuentas_detalle[cuenta]["saldo"] = (
+            cuentas_detalle[cuenta]["total_debito"]
+            - cuentas_detalle[cuenta]["total_credito"]
+        )
+
+    notas_normativas = _fetch_rag_referencias(
+        "Libro Auxiliar saldo cuenta detalle transacciones por cuenta",
+        n_results=2,
+    )
+
+    return {
+        "report_type": "libro_auxiliar",
+        "period_start": params.get("start_date"),
+        "period_end": params.get("end_date") or _today_iso(),
+        "company_nit": company_nit,
+        "generated_at": _now_iso(),
+        "cuentas": list(cuentas_detalle.values()),
+        "total_cuentas": len(cuentas_detalle),
+        "notas_normativas": notas_normativas,
+    }
+
+
+def _build_cambios_patrimonio(db, params: dict, svc) -> dict:
+    """Cambios en Patrimonio: changes to equity accounts (class 3)."""
+    start_date = _parse_date_param(params.get("start_date"))
+    end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
+    company_nit = params.get("company_nit")
+
+    ledger = svc.get_general_ledger(
+        db, start_date=start_date, end_date=end_date, company_nit=company_nit
+    )
+
+    patrimonio_rows = _ledger_by_prefix(ledger, _CLASS_PATRIMONIO)
+
+    cambios = [
+        {
+            "codigo": r["account"],
+            "nombre": r["name"],
+            "movimiento_debito": float(r["total_debit"]),
+            "movimiento_credito": float(r["total_credit"]),
+            "saldo_final": float(_credit_nature_balance(r)),
+        }
+        for r in patrimonio_rows
+    ]
+
+    notas_normativas = _fetch_rag_referencias(
+        "Cambios en Patrimonio capital reservas resultados revaluacion",
+        n_results=2,
+    )
+
+    return {
+        "report_type": "cambios_patrimonio",
+        "period_start": params.get("start_date"),
+        "period_end": params.get("end_date") or _today_iso(),
+        "company_nit": company_nit,
+        "generated_at": _now_iso(),
+        "cambios": cambios,
+        "total_cambios": len(cambios),
+        "notas_normativas": notas_normativas,
+    }
+
+
+def _build_notas_eeff(db, params: dict, svc) -> dict:
+    """Notas a los Estados Financieros: explanatory notes."""
+    end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
+    company_nit = params.get("company_nit")
+
+    # Fetch balance to include summary data in notes
+    balance_data = svc.get_balance_sheet(db, cutoff_date=end_date, company_nit=company_nit)
+
+    notas_normativas = _fetch_rag_referencias(
+        "Notas Estados Financieros NIIF PUC políticas contables estimaciones",
+        n_results=5,
+    )
+
+    # Construct notes from regulatory references
+    notas_contenido = [
+        {
+            "numero": i + 1,
+            "titulo": f"Norma Contable {i + 1}",
+            "contenido": nota,
+        }
+        for i, nota in enumerate(notas_normativas[:5])
+    ]
+
+    return {
+        "report_type": "notas_eeff",
+        "period_end": params.get("end_date") or _today_iso(),
+        "company_nit": company_nit,
+        "generated_at": _now_iso(),
+        "notas": notas_contenido,
+        "total_notas": len(notas_contenido),
+        "resumen_financiero": {
+            "activos": balance_data.get("assets", 0),
+            "pasivos": balance_data.get("liabilities", 0),
+            "patrimonio": balance_data.get("equity", 0),
+        },
+    }
+
+
 _BUILDERS = {
     "balance": _build_balance,
     "pnl": _build_pnl,
@@ -822,6 +1015,10 @@ _BUILDERS = {
     "iva": _build_iva,
     "withholdings": _build_withholdings,
     "analysis": _build_analysis,
+    "libro_diario": _build_libro_diario,
+    "libro_auxiliar": _build_libro_auxiliar,
+    "cambios_patrimonio": _build_cambios_patrimonio,
+    "notas_eeff": _build_notas_eeff,
 }
 
 
