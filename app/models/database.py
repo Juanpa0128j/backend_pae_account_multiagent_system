@@ -479,6 +479,9 @@ class AuditLog(Base):
     entity_type = Column(
         String(50), nullable=True, comment="e.g. transaction, job, ingest"
     )
+    company_nit = Column(
+        String(20), nullable=True, index=True, comment="Owning company NIT (tenant)"
+    )
     details = Column(JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -628,6 +631,9 @@ class ChatMessageRecord(Base):
     )  # Structured financial data (assistant only)
     intent = Column(String(30), nullable=True)  # Classified intent (assistant only)
     sources = Column(JSONB, nullable=True)  # Normative references cited
+    reasoning = Column(
+        JSONB, nullable=True
+    )  # Step-by-step trace of the agent (assistant only)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")

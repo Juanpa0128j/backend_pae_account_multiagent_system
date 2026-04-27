@@ -158,6 +158,7 @@ def create_transaction_pending(
             "total": str(total) if total else None,
         },
         commit=False,
+        company_nit=company_nit,
     )
     _commit_or_flush(db, commit)
     db.refresh(txn)
@@ -280,6 +281,7 @@ def create_transaction_posted(
             "pending_id": transaction_pending_id,
         },
         commit=False,
+        company_nit=company_nit,
     )
     _commit_or_flush(db, commit)
     db.refresh(posted)
@@ -350,9 +352,14 @@ def get_daily_journal(
     company_nit: str = None,
 ) -> List[JournalEntryLine]:
     """Daily Journal — all journal entries in chronological order (posted transactions only)."""
-    query = db.query(JournalEntryLine).join(
-        TransactionPosted, JournalEntryLine.transaction_posted_id == TransactionPosted.id
-    ).filter(TransactionPosted.status == TransactionStatus.POSTED)
+    query = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+    )
     if company_nit:
         query = query.filter(JournalEntryLine.company_nit == company_nit)
     if start_date:
@@ -372,16 +379,22 @@ def get_general_ledger(
     Libro Mayor — aggregated by cuenta_puc (posted transactions only).
     Returns list of dicts with: cuenta, nombre, saldo_debito, saldo_credito, saldo_neto
     """
-    query = db.query(
-        JournalEntryLine.cuenta_puc,
-        JournalEntryLine.cuenta_nombre,
-        func.sum(JournalEntryLine.debito).label("total_debit"),
-        func.sum(JournalEntryLine.credito).label("total_credit"),
-    ).join(
-        TransactionPosted, JournalEntryLine.transaction_posted_id == TransactionPosted.id
-    ).filter(TransactionPosted.status == TransactionStatus.POSTED).group_by(
-        JournalEntryLine.cuenta_puc,
-        JournalEntryLine.cuenta_nombre,
+    query = (
+        db.query(
+            JournalEntryLine.cuenta_puc,
+            JournalEntryLine.cuenta_nombre,
+            func.sum(JournalEntryLine.debito).label("total_debit"),
+            func.sum(JournalEntryLine.credito).label("total_credit"),
+        )
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+        .group_by(
+            JournalEntryLine.cuenta_puc,
+            JournalEntryLine.cuenta_nombre,
+        )
     )
 
     if start_date:
@@ -413,10 +426,14 @@ def get_subsidiary_journal(
     company_nit: str = None,
 ) -> List[JournalEntryLine]:
     """Subsidiary journal — detail for a specific account (posted transactions only)."""
-    query = db.query(JournalEntryLine).join(
-        TransactionPosted, JournalEntryLine.transaction_posted_id == TransactionPosted.id
-    ).filter(TransactionPosted.status == TransactionStatus.POSTED).filter(
-        JournalEntryLine.cuenta_puc == account
+    query = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+        .filter(JournalEntryLine.cuenta_puc == account)
     )
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
@@ -436,9 +453,14 @@ def get_balance_sheet(
 
     Revenue (4) and Expenses (5,6) flow into retained earnings.
     """
-    query = db.query(JournalEntryLine).join(
-        TransactionPosted, JournalEntryLine.transaction_posted_id == TransactionPosted.id
-    ).filter(TransactionPosted.status == TransactionStatus.POSTED)
+    query = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+    )
     if cutoff_date:
         query = query.filter(JournalEntryLine.fecha <= cutoff_date)
     if company_nit:
@@ -714,12 +736,14 @@ def create_audit_log(
     entity_type: str = None,
     details: Dict = None,
     commit: bool = True,
+    company_nit: str | None = None,
 ) -> AuditLog:
     """Create an immutable audit log entry."""
     log = AuditLog(
         action=action,
         entity_id=entity_id,
         entity_type=entity_type,
+        company_nit=company_nit,
         details=details,
     )
     db.add(log)
@@ -1180,18 +1204,26 @@ def get_balance_sheet_for_period(
     db: Session,
     start_date: datetime = None,
     end_date: datetime = None,
+    company_nit: str | None = None,
 ) -> Dict:
     """Balance sheet scoped to a date range (not just cutoff, posted transactions only).
 
     Same logic as get_balance_sheet but filters by both start and end date.
     """
-    query = db.query(JournalEntryLine).join(
-        TransactionPosted, JournalEntryLine.transaction_posted_id == TransactionPosted.id
-    ).filter(TransactionPosted.status == TransactionStatus.POSTED)
+    query = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+    )
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
         query = query.filter(JournalEntryLine.fecha <= end_date)
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
 
     lines = query.all()
     totals = {
@@ -1320,6 +1352,7 @@ def get_top_terceros(
     start_date: datetime = None,
     end_date: datetime = None,
     limit: int = 5,
+    company_nit: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Return top N terceros by transaction volume (count + total amount)."""
     query = (
@@ -1336,6 +1369,8 @@ def get_top_terceros(
         .group_by(JournalEntryLine.tercero_nit)
     )
 
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
@@ -1357,6 +1392,7 @@ def get_monthly_trend(
     db: Session,
     account_prefix: str,
     months: int = 6,
+    company_nit: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Return monthly aggregated balances for a given account prefix.
 
@@ -1379,6 +1415,9 @@ def get_monthly_trend(
         .order_by("yr", "mo")
     )
 
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
+
     results = query.all()
     return [
         {
@@ -1394,6 +1433,7 @@ def get_monthly_trend(
 def get_monthly_totals_by_class(
     db: Session,
     months: int = 6,
+    company_nit: str | None = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Return monthly totals for each PUC class (1-6). Used for predictions.
 
@@ -1410,7 +1450,7 @@ def get_monthly_totals_by_class(
     }
     result = {}
     for prefix, name in class_map.items():
-        result[name] = get_monthly_trend(db, prefix, months)
+        result[name] = get_monthly_trend(db, prefix, months, company_nit=company_nit)
     return result
 
 
@@ -1425,9 +1465,18 @@ def get_transaction_counts_by_status(
     return {str(status.value): count for status, count in rows}
 
 
-def get_recent_activity(db: Session, limit: int = 10) -> List[Dict[str, Any]]:
-    """Return the N most recent audit log entries."""
-    logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).all()
+def get_recent_activity(
+    db: Session, limit: int = 10, company_nit: str | None = None
+) -> List[Dict[str, Any]]:
+    """Return the N most recent audit log entries, optionally scoped by NIT.
+
+    Rows with company_nit IS NULL (e.g. process / pre-tenant entries) are
+    excluded when company_nit is provided to avoid cross-tenant leakage.
+    """
+    query = db.query(AuditLog)
+    if company_nit:
+        query = query.filter(AuditLog.company_nit == company_nit)
+    logs = query.order_by(AuditLog.created_at.desc()).limit(limit).all()
     return [
         {
             "id": log.id,

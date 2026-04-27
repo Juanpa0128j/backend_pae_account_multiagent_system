@@ -771,9 +771,9 @@ class TestProcessGraphE2E:
         assert final.get("error") is None, final.get("error")
         assert final["audit_approved"] is True
         assert final["db_result"] is not None
-        assert (
-            audit_calls["n"] == 2
-        ), "Auditor should have been called twice (reject + approve)"
+        assert audit_calls["n"] == 2, (
+            "Auditor should have been called twice (reject + approve)"
+        )
 
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
@@ -1053,9 +1053,9 @@ class TestProcessGraphDBIntegration:
 
             total_debito = sum(ln.debito for ln in lines)
             total_credito = sum(ln.credito for ln in lines)
-            assert (
-                total_debito == total_credito
-            ), f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
+            assert total_debito == total_credito, (
+                f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
+            )
 
             # Auditor output stored in agent_reasoning
             assert posted.agent_reasoning is not None
@@ -1120,9 +1120,9 @@ class TestProcessGraphDBIntegration:
 
         # Phase 4: budget exhaustion routes to error_terminal — no DB persist.
         assert result.get("audit_approved") is False
-        assert (
-            result.get("giveup_record") is not None
-        ), "giveup_record must be set after retry budget exhaustion"
+        assert result.get("giveup_record") is not None, (
+            "giveup_record must be set after retry budget exhaustion"
+        )
         # persist was refused — db_result should not contain a posted transaction
         db_res = result.get("db_result") or {}
         assert db_res.get("transaction_posted_id") is None

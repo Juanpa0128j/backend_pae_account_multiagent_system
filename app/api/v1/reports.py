@@ -75,6 +75,7 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
     Stored statements use a different key/shape than the live pipeline output.
     This bridges the gap so exporters work identically for both sources.
     """
+
     def _to_float(v) -> float:
         if isinstance(v, dict):
             return 0.0
@@ -90,7 +91,9 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
             "period_end": data.get("periodo_fin"),
             "activos": _to_float(data.get("total_activos")),
             "pasivos": _to_float(data.get("total_pasivos")),
-            "patrimonio": _to_float(data.get("patrimonio_sin_utilidad") or data.get("total_patrimonio")),
+            "patrimonio": _to_float(
+                data.get("patrimonio_sin_utilidad") or data.get("total_patrimonio")
+            ),
             "utilidad_neta": _to_float(data.get("utilidad_neta")),
             "patrimonio_total": _to_float(data.get("total_patrimonio")),
             "cuadre": bool(data.get("cuadre", False)),
@@ -102,15 +105,18 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
 
     # estado_resultados / pnl ──────────────────────────────────────────────────
     if report_type in ("pnl", "estado_resultados"):
+
         def _normalize_cuenta_list(items):
             out = []
-            for c in (items or []):
+            for c in items or []:
                 if isinstance(c, dict):
-                    out.append({
-                        "codigo": c.get("cuenta_puc") or c.get("codigo") or "",
-                        "nombre": c.get("nombre") or c.get("cuenta_puc") or "",
-                        "saldo": _to_float(c.get("saldo") or c.get("valor")),
-                    })
+                    out.append(
+                        {
+                            "codigo": c.get("cuenta_puc") or c.get("codigo") or "",
+                            "nombre": c.get("nombre") or c.get("cuenta_puc") or "",
+                            "saldo": _to_float(c.get("saldo") or c.get("valor")),
+                        }
+                    )
             return out
 
         return {
@@ -134,7 +140,11 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
         flujo_inv = _to_float(data.get("flujo_neto_inversion"))
         flujo_fin = _to_float(data.get("flujo_neto_financiacion"))
         cuentas_efectivo = [
-            {"codigo": "11", "nombre": "Efectivo y equivalentes", "saldo": efectivo_fin},
+            {
+                "codigo": "11",
+                "nombre": "Efectivo y equivalentes",
+                "saldo": efectivo_fin,
+            },
         ]
         return {
             "period_start": data.get("periodo_inicio"),
@@ -170,30 +180,41 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
                 if not isinstance(acc, dict):
                     continue
                 total_debito = _to_float(
-                    acc.get("total_debito") or acc.get("debito_total") or acc.get("total_debit")
+                    acc.get("total_debito")
+                    or acc.get("debito_total")
+                    or acc.get("total_debit")
                 )
                 total_credito = _to_float(
-                    acc.get("total_credito") or acc.get("credito_total") or acc.get("total_credit")
+                    acc.get("total_credito")
+                    or acc.get("credito_total")
+                    or acc.get("total_credit")
                 )
                 saldo = _to_float(
                     acc.get("saldo") or acc.get("saldo_neto") or acc.get("net_balance")
                 )
                 movimientos = acc.get("movimientos") or []
                 if not movimientos and (total_debito or total_credito):
-                    movimientos = [{
-                        "fecha": data.get("periodo_fin", ""),
-                        "descripcion": "Saldo acumulado del periodo",
-                        "debito": total_debito,
-                        "credito": total_credito,
-                    }]
-                cuentas.append({
-                    "cuenta": acc.get("cuenta_puc") or acc.get("account") or acc.get("cuenta") or "",
-                    "nombre": acc.get("nombre") or acc.get("name") or "",
-                    "total_debito": total_debito,
-                    "total_credito": total_credito,
-                    "saldo": saldo,
-                    "movimientos": movimientos,
-                })
+                    movimientos = [
+                        {
+                            "fecha": data.get("periodo_fin", ""),
+                            "descripcion": "Saldo acumulado del periodo",
+                            "debito": total_debito,
+                            "credito": total_credito,
+                        }
+                    ]
+                cuentas.append(
+                    {
+                        "cuenta": acc.get("cuenta_puc")
+                        or acc.get("account")
+                        or acc.get("cuenta")
+                        or "",
+                        "nombre": acc.get("nombre") or acc.get("name") or "",
+                        "total_debito": total_debito,
+                        "total_credito": total_credito,
+                        "saldo": saldo,
+                        "movimientos": movimientos,
+                    }
+                )
         else:
             # Case 2: AuxiliaryLedgerContent — flat lines[], group by cuenta_puc
             flat_lines = data.get("lines") or []
@@ -213,16 +234,22 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
                     }
                 deb = _to_float(line.get("debito"))
                 cred = _to_float(line.get("credito"))
-                grouped[code]["movimientos"].append({
-                    "fecha": line.get("fecha", ""),
-                    "comprobante": line.get("comprobante", ""),
-                    "descripcion": line.get("detalle") or line.get("descripcion") or "",
-                    "debito": deb,
-                    "credito": cred,
-                })
+                grouped[code]["movimientos"].append(
+                    {
+                        "fecha": line.get("fecha", ""),
+                        "comprobante": line.get("comprobante", ""),
+                        "descripcion": line.get("detalle")
+                        or line.get("descripcion")
+                        or "",
+                        "debito": deb,
+                        "credito": cred,
+                    }
+                )
                 grouped[code]["total_debito"] += deb
                 grouped[code]["total_credito"] += cred
-                grouped[code]["saldo"] = grouped[code]["total_debito"] - grouped[code]["total_credito"]
+                grouped[code]["saldo"] = (
+                    grouped[code]["total_debito"] - grouped[code]["total_credito"]
+                )
             cuentas = list(grouped.values())
 
         return {
@@ -238,24 +265,37 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
             if not isinstance(comp, dict):
                 continue
             movs = comp.get("movimientos") or []
-            mov_debito = sum(_to_float(m.get("valor", 0)) for m in movs if _to_float(m.get("valor", 0)) < 0)
-            mov_credito = sum(_to_float(m.get("valor", 0)) for m in movs if _to_float(m.get("valor", 0)) >= 0)
-            cambios.append({
-                "codigo": comp.get("concepto_patrimonio", ""),
-                "nombre": comp.get("concepto_patrimonio", "").replace("_", " ").title(),
-                "movimiento_debito": abs(mov_debito),
-                "movimiento_credito": mov_credito,
-                "saldo_final": _to_float(comp.get("saldo_final")),
-            })
+            mov_debito = sum(
+                _to_float(m.get("valor", 0))
+                for m in movs
+                if _to_float(m.get("valor", 0)) < 0
+            )
+            mov_credito = sum(
+                _to_float(m.get("valor", 0))
+                for m in movs
+                if _to_float(m.get("valor", 0)) >= 0
+            )
+            cambios.append(
+                {
+                    "codigo": comp.get("concepto_patrimonio", ""),
+                    "nombre": comp.get("concepto_patrimonio", "")
+                    .replace("_", " ")
+                    .title(),
+                    "movimiento_debito": abs(mov_debito),
+                    "movimiento_credito": mov_credito,
+                    "saldo_final": _to_float(comp.get("saldo_final")),
+                }
+            )
         if not cambios:
-            info = data.get("informacion_adicional") or {}
-            cambios = [{
-                "codigo": "3",
-                "nombre": "Patrimonio Total",
-                "movimiento_debito": 0,
-                "movimiento_credito": _to_float(data.get("total_patrimonio_fin")),
-                "saldo_final": _to_float(data.get("total_patrimonio_fin")),
-            }]
+            cambios = [
+                {
+                    "codigo": "3",
+                    "nombre": "Patrimonio Total",
+                    "movimiento_debito": 0,
+                    "movimiento_credito": _to_float(data.get("total_patrimonio_fin")),
+                    "saldo_final": _to_float(data.get("total_patrimonio_fin")),
+                }
+            ]
         return {
             "period_start": data.get("periodo_inicio"),
             "period_end": data.get("periodo_fin"),
@@ -269,14 +309,18 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
         for n in notas_raw:
             if not isinstance(n, dict):
                 continue
-            notas.append({
-                "numero": n.get("numero_nota") or n.get("numero") or 0,
-                "titulo": n.get("titulo") or "",
-                "contenido": n.get("contenido_resumido") or n.get("contenido") or "",
-            })
+            notas.append(
+                {
+                    "numero": n.get("numero_nota") or n.get("numero") or 0,
+                    "titulo": n.get("titulo") or "",
+                    "contenido": n.get("contenido_resumido")
+                    or n.get("contenido")
+                    or "",
+                }
+            )
         cifras = {}
         for n in notas_raw:
-            for c in (n.get("cifras_relevantes") or []):
+            for c in n.get("cifras_relevantes") or []:
                 cifras[c.get("concepto", "")] = _to_float(c.get("valor"))
         informacion_adicional = data.get("informacion_adicional") or {}
         activos = cifras.get(
@@ -382,7 +426,9 @@ def _resolve_report(
             db.close()
 
     return (
-        _run_report(report_type, _build_params(start_date, resolved_end_date), company_nit),
+        _run_report(
+            report_type, _build_params(start_date, resolved_end_date), company_nit
+        ),
         resolved_end_date,
     )
 
@@ -405,7 +451,9 @@ def _build_attachment_headers(
     resolved_end_date: date,
     start_date: Optional[date] = None,
 ) -> dict[str, str]:
-    filename = _build_export_filename(base_name, extension, resolved_end_date, start_date)
+    filename = _build_export_filename(
+        base_name, extension, resolved_end_date, start_date
+    )
     return {"Content-Disposition": f"attachment; filename={filename}"}
 
 
@@ -542,14 +590,20 @@ async def get_financial_statement_by_id(statement_id: str):
 
 @router.get("/balance/download/pdf")
 async def download_balance_pdf(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
 ):
     """Download Balance Sheet as PDF."""
-    report, resolved_end_date = _resolve_report("balance", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "balance", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         pdf_bytes = BalanceSheetExporter.to_pdf(report, company_name)
@@ -559,20 +613,28 @@ async def download_balance_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers=_build_attachment_headers("balance_general", "pdf", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "balance_general", "pdf", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/balance/download/excel")
 async def download_balance_excel(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Balance Sheet as Excel."""
-    report, resolved_end_date = _resolve_report("balance", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "balance", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         excel_bytes = BalanceSheetExporter.to_excel(report, company_name)
@@ -582,20 +644,28 @@ async def download_balance_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=_build_attachment_headers("balance_general", "xlsx", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "balance_general", "xlsx", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/pnl/download/pdf")
 async def download_pnl_pdf(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
 ):
     """Download Profit & Loss as PDF."""
-    report, resolved_end_date = _resolve_report("pnl", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "pnl", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         pdf_bytes = PnLExporter.to_pdf(report, company_name)
@@ -605,20 +675,28 @@ async def download_pnl_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers=_build_attachment_headers("estado_resultados", "pdf", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "estado_resultados", "pdf", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/pnl/download/excel")
 async def download_pnl_excel(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Profit & Loss as Excel."""
-    report, resolved_end_date = _resolve_report("pnl", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "pnl", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         excel_bytes = PnLExporter.to_excel(report, company_name)
@@ -628,20 +706,28 @@ async def download_pnl_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=_build_attachment_headers("estado_resultados", "xlsx", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "estado_resultados", "xlsx", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/cashflow/download/pdf")
 async def download_cashflow_pdf(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
 ):
     """Download Cash Flow as PDF."""
-    report, resolved_end_date = _resolve_report("cashflow", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "cashflow", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         pdf_bytes = CashFlowExporter.to_pdf(report, company_name)
@@ -651,20 +737,28 @@ async def download_cashflow_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers=_build_attachment_headers("flujo_caja", "pdf", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "flujo_caja", "pdf", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/cashflow/download/excel")
 async def download_cashflow_excel(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Cash Flow as Excel."""
-    report, resolved_end_date = _resolve_report("cashflow", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "cashflow", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         excel_bytes = CashFlowExporter.to_excel(report, company_name)
@@ -674,20 +768,28 @@ async def download_cashflow_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=_build_attachment_headers("flujo_caja", "xlsx", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "flujo_caja", "xlsx", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/libro_diario/download/pdf")
 async def download_libro_diario_pdf(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
 ):
     """Download Libro Diario as PDF."""
-    report, resolved_end_date = _resolve_report("libro_diario", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "libro_diario", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         pdf_bytes = LibroDiarioExporter.to_pdf(report, company_name)
@@ -697,20 +799,28 @@ async def download_libro_diario_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers=_build_attachment_headers("libro_diario", "pdf", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "libro_diario", "pdf", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/libro_diario/download/excel")
 async def download_libro_diario_excel(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Libro Diario as Excel."""
-    report, resolved_end_date = _resolve_report("libro_diario", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "libro_diario", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         excel_bytes = LibroDiarioExporter.to_excel(report, company_name)
@@ -720,20 +830,28 @@ async def download_libro_diario_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=_build_attachment_headers("libro_diario", "xlsx", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "libro_diario", "xlsx", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/libro_auxiliar/download/pdf")
 async def download_libro_auxiliar_pdf(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
 ):
     """Download Libro Auxiliar as PDF."""
-    report, resolved_end_date = _resolve_report("libro_auxiliar", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "libro_auxiliar", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         pdf_bytes = LibroAuxiliarExporter.to_pdf(report, company_name)
@@ -743,20 +861,28 @@ async def download_libro_auxiliar_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers=_build_attachment_headers("libro_auxiliar", "pdf", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "libro_auxiliar", "pdf", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/libro_auxiliar/download/excel")
 async def download_libro_auxiliar_excel(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Libro Auxiliar as Excel."""
-    report, resolved_end_date = _resolve_report("libro_auxiliar", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "libro_auxiliar", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         excel_bytes = LibroAuxiliarExporter.to_excel(report, company_name)
@@ -766,20 +892,28 @@ async def download_libro_auxiliar_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=_build_attachment_headers("libro_auxiliar", "xlsx", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "libro_auxiliar", "xlsx", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/cambios_patrimonio/download/pdf")
 async def download_cambios_patrimonio_pdf(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
 ):
     """Download Cambios en el Patrimonio as PDF."""
-    report, resolved_end_date = _resolve_report("cambios_patrimonio", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "cambios_patrimonio", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         pdf_bytes = CambiosPatrimonioExporter.to_pdf(report, company_name)
@@ -789,20 +923,28 @@ async def download_cambios_patrimonio_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers=_build_attachment_headers("cambios_patrimonio", "pdf", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "cambios_patrimonio", "pdf", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/cambios_patrimonio/download/excel")
 async def download_cambios_patrimonio_excel(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Cambios en el Patrimonio as Excel."""
-    report, resolved_end_date = _resolve_report("cambios_patrimonio", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "cambios_patrimonio", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         excel_bytes = CambiosPatrimonioExporter.to_excel(report, company_name)
@@ -812,20 +954,28 @@ async def download_cambios_patrimonio_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=_build_attachment_headers("cambios_patrimonio", "xlsx", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "cambios_patrimonio", "xlsx", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/notas_estados_financieros/download/pdf")
 async def download_notas_pdf(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
 ):
     """Download Notas a los Estados Financieros as PDF."""
-    report, resolved_end_date = _resolve_report("notas_eeff", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "notas_eeff", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         pdf_bytes = NotasEstadosFinancierosExporter.to_pdf(report, company_name)
@@ -835,20 +985,28 @@ async def download_notas_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers=_build_attachment_headers("notas_estados_financieros", "pdf", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "notas_estados_financieros", "pdf", resolved_end_date, start_date
+        ),
     )
 
 
 @router.get("/notas_estados_financieros/download/excel")
 async def download_notas_excel(
-    statement_id: Optional[str] = Query(None, description="Load from stored statement (same data as ojito)"),
+    statement_id: Optional[str] = Query(
+        None, description="Load from stored statement (same data as ojito)"
+    ),
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    end_date: Optional[date] = Query(
+        None, description="End date YYYY-MM-DD (default: today)"
+    ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Notas a los Estados Financieros as Excel."""
-    report, resolved_end_date = _resolve_report("notas_eeff", statement_id, start_date, end_date, company_nit)
+    report, resolved_end_date = _resolve_report(
+        "notas_eeff", statement_id, start_date, end_date, company_nit
+    )
 
     try:
         excel_bytes = NotasEstadosFinancierosExporter.to_excel(report, company_name)
@@ -858,5 +1016,7 @@ async def download_notas_excel(
     return StreamingResponse(
         iter([excel_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=_build_attachment_headers("notas_estados_financieros", "xlsx", resolved_end_date, start_date),
+        headers=_build_attachment_headers(
+            "notas_estados_financieros", "xlsx", resolved_end_date, start_date
+        ),
     )

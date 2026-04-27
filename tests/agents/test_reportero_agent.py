@@ -816,9 +816,9 @@ class TestReporteroNodeRAGEnrichment:
         with patch.dict(sys.modules, all_mocks):
             result_state = reportero_node(state)
 
-        assert (
-            result_state.get("error") is None
-        ), f"RAG failure set error for report_type={report_type!r}"
+        assert result_state.get("error") is None, (
+            f"RAG failure set error for report_type={report_type!r}"
+        )
         assert result_state["result"]["status"] == "ok"
 
 
@@ -968,6 +968,48 @@ class TestReporteroAnalysis:
         assert len(report["top_accounts_debit"]) >= 1  # mock returns 1 entry
         assert isinstance(report["top_terceros"], list)
         assert len(report["top_terceros"]) >= 1  # mock returns 1 entry
+
+    def test_analysis_propagates_company_nit_to_svc_calls(self):
+        """_build_analysis must pass company_nit to every svc query to prevent cross-tenant leaks."""
+        state = base_reporting_state("analysis", start_date=_START, end_date=_END)
+        state["company_nit"] = "900123456"
+        svc = MagicMock()
+        self._setup_analysis_mocks(svc)
+
+        mock_llm_module = MagicMock()
+        mock_llm_module.get_llm_client.side_effect = RuntimeError("no LLM")
+
+        all_mocks = {
+            **_mock_db_modules(svc),
+            **_mock_rag_modules([]),
+            "app.core.llm_client": mock_llm_module,
+        }
+        with patch.dict(sys.modules, all_mocks):
+            result_state = reportero_node(state)
+
+        assert result_state.get("error") is None
+
+        svc.get_balance_sheet_for_period.assert_called_once()
+        assert (
+            svc.get_balance_sheet_for_period.call_args.kwargs.get("company_nit")
+            == "900123456"
+        )
+
+        svc.get_general_ledger.assert_called()
+        for call in svc.get_general_ledger.call_args_list:
+            assert call.kwargs.get("company_nit") == "900123456"
+
+        for call in svc.get_top_accounts.call_args_list:
+            assert call.kwargs.get("company_nit") == "900123456"
+
+        svc.get_top_terceros.assert_called_once()
+        assert svc.get_top_terceros.call_args.kwargs.get("company_nit") == "900123456"
+
+        svc.get_monthly_totals_by_class.assert_called_once()
+        assert (
+            svc.get_monthly_totals_by_class.call_args.kwargs.get("company_nit")
+            == "900123456"
+        )
 
 
 class TestIncludeAnalysis:

@@ -776,7 +776,9 @@ class LibroDiarioExporter:
         )
         story.append(Spacer(1, 0.2 * inch))
 
-        data = [["Fecha", "Cuenta", "Nombre Cuenta", "Descripcion", "Debito", "Credito"]]
+        data = [
+            ["Fecha", "Cuenta", "Nombre Cuenta", "Descripcion", "Debito", "Credito"]
+        ]
         total_debito = 0.0
         total_credito = 0.0
 
@@ -790,20 +792,35 @@ class LibroDiarioExporter:
                 if not isinstance(entry, dict):
                     continue
                 # Flat line (from live pipeline builder)
-                if entry.get("cuenta_puc") or entry.get("debito") or entry.get("credito"):
+                if (
+                    entry.get("cuenta_puc")
+                    or entry.get("debito")
+                    or entry.get("credito")
+                ):
                     yield entry
                     continue
                 # Grouped voucher (from stored LibroDiarioContent)
                 fecha_grupo = entry.get("fecha") or entry.get("fecha_comprobante") or ""
                 comp = entry.get("comprobante") or entry.get("numero_comprobante") or ""
-                desc_grupo = entry.get("descripcion") or entry.get("descripcion_general") or ""
-                for linea in entry.get("lineas") or entry.get("cuentas") or entry.get("detalle") or []:
+                desc_grupo = (
+                    entry.get("descripcion") or entry.get("descripcion_general") or ""
+                )
+                for linea in (
+                    entry.get("lineas")
+                    or entry.get("cuentas")
+                    or entry.get("detalle")
+                    or []
+                ):
                     if isinstance(linea, dict):
                         yield {
                             "fecha": linea.get("fecha") or fecha_grupo,
                             "comprobante": linea.get("comprobante") or comp,
-                            "cuenta_puc": linea.get("cuenta_puc") or linea.get("codigo_cuenta") or "",
-                            "cuenta_nombre": linea.get("nombre_cuenta") or linea.get("cuenta_nombre") or "",
+                            "cuenta_puc": linea.get("cuenta_puc")
+                            or linea.get("codigo_cuenta")
+                            or "",
+                            "cuenta_nombre": linea.get("nombre_cuenta")
+                            or linea.get("cuenta_nombre")
+                            or "",
                             "descripcion": linea.get("descripcion") or desc_grupo,
                             "debito": linea.get("debito") or 0,
                             "credito": linea.get("credito") or 0,
@@ -822,18 +839,36 @@ class LibroDiarioExporter:
                 [
                     fecha,
                     trans.get("cuenta_puc", ""),
-                    (trans.get("cuenta_nombre", "") or trans.get("descripcion", ""))[:25],
+                    (trans.get("cuenta_nombre", "") or trans.get("descripcion", ""))[
+                        :25
+                    ],
                     (trans.get("descripcion", "") or "")[:25],
                     _format_currency(debito),
                     _format_currency(credito),
                 ]
             )
 
-        data.append(["", "", "", "TOTAL", _format_currency(total_debito), _format_currency(total_credito)])
+        data.append(
+            [
+                "",
+                "",
+                "",
+                "TOTAL",
+                _format_currency(total_debito),
+                _format_currency(total_credito),
+            ]
+        )
 
         table = Table(
             data,
-            colWidths=[0.85 * inch, 0.75 * inch, 1.5 * inch, 1.5 * inch, 1.05 * inch, 1.05 * inch],
+            colWidths=[
+                0.85 * inch,
+                0.75 * inch,
+                1.5 * inch,
+                1.5 * inch,
+                1.05 * inch,
+                1.05 * inch,
+            ],
         )
         table.setStyle(
             TableStyle(
@@ -846,7 +881,12 @@ class LibroDiarioExporter:
                     ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e8f0f7")),
                     ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f9f9f9")]),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -2),
+                        [colors.white, colors.HexColor("#f9f9f9")],
+                    ),
                 ]
             )
         )
@@ -877,7 +917,14 @@ class LibroDiarioExporter:
         )
 
         row = 5
-        headers = ["Fecha", "Cuenta PUC", "Nombre Cuenta", "Descripcion", "Debito", "Credito"]
+        headers = [
+            "Fecha",
+            "Cuenta PUC",
+            "Nombre Cuenta",
+            "Descripcion",
+            "Debito",
+            "Credito",
+        ]
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=row, column=col)
             cell.value = header
@@ -894,19 +941,34 @@ class LibroDiarioExporter:
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
-                if entry.get("cuenta_puc") or entry.get("debito") or entry.get("credito"):
+                if (
+                    entry.get("cuenta_puc")
+                    or entry.get("debito")
+                    or entry.get("credito")
+                ):
                     yield entry
                     continue
                 fecha_g = entry.get("fecha") or entry.get("fecha_comprobante") or ""
                 comp = entry.get("comprobante") or entry.get("numero_comprobante") or ""
-                desc_g = entry.get("descripcion") or entry.get("descripcion_general") or ""
-                for linea in entry.get("lineas") or entry.get("cuentas") or entry.get("detalle") or []:
+                desc_g = (
+                    entry.get("descripcion") or entry.get("descripcion_general") or ""
+                )
+                for linea in (
+                    entry.get("lineas")
+                    or entry.get("cuentas")
+                    or entry.get("detalle")
+                    or []
+                ):
                     if isinstance(linea, dict):
                         yield {
                             "fecha": linea.get("fecha") or fecha_g,
                             "comprobante": linea.get("comprobante") or comp,
-                            "cuenta_puc": linea.get("cuenta_puc") or linea.get("codigo_cuenta") or "",
-                            "cuenta_nombre": linea.get("nombre_cuenta") or linea.get("cuenta_nombre") or "",
+                            "cuenta_puc": linea.get("cuenta_puc")
+                            or linea.get("codigo_cuenta")
+                            or "",
+                            "cuenta_nombre": linea.get("nombre_cuenta")
+                            or linea.get("cuenta_nombre")
+                            or "",
                             "descripcion": linea.get("descripcion") or desc_g,
                             "debito": linea.get("debito") or 0,
                             "credito": linea.get("credito") or 0,
@@ -979,7 +1041,10 @@ class LibroAuxiliarExporter:
             textColor=colors.HexColor("#1f4788"),
         )
         section_style = ParagraphStyle(
-            "Section", parent=styles["Heading2"], fontSize=10, textColor=colors.HexColor("#1f4788")
+            "Section",
+            parent=styles["Heading2"],
+            fontSize=10,
+            textColor=colors.HexColor("#1f4788"),
         )
 
         story = []
@@ -1012,7 +1077,9 @@ class LibroAuxiliarExporter:
                 saldo += debito - credito
 
                 fecha_raw = mov.get("fecha", "--") or "--"
-                fecha = fecha_raw[:10] if fecha_raw and len(fecha_raw) > 10 else fecha_raw
+                fecha = (
+                    fecha_raw[:10] if fecha_raw and len(fecha_raw) > 10 else fecha_raw
+                )
 
                 data.append(
                     [
@@ -1024,7 +1091,9 @@ class LibroAuxiliarExporter:
                     ]
                 )
 
-            table = Table(data, colWidths=[0.8 * inch, 1.5 * inch, 1 * inch, 1 * inch, 1 * inch])
+            table = Table(
+                data, colWidths=[0.8 * inch, 1.5 * inch, 1 * inch, 1 * inch, 1 * inch]
+            )
             table.setStyle(
                 TableStyle(
                     [
@@ -1066,7 +1135,9 @@ class LibroAuxiliarExporter:
 
         row = 5
         for cuenta in report.get("cuentas", []):
-            ws[f"A{row}"] = f"Cuenta {cuenta.get('cuenta')} - {cuenta.get('nombre', '')}"
+            ws[f"A{row}"] = (
+                f"Cuenta {cuenta.get('cuenta')} - {cuenta.get('nombre', '')}"
+            )
             ws[f"A{row}"].font = Font(bold=True, size=11)
             ws.merge_cells(f"A{row}:F{row}")
             row += 1
@@ -1087,7 +1158,9 @@ class LibroAuxiliarExporter:
                 saldo += debito - credito
 
                 fecha_raw = mov.get("fecha", "--") or "--"
-                fecha = fecha_raw[:10] if fecha_raw and len(fecha_raw) > 10 else fecha_raw
+                fecha = (
+                    fecha_raw[:10] if fecha_raw and len(fecha_raw) > 10 else fecha_raw
+                )
                 ws[f"A{row}"] = fecha
                 ws[f"B{row}"] = (mov.get("descripcion", "") or "")[:40]
                 ws[f"C{row}"] = debito
@@ -1161,7 +1234,9 @@ class CambiosPatrimonioExporter:
         )
         story.append(Spacer(1, 0.2 * inch))
 
-        data = [["Cuenta PUC", "Descripcion", "Mov. Debito", "Mov. Credito", "Saldo Final"]]
+        data = [
+            ["Cuenta PUC", "Descripcion", "Mov. Debito", "Mov. Credito", "Saldo Final"]
+        ]
 
         for cambio in report.get("cambios", []):
             data.append(
@@ -1189,7 +1264,12 @@ class CambiosPatrimonioExporter:
                     ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e8f0f7")),
                     ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f9f9f9")]),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -2),
+                        [colors.white, colors.HexColor("#f9f9f9")],
+                    ),
                 ]
             )
         )
@@ -1220,7 +1300,13 @@ class CambiosPatrimonioExporter:
         )
 
         row = 5
-        headers = ["Cuenta PUC", "Descripcion", "Movimiento Debito", "Movimiento Credito", "Saldo Final"]
+        headers = [
+            "Cuenta PUC",
+            "Descripcion",
+            "Movimiento Debito",
+            "Movimiento Credito",
+            "Saldo Final",
+        ]
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=row, column=col)
             cell.value = header
@@ -1296,7 +1382,9 @@ class NotasEstadosFinancierosExporter:
 
         # Resumen financiero
         resumen = report.get("resumen_financiero", {})
-        story.append(Paragraph("<b>Resumen de Situacion Financiera:</b>", heading_style))
+        story.append(
+            Paragraph("<b>Resumen de Situacion Financiera:</b>", heading_style)
+        )
         data = [
             ["Activos", _format_currency(resumen.get("activos", 0))],
             ["Pasivos", _format_currency(resumen.get("pasivos", 0))],
@@ -1320,7 +1408,9 @@ class NotasEstadosFinancierosExporter:
                         styles["Heading3"],
                     )
                 )
-                story.append(Paragraph(f"{_escape_paragraph_text(contenido)}", styles["Normal"]))
+                story.append(
+                    Paragraph(f"{_escape_paragraph_text(contenido)}", styles["Normal"])
+                )
                 story.append(Spacer(1, 0.1 * inch))
         else:
             story.append(Paragraph("No hay notas disponibles.", styles["Normal"]))

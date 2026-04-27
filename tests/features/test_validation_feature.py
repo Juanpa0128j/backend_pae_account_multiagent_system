@@ -442,9 +442,9 @@ class TestSchemaRegistry:
         from pydantic import BaseModel
 
         for name, schema_cls in AGENT_OUTPUT_SCHEMAS.items():
-            assert issubclass(
-                schema_cls, BaseModel
-            ), f"Schema for '{name}' is not a Pydantic BaseModel"
+            assert issubclass(schema_cls, BaseModel), (
+                f"Schema for '{name}' is not a Pydantic BaseModel"
+            )
 
     def test_schemas_produce_json_schema(self):
         """All schemas should export a valid JSON schema."""

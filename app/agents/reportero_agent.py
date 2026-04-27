@@ -701,6 +701,7 @@ def _build_analysis(db, params: dict, svc) -> dict:
     """Build comprehensive financial analysis with ratios, predictions, and LLM narrative."""
     start_date = _parse_date_param(params.get("start_date"))
     end_date = _parse_date_param(params.get("end_date"), end_of_day=True)
+    company_nit = params.get("company_nit")
 
     # --- Phase 1: Deterministic calculations ---
 
@@ -708,13 +709,17 @@ def _build_analysis(db, params: dict, svc) -> dict:
     # cumulative (up to end_date) otherwise
     if start_date is not None:
         balance = svc.get_balance_sheet_for_period(
-            db, start_date=start_date, end_date=end_date
+            db, start_date=start_date, end_date=end_date, company_nit=company_nit
         )
     else:
-        balance = svc.get_balance_sheet(db, cutoff_date=end_date)
+        balance = svc.get_balance_sheet(
+            db, cutoff_date=end_date, company_nit=company_nit
+        )
 
     # General ledger for current period
-    ledger = svc.get_general_ledger(db, start_date=start_date, end_date=end_date)
+    ledger = svc.get_general_ledger(
+        db, start_date=start_date, end_date=end_date, company_nit=company_nit
+    )
 
     # P&L summary (period-scoped, computed from ledger for consistency)
     ingresos_rows = _ledger_by_prefix(ledger, _CLASS_INGRESOS)
@@ -736,14 +741,22 @@ def _build_analysis(db, params: dict, svc) -> dict:
     ratios = _compute_ratios(ledger, balance)
 
     # Top accounts
-    top_debit = svc.get_top_accounts(db, start_date, end_date, by="debit", limit=5)
-    top_credit = svc.get_top_accounts(db, start_date, end_date, by="credit", limit=5)
+    top_debit = svc.get_top_accounts(
+        db, start_date, end_date, by="debit", limit=5, company_nit=company_nit
+    )
+    top_credit = svc.get_top_accounts(
+        db, start_date, end_date, by="credit", limit=5, company_nit=company_nit
+    )
 
     # Top terceros
-    top_terceros = svc.get_top_terceros(db, start_date, end_date, limit=5)
+    top_terceros = svc.get_top_terceros(
+        db, start_date, end_date, limit=5, company_nit=company_nit
+    )
 
     # Monthly trends (last 6 months)
-    monthly_data = svc.get_monthly_totals_by_class(db, months=6)
+    monthly_data = svc.get_monthly_totals_by_class(
+        db, months=6, company_nit=company_nit
+    )
 
     # Anomaly detection — compare current period ledger with previous period
     # Calculate a previous period of same length
@@ -753,7 +766,10 @@ def _build_analysis(db, params: dict, svc) -> dict:
         prev_start = start_date - delta
         prev_end = start_date - timedelta(microseconds=1)
         prev_ledger = svc.get_general_ledger(
-            db, start_date=prev_start, end_date=prev_end
+            db,
+            start_date=prev_start,
+            end_date=prev_end,
+            company_nit=company_nit,
         )
 
     anomalies = _detect_anomalies(ledger, prev_ledger) if prev_ledger else []
@@ -976,7 +992,9 @@ def _build_notas_eeff(db, params: dict, svc) -> dict:
     company_nit = params.get("company_nit")
 
     # Fetch balance to include summary data in notes
-    balance_data = svc.get_balance_sheet(db, cutoff_date=end_date, company_nit=company_nit)
+    balance_data = svc.get_balance_sheet(
+        db, cutoff_date=end_date, company_nit=company_nit
+    )
 
     notas_normativas = _fetch_rag_referencias(
         "Notas Estados Financieros NIIF PUC políticas contables estimaciones",
