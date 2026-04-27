@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.core.database import get_db
 from app.models.database import (
@@ -37,6 +37,20 @@ class DashboardStatsResponse(BaseModel):
     iva_por_pagar: float = 0.0
     total_retenciones: float = 0.0
     transacciones_por_estado: Dict[str, int] = Field(default_factory=dict)
+
+
+class DashboardFinancialSummaryResponse(BaseModel):
+    total_activos: float = 0.0
+    total_pasivos: float = 0.0
+    patrimonio: float = 0.0
+    utilidad_neta: float = 0.0
+    efectivo_disponible: float = 0.0
+    iva_por_pagar: float = 0.0
+    total_retenciones: float = 0.0
+    ingresos_periodo: float = 0.0
+    gastos_periodo: float = 0.0
+    transacciones_por_estado: Dict[str, int] = Field(default_factory=dict)
+    actividad_reciente: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 @router.get("/stats", response_model=DashboardStatsResponse)
@@ -136,4 +150,85 @@ async def get_dashboard_stats(
         iva_por_pagar=iva_por_pagar,
         total_retenciones=retfte + retica,
         transacciones_por_estado=txn_counts,
+    )
+
+
+@router.get("/financial-summary", response_model=DashboardFinancialSummaryResponse)
+async def get_financial_summary(
+    db: Session = Depends(get_db),
+    company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+):
+    """
+    Complete financial summary for the dashboard.
+    Includes balance sheet totals, P&L, cash position, taxes, and recent activity.
+    """
+    if company_nit:
+        try:
+            company_nit = normalize_nit(company_nit)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    balance = db_service.get_balance_sheet(db, company_nit=company_nit)
+    ledger = db_service.get_general_ledger(db, company_nit=company_nit)
+
+    # Cash
+    efectivo = sum(
+        float(r["total_debit"] - r["total_credit"])
+        for r in ledger
+        if r["account"].startswith("11")
+    )
+
+    # IVA
+    iva_gen = next((r for r in ledger if r["account"] == "240808"), None)
+    iva_desc = next((r for r in ledger if r["account"] == "240802"), None)
+    iva_generado = (
+        float(iva_gen["total_credit"] - iva_gen["total_debit"]) if iva_gen else 0
+    )
+    iva_descontable = (
+        float(iva_desc["total_debit"] - iva_desc["total_credit"]) if iva_desc else 0
+    )
+
+    # Retenciones (PUC 2026)
+    retfte_row = next((r for r in ledger if r["account"] == "2365"), None)
+    retica_row = next((r for r in ledger if r["account"] == "2368"), None)
+    retfte = (
+        float(retfte_row["total_credit"] - retfte_row["total_debit"])
+        if retfte_row
+        else 0
+    )
+    retica = (
+        float(retica_row["total_credit"] - retica_row["total_debit"])
+        if retica_row
+        else 0
+    )
+
+    # Revenue and expenses for period
+    ingresos = sum(
+        float(r["total_credit"] - r["total_debit"])
+        for r in ledger
+        if r["account"].startswith("4")
+    )
+    gastos = sum(
+        float(r["total_debit"] - r["total_credit"])
+        for r in ledger
+        if r["account"].startswith("5")
+    )
+
+    txn_counts = db_service.get_transaction_counts_by_status(
+        db, company_nit=company_nit
+    )
+    recent = db_service.get_recent_activity(db, limit=10, company_nit=company_nit)
+
+    return DashboardFinancialSummaryResponse(
+        total_activos=balance["assets"],
+        total_pasivos=balance["liabilities"],
+        patrimonio=balance["equity"],
+        utilidad_neta=balance["net_profit"],
+        efectivo_disponible=efectivo,
+        iva_por_pagar=iva_generado - iva_descontable,
+        total_retenciones=retfte + retica,
+        ingresos_periodo=ingresos,
+        gastos_periodo=gastos,
+        transacciones_por_estado=txn_counts,
+        actividad_reciente=recent,
     )

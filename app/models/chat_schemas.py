@@ -30,6 +30,14 @@ class ChatReasoningStep(BaseModel):
     timestamp: str | None = None
 
 
+class FinancialDataCard(BaseModel):
+    """Structured financial data attached to an assistant message."""
+
+    card_type: str  # balance, pnl, cashflow, iva, withholdings, ratios, top_accounts, dashboard, analysis
+    title: str
+    data: dict[str, Any]
+
+
 class ChatMessageSchema(BaseModel):
     """A single message in the conversation (for API display)."""
 
@@ -50,14 +58,6 @@ class ChatRequest(BaseModel):
     company_nit: str | None = None
     start_date: date | None = None
     end_date: date | None = None
-
-
-class FinancialDataCard(BaseModel):
-    """Structured financial data attached to an assistant message."""
-
-    card_type: str  # balance, pnl, cashflow, iva, withholdings, ratios, top_accounts, dashboard, analysis
-    title: str
-    data: dict[str, Any]
 
 
 class ChatResponse(BaseModel):

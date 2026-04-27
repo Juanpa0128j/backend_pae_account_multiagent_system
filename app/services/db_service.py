@@ -351,8 +351,15 @@ def get_daily_journal(
     end_date: datetime = None,
     company_nit: str = None,
 ) -> List[JournalEntryLine]:
-    """Daily Journal — all journal entries in chronological order."""
-    query = db.query(JournalEntryLine)
+    """Daily Journal — all journal entries in chronological order (posted transactions only)."""
+    query = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+    )
     if company_nit:
         query = query.filter(JournalEntryLine.company_nit == company_nit)
     if start_date:
@@ -369,17 +376,25 @@ def get_general_ledger(
     company_nit: str = None,
 ) -> List[Dict]:
     """
-    Libro Mayor — aggregated by cuenta_puc.
+    Libro Mayor — aggregated by cuenta_puc (posted transactions only).
     Returns list of dicts with: cuenta, nombre, saldo_debito, saldo_credito, saldo_neto
     """
-    query = db.query(
-        JournalEntryLine.cuenta_puc,
-        JournalEntryLine.cuenta_nombre,
-        func.sum(JournalEntryLine.debito).label("total_debit"),
-        func.sum(JournalEntryLine.credito).label("total_credit"),
-    ).group_by(
-        JournalEntryLine.cuenta_puc,
-        JournalEntryLine.cuenta_nombre,
+    query = (
+        db.query(
+            JournalEntryLine.cuenta_puc,
+            JournalEntryLine.cuenta_nombre,
+            func.sum(JournalEntryLine.debito).label("total_debit"),
+            func.sum(JournalEntryLine.credito).label("total_credit"),
+        )
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+        .group_by(
+            JournalEntryLine.cuenta_puc,
+            JournalEntryLine.cuenta_nombre,
+        )
     )
 
     if start_date:
@@ -410,8 +425,16 @@ def get_subsidiary_journal(
     end_date: datetime = None,
     company_nit: str = None,
 ) -> List[JournalEntryLine]:
-    """Subsidiary journal — detail for a specific account."""
-    query = db.query(JournalEntryLine).filter(JournalEntryLine.cuenta_puc == account)
+    """Subsidiary journal — detail for a specific account (posted transactions only)."""
+    query = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+        .filter(JournalEntryLine.cuenta_puc == account)
+    )
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
@@ -425,12 +448,19 @@ def get_balance_sheet(
     db: Session, cutoff_date: datetime = None, company_nit: str = None
 ) -> Dict:
     """
-    Balance Sheet (Statement of Financial Position).
+    Balance Sheet (Statement of Financial Position, posted transactions only).
     Assets (class 1) = Liabilities (class 2) + Equity (class 3)
 
     Revenue (4) and Expenses (5,6) flow into retained earnings.
     """
-    query = db.query(JournalEntryLine)
+    query = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+    )
     if cutoff_date:
         query = query.filter(JournalEntryLine.fecha <= cutoff_date)
     if company_nit:
@@ -1176,11 +1206,18 @@ def get_balance_sheet_for_period(
     end_date: datetime = None,
     company_nit: str | None = None,
 ) -> Dict:
-    """Balance sheet scoped to a date range (not just cutoff).
+    """Balance sheet scoped to a date range (not just cutoff, posted transactions only).
 
     Same logic as get_balance_sheet but filters by both start and end date.
     """
-    query = db.query(JournalEntryLine)
+    query = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+    )
     if start_date:
         query = query.filter(JournalEntryLine.fecha >= start_date)
     if end_date:

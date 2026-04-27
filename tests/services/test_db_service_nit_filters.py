@@ -8,7 +8,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.database import JournalEntryLine
+from app.models.database import (
+    JournalEntryLine,
+    TransactionPending,
+    TransactionPosted,
+    TransactionStatus,
+)
 from app.services import db_service
 
 
@@ -25,6 +30,38 @@ def db():
     session = SessionLocal()
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    # Posted ancestors required by the JOIN added in get_balance_sheet_for_period.
+    # SQLite does not enforce foreign keys, so the FK strings below need not point
+    # at real rows — only NOT NULL constraints matter.
+    posted_ids = [
+        ("tp_A_1", NIT_A, "413595"),
+        ("tp_A_2", NIT_A, "413595"),
+        ("tp_A_3", NIT_A, "519595"),
+        ("tp_B_1", NIT_B, "413595"),
+    ]
+    pending_rows = [
+        TransactionPending(
+            id=f"tpend_{tp_id}",
+            ingest_id="ig_fake",
+            company_nit=nit,
+            status=TransactionStatus.POSTED,
+        )
+        for tp_id, nit, _ in posted_ids
+    ]
+    posted_rows = [
+        TransactionPosted(
+            id=tp_id,
+            transaction_pending_id=f"tpend_{tp_id}",
+            company_nit=nit,
+            cuenta_puc=puc,
+            status=TransactionStatus.POSTED,
+        )
+        for tp_id, nit, puc in posted_ids
+    ]
+    session.add_all(pending_rows + posted_rows)
+    session.commit()
+
     rows = [
         JournalEntryLine(
             transaction_posted_id="tp_A_1",
