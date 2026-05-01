@@ -122,12 +122,22 @@ def _build_f300(
     iva_descontable = _exact_debit(ledger, "240802")
 
     # ── Prorrateo detection (Art. 490 ET) ──────────────────────────────────
-    tasa_iva = float(settings.tasa_iva_general) if settings.tasa_iva_general else 0.19
+    iva_responsable = getattr(settings, "iva_responsable", True)
+    tasa_iva = (
+        float(settings.tasa_iva_general)
+        if settings.tasa_iva_general is not None
+        else 0.19
+    )
     ingresos_totales = _sum_credits(ledger, "4")
     # Infer taxable sales base from IVA generated; remainder are excluded/exempt
-    base_gravada = (iva_generado_19 / tasa_iva) if tasa_iva else 0.0
-    ingresos_no_gravados = max(0.0, ingresos_totales - base_gravada)
-    operaciones_mixtas = ingresos_no_gravados > 1.0  # >$1 to ignore float noise
+    if not iva_responsable:
+        base_gravada = 0.0
+        ingresos_no_gravados = 0.0
+        operaciones_mixtas = False
+    else:
+        base_gravada = (iva_generado_19 / tasa_iva) if tasa_iva else 0.0
+        ingresos_no_gravados = max(0.0, ingresos_totales - base_gravada)
+        operaciones_mixtas = ingresos_no_gravados > 1.0  # >$1 to ignore float noise
 
     if operaciones_mixtas and ingresos_totales > 0:
         factor_prorrateo = base_gravada / ingresos_totales
@@ -721,8 +731,10 @@ def generate_declaration_draft(
             raise ValueError(
                 f"F110 para {company_nit} año {year} requiere F2516 (Conciliación Fiscal) "
                 f"registrado previamente (Art. 772-1 ET). "
-                f"Registre el F2516 mediante POST /api/v1/tax/declarations con form_type='F2516' "
-                f"antes de generar el F110."
+                f"Genere primero el borrador F2516 mediante POST /api/v1/tax/declarations/generate "
+                f"con payload {{'company_nit': '{company_nit}', 'form_type': 'F2516', "
+                f"'period_start': 'YYYY-MM-DD', 'period_end': 'YYYY-MM-DD'}}. "
+                f"Luego genere el F110."
             )
 
     start_dt = datetime.combine(period_start, datetime.min.time())

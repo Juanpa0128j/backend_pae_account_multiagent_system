@@ -153,6 +153,95 @@ class TestF300Draft:
         assert fields["42"]["requires_review"] is False
 
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
+    def test_prorrateo_operaciones_mixtas(self, mock_ledger):
+        """Test mixed operations (excluded/exempt sales) trigger prorrateo."""
+        settings = _make_settings()
+        # Ledger: IVA generado 1M (19% rate) → base_gravada = 1M/0.19 ≈ 5.26M
+        # Total ingresos 10M → ingresos_no_gravados ≈ 4.74M → operaciones_mixtas=True
+        ledger = [
+            {
+                "account": "240808",
+                "name": "IVA Generado",
+                "total_debit": 0.0,
+                "total_credit": 1_000_000.0,
+                "net_balance": -1_000_000.0,
+            },
+            {
+                "account": "240802",
+                "name": "IVA Descontable",
+                "total_debit": 500_000.0,
+                "total_credit": 0.0,
+                "net_balance": 500_000.0,
+            },
+            {
+                "account": "4135",
+                "name": "Ingresos",
+                "total_debit": 0.0,
+                "total_credit": 10_000_000.0,
+                "net_balance": -10_000_000.0,
+            },
+        ]
+        mock_ledger.return_value = ledger
+        draft = generate_declaration_draft(
+            _mock_db(settings), "900123456", "F300", date(2026, 1, 1), date(2026, 2, 28)
+        )
+
+        fields = {f["renglon"]: f for f in draft.fields_json}
+        # Field 66 should be marked requires_review=True when prorated
+        assert fields["66"]["requires_review"] is True
+        # Field 66_base (total before prorrateo) should exist
+        assert "66_base" in fields
+        assert fields["66_base"]["value"] == pytest.approx(500_000.0)
+        assert fields["66_base"]["requires_review"] is True
+        # Prorated value should be less than original
+        expected_factor = (1_000_000.0 / 0.19) / 10_000_000.0
+        expected_prorated = round(500_000.0 * expected_factor, 2)
+        assert fields["66"]["value"] == pytest.approx(expected_prorated)
+        # Warning should be emitted for field 66
+        warning_fields = {w["field"] for w in draft.warnings_json}
+        assert "66" in warning_fields
+
+    @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
+    def test_non_iva_responsable_skips_prorrateo(self, mock_ledger):
+        """Non-IVA companies should not trigger prorrateo even if ingresos > implied base."""
+        settings = _make_settings(iva_responsable=False)
+        ledger = [
+            {
+                "account": "240808",
+                "name": "IVA Generado",
+                "total_debit": 0.0,
+                "total_credit": 1_000_000.0,
+                "net_balance": -1_000_000.0,
+            },
+            {
+                "account": "240802",
+                "name": "IVA Descontable",
+                "total_debit": 500_000.0,
+                "total_credit": 0.0,
+                "net_balance": 500_000.0,
+            },
+            {
+                "account": "4135",
+                "name": "Ingresos",
+                "total_debit": 0.0,
+                "total_credit": 10_000_000.0,
+                "net_balance": -10_000_000.0,
+            },
+        ]
+        mock_ledger.return_value = ledger
+        draft = generate_declaration_draft(
+            _mock_db(settings), "900123456", "F300", date(2026, 1, 1), date(2026, 2, 28)
+        )
+
+        fields = {f["renglon"]: f for f in draft.fields_json}
+        # Field 66 should NOT be marked requires_review when company is not iva_responsable
+        assert fields["66"]["requires_review"] is False
+        # Field 66_base should not exist
+        assert "66_base" not in fields
+        # IVA descontable should not be prorated
+        assert fields["66"]["value"] == pytest.approx(500_000.0)
+
+    @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
     def test_saldo_anterior_requires_review(self, mock_ledger):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
