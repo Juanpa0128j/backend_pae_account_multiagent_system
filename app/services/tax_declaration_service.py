@@ -108,15 +108,46 @@ def _build_f300(
 ) -> tuple[List[DraftField], List[DraftWarning]]:
     """
     F300 IVA draft — filled from PUC accounts:
-      240808 (IVA generado), 240802 (IVA descontable)
+      240808 (IVA generado 19%), 240802 (IVA descontable)
+
+    Prorrateo (Art. 490 ET): if ingresos totales (clase 4) exceed the taxable
+    base implied by IVA generado, the taxpayer has excluded/exempt sales.
+    IVA descontable on common costs must be prorated by the gravado fraction.
+    The prorated value is flagged requires_review=True for accountant confirmation.
     """
     fields: List[DraftField] = []
     warnings: List[DraftWarning] = []
 
     iva_generado_19 = _exact_credit(ledger, "240808")
     iva_descontable = _exact_debit(ledger, "240802")
+
+    # ── Prorrateo detection (Art. 490 ET) ──────────────────────────────────
+    iva_responsable = getattr(settings, "iva_responsable", True)
+    tasa_iva = (
+        float(settings.tasa_iva_general)
+        if settings.tasa_iva_general is not None
+        else 0.19
+    )
+    ingresos_totales = _sum_credits(ledger, "4")
+    # Infer taxable sales base from IVA generated; remainder are excluded/exempt
+    if not iva_responsable:
+        base_gravada = 0.0
+        ingresos_no_gravados = 0.0
+        operaciones_mixtas = False
+    else:
+        base_gravada = (iva_generado_19 / tasa_iva) if tasa_iva else 0.0
+        ingresos_no_gravados = max(0.0, ingresos_totales - base_gravada)
+        operaciones_mixtas = ingresos_no_gravados > 1.0  # >$1 to ignore float noise
+
+    if operaciones_mixtas and ingresos_totales > 0:
+        factor_prorrateo = base_gravada / ingresos_totales
+        iva_descontable_prorateable = round(iva_descontable * factor_prorrateo, 2)
+    else:
+        factor_prorrateo = 1.0
+        iva_descontable_prorateable = iva_descontable
+
     # Preserve sign: positive = IVA a pagar, negative = saldo a favor del período
-    iva_neto = iva_generado_19 - iva_descontable
+    iva_neto = iva_generado_19 - iva_descontable_prorateable
 
     fields.append(
         DraftField(
@@ -131,13 +162,35 @@ def _build_f300(
     fields.append(
         DraftField(
             "66",
-            "IVA descontable (compras y servicios)",
-            round(iva_descontable, 2),
+            "IVA descontable (compras y servicios)"
+            if not operaciones_mixtas
+            else f"IVA descontable prorateable (factor {factor_prorrateo:.4%})",
+            round(iva_descontable_prorateable, 2),
             "cuenta_240802",
             "high",
-            False,
+            operaciones_mixtas,  # requires_review when prorated
         )
     )
+    if operaciones_mixtas:
+        fields.append(
+            DraftField(
+                "66_base",
+                "IVA descontable total antes de prorrateo",
+                round(iva_descontable, 2),
+                "cuenta_240802",
+                "medium",
+                True,
+            )
+        )
+        warnings.append(
+            DraftWarning(
+                "66",
+                f"Prorrateo IVA (Art. 490 ET): ingresos no gravados estimados "
+                f"${ingresos_no_gravados:,.2f} de ${ingresos_totales:,.2f} totales. "
+                f"Factor aplicado: {factor_prorrateo:.4%}. "
+                "Confirme factor con desglose real de ventas gravadas vs. excluidas/exentas.",
+            )
+        )
     fields.append(
         DraftField(
             "84",
@@ -561,10 +614,68 @@ _DISCLAIMER = (
     "explícita antes de presentar."
 )
 
+
+def _build_f2516(
+    _ledger: List[Dict[str, Any]],
+    _settings: CompanySettings,
+) -> tuple[List[DraftField], List[DraftWarning]]:
+    """
+    F2516 Conciliación Fiscal — registration stub (Art. 772-1 ET).
+
+    The system cannot auto-fill this form; all fields require explicit accountant
+    input. This builder creates a draft record so the F110 prerequisite check
+    can verify that the accountant has acknowledged and registered the F2516.
+    """
+    fields = [
+        DraftField(
+            "1",
+            "Patrimonio contable (del balance fiscal)",
+            0.0,
+            "input_manual",
+            "low",
+            True,
+        ),
+        DraftField(
+            "2",
+            "Diferencias temporarias activas acumuladas",
+            0.0,
+            "input_manual",
+            "low",
+            True,
+        ),
+        DraftField(
+            "3",
+            "Diferencias temporarias pasivas acumuladas",
+            0.0,
+            "input_manual",
+            "low",
+            True,
+        ),
+        DraftField(
+            "4",
+            "Renta líquida fiscal conciliada",
+            0.0,
+            "input_manual",
+            "low",
+            True,
+        ),
+    ]
+    warnings = [
+        DraftWarning(
+            "general",
+            "F2516 no puede generarse automáticamente. Complete todos los campos "
+            "con el desglose de diferencias temporarias (NIIF vs fiscal) según "
+            "Resolución DIAN 000049/2019. Este registro habilita la generación de F110.",
+        )
+    ]
+    return fields, warnings
+
+
 _BUILDERS = {
     "F300": _build_f300,
     "F350": _build_f350,
     "F110": _build_f110,
+    "F2516": _build_f2516,
     "ICA": _build_ica,
 }
 
@@ -582,7 +693,7 @@ def generate_declaration_draft(
     Args:
         db: SQLAlchemy session
         company_nit: Company NIT (tenant identifier)
-        form_type: "F300" | "F350" | "F110" | "ICA"
+        form_type: "F300" | "F350" | "F110" | "F2516" | "ICA"
         period_start: First day of the declaration period
         period_end: Last day of the declaration period
 
@@ -602,6 +713,29 @@ def generate_declaration_draft(
     )
     if not settings:
         raise ValueError(f"CompanySettings not found for NIT: {company_nit}")
+
+    # F110 requires F2516 (Conciliación Fiscal) to have been registered first.
+    # Art. 772-1 ET obliges fiscal reconciliation before income tax filing.
+    if form_type == "F110":
+        year = period_end.year
+        f2516_exists = (
+            db.query(TaxDeclarationDraft)
+            .filter(
+                TaxDeclarationDraft.company_nit == company_nit,
+                TaxDeclarationDraft.form_type == "F2516",
+                TaxDeclarationDraft.year == year,
+            )
+            .first()
+        )
+        if not f2516_exists:
+            raise ValueError(
+                f"F110 para {company_nit} año {year} requiere F2516 (Conciliación Fiscal) "
+                f"registrado previamente (Art. 772-1 ET). "
+                f"Genere primero el borrador F2516 mediante POST /api/v1/tax/declarations/generate "
+                f"con payload {{'company_nit': '{company_nit}', 'form_type': 'F2516', "
+                f"'period_start': 'YYYY-MM-DD', 'period_end': 'YYYY-MM-DD'}}. "
+                f"Luego genere el F110."
+            )
 
     start_dt = datetime.combine(period_start, datetime.min.time())
     end_dt = datetime.combine(period_end, datetime.max.time().replace(microsecond=0))
