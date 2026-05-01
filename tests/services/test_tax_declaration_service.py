@@ -33,6 +33,7 @@ def _make_settings(**overrides):
     s.es_declarante = True
     s.tasa_renta = Decimal("0.35")
     s.tasa_ica = Decimal("0.00966")
+    s.tasa_iva_general = Decimal("0.19")
     for k, v in overrides.items():
         setattr(s, k, v)
     return s
