@@ -181,12 +181,32 @@ class BalanceGeneralResponse(BaseModel):
     cuadre: bool
 
 
-class CuentaPUCResponse(BaseModel):
+class CuentaPUCRequest(BaseModel):
     codigo: str
     nombre: str
     clase: int
     naturaleza: str
+    grupo: Optional[str] = None
+    cuenta: Optional[str] = None
+    subcuenta: Optional[str] = None
     descripcion: Optional[str] = None
+    activa: bool = True
+
+
+class CuentaPUCResponse(BaseModel):
+    id: int
+    codigo: str
+    nombre: str
+    clase: int
+    naturaleza: str
+    grupo: Optional[str] = None
+    cuenta: Optional[str] = None
+    subcuenta: Optional[str] = None
+    descripcion: Optional[str] = None
+    activa: bool
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
 
 
 class ICADeclaracionOutput(BaseModel):

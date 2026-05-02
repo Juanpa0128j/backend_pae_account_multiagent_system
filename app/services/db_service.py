@@ -593,6 +593,36 @@ def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC
     )
 
 
+def create_puc(db: Session, data: dict, commit: bool = True) -> CuentaPUC:
+    """Create new PUC account. Raises ValueError if codigo already exists."""
+    existing = db.query(CuentaPUC).filter(CuentaPUC.codigo == data.get("codigo")).first()
+    if existing:
+        raise ValueError(f"PUC code {data['codigo']} already exists")
+    row = CuentaPUC(**data)
+    db.add(row)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def update_puc(db: Session, codigo: str, data: dict, commit: bool = True) -> Optional[CuentaPUC]:
+    """Update existing PUC account. Returns None if not found."""
+    row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
+    if not row:
+        return None
+    for key, value in data.items():
+        if key != "codigo":
+            setattr(row, key, value)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def get_all_puc_including_inactive(db: Session) -> List[CuentaPUC]:
+    """Get ALL PUC accounts (active + inactive) ordered by codigo."""
+    return db.query(CuentaPUC).order_by(CuentaPUC.codigo).all()
+
+
 # ─── ProcessJob ──────────────────────────────────────────────────
 
 
