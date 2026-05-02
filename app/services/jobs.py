@@ -85,6 +85,13 @@ async def run_process_job(process_id: str) -> None:
             return
 
         pending_id = str(staged[0].id)
+        # Fallback: documents like CEs/nóminas/extractos have no nit_receptor
+        # in their content. Use the company_nit captured at upload time so
+        # downstream agents (tributario) can resolve company tax settings.
+        fallback_nit = (
+            getattr(ingest_job, "company_nit", None)
+            or getattr(staged[0], "company_nit", None)
+        )
         raw_transactions: list[dict] = []
         for tx in staged:
             raw_transactions.append(
@@ -92,7 +99,7 @@ async def run_process_job(process_id: str) -> None:
                     "id": str(tx.id),
                     "fecha": tx.fecha.isoformat() if tx.fecha else None,
                     "nit_emisor": tx.nit_emisor,
-                    "nit_receptor": tx.nit_receptor,
+                    "nit_receptor": tx.nit_receptor or fallback_nit,
                     "total": float(tx.total) if tx.total is not None else 0.0,
                     "descripcion": tx.descripcion,
                     "items": tx.items if isinstance(tx.items, list) else [],
