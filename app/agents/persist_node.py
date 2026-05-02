@@ -20,7 +20,7 @@ from sqlalchemy.exc import OperationalError as SAOperationalError
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
-from app.core.database import SessionLocal
+from app.core.database import DB_WRITE_SEMAPHORE, SessionLocal
 from app.core.logger import get_logger
 from app.models.database import IngestStatus, ProcessStatus, TransactionPending
 from app.services import db_service
@@ -369,14 +369,27 @@ def _resolve_company_nit(
 
 
 def db_persist_node(state: AgentState) -> AgentState:
-    """Persist current state output to DB for ingest/process mode."""
+    """Persist current state output to DB for ingest/process mode.
 
+    Acquires DB_WRITE_SEMAPHORE before any writes so that concurrent document
+    uploads serialize at this point instead of racing on shared DB rows or
+    exhausting the connection pool. LLM extraction upstream runs in parallel;
+    only the write phase is serialized.
+    """
     if state.get("error"):
         logger.warning("db_persist: Skipping due to upstream error: %s", state["error"])
         return state
 
     append_log(state, "db_persist", "node_start", {"mode": state.get("mode", "ingest")})
 
+    logger.debug("db_persist: waiting for DB write semaphore (ingest_id=%s)", state.get("ingest_id"))
+    with DB_WRITE_SEMAPHORE:
+        logger.debug("db_persist: acquired DB write semaphore (ingest_id=%s)", state.get("ingest_id"))
+        return _db_persist_node_inner(state)
+
+
+def _db_persist_node_inner(state: AgentState) -> AgentState:
+    """Execute DB writes — called only while holding DB_WRITE_SEMAPHORE."""
     for _attempt in range(1, MAX_NODE_RETRIES + 1):
         try:
             _db_persist_inner(state)
