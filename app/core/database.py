@@ -40,6 +40,15 @@ engine = create_engine(
 DB_WRITE_CONCURRENCY = 1
 DB_WRITE_SEMAPHORE = threading.Semaphore(DB_WRITE_CONCURRENCY)
 
+# Global semaphore that limits concurrent ingest pipelines end-to-end.
+# Each pipeline holds DB connections at multiple stages (status updates,
+# classification reads, persistence). With Supabase pool_size+overflow=5,
+# running >2 pipelines concurrently while the frontend polls every 2s
+# starves the pool and hangs the backend. This semaphore queues uploads
+# instead of running them all in parallel.
+INGEST_PIPELINE_CONCURRENCY = 2
+INGEST_PIPELINE_SEMAPHORE = threading.Semaphore(INGEST_PIPELINE_CONCURRENCY)
+
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

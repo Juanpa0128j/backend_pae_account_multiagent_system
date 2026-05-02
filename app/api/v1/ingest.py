@@ -17,7 +17,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.agents.graph import invoke_ingest_pipeline
-from app.core.database import SessionLocal, get_db
+from app.core.database import INGEST_PIPELINE_SEMAPHORE, SessionLocal, get_db
 from app.models.database import IngestJob, IngestStatus
 from app.models.document_types import (
     DocumentType,
@@ -54,8 +54,20 @@ def process_ingest_background(
     temp_file_path: str, ingest_id: str, company_nit: Optional[str] = None
 ):
     logger.info(
-        f"Invoking background agent for: {ingest_id} (company_nit={company_nit})"
+        f"Queueing background agent for: {ingest_id} (company_nit={company_nit})"
     )
+    # Limit concurrent ingest pipelines to avoid exhausting the Supabase
+    # connection pool. Uploads queue here instead of racing for connections.
+    with INGEST_PIPELINE_SEMAPHORE:
+        logger.info(
+            f"Acquired ingest pipeline slot for: {ingest_id}"
+        )
+        _run_ingest_pipeline(temp_file_path, ingest_id, company_nit)
+
+
+def _run_ingest_pipeline(
+    temp_file_path: str, ingest_id: str, company_nit: Optional[str] = None
+):
     initial: dict = {"ingest_id": ingest_id}
     if company_nit:
         initial["company_nit"] = company_nit
