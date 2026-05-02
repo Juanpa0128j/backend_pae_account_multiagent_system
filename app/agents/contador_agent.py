@@ -2,11 +2,11 @@
 Contador (Accountant) worker node for the process graph.
 
 Receives staged raw transactions from state, queries the RAG service for
-relevant PUC codes/normativa, and uses Gemini to produce a balanced
+relevant PUC codes/normativa, and uses the LLM to produce a balanced
 ContadorOutput (partida doble) following Colombian PUC standards.
 
 On retry (when correction_feedback is present), the previous invalid
-output and the schema errors are re-sent to Gemini for self-correction.
+output and the schema errors are re-sent to the LLM for self-correction.
 """
 
 import logging

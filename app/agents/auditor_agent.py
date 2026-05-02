@@ -2,7 +2,7 @@
 Auditor worker node for the process graph.
 
 Receives the ContadorOutput (journal entries) and the original raw
-transactions, then uses Gemini to perform a qualitative audit review
+transactions, then uses the LLM to perform a qualitative audit review
 following Colombian NIIF/DIAN standards.
 
 The auditor node produces a structured AuditorOutput that includes:
@@ -17,7 +17,7 @@ performed *before* this node by validate_contador_output_node, so
 the LLM focuses purely on semantic/qualitative review.
 
 On retry (when correction_feedback is present), the invalid output
-and schema errors are re-sent to Gemini for self-correction.
+and schema errors are re-sent to the LLM for self-correction.
 """
 
 import logging

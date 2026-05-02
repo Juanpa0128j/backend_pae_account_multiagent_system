@@ -2,11 +2,11 @@
 Ingesta (Ingest) worker node for the agent graph.
 
 Supports multiple document formats (PDF, XLSX, and images JPG/PNG) and routes
-interpretation to the appropriate Gemini extraction method based on document
+interpretation to the appropriate LLM extraction method based on document
 classification. Images are parsed via LlamaParse identical to PDFs.
 
 On retry (when correction_feedback is present), the agent re-sends the
-raw text to Gemini along with the schema errors so the model can self-correct.
+raw text to the LLM along with the schema errors so the model can self-correct.
 """
 
 import uuid
@@ -27,7 +27,7 @@ except ImportError:
 logger = get_logger("app.agents.ingest")
 
 
-# Dispatch table: doc_type → GeminiClient method name
+# Dispatch table: doc_type → LLMClient method name
 _EXTRACT_METHOD_MAP: dict[str, str] = {
     # Invoice-like documents
     "factura_venta": "extract_factura_venta",
@@ -78,10 +78,10 @@ _VIA_B_STATEMENT_TYPES: set[str] = {
 
 def ingest_node(state: AgentState) -> AgentState:
     """
-    Ingest node: Extracts from document (PDF/XLSX/XML/image) and interprets with Gemini.
+    Ingest node: Extracts from document (PDF/XLSX/XML/image) and interprets with the LLM.
 
     Supports multiple formats (PDF, XLSX, XML, JPG, JPEG, PNG) and routes interpretation
-    to the appropriate Gemini method based on document classification from the supervisor.
+    to the appropriate LLM method based on document classification from the supervisor.
     Images are parsed via LlamaParse exactly like PDFs.
     """
     # If supervisor already flagged an error, skip processing
@@ -239,25 +239,25 @@ def ingest_node(state: AgentState) -> AgentState:
             },
         )
 
-        # Step 2: Send to Gemini for interpretation (doc-type-aware)
-        gemini_client = get_llm_client()
+        # Step 2: Send to LLM for interpretation (doc-type-aware)
+        llm = get_llm_client()
         correction_feedback = state.get("correction_feedback") if is_retry else None
         classification = state.get("document_classification") or {}
         doc_type = classification.get("doc_type", "otro")
 
         if is_retry:
             logger.info(
-                f"Ingest: Re-sending to Gemini with correction feedback "
+                f"Ingest: Re-sending to LLM with correction feedback "
                 f"(attempt {state.get('retry_count', 1)})"
             )
         else:
             logger.info(
-                "Ingest: Sending to Gemini for interpretation (doc_type=%s)", doc_type
+                "Ingest: Sending to LLM for interpretation (doc_type=%s)", doc_type
             )
 
         # Dispatch to the appropriate extraction method
         method_name = _EXTRACT_METHOD_MAP.get(doc_type, "extract_transactions")
-        if not hasattr(gemini_client, method_name):
+        if not hasattr(llm, method_name):
             state["error"] = (
                 f"Ingest dispatch error: method '{method_name}' is not available "
                 f"for doc_type '{doc_type}'"
@@ -281,7 +281,7 @@ def ingest_node(state: AgentState) -> AgentState:
             },
         )
 
-        extract_method = getattr(gemini_client, method_name)
+        extract_method = getattr(llm, method_name)
         interpreted_data = llm_with_parse_retry(
             extract_method,
             raw_text,
@@ -293,10 +293,10 @@ def ingest_node(state: AgentState) -> AgentState:
 
         state["interpreted_data"] = interpreted_data
 
-        # Validate Gemini response structure
+        # Validate LLM response structure
         if not isinstance(interpreted_data, dict):
             state["error"] = (
-                f"Gemini returned invalid structure: expected dict, "
+                f"LLM returned invalid structure: expected dict, "
                 f"got {type(interpreted_data).__name__}"
             )
             logger.error(state["error"])
@@ -311,12 +311,12 @@ def ingest_node(state: AgentState) -> AgentState:
         if doc_type in _TRANSACTION_DOC_TYPES:
             raw_txs = interpreted_data.get("transactions", [])
             if not isinstance(raw_txs, list):
-                state["error"] = "Gemini 'transactions' field is not a list"
+                state["error"] = "LLM 'transactions' field is not a list"
                 logger.error(state["error"])
                 append_log(state, "ingesta", "node_error", {"error": state["error"]})
                 return state
             if not raw_txs:
-                state["error"] = "Gemini extracted zero transactions from document"
+                state["error"] = "LLM extracted zero transactions from document"
                 logger.warning(state["error"])
                 append_log(state, "ingesta", "node_error", {"error": state["error"]})
                 return state

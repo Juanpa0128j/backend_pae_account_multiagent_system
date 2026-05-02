@@ -5,7 +5,7 @@ Role (docs/Diseño de arquitectura de agente):
   - Receives classified journal entries from Contador (ContadorOutput).
   - Calculates Retefuente, ReteICA, IVA using deterministic Python functions.
   - Queries RAG normativo for relevant legal articles.
-  - Calls Gemini to validate rates and produce legal justification (TaxJustification).
+  - Calls the LLM to validate rates and produce legal justification (TaxJustification).
   - Returns TributarioOutput enriched with tax liability accounts (2365 Retefuente, 2368 ReteICA, 240802 IVA descontable).
 
 Tax rates (Colombian legislation, UVT 2026 = $52.374):
@@ -332,7 +332,7 @@ def tributario_node(state: AgentState) -> AgentState:
     1. Reads ContadorOutput from state.
     2. Runs deterministic Colombian tax calculations.
     3. Queries RAG normativo for legal context.
-    4. Calls Gemini to validate rates and produce TaxJustification.
+    4. Calls the LLM to validate rates and produce TaxJustification.
     5. Stores TributarioOutput in state["tributario_output"].
     """
     if state.get("error"):
@@ -661,7 +661,7 @@ def tributario_node(state: AgentState) -> AgentState:
             logger.warning(f"Tributario: RAG lookup failed (continuing): {rag_err}")
 
         # ------------------------------------------------------------------
-        # Step 5 — Gemini justification (structured output)
+        # Step 5 — LLM justification (structured output)
         # ------------------------------------------------------------------
         tax_amounts = {
             "retefuente": float(retefuente_val),
@@ -675,12 +675,12 @@ def tributario_node(state: AgentState) -> AgentState:
             "tipo_transaccion": tipo_transaccion,
         }
 
-        gemini_client = get_llm_client()
+        llm = get_llm_client()
         try:
-            justification = gemini_client.justify_tax_analysis(tax_amounts, rag_context)
-        except Exception as gemini_err:
+            justification = llm.justify_tax_analysis(tax_amounts, rag_context)
+        except Exception as llm_err:
             logger.warning(
-                f"Tributario: Gemini justification failed (using fallback): {gemini_err}"
+                f"Tributario: LLM justification failed (using fallback): {llm_err}"
             )
             from app.models.llm_schemas import TaxJustification as _TaxJustification
 
