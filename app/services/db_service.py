@@ -579,30 +579,32 @@ def get_all_puc(db: Session) -> List[CuentaPUC]:
     )
 
 
-def search_puc(db: Session, search_term: str, limit: int = 10) -> List[CuentaPUC]:
-    """Search PUC accounts by code or name."""
-    return (
-        db.query(CuentaPUC)
-        .filter(
-            CuentaPUC.activa,
-            (CuentaPUC.codigo.ilike(f"%{search_term}%"))
-            | (CuentaPUC.nombre.ilike(f"%{search_term}%")),
-        )
-        .limit(limit)
-        .all()
+def search_puc(db: Session, search_term: str, limit: int = 10, include_inactive: bool = False) -> List[CuentaPUC]:
+    """Search PUC accounts by code or name. Optionally include inactive accounts."""
+    query = db.query(CuentaPUC).filter(
+        (CuentaPUC.codigo.ilike(f"%{search_term}%"))
+        | (CuentaPUC.nombre.ilike(f"%{search_term}%"))
     )
+    if not include_inactive:
+        query = query.filter(CuentaPUC.activa)
+    return query.limit(limit).all()
 
 
 def create_puc(db: Session, data: dict, commit: bool = True) -> CuentaPUC:
     """Create new PUC account. Raises ValueError if codigo already exists."""
-    existing = db.query(CuentaPUC).filter(CuentaPUC.codigo == data.get("codigo")).first()
-    if existing:
-        raise ValueError(f"PUC code {data['codigo']} already exists")
+    from sqlalchemy.exc import IntegrityError
+
     row = CuentaPUC(**data)
     db.add(row)
-    _commit_or_flush(db, commit)
-    db.refresh(row)
-    return row
+    try:
+        _commit_or_flush(db, commit)
+        db.refresh(row)
+        return row
+    except IntegrityError as e:
+        db.rollback()
+        if "codigo" in str(e):
+            raise ValueError(f"PUC code {data.get('codigo')} already exists")
+        raise
 
 
 def update_puc(db: Session, codigo: str, data: dict, commit: bool = True) -> Optional[CuentaPUC]:

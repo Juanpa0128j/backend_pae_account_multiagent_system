@@ -31,7 +31,7 @@ def list_puc(
 ):
     """List PUC accounts with optional search and filter for inactive."""
     if search:
-        return db_service.search_puc(db, search, limit)
+        return db_service.search_puc(db, search, limit, include_inactive=include_inactive)
     if include_inactive:
         return db_service.get_all_puc_including_inactive(db)
     return db_service.get_all_puc(db)
