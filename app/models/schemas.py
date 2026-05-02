@@ -184,8 +184,8 @@ class BalanceGeneralResponse(BaseModel):
 class CuentaPUCRequest(BaseModel):
     codigo: str
     nombre: str
-    clase: int
-    naturaleza: str
+    clase: int = Field(..., ge=1, le=6)
+    naturaleza: Literal["deudora", "acreedora"]
     grupo: Optional[str] = None
     cuenta: Optional[str] = None
     subcuenta: Optional[str] = None
