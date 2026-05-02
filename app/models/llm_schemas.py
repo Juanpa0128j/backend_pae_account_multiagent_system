@@ -473,6 +473,9 @@ Clasifica el documento aplicando las reglas en ESTE ORDEN. La primera que coinci
 REGLAS PRIORIDAD 1 — TÍTULO O ENCABEZADO EXPLÍCITO (buscar en las primeras líneas)
 - Título contiene "BALANCE GENERAL" o "ESTADO DE SITUACIÓN FINANCIERA" → balance_general
 - Título contiene "ESTADO DE RESULTADOS", "ESTADO DE PÉRDIDAS Y GANANCIAS", "PyG", "P y G" o "P&G" → estado_resultados
+- Título contiene "ANEXO IVA", "ANEXO DE IVA", "ANEXO DECLARACIÓN DE IVA" o "ANEXO DECLARACION IVA" → anexo_iva. CRÍTICO: tiene prioridad ABSOLUTA sobre estado_resultados aunque el documento contenga cifras numéricas o tablas de valores.
+- Título contiene "ANEXO TRIBUTARIO" o "ANEXO DECLARACIÓN" (de otro impuesto distinto a IVA) → anexo_tributario
+- Título contiene "AUXILIAR IVA", "AUXILIAR DE IVA" o "AUXILIAR DE CUENTAS DE IVA" → auxiliar_iva
 - Título contiene "LIBRO AUXILIAR", "LIBRO MAYOR", "AUXILIAR POR CUENTA" o "MAYOR Y BALANCES" (sin calificador de impuesto) → libro_auxiliar. NOTA: si el documento lista movimientos con prefijos CE, RC o FV, esos son referencias a comprobantes DENTRO del libro — no cambian el tipo del documento.
 - Título contiene "LIBRO DIARIO" → libro_diario
 - Título contiene "FLUJO DE CAJA", "FLUJO DE EFECTIVO" o "ESTADO DE FLUJOS DE EFECTIVO" → flujo_de_caja
