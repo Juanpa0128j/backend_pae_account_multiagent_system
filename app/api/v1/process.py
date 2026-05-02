@@ -264,11 +264,7 @@ async def get_process_result(process_id: str, db: Session = Depends(get_db)):
         return JSONResponse(
             status_code=202,
             content={
-                "message": (
-                    f"Process job {process_id} is still being processed "
-                    f"(current status: {process_job.status.value}). "
-                    f"Poll /api/v1/process/status/{process_id} for updates."
-                ),
+                "message": "El proceso contable aún está en curso. Por favor espera y consulta el estado nuevamente en unos segundos.",
                 "process_id": process_id,
                 "status": process_job.status.value,
                 "error_category": None,

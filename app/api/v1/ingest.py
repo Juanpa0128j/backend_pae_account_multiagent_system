@@ -458,8 +458,8 @@ async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
             detail={
                 "error_category": "job_not_ready",
                 "error_code": "INGEST_NOT_COMPLETE",
-                "message": f"Ingest job {ingest_id} is still processing (status: {job.status.value}).",
-                "remediation": "Wait for the ingest to complete and try again.",
+                "message": "El documento aún se está procesando. Por favor espera unos segundos y vuelve a intentarlo.",
+                "remediation": "Espera a que el procesamiento termine antes de continuar.",
             },
         )
 
