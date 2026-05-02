@@ -271,6 +271,12 @@ class IngestJob(Base):
         nullable=True,
         comment="Classifier confidence 0-1 when available",
     )
+    company_nit = Column(
+        String(20),
+        nullable=True,
+        index=True,
+        comment="Tenant NIT supplied by the caller at upload time",
+    )
 
     raw_preview = Column(
         JSONB, nullable=True, comment="Quick preview of extracted data"

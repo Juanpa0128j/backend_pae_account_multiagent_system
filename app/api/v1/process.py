@@ -122,13 +122,15 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
         None,
     )
     if not nit_receptor:
+        nit_receptor = ingest_job.company_nit or None
+    if not nit_receptor:
         raise HTTPException(
             status_code=409,
             detail={
                 "error_category": "business_precondition",
                 "error_code": "MISSING_NIT_RECEPTOR",
-                "message": "Cannot start process: staged transactions are missing nit_receptor.",
-                "remediation": "Fix extraction/staging data so nit_receptor is present, then retry processing.",
+                "message": "Cannot start process: staged transactions are missing nit_receptor and no company_nit was provided at upload time.",
+                "remediation": "Re-upload the document passing company_nit in the form data, or select a company in the UI before uploading.",
             },
         )
 

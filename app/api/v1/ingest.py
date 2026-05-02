@@ -291,7 +291,9 @@ async def upload_file(
         temp_file_path = save_temp_file(file_content, file.filename)
         logger.info(f"Saved uploaded file to: {temp_file_path}")
 
-        ingest_job = db_service.create_ingest_job(db, file.filename, temp_file_path)
+        ingest_job = db_service.create_ingest_job(
+            db, file.filename, temp_file_path, company_nit=normalized_company_nit
+        )
         logger.info(f"Created IngestJob: {ingest_job.id}")
 
         background_tasks.add_task(

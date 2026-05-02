@@ -59,7 +59,11 @@ def _commit_or_flush(db: Session, commit: bool) -> None:
 
 
 def create_ingest_job(
-    db: Session, file_name: str, file_path: str = None, commit: bool = True
+    db: Session,
+    file_name: str,
+    file_path: str = None,
+    company_nit: Optional[str] = None,
+    commit: bool = True,
 ) -> IngestJob:
     """Create a new ingest job for a document upload."""
     job = IngestJob(
@@ -67,6 +71,7 @@ def create_ingest_job(
         file_name=file_name,
         file_path=file_path,
         status=IngestStatus.PENDING_PROCESSING,
+        company_nit=company_nit or None,
     )
     db.add(job)
     # Stage audit log before the single commit/flush so job + log are atomic
