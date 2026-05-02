@@ -66,6 +66,12 @@ def update_puc(
     codigo: str, body: CuentaPUCRequest, db: Session = Depends(get_db)
 ):
     """Update an existing PUC account."""
+    if body.codigo != codigo:
+        raise HTTPException(
+            status_code=400,
+            detail="Path parameter 'codigo' must match body field 'codigo'",
+        )
+
     row = db_service.update_puc(db, codigo, body.model_dump())
     if not row:
         raise HTTPException(
