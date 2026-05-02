@@ -946,10 +946,10 @@ class BalanceGeneralContent(ContentBase):
         if self.accounts:
             seen: dict[str, AccountBalance] = {}
             for acct in self.accounts:
-                key = acct.cuenta_puc or ""
+                key = (acct.cuenta_puc or "").strip()
                 if key not in seen:
                     seen[key] = acct
-            self.accounts = list(seen.values())
+            self.accounts = list(seen.values())[:300]
         return self
 
 

@@ -357,6 +357,42 @@ class TestBuildTrace:
         assert persist_step.suggested_action_es
         assert "desbalance" in persist_step.suggested_action_es.lower()
 
+
+@pytest.mark.unit
+class TestTraceStepFindings:
+    def test_audit_finding_populates_step_findings(self):
+        db = MagicMock()
+        finding_details = {
+            "target": "ingest",
+            "rule_id": "ING-EXTRACTION-PARTIAL",
+            "severity": "warning",
+            "fixable": False,
+            "responsible_agent": "ingest",
+            "technical_message": "short text",
+            "user_message_es": "La extracción fue parcial.",
+            "suggested_action_es": None,
+            "evidence": {"text_chars": 30},
+        }
+        log = [
+            _log_entry("ingesta", "node_start", "2026-04-25T12:00:00+00:00"),
+            {
+                "timestamp": "2026-04-25T12:00:01+00:00",
+                "agent": "ingesta",
+                "event": "audit_finding",
+                "details": finding_details,
+            },
+            _log_entry("ingesta", "node_complete", "2026-04-25T12:00:02+00:00"),
+        ]
+        job = _make_process_job(agent_log=log)
+        with patch("app.services.pipeline_trace_service.db_service") as mock_svc:
+            mock_svc.get_process_job.return_value = job
+            trace = build_trace("proc-test-001", db)
+
+        ingest_step = next(s for s in trace.steps if s.agent == "ingesta")
+        assert len(ingest_step.findings) == 1
+        assert ingest_step.findings[0].rule_id == "ING-EXTRACTION-PARTIAL"
+        assert "parcial" in ingest_step.details_es[0].lower()
+
     def test_fixable_blocker_does_not_force_failed_overall(self):
         db = MagicMock()
         finding_details = {

@@ -100,16 +100,23 @@ def _gemini_with_retry(client, raw_text: str, correction_feedback=None):
 def _gemini_with_retry_generic(method, raw_text: str, correction_feedback=None):
     """
     Call any Gemini extraction method with transient error retry.
+    On OutputParserException, the error message is forwarded as correction_feedback
+    so the next attempt can self-correct rather than repeating identically.
     """
     last_exc = None
+    active_feedback = correction_feedback
     for attempt in range(1, MAX_NODE_RETRIES + 1):
         try:
-            return method(raw_text, correction_feedback=correction_feedback)
+            return method(raw_text, correction_feedback=active_feedback)
         except _TRANSIENT_EXC as e:
             last_exc = e
             logger.warning(
                 f"Ingest: Gemini transient error attempt {attempt}/{MAX_NODE_RETRIES}: {e}"
             )
+            if _OutputParserException is not None and isinstance(
+                e, _OutputParserException
+            ):
+                active_feedback = f"Previous attempt failed with a JSON/schema parse error. Fix and retry. Error: {e}"
         except Exception:
             raise
     if last_exc is not None:
