@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.models.audit import AuditFinding, GiveUpRecord
 
@@ -40,6 +40,12 @@ class TraceStep(BaseModel):
     technical_ref: str = Field(
         default="", description="Log slice identifier for engineer drill-down"
     )
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def duration_ms(self) -> int:
+        delta = self.ended_at - self.started_at
+        return max(0, int(delta.total_seconds() * 1000))
 
 
 class PipelineTrace(BaseModel):
