@@ -654,12 +654,26 @@ class TestProcessGraphStructure:
         nodes = [
             n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
         ]
-        assert len(nodes) == 10
+        assert len(nodes) == 11
 
 
 # ===========================================================================
 # 8–11. E2E: process graph with mocked Gemini + mocked DB persist
 # ===========================================================================
+
+
+def _mock_company_settings() -> MagicMock:
+    """Return a MagicMock that mimics CompanySettings with default tax rates."""
+    cs = MagicMock()
+    cs.tasa_retefuente_servicios = 0.04
+    cs.tasa_retefuente_bienes = 0.025
+    cs.tasa_retefuente_arrendamiento = 0.035
+    cs.tasa_reteica = 0.00414
+    cs.tasa_iva_general = 0.19
+    cs.iva_responsable = True
+    cs.tasa_ica = 0.00414
+    cs.tasa_renta = 0.35
+    return cs
 
 
 def _mock_persist(state: AgentState) -> AgentState:
@@ -696,14 +710,18 @@ class TestProcessGraphE2E:
     No PostgreSQL required.
     """
 
+    @patch("app.services.db_service.get_company_settings")
+    @patch("app.agents.tributario_agent.get_llm_client")
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_happy_path_approved(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
+        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
     ):
         """Successful pipeline: contador → validate → auditor → validate → persist."""
+        mock_co_settings.return_value = _mock_company_settings()
+
         mock_cnt = MagicMock()
         mock_cnt.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
         mock_cnt_factory.return_value = mock_cnt
@@ -711,6 +729,12 @@ class TestProcessGraphE2E:
         mock_aud = MagicMock()
         mock_aud.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
         mock_aud_factory.return_value = mock_aud
+
+        mock_trib = MagicMock()
+        mock_trib.justify_tax_analysis.return_value = MagicMock(
+            referencias=["Art. 383 ET"], justificacion="ok", confirma_tasas=True
+        )
+        mock_trib_factory.return_value = mock_trib
 
         # RAG service not needed in this test
         with patch(
@@ -726,13 +750,14 @@ class TestProcessGraphE2E:
         assert final["db_result"]["journal_lines_count"] == 2
         assert len(final["validation_history"]) >= 2  # contador + auditor validated
 
+    @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.tributario_agent.get_llm_client")
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_rejected_audit_triggers_self_correction_then_approves(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory
+        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
     ):
         """
         Self-correction cycle: auditor rejects once → supervisor routes back to
@@ -761,6 +786,7 @@ class TestProcessGraphE2E:
             referencias=["Art. 383 ET"], justificacion="ok", confirma_tasas=True
         )
         mock_trib_factory.return_value = mock_trib
+        mock_co_settings.return_value = _mock_company_settings()
 
         with patch(
             "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
@@ -775,12 +801,14 @@ class TestProcessGraphE2E:
             "Auditor should have been called twice (reject + approve)"
         )
 
+    @patch("app.services.db_service.get_company_settings")
+    @patch("app.agents.tributario_agent.get_llm_client")
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_contador_retry_then_success(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
+        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
     ):
         """
         First contador call returns an unbalanced output → validate triggers retry.
@@ -802,6 +830,13 @@ class TestProcessGraphE2E:
         mock_aud.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
         mock_aud_factory.return_value = mock_aud
 
+        mock_trib = MagicMock()
+        mock_trib.justify_tax_analysis.return_value = MagicMock(
+            referencias=["Art. 383 ET"], justificacion="ok", confirma_tasas=True
+        )
+        mock_trib_factory.return_value = mock_trib
+        mock_co_settings.return_value = _mock_company_settings()
+
         with patch(
             "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
         ):
@@ -817,12 +852,14 @@ class TestProcessGraphE2E:
         assert any(not h["is_valid"] for h in contador_history)
         assert any(h["is_valid"] for h in contador_history)
 
+    @patch("app.services.db_service.get_company_settings")
+    @patch("app.agents.tributario_agent.get_llm_client")
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_auditor_retry_then_success(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
+        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
     ):
         """
         First auditor call returns invalid schema → validate triggers retry.
@@ -843,6 +880,13 @@ class TestProcessGraphE2E:
         mock_aud = MagicMock()
         mock_aud.extract_auditor_output.side_effect = side_effect_auditor
         mock_aud_factory.return_value = mock_aud
+
+        mock_trib = MagicMock()
+        mock_trib.justify_tax_analysis.return_value = MagicMock(
+            referencias=["Art. 383 ET"], justificacion="ok", confirma_tasas=True
+        )
+        mock_trib_factory.return_value = mock_trib
+        mock_co_settings.return_value = _mock_company_settings()
 
         with patch(
             "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")
@@ -869,14 +913,18 @@ class TestProcessGraphE2E:
 
         assert final.get("error") is not None
 
+    @patch("app.services.db_service.get_company_settings")
+    @patch("app.agents.tributario_agent.get_llm_client")
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_audit_result_propagated_to_result_dict(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory
+        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
     ):
         """audit_approved and audit_nivel_riesgo must surface in final result."""
+        mock_co_settings.return_value = _mock_company_settings()
+
         mock_cnt = MagicMock()
         mock_cnt.extract_contador_output.return_value = dict(VALID_CONTADOR_OUTPUT)
         mock_cnt_factory.return_value = mock_cnt
@@ -884,6 +932,12 @@ class TestProcessGraphE2E:
         mock_aud = MagicMock()
         mock_aud.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
         mock_aud_factory.return_value = mock_aud
+
+        mock_trib = MagicMock()
+        mock_trib.justify_tax_analysis.return_value = MagicMock(
+            referencias=["Art. 383 ET"], justificacion="ok", confirma_tasas=True
+        )
+        mock_trib_factory.return_value = mock_trib
 
         with patch(
             "app.services.rag_service.get_rag_service", side_effect=Exception("no RAG")

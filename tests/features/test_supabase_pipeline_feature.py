@@ -310,6 +310,19 @@ def _create_context_from_ingest(
     )
 
 
+def _mock_company_settings() -> MagicMock:
+    cs = MagicMock()
+    cs.tasa_retefuente_servicios = 0.04
+    cs.tasa_retefuente_bienes = 0.025
+    cs.tasa_retefuente_arrendamiento = 0.035
+    cs.tasa_reteica = 0.00414
+    cs.tasa_iva_general = 0.19
+    cs.iva_responsable = True
+    cs.tasa_ica = 0.00414
+    cs.tasa_renta = 0.35
+    return cs
+
+
 def _run_process_pipeline(ctx: SupabaseE2EContext) -> dict[str, Any]:
     fake_client = FakeLLMClient()
     with (
@@ -319,6 +332,10 @@ def _run_process_pipeline(ctx: SupabaseE2EContext) -> dict[str, Any]:
         patch(
             "app.services.rag_service.get_rag_service",
             return_value=MagicMock(search_normativo=MagicMock(return_value=[])),
+        ),
+        patch(
+            "app.services.db_service.get_company_settings",
+            return_value=_mock_company_settings(),
         ),
     ):
         return invoke_accounting_pipeline(
