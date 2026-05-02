@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from app.agents.agent_utils import append_log
+from app.agents.llm_retry import llm_with_parse_retry
 from app.agents.state import AgentState
 from app.core.config import get_settings
 from app.core.llm_client import get_llm_client
@@ -23,19 +24,7 @@ try:
 except ImportError:
     LlamaParse = None  # type: ignore[assignment,misc]
 
-try:
-    from langchain_core.exceptions import (
-        OutputParserException as _OutputParserException,
-    )
-except ImportError:
-    _OutputParserException = None  # type: ignore[assignment,misc]
-
 logger = get_logger("app.agents.ingest")
-
-MAX_NODE_RETRIES = 3
-_TRANSIENT_EXC = (TimeoutError, ConnectionError, OSError) + (
-    (_OutputParserException,) if _OutputParserException is not None else ()
-)
 
 
 # Dispatch table: doc_type → GeminiClient method name
@@ -85,43 +74,6 @@ _VIA_B_STATEMENT_TYPES: set[str] = {
     "cambios_patrimonio",
     "notas_estados_financieros",
 }
-
-
-def _gemini_with_retry(client, raw_text: str, correction_feedback=None):
-    """
-    Call client.extract_transactions() with up to MAX_NODE_RETRIES attempts
-    on transient network errors. Non-transient exceptions propagate immediately.
-    """
-    return _gemini_with_retry_generic(
-        client.extract_transactions, raw_text, correction_feedback=correction_feedback
-    )
-
-
-def _gemini_with_retry_generic(method, raw_text: str, correction_feedback=None):
-    """
-    Call any Gemini extraction method with transient error retry.
-    On OutputParserException, the error message is forwarded as correction_feedback
-    so the next attempt can self-correct rather than repeating identically.
-    """
-    last_exc = None
-    active_feedback = correction_feedback
-    for attempt in range(1, MAX_NODE_RETRIES + 1):
-        try:
-            return method(raw_text, correction_feedback=active_feedback)
-        except _TRANSIENT_EXC as e:
-            last_exc = e
-            logger.warning(
-                f"Ingest: Gemini transient error attempt {attempt}/{MAX_NODE_RETRIES}: {e}"
-            )
-            if _OutputParserException is not None and isinstance(
-                e, _OutputParserException
-            ):
-                active_feedback = f"Previous attempt failed with a JSON/schema parse error. Fix and retry. Error: {e}"
-        except Exception:
-            raise
-    if last_exc is not None:
-        raise last_exc
-    raise RuntimeError("Gemini extraction failed without a captured exception")
 
 
 def ingest_node(state: AgentState) -> AgentState:
@@ -330,8 +282,11 @@ def ingest_node(state: AgentState) -> AgentState:
         )
 
         extract_method = getattr(gemini_client, method_name)
-        interpreted_data = _gemini_with_retry_generic(
-            extract_method, raw_text, correction_feedback=correction_feedback
+        interpreted_data = llm_with_parse_retry(
+            extract_method,
+            raw_text,
+            correction_feedback=correction_feedback,
+            agent_label="ingesta",
         )
         # Clear correction feedback after using it
         state["correction_feedback"] = None

@@ -12,6 +12,12 @@ output and the schema errors are re-sent to Gemini for self-correction.
 import logging
 
 from app.agents.agent_utils import append_log
+from app.agents.llm_retry import (
+    is_double_entry_violation,
+    is_invalid_puc,
+    is_parse_error,
+    llm_with_parse_retry,
+)
 from app.agents.state import AgentState
 from app.core.llm_client import get_llm_client
 
@@ -175,12 +181,14 @@ def contador_node(state: AgentState) -> AgentState:
         if source_doc:
             source_taxes = _extract_source_taxes_summary(source_doc)
 
-        contador_output = llm.extract_contador_output(
+        contador_output = llm_with_parse_retry(
+            llm.extract_contador_output,
             raw_transactions=raw_transactions,
             doc_type=doc_type,
             rag_context=rag_context,
             correction_feedback=state.get("correction_feedback") if is_retry else None,
             source_taxes=source_taxes,
+            agent_label="contador",
         )
 
         # Clear correction feedback after consuming it
@@ -198,6 +206,66 @@ def contador_node(state: AgentState) -> AgentState:
         append_log(state, "contador", "node_complete", {"stage": "classifying"})
 
     except Exception as exc:
+        # Surface actionable, Spanish audit findings for known parse failures
+        # before terminating, so the accountant gets a useful trace instead of
+        # a generic "contador error".
+        if is_parse_error(exc):
+            from app.agents.audit_utils import append_finding
+            from app.models.audit import AuditFinding, AuditTarget, Severity
+
+            if is_double_entry_violation(exc):
+                rule_id = "CONT-BALANCE-UNFIXABLE"
+                user_msg_es = (
+                    "El documento no contiene información suficiente para generar "
+                    "un asiento de doble entrada balanceado tras varios intentos. "
+                    "Revise el documento fuente: puede estar incompleto, ser de "
+                    "una sola entrada (recibo, comprobante parcial), o tener "
+                    "valores inconsistentes."
+                )
+                action_es = (
+                    "Verifique que el documento incluya tanto el cargo como el "
+                    "abono. Si es un documento parcial, complete la contraparte "
+                    "manualmente o use una cuenta puente (139595 - Cuentas por "
+                    "Aclarar) y reclasifique después."
+                )
+            elif is_invalid_puc(exc):
+                rule_id = "CONT-INVALID-PUC"
+                user_msg_es = (
+                    "El modelo generó un código PUC inválido (placeholder o "
+                    "formato incorrecto) y no logró corregirlo tras varios "
+                    "intentos."
+                )
+                action_es = (
+                    "Reintente con un documento más legible o reclasifique "
+                    "manualmente el asiento usando códigos PUC reales del plan "
+                    "de cuentas (1-6 dígitos numéricos)."
+                )
+            else:
+                rule_id = "CONT-PARSE-EXHAUSTED"
+                user_msg_es = (
+                    "El modelo no logró producir una salida válida tras varios "
+                    "intentos."
+                )
+                action_es = (
+                    "Reintente el procesamiento. Si persiste, revise el "
+                    "documento fuente o reclasifique manualmente."
+                )
+
+            append_finding(
+                state,
+                AuditFinding(
+                    target=AuditTarget.CONTADOR,
+                    rule_id=rule_id,
+                    severity=Severity.BLOCKER,
+                    fixable=False,
+                    responsible_agent="contador",
+                    technical_message=str(exc)[:500],
+                    user_message_es=user_msg_es,
+                    suggested_action_es=action_es,
+                    evidence={"exception_type": exc.__class__.__name__},
+                ),
+            )
+
         state["error"] = f"contador error: {exc}"
         logger.error(state["error"], exc_info=True)
         append_log(state, "contador", "node_error", {"error": str(exc)})
