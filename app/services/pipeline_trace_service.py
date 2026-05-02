@@ -117,6 +117,17 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
     elif all_findings and overall_status == "completed":
         overall_status = "completed_with_warnings"
 
+    # Pre-compute per-run start times so single-entry runs can borrow the
+    # next run's start as their ended_at instead of producing 0ms durations.
+    run_start_times: list[datetime] = []
+    for _, entries in runs:
+        if entries:
+            run_start_times.append(
+                min(_parse_ts(e.get("timestamp", "")) for e in entries)
+            )
+        else:
+            run_start_times.append(datetime.now(timezone.utc))
+
     steps: list[TraceStep] = []
     for run_idx, (agent, entries) in enumerate(runs):
         if not entries:
@@ -125,6 +136,9 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
         timestamps = [_parse_ts(e.get("timestamp", "")) for e in entries]
         started_at = min(timestamps)
         ended_at = max(timestamps)
+        # Single-entry run: borrow the next run's started_at as ended_at
+        if started_at == ended_at and run_idx + 1 < len(run_start_times):
+            ended_at = run_start_times[run_idx + 1]
 
         events = [e.get("event", "") for e in entries]
         run_finding_payloads = [
@@ -226,18 +240,23 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
 
     steps: list[TraceStep] = []
     total = len(audit_logs)
+    # Collect timestamps up-front so each step's ended_at = next step's started_at
+    log_timestamps = [
+        (log.created_at or datetime.now(timezone.utc)) for log in audit_logs
+    ]
     for idx, log in enumerate(audit_logs):
         details = log.details or {}
         agent = details.get("agent", "ingesta")
         is_last_and_failed = overall_status == "failed" and idx == total - 1
         step_status = "failed" if is_last_and_failed else "ok"
         detail_text = details.get("message") or details.get("summary") or ""
-        ts = log.created_at or datetime.now(timezone.utc)
+        started_at = log_timestamps[idx]
+        ended_at = log_timestamps[idx + 1] if idx + 1 < total else started_at
         steps.append(
             TraceStep(
                 agent=agent,
-                started_at=ts,
-                ended_at=ts,
+                started_at=started_at,
+                ended_at=ended_at,
                 status=step_status,
                 summary_es=get_agent_summary_es(agent, failed=is_last_and_failed),
                 details_es=[detail_text] if detail_text else [],
