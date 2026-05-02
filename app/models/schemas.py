@@ -185,7 +185,7 @@ class CuentaPUCRequest(BaseModel):
     codigo: str
     nombre: str
     clase: int = Field(..., ge=1, le=6)
-    naturaleza: Literal["deudora", "acreedora"]
+    naturaleza: Literal["debito", "credito"]
     grupo: Optional[str] = None
     cuenta: Optional[str] = None
     subcuenta: Optional[str] = None
