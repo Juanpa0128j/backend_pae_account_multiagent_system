@@ -57,6 +57,27 @@ async def lifespan(app: FastAPI):
         logger.info("Database connection verified")
     else:
         logger.warning("Database connection failed — some features will be unavailable")
+
+    # RAG schema health check — surfaces drift at startup instead of at first
+    # user query. Failure to introspect (e.g. credentials, missing extension)
+    # is non-fatal: the app continues, but the RAG layer will degrade.
+    if db_ok:
+        try:
+            from app.core.vectordb import get_vectordb
+
+            schema = get_vectordb().validate_schema()
+            if schema["healthy"]:
+                logger.info("RAG vector_documents schema OK")
+            else:
+                logger.warning(
+                    "RAG vector_documents schema DEGRADED at startup — "
+                    "missing_columns=%s missing_indexes=%s",
+                    schema["missing_columns"],
+                    schema["missing_indexes"],
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RAG schema validation skipped (%s)", exc)
+
     yield
     # Shutdown
     logger.info("Application shutdown")

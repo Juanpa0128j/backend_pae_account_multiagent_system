@@ -1,0 +1,210 @@
+[
+  {
+    "id": "CAL_DIAN_2026_RENTA_GRANDES_CUOTA_1",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Renta Grandes Contribuyentes - 1ª cuota",
+    "titulo": "Pago primera cuota Renta Grandes Contribuyentes 2026",
+    "contenido": "Plazo para el pago de la primera cuota del impuesto sobre la renta para Grandes Contribuyentes correspondiente al año gravable 2025. Vencimientos en febrero de 2026 según último dígito del NIT: NIT terminado en 1 (10 feb), 2 (11 feb), 3 (12 feb), 4 (13 feb), 5 (16 feb), 6 (17 feb), 7 (18 feb), 8 (19 feb), 9 (20 feb), 0 (23 feb).",
+    "tags": ["calendario_dian", "2026", "renta", "grandes_contribuyentes", "primera_cuota", "febrero"]
+  },
+  {
+    "id": "CAL_DIAN_2026_RENTA_GRANDES_DECL_CUOTA_2",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Renta Grandes Contribuyentes - Declaración + 2ª cuota",
+    "titulo": "Declaración y pago segunda cuota Renta Grandes Contribuyentes 2026",
+    "contenido": "Plazo para presentar la declaración del impuesto sobre la renta y pagar la segunda cuota para Grandes Contribuyentes (año gravable 2025). Vencimientos en abril de 2026 según último dígito NIT: 1 (13 abr), 2 (14 abr), 3 (15 abr), 4 (16 abr), 5 (20 abr), 6 (21 abr), 7 (22 abr), 8 (23 abr), 9 (24 abr), 0 (27 abr).",
+    "tags": ["calendario_dian", "2026", "renta", "grandes_contribuyentes", "declaracion", "segunda_cuota", "abril"]
+  },
+  {
+    "id": "CAL_DIAN_2026_RENTA_GRANDES_CUOTA_3",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Renta Grandes Contribuyentes - 3ª cuota",
+    "titulo": "Pago tercera cuota Renta Grandes Contribuyentes 2026",
+    "contenido": "Plazo para el pago de la tercera cuota del impuesto sobre la renta para Grandes Contribuyentes (año gravable 2025). Vencimientos en junio de 2026 según último dígito NIT: 1 (10 jun), 2 (11 jun), 3 (12 jun), 4 (16 jun), 5 (17 jun), 6 (18 jun), 7 (19 jun), 8 (22 jun), 9 (23 jun), 0 (24 jun).",
+    "tags": ["calendario_dian", "2026", "renta", "grandes_contribuyentes", "tercera_cuota", "junio"]
+  },
+  {
+    "id": "CAL_DIAN_2026_RENTA_JURIDICAS_DECL_CUOTA_1",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Renta Personas Jurídicas - Declaración + 1ª cuota",
+    "titulo": "Declaración y pago primera cuota Renta Personas Jurídicas 2026",
+    "contenido": "Plazo para presentar la declaración del impuesto sobre la renta y pagar la primera cuota para Personas Jurídicas (año gravable 2025). Vencimientos en mayo de 2026 según último dígito NIT: 1 (12 may), 2 (13 may), 3 (14 may), 4 (15 may), 5 (19 may), 6 (20 may), 7 (21 may), 8 (22 may), 9 (25 may), 0 (26 may).",
+    "tags": ["calendario_dian", "2026", "renta", "personas_juridicas", "declaracion", "primera_cuota", "mayo"]
+  },
+  {
+    "id": "CAL_DIAN_2026_RENTA_JURIDICAS_CUOTA_2",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Renta Personas Jurídicas - 2ª cuota",
+    "titulo": "Pago segunda cuota Renta Personas Jurídicas 2026",
+    "contenido": "Plazo para el pago de la segunda cuota del impuesto sobre la renta para Personas Jurídicas (año gravable 2025). Vencimientos en julio de 2026 según último dígito NIT: 1 (9 jul), 2 (10 jul), 3 (13 jul), 4 (14 jul), 5 (15 jul), 6 (16 jul), 7 (17 jul), 8 (21 jul), 9 (22 jul), 0 (23 jul).",
+    "tags": ["calendario_dian", "2026", "renta", "personas_juridicas", "segunda_cuota", "julio"]
+  },
+  {
+    "id": "CAL_DIAN_2026_RENTA_NATURALES",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Renta Personas Naturales",
+    "titulo": "Declaración y pago Renta Personas Naturales 2026",
+    "contenido": "Plazo para presentar la declaración del impuesto sobre la renta y pagar para Personas Naturales (año gravable 2025), por últimos DOS dígitos del NIT. Agosto 2026: NIT 01-02 (12), 03-04 (13), 05-06 (14), 07-08 (18), 09-10 (19), 11-12 (20), 13-14 (21), 15-16 (24), 17-18 (25), 19-20 (26), 21-22 (27), 23-24 (28), 25-26 (31). Septiembre 2026: 27-28 (1), 29-30 (2), 31-32 (3), 33-34 (4), 35-36 (7), 37-38 (8), 39-40 (9), 41-42 (10), 43-44 (11), 45-46 (14), 47-48 (15), 49-50 (16), 51-52 (17), 53-54 (18), 55-56 (21), 57-58 (22), 59-60 (23), 61-62 (24), 63-64 (25), 65-66 (28). Octubre 2026: 67-68 (1), 69-70 (2), 71-72 (5), 73-74 (6), 75-76 (7), 77-78 (8), 79-80 (9), 81-82 (13), 83-84 (14), 85-86 (15), 87-88 (16), 89-90 (19), 91-92 (20), 93-94 (21), 95-96 (22), 97-98 (23), 99-00 (26).",
+    "tags": ["calendario_dian", "2026", "renta", "personas_naturales", "agosto", "septiembre", "octubre", "dos_digitos_nit"]
+  },
+  {
+    "id": "CAL_DIAN_2026_IVA_BIMESTRAL",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "IVA Bimestral",
+    "titulo": "Declaración y pago IVA Bimestral 2026",
+    "contenido": "Plazos de declaración y pago del Impuesto al Valor Agregado (IVA) bimestral para responsables del régimen común con ingresos altos. Períodos y vencimientos por último dígito NIT: Enero-Febrero (vence en marzo): 1 (10), 2 (11), 3 (12), 4 (13), 5 (16), 6 (17), 7 (18), 8 (19), 9 (20), 0 (24). Marzo-Abril (vence en mayo): 1 (12), 2 (13), 3 (14), 4 (15), 5 (19), 6 (20), 7 (21), 8 (22), 9 (25), 0 (26). Mayo-Junio (vence en julio): 1 (9), 2 (10), 3 (13), 4 (14), 5 (15), 6 (16), 7 (17), 8 (21), 9 (22), 0 (23). Julio-Agosto (vence en septiembre): 1 (9), 2 (10), 3 (11), 4 (14), 5 (15), 6 (16), 7 (17), 8 (18), 9 (21), 0 (22). Septiembre-Octubre (vence en noviembre): 1 (11), 2 (12), 3 (13), 4 (17), 5 (18), 6 (19), 7 (20), 8 (23), 9 (24), 0 (25). Noviembre-Diciembre (vence en enero 2027): 1 (13), 2 (14), 3 (15), 4 (18), 5 (19), 6 (20), 7 (21), 8 (22), 9 (25), 0 (26).",
+    "tags": ["calendario_dian", "2026", "iva", "bimestral", "regimen_comun", "f300"]
+  },
+  {
+    "id": "CAL_DIAN_2026_IVA_CUATRIMESTRAL",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "IVA Cuatrimestral",
+    "titulo": "Declaración y pago IVA Cuatrimestral 2026",
+    "contenido": "Plazos de declaración y pago del IVA cuatrimestral para responsables con ingresos brutos en el año anterior inferiores a 92.000 UVT. Períodos: Enero-Abril (vence mayo 2026): por NIT 1 (12), 2 (13), 3 (14), 4 (15), 5 (19), 6 (20), 7 (21), 8 (22), 9 (25), 0 (26). Mayo-Agosto (vence septiembre 2026): 1 (9), 2 (10), 3 (11), 4 (14), 5 (15), 6 (16), 7 (17), 8 (18), 9 (21), 0 (22). Septiembre-Diciembre (vence enero 2027): 1 (13), 2 (14), 3 (15), 4 (18), 5 (19), 6 (20), 7 (21), 8 (22), 9 (25), 0 (26).",
+    "tags": ["calendario_dian", "2026", "iva", "cuatrimestral", "ingresos_bajos", "92000_uvt"]
+  },
+  {
+    "id": "CAL_DIAN_2026_IVA_PRESTADORES_EXTERIOR",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "IVA Prestadores Servicios desde el Exterior",
+    "titulo": "Declaración y pago IVA Prestadores Servicios desde el Exterior",
+    "contenido": "Plazos bimestrales de declaración y pago del IVA para prestadores de servicios desde el exterior (Netflix, Spotify, Microsoft, etc. — empresas no residentes que prestan servicios digitales en Colombia). Períodos y vencimientos: Enero-Febrero (13 mar), Marzo-Abril (15 may), Mayo-Junio (14 jul), Julio-Agosto (14 sep), Septiembre-Octubre (17 nov), Noviembre-Diciembre (18 ene 2027). Independientemente del NIT.",
+    "tags": ["calendario_dian", "2026", "iva", "prestadores_exterior", "servicios_digitales", "no_residentes"]
+  },
+  {
+    "id": "CAL_DIAN_2026_RETEFUENTE_MENSUAL",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Retención en la Fuente Mensual",
+    "titulo": "Declaración y pago mensual Retención en la Fuente",
+    "contenido": "Plazos mensuales de declaración y pago de retenciones en la fuente practicadas por agentes retenedores. Cada período se declara el mes siguiente. Por último dígito NIT, vencimientos: Enero (febrero): 1 (10), 2 (11), 3 (12), 4 (13), 5 (16), 6 (17), 7 (18), 8 (19), 9 (20), 0 (23). Febrero (marzo): 1 (10), 2 (11), 3 (12), 4 (13), 5 (16), 6 (17), 7 (18), 8 (19), 9 (20), 0 (24). Marzo (abril): 1 (13), 2 (14), 3 (15), 4 (16), 5 (20), 6 (21), 7 (22), 8 (23), 9 (24), 0 (27). Abril (mayo): 1 (12), 2 (13), 3 (14), 4 (15), 5 (19), 6 (20), 7 (21), 8 (22), 9 (25), 0 (26). Mayo (junio): 1 (10), 2 (11), 3 (12), 4 (16), 5 (17), 6 (18), 7 (19), 8 (22), 9 (23), 0 (24). Junio (julio): 1 (9), 2 (10), 3 (13), 4 (14), 5 (15), 6 (16), 7 (17), 8 (21), 9 (22), 0 (23). Julio (agosto): 1 (12), 2 (13), 3 (14), 4 (18), 5 (19), 6 (20), 7 (21), 8 (24), 9 (25), 0 (26). Agosto (septiembre): 1 (9), 2 (10), 3 (11), 4 (14), 5 (15), 6 (16), 7 (17), 8 (18), 9 (21), 0 (22). Septiembre (octubre): 1 (9), 2 (13), 3 (14), 4 (15), 5 (16), 6 (19), 7 (20), 8 (21), 9 (22), 0 (23). Octubre (noviembre): 1 (11), 2 (12), 3 (13), 4 (17), 5 (18), 6 (19), 7 (20), 8 (23), 9 (24), 0 (25). Noviembre (diciembre): 1 (10), 2 (11), 3 (14), 4 (15), 5 (16), 6 (17), 7 (18), 8 (21), 9 (22), 0 (23). Diciembre (enero 2027): 1 (13), 2 (14), 3 (15), 4 (18), 5 (19), 6 (20), 7 (21), 8 (22), 9 (25), 0 (26).",
+    "tags": ["calendario_dian", "2026", "retefuente", "mensual", "f350", "agentes_retenedores"]
+  },
+  {
+    "id": "CAL_DIAN_2026_CONSUMO",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Impuesto al Consumo",
+    "titulo": "Declaración y pago bimestral Impuesto al Consumo 2026",
+    "contenido": "El Impuesto al Consumo (incluyendo bolsas plásticas y cannabis) se declara y paga en las mismas fechas que el IVA bimestral. Aplica a servicios de telefonía, datos, internet, restaurantes, bares y vehículos no-eléctricos. Períodos y vencimientos coinciden con IVA Bimestral.",
+    "tags": ["calendario_dian", "2026", "consumo", "bimestral", "bolsas_plasticas", "cannabis"]
+  },
+  {
+    "id": "CAL_DIAN_2026_GASOLINA_ACPM",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Impuesto Gasolina y ACPM",
+    "titulo": "Declaración y pago mensual Gasolina y ACPM 2026",
+    "contenido": "Plazos mensuales de declaración y pago del Impuesto Nacional a la Gasolina y al ACPM (Aceite Combustible Para Motores). Vencimientos: enero (13 feb), febrero (13 mar), marzo (16 abr), abril (15 may), mayo (16 jun), junio (14 jul), julio (18 ago), agosto (14 sep), septiembre (15 oct), octubre (17 nov), noviembre (15 dic), diciembre (18 ene 2027). Independientemente del NIT.",
+    "tags": ["calendario_dian", "2026", "gasolina", "acpm", "combustibles", "mensual"]
+  },
+  {
+    "id": "CAL_DIAN_2026_CARBONO",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Impuesto Nacional al Carbono",
+    "titulo": "Declaración y pago bimestral Impuesto al Carbono 2026",
+    "contenido": "Plazos bimestrales del Impuesto Nacional al Carbono que grava el contenido de carbono de los combustibles fósiles. Períodos: Enero-Febrero (13 mar), Marzo-Abril (15 may), Mayo-Junio (14 jul), Julio-Agosto (14 sep), Septiembre-Octubre (17 nov), Noviembre-Diciembre (18 ene 2027). Independientemente del NIT.",
+    "tags": ["calendario_dian", "2026", "carbono", "combustibles_fosiles", "bimestral", "ambiental"]
+  },
+  {
+    "id": "CAL_DIAN_2026_RST_ANUAL",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "RST - Declaración Anual y Pago",
+    "titulo": "Declaración anual y pago Régimen Simple de Tributación 2026",
+    "contenido": "Plazo para la declaración anual consolidada del Régimen Simple de Tributación (RST) año 2025. Vencimiento en abril 2026 por últimos DOS dígitos NIT: 1-2 (20), 3-4 (21), 5-6 (22), 7-8 (23), 9-0 (24). La declaración consolidada de IVA del RST vence en febrero 2026: 1-2 (16), 3-4 (17), 5-6 (18), 7-8 (19), 9-0 (20).",
+    "tags": ["calendario_dian", "2026", "rst", "regimen_simple", "anual", "declaracion_consolidada"]
+  },
+  {
+    "id": "CAL_DIAN_2026_RST_ANTICIPOS_BIMESTRALES",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "RST - Anticipos Bimestrales",
+    "titulo": "Anticipos bimestrales Régimen Simple de Tributación 2026",
+    "contenido": "Plazos bimestrales para el pago de anticipos del Régimen Simple de Tributación. Períodos por último dígito NIT: Enero-Febrero (mayo 2026): 1 (12), 2 (13), 3 (14), 4 (15), 5 (19), 6 (20), 7 (21), 8 (22), 9 (25), 0 (26). Marzo-Abril (junio 2026): 1 (10), 2 (11), 3 (12), 4 (16), 5 (17), 6 (18), 7 (19), 8 (22), 9 (23), 0 (24). Mayo-Junio (julio 2026): 1 (9), 2 (10), 3 (13), 4 (14), 5 (15), 6 (16), 7 (17), 8 (21), 9 (22), 0 (23). Julio-Agosto (septiembre 2026): 1 (9), 2 (10), 3 (11), 4 (14), 5 (15), 6 (16), 7 (17), 8 (18), 9 (21), 0 (22). Septiembre-Octubre (noviembre 2026): 1 (11), 2 (12), 3 (13), 4 (17), 5 (18), 6 (19), 7 (20), 8 (23), 9 (24), 0 (25). Noviembre-Diciembre (enero 2027): 1 (13), 2 (14), 3 (15), 4 (18), 5 (19), 6 (20), 7 (21), 8 (22), 9 (25), 0 (26).",
+    "tags": ["calendario_dian", "2026", "rst", "anticipos", "bimestral"]
+  },
+  {
+    "id": "CAL_DIAN_2026_PRECIOS_TRANSFERENCIA_INFORMATIVA",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Precios de Transferencia - Declaración Informativa",
+    "titulo": "Declaración Informativa Precios de Transferencia 2026",
+    "contenido": "Plazo para presentar la Declaración Informativa de Precios de Transferencia para empresas con vinculados económicos en el exterior. Vencimientos en septiembre 2026 por último dígito NIT: 1 (9), 2 (10), 3 (11), 4 (14), 5 (15), 6 (16), 7 (17), 8 (18), 9 (21), 0 (22).",
+    "tags": ["calendario_dian", "2026", "precios_transferencia", "declaracion_informativa", "vinculados_exterior", "septiembre"]
+  },
+  {
+    "id": "CAL_DIAN_2026_PRECIOS_TRANSFERENCIA_DOCUMENTACION",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Precios de Transferencia - Documentación Comprobatoria",
+    "titulo": "Documentación Comprobatoria Precios de Transferencia 2026",
+    "contenido": "Plazo para presentar la documentación comprobatoria de Precios de Transferencia (Informe Local + Informe Maestro). Vencimientos en septiembre 2026 por último dígito NIT: 1 (9), 2 (10), 3 (11), 4 (14), 5 (15), 6 (16), 7 (17), 8 (18), 9 (21), 0 (22).",
+    "tags": ["calendario_dian", "2026", "precios_transferencia", "informe_local", "informe_maestro", "septiembre"]
+  },
+  {
+    "id": "CAL_DIAN_2026_PRECIOS_TRANSFERENCIA_PAIS_POR_PAIS",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Precios de Transferencia - Informe País por País",
+    "titulo": "Informe País por País 2026",
+    "contenido": "Plazo para presentar el Informe País por País (Country-by-Country Report) por parte de matrices de grupos multinacionales con presencia en Colombia. Vencimiento: 15 de diciembre de 2026, independientemente del NIT.",
+    "tags": ["calendario_dian", "2026", "precios_transferencia", "pais_por_pais", "country_by_country", "diciembre"]
+  },
+  {
+    "id": "CAL_DIAN_2026_PATRIMONIO_CUOTA_1",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Impuesto al Patrimonio - 1ª cuota",
+    "titulo": "Declaración y pago primera cuota Impuesto al Patrimonio 2026",
+    "contenido": "Plazo para la declaración y pago de la primera cuota del Impuesto al Patrimonio. Vencimientos en mayo 2026 por último dígito NIT: 1 (12), 2 (13), 3 (14), 4 (15), 5 (19), 6 (20), 7 (21), 8 (22), 9 (25), 0 (26).",
+    "tags": ["calendario_dian", "2026", "patrimonio", "primera_cuota", "mayo"]
+  },
+  {
+    "id": "CAL_DIAN_2026_PATRIMONIO_CUOTA_2",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Impuesto al Patrimonio - 2ª cuota",
+    "titulo": "Pago segunda cuota Impuesto al Patrimonio 2026",
+    "contenido": "Plazo para el pago de la segunda cuota del Impuesto al Patrimonio. Vencimiento: 14 de septiembre de 2026, independientemente del NIT.",
+    "tags": ["calendario_dian", "2026", "patrimonio", "segunda_cuota", "septiembre"]
+  },
+  {
+    "id": "CAL_DIAN_2026_PRODUCTOS_PLASTICOS",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Productos Plásticos un Solo Uso",
+    "titulo": "Presentación y pago Impuesto Plásticos un Solo Uso 2026",
+    "contenido": "Plazo para presentar y pagar el Impuesto Nacional sobre Productos Plásticos de un Solo Uso utilizados para envasar, embalar o empacar bienes. Vencimiento: 13 de febrero de 2026, independientemente del NIT.",
+    "tags": ["calendario_dian", "2026", "plasticos", "un_solo_uso", "envases", "embalajes", "ambiental", "febrero"]
+  },
+  {
+    "id": "CAL_DIAN_2026_BEBIDAS_ULTRAPROCESADAS",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Bebidas Ultraprocesadas Azucaradas",
+    "titulo": "Presentación y pago bimestral Impuesto Bebidas Ultraprocesadas y Comestibles 2026",
+    "contenido": "Plazos bimestrales del Impuesto a las Bebidas Ultraprocesadas Azucaradas y a los productos comestibles ultraprocesados industrialmente con alto contenido de azúcares añadidos, sodio o grasas saturadas. Períodos: Enero-Febrero (13 mar), Marzo-Abril (15 may), Mayo-Junio (14 jul), Julio-Agosto (14 sep), Septiembre-Octubre (17 nov), Noviembre-Diciembre (18 ene 2027).",
+    "tags": ["calendario_dian", "2026", "bebidas_azucaradas", "ultraprocesados", "salud_publica", "bimestral"]
+  },
+  {
+    "id": "CAL_DIAN_2026_PES_ANTICIPOS",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "PES - Presencia Económica Significativa - Anticipos Bimestrales",
+    "titulo": "Anticipos bimestrales PES 2026",
+    "contenido": "Pagos anticipados bimestrales para personas no residentes o entidades no domiciliadas con Presencia Económica Significativa (PES) en Colombia. Períodos: Enero-Febrero (13 mar), Marzo-Abril (15 may), Mayo-Junio (14 jul), Julio-Agosto (14 sep), Septiembre-Octubre (17 nov), Noviembre-Diciembre (18 ene 2027).",
+    "tags": ["calendario_dian", "2026", "pes", "presencia_economica_significativa", "no_residentes", "anticipos"]
+  },
+  {
+    "id": "CAL_DIAN_2026_PES_DECLARACION_ANUAL",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "PES - Presencia Económica Significativa - Declaración Anual",
+    "titulo": "Declaración anual PES 2026",
+    "contenido": "Plazo para la presentación de la declaración anual de Presencia Económica Significativa (PES). Vencimiento: 23 de abril de 2026, independientemente del NIT.",
+    "tags": ["calendario_dian", "2026", "pes", "declaracion_anual", "abril"]
+  },
+  {
+    "id": "CAL_DIAN_2026_ACTIVOS_EXTERIOR",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "Activos en el Exterior - Declaración Anual",
+    "titulo": "Declaración Anual de Activos en el Exterior 2026",
+    "contenido": "Plazo para la declaración anual de Activos en el Exterior (Formato 160). Las fechas coinciden con las del impuesto sobre la renta correspondiente al contribuyente: Grandes Contribuyentes en abril, Personas Jurídicas en mayo, Personas Naturales en agosto-octubre, RST en abril. Aplica a residentes fiscales colombianos con activos fuera del país.",
+    "tags": ["calendario_dian", "2026", "activos_exterior", "formato_160", "residencia_fiscal"]
+  },
+  {
+    "id": "CAL_DIAN_2026_RUB",
+    "fuente": "Calendario Tributario DIAN 2026",
+    "articulo": "RUB - Registro Único de Beneficiarios Finales",
+    "titulo": "Actualización RUB 2026",
+    "contenido": "Plazos para la actualización del Registro Único de Beneficiarios Finales (RUB), que identifica a las personas naturales propietarias o controladoras finales de personas jurídicas y otras estructuras. Vencimientos trimestrales en 2026: 2 de febrero, 4 de mayo, 3 de agosto, 3 de noviembre. Independientemente del NIT.",
+    "tags": ["calendario_dian", "2026", "rub", "beneficiarios_finales", "trimestral", "transparencia"]
+  }
+]

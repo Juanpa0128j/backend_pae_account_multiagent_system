@@ -1,0 +1,98 @@
+[
+  {
+    "id": "CAL_BOG_2026_OVERVIEW",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Calendario Tributario Bogotá D.C. 2026",
+    "titulo": "Calendario Tributario Distrital Bogotá D.C. para 2026",
+    "contenido": "La Secretaría Distrital de Hacienda de Bogotá D.C. expidió la Resolución SDH 000195 de 2025 que fija plazos y descuentos por pronto pago para los tributos distritales del año 2026: Impuesto Predial Unificado, Impuesto sobre Vehículos Automotores, Impuesto de Industria y Comercio (ICA), Retención de ICA (ReteICA), Sobretasa Bomberil, Régimen Común anual e Régimen Preferencial anual. UVT 2026 = $52.374. Sitio oficial: www.haciendabogota.gov.co.",
+    "tags": ["calendario_bogota", "2026", "tributos_distritales", "shd", "resolucion_000195_2025"]
+  },
+  {
+    "id": "CAL_BOG_2026_PREDIAL_PRONTO_PAGO",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Predial Bogotá - Pronto pago con descuento",
+    "titulo": "Impuesto Predial Bogotá 2026 - Descuento por pronto pago 10%",
+    "contenido": "El Impuesto Predial Unificado de Bogotá D.C. 2026 ofrece un descuento del 10% por pronto pago si el contribuyente paga la totalidad del impuesto a más tardar el 17 de abril de 2026. Aplica a propiedades inmuebles ubicadas en el Distrito Capital.",
+    "tags": ["calendario_bogota", "2026", "predial", "pronto_pago", "descuento_10", "abril"]
+  },
+  {
+    "id": "CAL_BOG_2026_PREDIAL_SIN_DESCUENTO",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Predial Bogotá - Pago sin descuento",
+    "titulo": "Impuesto Predial Bogotá 2026 - Pago sin descuento",
+    "contenido": "El Impuesto Predial Unificado de Bogotá D.C. 2026 sin descuento debe pagarse a más tardar el 10 de julio de 2026. Después de esta fecha se generan intereses moratorios.",
+    "tags": ["calendario_bogota", "2026", "predial", "sin_descuento", "julio"]
+  },
+  {
+    "id": "CAL_BOG_2026_PREDIAL_CUOTAS",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Predial Bogotá - Sistema de Pago Alternativo por Cuotas",
+    "titulo": "Sistema de Pago por Cuotas Voluntario Predial Bogotá 2026",
+    "contenido": "El Sistema de Pago Alternativo por Cuotas Voluntario del Impuesto Predial Bogotá 2026 distribuye el pago en 4 cuotas. Fechas: Declaración inicial 8 de mayo de 2026; Pago Cuota 1: 5 de junio de 2026; Pago Cuota 2: 14 de agosto de 2026; Pago Cuota 3: 2 de octubre de 2026; Pago Cuota 4: 4 de diciembre de 2026.",
+    "tags": ["calendario_bogota", "2026", "predial", "cuotas_voluntarias", "pago_alternativo"]
+  },
+  {
+    "id": "CAL_BOG_2026_VEHICULOS_PRONTO_PAGO",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Vehículos Bogotá - Pronto pago con descuento",
+    "titulo": "Impuesto sobre Vehículos Bogotá 2026 - Descuento por pronto pago 10%",
+    "contenido": "El Impuesto sobre Vehículos Automotores de Bogotá D.C. 2026 ofrece un descuento del 10% por pronto pago si el contribuyente paga la totalidad del impuesto a más tardar el 15 de mayo de 2026.",
+    "tags": ["calendario_bogota", "2026", "vehiculos", "pronto_pago", "descuento_10", "mayo"]
+  },
+  {
+    "id": "CAL_BOG_2026_VEHICULOS_SIN_DESCUENTO",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Vehículos Bogotá - Pago sin descuento",
+    "titulo": "Impuesto sobre Vehículos Bogotá 2026 - Pago sin descuento",
+    "contenido": "El Impuesto sobre Vehículos Automotores de Bogotá D.C. 2026 sin descuento debe pagarse a más tardar el 24 de julio de 2026.",
+    "tags": ["calendario_bogota", "2026", "vehiculos", "sin_descuento", "julio"]
+  },
+  {
+    "id": "CAL_BOG_2026_VEHICULOS_CUOTAS",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Vehículos Bogotá - Sistema de Pago Alternativo por Cuotas",
+    "titulo": "Sistema de Pago por Cuotas Voluntario Vehículos Bogotá 2026",
+    "contenido": "El Sistema de Pago Alternativo por Cuotas Voluntario del Impuesto sobre Vehículos Bogotá 2026 distribuye el pago en 2 cuotas. Fechas: Declaración inicial 12 de junio de 2026; Pago Cuota 1: 3 de julio de 2026; Pago Cuota 2: 4 de septiembre de 2026.",
+    "tags": ["calendario_bogota", "2026", "vehiculos", "cuotas_voluntarias", "pago_alternativo"]
+  },
+  {
+    "id": "CAL_BOG_2026_ICA_BIMESTRAL",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "ICA Bogotá - Pago Bimestral",
+    "titulo": "Impuesto de Industria y Comercio Bogotá 2026 - Pago Bimestral",
+    "contenido": "El Impuesto de Industria y Comercio (ICA) Bogotá 2026 se paga bimestralmente para contribuyentes con impuesto a cargo en la vigencia 2025 superior a 391 UVT ($19.471.409 con UVT 2025). Vencimientos por bimestre: Bimestre 1 (Ene-Feb): 10 de abril de 2026. Bimestre 2 (Mar-Abr): 12 de junio de 2026. Bimestre 3 (May-Jun): 21 de agosto de 2026. Bimestre 4 (Jul-Ago): 9 de octubre de 2026. Bimestre 5 (Sep-Oct): 11 de diciembre de 2026. Bimestre 6 (Nov-Dic): 12 de febrero de 2027. Los contribuyentes del régimen común con ingreso neto superior a 43.498 UVT en el período a declarar, presentarán la sobretasa bomberil en los mismos plazos.",
+    "tags": ["calendario_bogota", "2026", "ica", "bimestral", "industria_comercio", "regimen_comun", "391_uvt"]
+  },
+  {
+    "id": "CAL_BOG_2026_RETEICA_BIMESTRAL",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "ReteICA Bogotá - Pago Bimestral",
+    "titulo": "Retención de ICA Bogotá 2026 - Pago Bimestral",
+    "contenido": "La Retención del Impuesto de Industria y Comercio (ReteICA) Bogotá 2026 se paga bimestralmente. Vencimientos: Bimestre 1 (Ene-Feb): 20 de marzo de 2026. Bimestre 2 (Mar-Abr): 22 de mayo de 2026. Bimestre 3 (May-Jun): 17 de julio de 2026. Bimestre 4 (Jul-Ago): 18 de septiembre de 2026. Bimestre 5 (Sep-Oct): 20 de noviembre de 2026. Bimestre 6 (Nov-Dic): 15 de enero de 2027.",
+    "tags": ["calendario_bogota", "2026", "reteica", "bimestral", "retencion_ica"]
+  },
+  {
+    "id": "CAL_BOG_2026_REGIMEN_COMUN_ANUAL",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Régimen Común Anual ICA Bogotá",
+    "titulo": "Régimen Común Anual ICA Bogotá 2026",
+    "contenido": "Los contribuyentes que tuvieron en el año 2025 un impuesto de Industria y Comercio a cargo hasta 391 UVT ($19.471.409) presentan declaración anual. Vencimiento: 26 de febrero de 2027. Los del régimen común anual de ICA con ingreso neto superior a 43.498 UVT en el período a declarar presentarán la sobretasa bomberil en el plazo establecido para el régimen común anual.",
+    "tags": ["calendario_bogota", "2026", "ica", "regimen_comun_anual", "391_uvt", "sobretasa_bomberil"]
+  },
+  {
+    "id": "CAL_BOG_2026_REGIMEN_PREFERENCIAL_ANUAL",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Régimen Preferencial Anual ICA Bogotá",
+    "titulo": "Régimen Preferencial Anual ICA Bogotá 2026",
+    "contenido": "Los contribuyentes con ingresos brutos totales en el 2025 inferiores a 3.500 UVT ($174.296.500) presentan declaración del régimen preferencial anual. Vencimiento: 26 de febrero de 2027. No están obligados a declarar quienes tengan ingresos netos en el 2026 inferiores a 1.933 UVT ($101.238.942 con UVT 2026 de $52.374).",
+    "tags": ["calendario_bogota", "2026", "ica", "regimen_preferencial", "3500_uvt", "1933_uvt"]
+  },
+  {
+    "id": "CAL_BOG_2026_PAGOS_PENDIENTES_2025",
+    "fuente": "Resolución SDH 000195 de 2025 - Calendario Tributario Bogotá D.C. 2026",
+    "articulo": "Pagos pendientes vigencia 2025",
+    "titulo": "Pagos pendientes 2025 que vencen en 2026",
+    "contenido": "Pagos pendientes de la vigencia 2025 con vencimiento en 2026: ReteICA bimestre 6 vence el 16 de enero de 2026. ICA bimestre 6 vence el 13 de febrero de 2026. Régimen Común anual ICA 2025 vence el 27 de febrero de 2026. Régimen Preferencial anual 2025 vence el 27 de febrero de 2026.",
+    "tags": ["calendario_bogota", "2026", "pagos_pendientes", "vigencia_2025", "transicion"]
+  }
+]

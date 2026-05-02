@@ -4,8 +4,8 @@
     "fuente": "Estatuto Tributario",
     "articulo": "Artículo 383",
     "titulo": "Tarifa de Retención en la Fuente sobre Salarios",
-    "contenido": "La retención en la fuente aplicable a los pagos gravables efectuados por las personas naturales o jurídicas, las sociedades de hecho, las comunidades organizadas y las sucesiones ilíquidas, originados en la relación laboral, o legal y reglamentaria, y los pagos recibidos por concepto de pensiones de jubilación, invalidez, vejez, de sobrevivientes y sobre riesgos laborales se efectuará de conformidad con la tabla de retención en la fuente establecida en el presente artículo. La base del cálculo se determina así: al salario mensual se resta el UVT mensual equivalente (87 UVT mensuales para 2025). Sobre la base depurada se aplica la tabla marginal de tasas: hasta 95 UVT: 0%, de 95 a 150 UVT: 19%, de 150 a 360 UVT: 28%, de 360 a 640 UVT: 33%, de 640 a 945 UVT: 35%, de 945 a 2300 UVT: 37%, más de 2300 UVT: 39%.",
-    "tags": ["retefuente", "salarios", "empleados", "nomina", "retención", "impuesto_renta"]
+    "contenido": "La retención en la fuente aplicable a los pagos gravables efectuados por las personas naturales o jurídicas, las sociedades de hecho, las comunidades organizadas y las sucesiones ilíquidas, originados en la relación laboral, o legal y reglamentaria, y los pagos recibidos por concepto de pensiones de jubilación, invalidez, vejez, de sobrevivientes y sobre riesgos laborales se efectuará de conformidad con la tabla de retención en la fuente establecida en el presente artículo. La base del cálculo se determina así: al salario mensual se resta el UVT mensual equivalente (UVT 2026 = $52.374, equivalente a 87 UVT mensuales = $4.556.538). Sobre la base depurada se aplica la tabla marginal de tasas: hasta 95 UVT: 0%, de 95 a 150 UVT: 19%, de 150 a 360 UVT: 28%, de 360 a 640 UVT: 33%, de 640 a 945 UVT: 35%, de 945 a 2300 UVT: 37%, más de 2300 UVT: 39%.",
+    "tags": ["retefuente", "salarios", "empleados", "nomina", "retención", "impuesto_renta", "uvt_2026"]
   },
   {
     "id": "ET_ART_392",

@@ -22,9 +22,26 @@ from functools import lru_cache
 
 from huggingface_hub import InferenceClient
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+
+# Schema columns + indexes the RAG layer relies on. validate_schema() flags
+# any drift so we detect a broken pgvector table at startup, not at first query.
+_REQUIRED_VECTOR_COLUMNS = {
+    "id",
+    "collection_name",
+    "content",
+    "metadata",
+    "embedding",
+    "content_tsv",
+}
+_REQUIRED_VECTOR_INDEXES = {
+    "ix_vector_documents_collection_name",
+    "ix_vector_documents_content_tsv_gin",
+    "ix_vector_documents_embedding_hnsw",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -194,18 +211,31 @@ class SupabaseVectorDB:
             LIMIT :n_results
         """)
 
-        with Session(self._engine) as session:
-            rows = session.execute(
-                sql,
-                {
-                    "query_text": query_text,
-                    "vec": vec_str,
-                    "collection": collection_name,
-                    "pool": pool,
-                    "rrf_k": rrf_k,
-                    "n_results": n_results,
-                },
-            ).fetchall()
+        try:
+            with Session(self._engine) as session:
+                rows = session.execute(
+                    sql,
+                    {
+                        "query_text": query_text,
+                        "vec": vec_str,
+                        "collection": collection_name,
+                        "pool": pool,
+                        "rrf_k": rrf_k,
+                        "n_results": n_results,
+                    },
+                ).fetchall()
+        except ProgrammingError as exc:
+            # Schema drift safety net: if content_tsv / embedding / index is missing
+            # (e.g. an old DB that never ran migration f1b2c3d4e5f6), gracefully
+            # degrade to vector-only search and surface a loud error in logs so
+            # the operator knows the schema needs repair.
+            logger.error(
+                "search_hybrid: SQL ProgrammingError (%s). Falling back to "
+                "vector-only search. Run `alembic upgrade head` to repair "
+                "vector_documents schema.",
+                getattr(exc.orig, "__class__", type(exc)).__name__,
+            )
+            return self.search(collection_name, query_embedding, n_results)
 
         if not rows:
             return {
@@ -340,6 +370,58 @@ class SupabaseVectorDB:
             result = session.execute(sql, {"collection": collection_name})
             session.commit()
             return result.rowcount
+
+    # Health check
+
+    def validate_schema(self) -> dict:
+        """Validate vector_documents has the columns/indexes RAG depends on.
+
+        Returns a dict with:
+          - healthy: bool
+          - missing_columns: sorted list of missing required columns
+          - missing_indexes: sorted list of missing required indexes
+
+        Logs a WARNING with concrete remediation steps when degraded so a
+        broken pgvector schema is visible at startup, not at first user query.
+        """
+        cols_sql = text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'vector_documents'"
+        )
+        idx_sql = text(
+            "SELECT indexname FROM pg_indexes WHERE tablename = 'vector_documents'"
+        )
+        with Session(self._engine) as session:
+            try:
+                cols = {r[0] for r in session.execute(cols_sql)}
+                idx = {r[0] for r in session.execute(idx_sql)}
+            except ProgrammingError as exc:
+                logger.warning(
+                    "validate_schema: could not introspect vector_documents (%s). "
+                    "Treating as fully missing.",
+                    exc,
+                )
+                cols = set()
+                idx = set()
+
+        missing_cols = _REQUIRED_VECTOR_COLUMNS - cols
+        missing_idx = _REQUIRED_VECTOR_INDEXES - idx
+        healthy = not missing_cols and not missing_idx
+
+        if not healthy:
+            logger.warning(
+                "vector_documents schema DEGRADED. Missing columns: %s. "
+                "Missing indexes: %s. Run `alembic upgrade head` to repair, "
+                "then `python scripts/populate_rag.py --force` to repopulate.",
+                sorted(missing_cols),
+                sorted(missing_idx),
+            )
+
+        return {
+            "healthy": healthy,
+            "missing_columns": sorted(missing_cols),
+            "missing_indexes": sorted(missing_idx),
+        }
 
 
 def _vec_to_str(vec: list[float]) -> str:

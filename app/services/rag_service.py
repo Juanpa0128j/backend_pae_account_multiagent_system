@@ -110,10 +110,23 @@ class RAGService:
             raw = self._db.search_hybrid(
                 NORMATIVA_COLLECTION, query, query_embedding, candidates
             )
-            # Fall back to pure vector if hybrid returned nothing (e.g., FTS had zero hits)
+            # Fall back to pure vector if hybrid returned nothing (e.g., FTS had zero hits).
+            # Log so we have telemetry on how often hybrid contributes.
             if not raw["ids"][0]:
+                logger.info(
+                    "search_normativo: hybrid retrieved 0 hits for query='%s'; "
+                    "falling back to vector-only search.",
+                    query[:80],
+                )
                 raw = self._db.search(NORMATIVA_COLLECTION, query_embedding, candidates)
         else:
+            if hybrid:
+                # Caller asked for hybrid but the vectordb backend doesn't support it.
+                # Loud warning so the operator can investigate the backend wiring.
+                logger.warning(
+                    "search_normativo: hybrid requested but vectordb has no "
+                    "search_hybrid method. Using vector-only."
+                )
             raw = self._db.search(NORMATIVA_COLLECTION, query_embedding, candidates)
 
         results = _parse_search_results(raw)

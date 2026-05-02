@@ -579,7 +579,9 @@ def get_all_puc(db: Session) -> List[CuentaPUC]:
     )
 
 
-def search_puc(db: Session, search_term: str, limit: int = 10, include_inactive: bool = False) -> List[CuentaPUC]:
+def search_puc(
+    db: Session, search_term: str, limit: int = 10, include_inactive: bool = False
+) -> List[CuentaPUC]:
     """Search PUC accounts by code or name. Optionally include inactive accounts."""
     query = db.query(CuentaPUC).filter(
         (CuentaPUC.codigo.ilike(f"%{search_term}%"))
@@ -607,7 +609,9 @@ def create_puc(db: Session, data: dict, commit: bool = True) -> CuentaPUC:
         raise
 
 
-def update_puc(db: Session, codigo: str, data: dict, commit: bool = True) -> Optional[CuentaPUC]:
+def update_puc(
+    db: Session, codigo: str, data: dict, commit: bool = True
+) -> Optional[CuentaPUC]:
     """Update existing PUC account. Returns None if not found."""
     row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
     if not row:

@@ -1,0 +1,314 @@
+[
+  {
+    "id": "RETEN_2026_UVT_BASE",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "UVT 2026",
+    "titulo": "Unidad de Valor Tributario para 2026",
+    "contenido": "El UVT (Unidad de Valor Tributario) para el año gravable 2026 se fijó en $52.374. Todas las bases mínimas de retención en la fuente, IVA, e impuestos territoriales se calculan multiplicando el número de UVT por este valor. Vigencia: a partir del 1 de enero de 2026 para todas las facturas y operaciones gravables.",
+    "tags": ["uvt", "2026", "base_calculo", "valor_tributario", "dian"]
+  },
+  {
+    "id": "RETEN_2026_COMPRAS_GENERALES_DECLARANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras generales (declarantes)",
+    "titulo": "Retención en compras generales a declarantes de renta",
+    "contenido": "Para compras generales realizadas a personas naturales o jurídicas declarantes de renta, la base mínima de retención es 10 UVT ($524.000 con UVT 2026 de $52.374). La tarifa de retención es del 2.5% sobre el valor de la compra antes de IVA. Aplica cuando el proveedor presenta declaración de renta.",
+    "tags": ["retefuente", "compras", "declarantes", "2026", "2.5%", "10_uvt"]
+  },
+  {
+    "id": "RETEN_2026_COMPRAS_GENERALES_NO_DECLARANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras generales (no declarantes)",
+    "titulo": "Retención en compras generales a no declarantes",
+    "contenido": "Para compras generales realizadas a personas naturales no declarantes de renta, la base mínima de retención es 10 UVT ($524.000 con UVT 2026 de $52.374). La tarifa de retención es del 3.5% sobre el valor de la compra antes de IVA. Tarifa más alta que para declarantes (2.5%) por la condición tributaria del beneficiario.",
+    "tags": ["retefuente", "compras", "no_declarantes", "2026", "3.5%", "10_uvt"]
+  },
+  {
+    "id": "RETEN_2026_COMPRAS_TARJETA",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras con tarjeta débito o crédito",
+    "titulo": "Retención en compras con tarjeta débito o crédito",
+    "contenido": "Para compras realizadas con tarjeta débito o crédito no hay base mínima de retención (0 UVT, $0). La tarifa de retención es del 1.5% sobre el valor de la compra. Esta retención la efectúan las entidades emisoras de las tarjetas como agentes retenedores, no el comprador.",
+    "tags": ["retefuente", "tarjeta_credito", "tarjeta_debito", "2026", "1.5%", "sin_base_minima"]
+  },
+  {
+    "id": "RETEN_2026_AGRICOLAS_SIN_PROCESO",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras agrícolas o pecuarias sin procesamiento industrial",
+    "titulo": "Retención en compras agrícolas/pecuarias sin proceso",
+    "contenido": "Para compras de bienes o productos agrícolas o pecuarios sin procesamiento industrial, la base mínima de retención es 70 UVT ($3.666.000 con UVT 2026 de $52.374). La tarifa de retención es del 1.5%. Aplica a productos del campo en estado natural sin transformación agroindustrial.",
+    "tags": ["retefuente", "agricola", "pecuario", "sin_proceso", "2026", "1.5%", "70_uvt"]
+  },
+  {
+    "id": "RETEN_2026_AGRICOLAS_CON_PROCESO_DECLARANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras agrícolas o pecuarias con procesamiento industrial (declarantes)",
+    "titulo": "Retención en compras agrícolas/pecuarias procesadas a declarantes",
+    "contenido": "Para compras de bienes o productos agrícolas o pecuarios con procesamiento industrial cuando el vendedor es declarante de renta, la base mínima es 10 UVT ($524.000 con UVT 2026). La tarifa de retención es del 2.5%. Aplica a productos transformados industrialmente (lácteos procesados, embutidos, conservas, etc.).",
+    "tags": ["retefuente", "agricola", "pecuario", "con_proceso", "declarantes", "2026", "2.5%"]
+  },
+  {
+    "id": "RETEN_2026_AGRICOLAS_CON_PROCESO_NO_DECLARANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras agrícolas o pecuarias con procesamiento industrial (no declarantes)",
+    "titulo": "Retención en compras agrícolas/pecuarias procesadas a no declarantes",
+    "contenido": "Para compras de bienes o productos agrícolas o pecuarios con procesamiento industrial cuando el vendedor es no declarante, la base mínima es 10 UVT ($524.000 con UVT 2026). La tarifa de retención es del 3.5%.",
+    "tags": ["retefuente", "agricola", "pecuario", "con_proceso", "no_declarantes", "2026", "3.5%"]
+  },
+  {
+    "id": "RETEN_2026_COMBUSTIBLES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras de combustibles derivados del petróleo",
+    "titulo": "Retención en combustibles del petróleo",
+    "contenido": "Para compras de combustibles derivados del petróleo no hay base mínima de retención (0 UVT, $0). La tarifa de retención es del 0.1% sobre el valor de la compra. Tarifa especial reducida por la naturaleza del producto y los márgenes regulados del sector.",
+    "tags": ["retefuente", "combustible", "petroleo", "gasolina", "diesel", "acpm", "2026", "0.1%"]
+  },
+  {
+    "id": "RETEN_2026_ENAJENACION_ACTIVOS_FIJOS_PN",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Enajenación de activos fijos de personas naturales",
+    "titulo": "Retención en venta de activos fijos por personas naturales",
+    "contenido": "Para enajenación (venta) de activos fijos por parte de personas naturales no hay base mínima (0 UVT, $0). La tarifa de retención es del 1%. Las notarías y oficinas de tránsito son los agentes retenedores autorizados, no el comprador. Aplica típicamente a venta de inmuebles y vehículos.",
+    "tags": ["retefuente", "enajenacion", "activos_fijos", "personas_naturales", "notarias", "transito", "2026", "1%"]
+  },
+  {
+    "id": "RETEN_2026_VEHICULOS",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras de vehículos",
+    "titulo": "Retención en compra de vehículos",
+    "contenido": "Para compras de vehículos no hay base mínima de retención (0 UVT, $0). La tarifa de retención es del 1% sobre el valor de la compra. Aplica a la adquisición de vehículos automotores nuevos o usados.",
+    "tags": ["retefuente", "vehiculos", "automotores", "2026", "1%", "sin_base_minima"]
+  },
+  {
+    "id": "RETEN_2026_VIVIENDA_HASTA_20000_UVT",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras de bienes raíces vivienda (hasta 20.000 UVT)",
+    "titulo": "Retención en compra de vivienda — primeras 20.000 UVT",
+    "contenido": "Para compras de bienes raíces destinados a vivienda de habitación, sobre las primeras 20.000 UVT (hasta $1.047.480.000 con UVT 2026 de $52.374), no hay base mínima y la tarifa de retención es del 1%. Aplica únicamente cuando el destino del inmueble es vivienda.",
+    "tags": ["retefuente", "bienes_raices", "vivienda", "habitacion", "2026", "1%", "20000_uvt"]
+  },
+  {
+    "id": "RETEN_2026_VIVIENDA_EXCESO_20000_UVT",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras de bienes raíces vivienda (exceso de 20.000 UVT)",
+    "titulo": "Retención en compra de vivienda — exceso sobre 20.000 UVT",
+    "contenido": "Para compras de bienes raíces destinados a vivienda de habitación cuyo valor supera 20.000 UVT (más de $1.047.480.000 con UVT 2026), sobre el exceso aplica una tarifa de retención del 2.5%. La base mínima del exceso es de 20.000 UVT ($995.980.000 según referencia H&G 2026).",
+    "tags": ["retefuente", "bienes_raices", "vivienda", "exceso", "2026", "2.5%", "20000_uvt"]
+  },
+  {
+    "id": "RETEN_2026_NO_VIVIENDA",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Compras de bienes raíces no vivienda",
+    "titulo": "Retención en compra de bienes raíces distintos a vivienda",
+    "contenido": "Para compras de bienes raíces cuyo destino y uso sea distinto a vivienda de habitación (ejemplo: locales comerciales, oficinas, bodegas, terrenos), no hay base mínima (0 UVT, $0) y la tarifa de retención es del 2.5%.",
+    "tags": ["retefuente", "bienes_raices", "no_vivienda", "comercial", "2026", "2.5%"]
+  },
+  {
+    "id": "RETEN_2026_SERVICIOS_GENERALES_DECLARANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Servicios generales (declarantes)",
+    "titulo": "Retención en servicios generales a declarantes",
+    "contenido": "Para servicios generales prestados por declarantes de renta, la base mínima es 2 UVT ($105.000 con UVT 2026 de $52.374, ligeramente menor por redondeo a $104.748). La tarifa de retención es del 4% sobre el valor del servicio antes de IVA.",
+    "tags": ["retefuente", "servicios", "declarantes", "2026", "4%", "2_uvt"]
+  },
+  {
+    "id": "RETEN_2026_SERVICIOS_GENERALES_NO_DECLARANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Servicios generales (no declarantes)",
+    "titulo": "Retención en servicios generales a no declarantes",
+    "contenido": "Para servicios generales prestados por personas naturales no declarantes de renta, la base mínima es 2 UVT ($105.000 con UVT 2026). La tarifa de retención es del 6% sobre el valor del servicio antes de IVA. Mayor que para declarantes (4%) debido a la condición tributaria del prestador.",
+    "tags": ["retefuente", "servicios", "no_declarantes", "2026", "6%", "2_uvt"]
+  },
+  {
+    "id": "RETEN_2026_TRANSPORTE_CARGA",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Servicios de transporte de carga",
+    "titulo": "Retención en transporte de carga",
+    "contenido": "Para servicios de transporte de carga, la base mínima es 2 UVT ($105.000 con UVT 2026). La tarifa de retención es del 1% sobre el valor del flete. Aplica a transporte terrestre, aéreo, marítimo o fluvial de mercancías.",
+    "tags": ["retefuente", "transporte", "carga", "fletes", "logistica", "2026", "1%"]
+  },
+  {
+    "id": "RETEN_2026_TRANSPORTE_PASAJEROS_TERRESTRE",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Transporte nacional de pasajeros terrestre",
+    "titulo": "Retención en transporte terrestre de pasajeros",
+    "contenido": "Para servicios de transporte nacional de pasajeros por vía terrestre, la base mínima es 10 UVT ($524.000 con UVT 2026). La tarifa de retención es del 3.5% tanto para declarantes como para no declarantes. Aplica a transporte intermunicipal e interdepartamental terrestre.",
+    "tags": ["retefuente", "transporte", "pasajeros", "terrestre", "2026", "3.5%", "10_uvt"]
+  },
+  {
+    "id": "RETEN_2026_TRANSPORTE_PASAJEROS_AEREO_MARITIMO",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Transporte nacional de pasajeros aéreo o marítimo",
+    "titulo": "Retención en transporte aéreo o marítimo de pasajeros",
+    "contenido": "Para servicios de transporte nacional de pasajeros por vía aérea o marítima, la base mínima es 2 UVT ($105.000 con UVT 2026). La tarifa de retención es del 1%. Aplica a tiquetes aéreos domésticos y travesías marítimas dentro del territorio nacional.",
+    "tags": ["retefuente", "transporte", "pasajeros", "aereo", "maritimo", "2026", "1%"]
+  },
+  {
+    "id": "RETEN_2026_SERVICIOS_TEMPORALES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Servicios temporales (sobre AIU)",
+    "titulo": "Retención en servicios temporales sobre AIU",
+    "contenido": "Para servicios prestados por empresas de servicios temporales, la base mínima es 2 UVT ($105.000 con UVT 2026) y la tarifa de retención es del 1%. La retención se calcula sobre el AIU (Administración, Imprevistos y Utilidad) y no sobre el valor total del contrato. AIU es la porción que efectivamente recibe la empresa temporal.",
+    "tags": ["retefuente", "servicios_temporales", "aiu", "outsourcing", "2026", "1%"]
+  },
+  {
+    "id": "RETEN_2026_VIGILANCIA_ASEO",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Servicios de vigilancia y aseo (sobre AIU)",
+    "titulo": "Retención en vigilancia y aseo sobre AIU",
+    "contenido": "Para servicios prestados por empresas de vigilancia y aseo, la base mínima es 2 UVT ($105.000 con UVT 2026) y la tarifa de retención es del 2%. La retención se calcula sobre el AIU (Administración, Imprevistos y Utilidad), no sobre el valor total del contrato.",
+    "tags": ["retefuente", "vigilancia", "aseo", "aiu", "2026", "2%"]
+  },
+  {
+    "id": "RETEN_2026_SALUD_IPS",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Servicios integrales de salud por IPS",
+    "titulo": "Retención en servicios integrales de salud por IPS",
+    "contenido": "Para servicios integrales de salud prestados por Instituciones Prestadoras de Salud (IPS), la base mínima es 2 UVT ($105.000 con UVT 2026) y la tarifa de retención es del 2%. Aplica a servicios médicos, hospitalarios y de diagnóstico facturados por IPS.",
+    "tags": ["retefuente", "salud", "ips", "medico", "hospitalario", "2026", "2%"]
+  },
+  {
+    "id": "RETEN_2026_HOTELES_RESTAURANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Servicios de hoteles y restaurantes",
+    "titulo": "Retención en hoteles y restaurantes",
+    "contenido": "Para servicios de hoteles y restaurantes, la base mínima es 2 UVT ($105.000 con UVT 2026) y la tarifa de retención es del 3.5%, tanto para declarantes como no declarantes. Aplica a hospedaje, alimentos y bebidas servidas en establecimientos comerciales del sector.",
+    "tags": ["retefuente", "hoteles", "restaurantes", "alojamiento", "alimentacion", "2026", "3.5%"]
+  },
+  {
+    "id": "RETEN_2026_ARRENDAMIENTO_MUEBLES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Arrendamiento de bienes muebles",
+    "titulo": "Retención en arrendamiento de bienes muebles",
+    "contenido": "Para el arrendamiento de bienes muebles (maquinaria, equipos, vehículos, mobiliario), no hay base mínima de retención (0 UVT, $0) y la tarifa es del 4%. Tarifa más alta que arrendamiento de inmuebles (3.5%) por la naturaleza distinta del bien.",
+    "tags": ["retefuente", "arrendamiento", "muebles", "alquiler", "leasing", "2026", "4%"]
+  },
+  {
+    "id": "RETEN_2026_ARRENDAMIENTO_INMUEBLES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Arrendamiento de bienes inmuebles",
+    "titulo": "Retención en arrendamiento de bienes inmuebles",
+    "contenido": "Para el arrendamiento de bienes inmuebles (locales, oficinas, bodegas, viviendas con destino comercial), la base mínima es 10 UVT ($524.000 con UVT 2026) y la tarifa de retención es del 3.5% tanto para declarantes como no declarantes. La base se calcula sobre el canon mensual antes de IVA.",
+    "tags": ["retefuente", "arrendamiento", "inmuebles", "canon", "locales", "oficinas", "2026", "3.5%"]
+  },
+  {
+    "id": "RETEN_2026_OTROS_INGRESOS_DECLARANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Otros ingresos tributarios (declarantes)",
+    "titulo": "Retención en otros ingresos tributarios a declarantes",
+    "contenido": "Para otros ingresos tributarios no clasificados en categorías específicas, cuando el beneficiario es declarante de renta, la base mínima es 10 UVT ($524.000 con UVT 2026) y la tarifa de retención es del 2.5%. Categoría residual para conceptos atípicos.",
+    "tags": ["retefuente", "otros_ingresos", "declarantes", "residual", "2026", "2.5%"]
+  },
+  {
+    "id": "RETEN_2026_OTROS_INGRESOS_NO_DECLARANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Otros ingresos tributarios (no declarantes)",
+    "titulo": "Retención en otros ingresos tributarios a no declarantes",
+    "contenido": "Para otros ingresos tributarios no clasificados, cuando el beneficiario es no declarante, la base mínima es 10 UVT ($524.000 con UVT 2026) y la tarifa de retención es del 3.5%.",
+    "tags": ["retefuente", "otros_ingresos", "no_declarantes", "residual", "2026", "3.5%"]
+  },
+  {
+    "id": "RETEN_2026_HONORARIOS_PERSONAS_JURIDICAS",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Honorarios y comisiones (personas jurídicas)",
+    "titulo": "Retención en honorarios y comisiones a personas jurídicas",
+    "contenido": "Para honorarios y comisiones pagados a personas jurídicas, no hay base mínima de retención (0 UVT, $0) y la tarifa es del 11%. Aplica a servicios profesionales y de intermediación facturados por sociedades comerciales.",
+    "tags": ["retefuente", "honorarios", "comisiones", "personas_juridicas", "2026", "11%", "sin_base_minima"]
+  },
+  {
+    "id": "RETEN_2026_HONORARIOS_PN_DECLARANTES_3300_UVT",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Honorarios y comisiones (personas naturales >3.300 UVT)",
+    "titulo": "Retención en honorarios a personas naturales con contratos >3.300 UVT",
+    "contenido": "Para honorarios y comisiones pagados a personas naturales que suscriban contratos por más de 3.300 UVT ($172.834.000 con UVT 2026 de $52.374) o cuya sumatoria de pagos durante el año gravable supere 3.300 UVT, la tarifa de retención es del 11% sin base mínima. Esta regla aplica al cumplir cualquiera de las dos condiciones (contrato individual o acumulado anual).",
+    "tags": ["retefuente", "honorarios", "personas_naturales", "3300_uvt", "2026", "11%", "contratos_grandes"]
+  },
+  {
+    "id": "RETEN_2026_HONORARIOS_NO_DECLARANTES",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Honorarios y comisiones (no declarantes)",
+    "titulo": "Retención en honorarios a no declarantes",
+    "contenido": "Para honorarios y comisiones pagados a personas naturales no declarantes de renta cuyos contratos no superen 3.300 UVT, no hay base mínima y la tarifa de retención es del 10%. Tarifa diferencial (1 punto menos que jurídicas o naturales con contrato grande) por la condición tributaria del beneficiario.",
+    "tags": ["retefuente", "honorarios", "no_declarantes", "personas_naturales", "2026", "10%"]
+  },
+  {
+    "id": "RETEN_2026_SOFTWARE_LICENCIAMIENTO",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Servicios de licenciamiento o derecho de uso de software",
+    "titulo": "Retención en licenciamiento de software",
+    "contenido": "Para servicios de licenciamiento o derecho de uso de software, no hay base mínima (0 UVT, $0) y la tarifa de retención es del 3.5%. Aplica a licencias SaaS, licencias perpetuas, suscripciones a plataformas y otros productos de software cuando el pago corresponde a derecho de uso.",
+    "tags": ["retefuente", "software", "licencia", "saas", "tecnologia", "2026", "3.5%"]
+  },
+  {
+    "id": "RETEN_2026_DESARROLLO_SOFTWARE",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Desarrollo y mantenimiento de software",
+    "titulo": "Retención en desarrollo de software",
+    "contenido": "Para servicios de diseño, análisis, desarrollo, implementación, mantenimiento, ajustes, pruebas, suministro y documentación de programas de informática, diseño de páginas web, consultoría en programas de informática y licenciamiento de software, no hay base mínima (0 UVT, $0). La tarifa varía: 10% si el beneficiario NO cumple condiciones de los literales a) y b) del Art. 1.2.4.3.1 del DUR 1625 de 2016, 11% si las cumple parcialmente, o 3.5% si es declarante de renta. La condición específica determina la tarifa aplicable.",
+    "tags": ["retefuente", "software", "desarrollo", "consultoria_ti", "decreto_1625", "2026", "10%", "11%", "3.5%"]
+  },
+  {
+    "id": "RETEN_2026_INTERESES_RENDIMIENTOS",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Intereses o rendimientos financieros",
+    "titulo": "Retención en intereses y rendimientos financieros",
+    "contenido": "Para intereses o rendimientos financieros, no hay base mínima (0 UVT, $0) y la tarifa de retención es del 7%. Aplica a intereses bancarios, rendimientos de cuentas de ahorro, intereses de mutuos y otros productos financieros generales.",
+    "tags": ["retefuente", "intereses", "rendimientos_financieros", "bancos", "2026", "7%"]
+  },
+  {
+    "id": "RETEN_2026_RENTA_FIJA",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Rendimientos financieros de títulos de renta fija",
+    "titulo": "Retención en títulos de renta fija",
+    "contenido": "Para rendimientos financieros provenientes de títulos de renta fija (bonos, CDT, TES, CDAT y similares), no hay base mínima (0 UVT, $0) y la tarifa de retención es del 4%. Tarifa diferencial menor que intereses generales (7%) por el carácter de instrumento de inversión regulado.",
+    "tags": ["retefuente", "renta_fija", "bonos", "cdt", "tes", "titulos_valores", "2026", "4%"]
+  },
+  {
+    "id": "RETEN_2026_RENTAS_TRABAJO",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Rentas de trabajo (salarios)",
+    "titulo": "Retención en rentas de trabajo según Art. 383 ET",
+    "contenido": "Para rentas de trabajo (salarios y pagos por relación laboral), la base mínima es 95 UVT ($4.976.000 con UVT 2026 de $52.374). La tarifa se calcula según la tabla marginal del Artículo 383 del Estatuto Tributario: 0% hasta 95 UVT, 19% entre 95 y 150 UVT, 28% entre 150 y 360 UVT, 33% entre 360 y 640 UVT, 35% entre 640 y 945 UVT, 37% entre 945 y 2.300 UVT, 39% para rangos superiores. La base depurada se obtiene restando del salario mensual el 25% exento (limitado a 240 UVT) y deducciones legales.",
+    "tags": ["retefuente", "salarios", "rentas_trabajo", "art_383", "tabla_marginal", "2026", "uvt"]
+  },
+  {
+    "id": "RETEN_2026_LOTERIAS_RIFAS",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Loterías, rifas, apuestas y similares",
+    "titulo": "Retención en premios de loterías, rifas y apuestas",
+    "contenido": "Para pagos por concepto de loterías, rifas, apuestas y similares, la base mínima es 48 UVT ($2.514.000 con UVT 2026 de $52.374) y la tarifa de retención es del 20%. Tarifa elevada por el carácter de ganancia ocasional sin esfuerzo productivo del beneficiario.",
+    "tags": ["retefuente", "loterias", "rifas", "apuestas", "ganancias_ocasionales", "2026", "20%"]
+  },
+  {
+    "id": "RETEN_2026_JUEGOS_SUERTE_AZAR",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Colocación independiente de juegos de suerte y azar",
+    "titulo": "Retención en colocación de juegos de suerte y azar",
+    "contenido": "Para retención en colocación independiente de juegos de suerte y azar, la base mínima es 5 UVT ($262.000 con UVT 2026) y la tarifa de retención es del 3%. Aplica a colocadores y distribuidores independientes de juegos regulados.",
+    "tags": ["retefuente", "juegos", "suerte_azar", "colocadores", "2026", "3%", "5_uvt"]
+  },
+  {
+    "id": "RETEN_2026_CONSTRUCCION_URBANIZACION",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Contratos de construcción y urbanización",
+    "titulo": "Retención en contratos de construcción y urbanización",
+    "contenido": "Para contratos de construcción y urbanización, la base mínima es 10 UVT ($524.000 con UVT 2026) y la tarifa de retención es del 2%. Aplica a contratos de obra civil, edificación y desarrollo urbanístico facturados por contratistas.",
+    "tags": ["retefuente", "construccion", "urbanizacion", "obras", "edificacion", "2026", "2%"]
+  },
+  {
+    "id": "RETEN_2026_IVA_SERVICIOS",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Retención de IVA en servicios",
+    "titulo": "Retención de IVA en compra de servicios",
+    "contenido": "Para retención de IVA (Reteiva) en servicios, la base mínima es 2 UVT ($105.000 con UVT 2026) y la tarifa de retención es del 15% del valor del IVA facturado (no del valor del servicio). Aplica cuando el comprador es agente de retención de IVA y el proveedor está obligado a facturar IVA.",
+    "tags": ["reteiva", "iva", "servicios", "retencion_iva", "2026", "15%"]
+  },
+  {
+    "id": "RETEN_2026_IVA_COMPRAS",
+    "fuente": "H&G Abogados y Contadores - Tabla Retención 2026",
+    "articulo": "Retención de IVA en compras",
+    "titulo": "Retención de IVA en compra de bienes",
+    "contenido": "Para retención de IVA (Reteiva) en compras de bienes, la base mínima es 10 UVT ($524.000 con UVT 2026) y la tarifa de retención es del 15% del valor del IVA facturado (no del valor del bien). Aplica cuando el comprador es agente de retención de IVA.",
+    "tags": ["reteiva", "iva", "compras", "bienes", "retencion_iva", "2026", "15%"]
+  }
+]
