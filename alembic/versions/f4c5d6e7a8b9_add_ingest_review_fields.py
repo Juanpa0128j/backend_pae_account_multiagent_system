@@ -1,7 +1,7 @@
 """add ingest review fields
 
 Revision ID: f4c5d6e7a8b9
-Revises: f3a4b5c6d7e8
+Revises: e0a1b2c3d4e5
 Create Date: 2026-05-02 00:00:00.000000
 
 """
@@ -12,7 +12,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "f4c5d6e7a8b9"
-down_revision: Union[str, Sequence[str], None] = "f3a4b5c6d7e8"
+down_revision: Union[str, Sequence[str], None] = "e0a1b2c3d4e5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
