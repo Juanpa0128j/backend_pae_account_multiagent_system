@@ -42,7 +42,6 @@ from app.models.database import (  # noqa: E402
     TransactionStatus,
 )
 
-
 SEED_MARKER = "NIT_SEED"
 SEED_NITS = ("900111111", "900222222")
 

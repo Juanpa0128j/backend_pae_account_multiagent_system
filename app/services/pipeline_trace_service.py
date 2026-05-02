@@ -173,6 +173,7 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
                 summary_es=summary_es,
                 details_es=details_es,
                 suggested_action_es=suggested_action_es,
+                findings=run_findings,
                 technical_ref=f"run-{run_idx}-{agent}",
             )
         )

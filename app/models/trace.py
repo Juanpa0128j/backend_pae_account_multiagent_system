@@ -34,6 +34,9 @@ class TraceStep(BaseModel):
     suggested_action_es: Optional[str] = Field(
         None, description="What the accountant should do for this step"
     )
+    findings: List[AuditFinding] = Field(
+        default_factory=list, description="Audit findings emitted during this step"
+    )
     technical_ref: str = Field(
         default="", description="Log slice identifier for engineer drill-down"
     )

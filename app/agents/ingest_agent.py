@@ -23,10 +23,19 @@ try:
 except ImportError:
     LlamaParse = None  # type: ignore[assignment,misc]
 
+try:
+    from langchain_core.exceptions import (
+        OutputParserException as _OutputParserException,
+    )
+except ImportError:
+    _OutputParserException = None  # type: ignore[assignment,misc]
+
 logger = get_logger("app.agents.ingest")
 
 MAX_NODE_RETRIES = 3
-_TRANSIENT_EXC = (TimeoutError, ConnectionError, OSError)
+_TRANSIENT_EXC = (TimeoutError, ConnectionError, OSError) + (
+    (_OutputParserException,) if _OutputParserException is not None else ()
+)
 
 
 # Dispatch table: doc_type → GeminiClient method name

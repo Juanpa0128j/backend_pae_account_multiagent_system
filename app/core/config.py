@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # --- OpenAI (first fallback when Gemini quota is exhausted) ------------
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
-    openai_model: str = Field("gpt-4.1-nano", alias="OPENAI_MODEL")
+    openai_model: str = Field("gpt-4.1-mini", alias="OPENAI_MODEL")
     # Document classifier uses a stronger model — the pre-refactor
     # doc_classifier hardcoded gpt-4o-mini for this task and classification
     # accuracy regressed when the main extraction model (nano) took over.

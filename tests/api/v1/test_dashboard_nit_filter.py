@@ -19,7 +19,6 @@ from app.models.database import (
 )
 from main import app
 
-
 NIT_A = "900111111"
 NIT_B = "900222222"
 

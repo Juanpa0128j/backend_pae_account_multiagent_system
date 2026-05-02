@@ -31,17 +31,31 @@ def test_balance_download_filename_includes_date_range(monkeypatch):
     from main import app
 
     def _fake_resolve(*args, **kwargs):
-        return ({"period_end": "2026-01-31", "activos": 0, "pasivos": 0, "patrimonio": 0, "utilidad_neta": 0}, date(2026, 1, 31))
+        return (
+            {
+                "period_end": "2026-01-31",
+                "activos": 0,
+                "pasivos": 0,
+                "patrimonio": 0,
+                "utilidad_neta": 0,
+            },
+            date(2026, 1, 31),
+        )
 
     monkeypatch.setattr("app.api.v1.reports._resolve_report", _fake_resolve)
     monkeypatch.setattr(
-        "app.api.v1.reports.BalanceSheetExporter.to_pdf", lambda *args, **kwargs: b"%PDF-1.4\n"
+        "app.api.v1.reports.BalanceSheetExporter.to_pdf",
+        lambda *args, **kwargs: b"%PDF-1.4\n",
     )
 
     client = TestClient(app)
     response = client.get(
         "/api/v1/reports/balance/download/pdf",
-        params={"start_date": "2026-01-01", "end_date": "2026-01-31", "company_nit": "800999888-2"},
+        params={
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
+            "company_nit": "800999888-2",
+        },
     )
 
     assert response.status_code == 200
@@ -53,11 +67,21 @@ def test_balance_download_filename_without_start_date_uses_all(monkeypatch):
     from main import app
 
     def _fake_resolve(*args, **kwargs):
-        return ({"period_end": "2026-01-31", "activos": 0, "pasivos": 0, "patrimonio": 0, "utilidad_neta": 0}, date(2026, 1, 31))
+        return (
+            {
+                "period_end": "2026-01-31",
+                "activos": 0,
+                "pasivos": 0,
+                "patrimonio": 0,
+                "utilidad_neta": 0,
+            },
+            date(2026, 1, 31),
+        )
 
     monkeypatch.setattr("app.api.v1.reports._resolve_report", _fake_resolve)
     monkeypatch.setattr(
-        "app.api.v1.reports.BalanceSheetExporter.to_pdf", lambda *args, **kwargs: b"%PDF-1.4\n"
+        "app.api.v1.reports.BalanceSheetExporter.to_pdf",
+        lambda *args, **kwargs: b"%PDF-1.4\n",
     )
 
     client = TestClient(app)
@@ -166,13 +190,24 @@ def test_balance_download_returns_422_on_export_failure(monkeypatch):
     from main import app
 
     def _fake_resolve(*args, **kwargs):
-        return ({"period_end": "2026-01-31", "activos": 0, "pasivos": 0, "patrimonio": 0, "utilidad_neta": 0}, date(2026, 1, 31))
+        return (
+            {
+                "period_end": "2026-01-31",
+                "activos": 0,
+                "pasivos": 0,
+                "patrimonio": 0,
+                "utilidad_neta": 0,
+            },
+            date(2026, 1, 31),
+        )
 
     def _raise_export_failure(*args, **kwargs):
         raise ValueError("report content invalid")
 
     monkeypatch.setattr("app.api.v1.reports._resolve_report", _fake_resolve)
-    monkeypatch.setattr("app.api.v1.reports.BalanceSheetExporter.to_pdf", _raise_export_failure)
+    monkeypatch.setattr(
+        "app.api.v1.reports.BalanceSheetExporter.to_pdf", _raise_export_failure
+    )
 
     client = TestClient(app)
     response = client.get(

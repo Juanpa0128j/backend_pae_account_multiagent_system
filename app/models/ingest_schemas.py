@@ -923,7 +923,11 @@ class BalanceGeneralContent(ContentBase):
         None, description="True if activos == pasivos + patrimonio"
     )
     accounts: Optional[List[AccountBalance]] = Field(
-        None, description="Flat list of all PUC accounts with balances"
+        None,
+        description=(
+            "Flat list of UNIQUE PUC accounts with balances. "
+            "Include each cuenta_puc EXACTLY ONCE. Maximum 300 entries."
+        ),
     )
     informacion_adicional: Optional[Dict[str, Any]] = Field(None)
 
@@ -936,6 +940,17 @@ class BalanceGeneralContent(ContentBase):
     @classmethod
     def parse_amounts(cls, v):
         return _parse_decimal(v)
+
+    @model_validator(mode="after")
+    def deduplicate_accounts(self) -> "BalanceGeneralContent":
+        if self.accounts:
+            seen: dict[str, AccountBalance] = {}
+            for acct in self.accounts:
+                key = acct.cuenta_puc or ""
+                if key not in seen:
+                    seen[key] = acct
+            self.accounts = list(seen.values())
+        return self
 
 
 # ---------------------------------------------------------------------------

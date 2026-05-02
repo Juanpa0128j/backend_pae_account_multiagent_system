@@ -162,9 +162,11 @@ def _build_f300(
     fields.append(
         DraftField(
             "66",
-            "IVA descontable (compras y servicios)"
-            if not operaciones_mixtas
-            else f"IVA descontable prorateable (factor {factor_prorrateo:.4%})",
+            (
+                "IVA descontable (compras y servicios)"
+                if not operaciones_mixtas
+                else f"IVA descontable prorateable (factor {factor_prorrateo:.4%})"
+            ),
             round(iva_descontable_prorateable, 2),
             "cuenta_240802",
             "high",
