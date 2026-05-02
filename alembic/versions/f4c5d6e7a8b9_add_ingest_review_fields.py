@@ -30,7 +30,7 @@ def _column_exists(table: str, column: str) -> bool:
 
 
 def upgrade() -> None:
-    op.execute("ALTER TYPE ingeststatus ADD VALUE IF NOT EXISTS 'pending_review'")
+    op.execute("ALTER TYPE ingeststatus ADD VALUE IF NOT EXISTS 'PENDING_REVIEW'")
 
     if not _column_exists("ingest_jobs", "classification_confirmed"):
         op.add_column(
