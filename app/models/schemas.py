@@ -33,6 +33,7 @@ class ClassificationReviewResponse(BaseModel):
     predicted_label: Optional[str] = None
     confidence: Optional[float] = None
     available_types: List[ClassificationReviewOption] = Field(default_factory=list)
+    wrong_upload_area: bool = False
 
 
 class IngestDetailResponse(BaseModel):

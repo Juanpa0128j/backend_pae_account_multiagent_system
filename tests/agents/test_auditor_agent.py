@@ -717,7 +717,13 @@ class TestProcessGraphE2E:
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_happy_path_approved(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
+        self,
+        _mock_db,
+        _mock_puc,
+        mock_cnt_factory,
+        mock_aud_factory,
+        mock_trib_factory,
+        mock_co_settings,
     ):
         """Successful pipeline: contador → validate → auditor → validate → persist."""
         mock_co_settings.return_value = _mock_company_settings()
@@ -757,7 +763,13 @@ class TestProcessGraphE2E:
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_rejected_audit_triggers_self_correction_then_approves(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
+        self,
+        _mock_db,
+        _mock_puc,
+        mock_cnt_factory,
+        mock_aud_factory,
+        mock_trib_factory,
+        mock_co_settings,
     ):
         """
         Self-correction cycle: auditor rejects once → supervisor routes back to
@@ -808,7 +820,13 @@ class TestProcessGraphE2E:
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_contador_retry_then_success(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
+        self,
+        _mock_db,
+        _mock_puc,
+        mock_cnt_factory,
+        mock_aud_factory,
+        mock_trib_factory,
+        mock_co_settings,
     ):
         """
         First contador call returns an unbalanced output → validate triggers retry.
@@ -859,7 +877,13 @@ class TestProcessGraphE2E:
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_auditor_retry_then_success(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
+        self,
+        _mock_db,
+        _mock_puc,
+        mock_cnt_factory,
+        mock_aud_factory,
+        mock_trib_factory,
+        mock_co_settings,
     ):
         """
         First auditor call returns invalid schema → validate triggers retry.
@@ -920,7 +944,13 @@ class TestProcessGraphE2E:
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
     @patch("app.agents.graph.db_persist_node", side_effect=_mock_persist)
     def test_audit_result_propagated_to_result_dict(
-        self, _mock_db, _mock_puc, mock_cnt_factory, mock_aud_factory, mock_trib_factory, mock_co_settings
+        self,
+        _mock_db,
+        _mock_puc,
+        mock_cnt_factory,
+        mock_aud_factory,
+        mock_trib_factory,
+        mock_co_settings,
     ):
         """audit_approved and audit_nivel_riesgo must surface in final result."""
         mock_co_settings.return_value = _mock_company_settings()

@@ -63,6 +63,9 @@ def create_ingest_job(
     file_name: str,
     file_path: str = None,
     company_nit: Optional[str] = None,
+    document_type: Optional[str] = None,
+    pathway: Optional[str] = None,
+    classification_confirmed: Optional[bool] = None,
     commit: bool = True,
 ) -> IngestJob:
     """Create a new ingest job for a document upload."""
@@ -72,6 +75,9 @@ def create_ingest_job(
         file_path=file_path,
         status=IngestStatus.PENDING_PROCESSING,
         company_nit=company_nit or None,
+        document_type=document_type or None,
+        pathway=pathway or None,
+        classification_confirmed=classification_confirmed,
     )
     db.add(job)
     # Stage audit log before the single commit/flush so job + log are atomic

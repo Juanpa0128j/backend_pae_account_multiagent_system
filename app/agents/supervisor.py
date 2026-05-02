@@ -373,16 +373,10 @@ def supervisor_node(state: AgentState) -> AgentState:
             if classification_dict:
                 resolved_doc_type = classification_dict.get("doc_type")
 
-            # Pause for user confirmation on Vía A documents. Vía B documents
-            # (balance_general, estado_resultados, libro_auxiliar) skip the review
-            # because the user explicitly selects the type via a dedicated upload area.
-            from app.models.document_types import _VIA_B_TYPES
-
-            is_via_b = bool(
-                resolved_doc_type
-                and resolved_doc_type in {t.value for t in _VIA_B_TYPES}
-            )
-            if ingest_job and not use_confirmed and not is_via_b:
+            # Pause for user confirmation on all unconfirmed uploads.
+            # Vía B uploads skip this gate because the frontend passes doc_type
+            # explicitly at upload time, which sets classification_confirmed=True.
+            if ingest_job and not use_confirmed:
                 db = SessionLocal()
                 try:
                     db_service.update_ingest_job(

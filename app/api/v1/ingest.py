@@ -173,6 +173,12 @@ def _build_ingest_detail_response(
             except ValueError:
                 predicted_label = predicted_type
 
+        from app.models.document_types import _VIA_B_TYPES
+
+        is_wrong_area = bool(
+            predicted_type and predicted_type in {t.value for t in _VIA_B_TYPES}
+        )
+
         classification_review = {
             "predicted_type": predicted_type,
             "predicted_label": predicted_label,
@@ -180,6 +186,7 @@ def _build_ingest_detail_response(
             if job.classification_confidence is not None
             else None,
             "available_types": list_via_a_document_type_options(),
+            "wrong_upload_area": is_wrong_area,
         }
 
     trace_url = (
@@ -220,6 +227,10 @@ async def upload_file(
         None,
         description="Company NIT to associate with this document. If omitted, the NIT is auto-detected from the document content.",
     ),
+    doc_type: Optional[str] = Form(
+        None,
+        description="Pre-confirmed document type (e.g. 'balance_general'). When provided, classification review is skipped. Use for Vía B uploads where the user explicitly selects the document type.",
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -228,6 +239,7 @@ async def upload_file(
 
     Optionally pass `company_nit` as a form field to explicitly associate the document
     with a company, overriding the NIT auto-detected from the document content.
+    Pass `doc_type` to pre-confirm the document type and skip the classification review step.
     """
     # Validate file type
     if not file.filename.lower().endswith(
@@ -291,8 +303,44 @@ async def upload_file(
         temp_file_path = save_temp_file(file_content, file.filename)
         logger.info(f"Saved uploaded file to: {temp_file_path}")
 
+        confirmed_doc_type = None
+        confirmed_pathway = None
+        if doc_type is not None:
+            try:
+                from app.models.document_types import (
+                    DocumentType,
+                    _VIA_B_TYPES,
+                    get_pathway,
+                )
+
+                parsed_doc_type = DocumentType(doc_type)
+                if parsed_doc_type not in _VIA_B_TYPES:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"El tipo de documento '{doc_type}' pertenece a Vía A (documentos fuente). "
+                            "El parámetro doc_type solo acepta tipos de Vía B: "
+                            "balance_general, estado_resultados, libro_auxiliar."
+                        ),
+                    )
+                confirmed_doc_type = parsed_doc_type.value
+                confirmed_pathway = get_pathway(parsed_doc_type).value
+            except HTTPException:
+                raise
+            except ValueError:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Tipo de documento '{doc_type}' no válido.",
+                )
+
         ingest_job = db_service.create_ingest_job(
-            db, file.filename, temp_file_path, company_nit=normalized_company_nit
+            db,
+            file.filename,
+            temp_file_path,
+            company_nit=normalized_company_nit,
+            document_type=confirmed_doc_type,
+            pathway=confirmed_pathway,
+            classification_confirmed=True if confirmed_doc_type else None,
         )
         logger.info(f"Created IngestJob: {ingest_job.id}")
 

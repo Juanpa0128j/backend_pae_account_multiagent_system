@@ -88,9 +88,8 @@ async def run_process_job(process_id: str) -> None:
         # Fallback: documents like CEs/nóminas/extractos have no nit_receptor
         # in their content. Use the company_nit captured at upload time so
         # downstream agents (tributario) can resolve company tax settings.
-        fallback_nit = (
-            getattr(ingest_job, "company_nit", None)
-            or getattr(staged[0], "company_nit", None)
+        fallback_nit = getattr(ingest_job, "company_nit", None) or getattr(
+            staged[0], "company_nit", None
         )
         raw_transactions: list[dict] = []
         for tx in staged:

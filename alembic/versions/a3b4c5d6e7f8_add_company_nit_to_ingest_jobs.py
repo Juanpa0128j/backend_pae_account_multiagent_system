@@ -39,9 +39,7 @@ def upgrade() -> None:
             "ingest_jobs",
             sa.Column("company_nit", sa.String(20), nullable=True),
         )
-        op.create_index(
-            "ix_ingest_jobs_company_nit", "ingest_jobs", ["company_nit"]
-        )
+        op.create_index("ix_ingest_jobs_company_nit", "ingest_jobs", ["company_nit"])
 
 
 def downgrade() -> None:
