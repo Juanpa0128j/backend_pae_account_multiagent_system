@@ -33,8 +33,8 @@ def list_puc(
     if search:
         return db_service.search_puc(db, search, limit)
     if include_inactive:
-        return db_service.get_all_puc_including_inactive(db)
-    return db_service.get_all_puc(db)
+        return db_service.get_all_puc_including_inactive(db)[:limit]
+    return db_service.get_all_puc(db)[:limit]
 
 
 @router.get("/{codigo}", response_model=CuentaPUCResponse)
