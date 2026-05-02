@@ -96,3 +96,49 @@ PATHWAY_MAP: dict[DocumentType, IngestPathway] = {
 def get_pathway(doc_type: DocumentType) -> IngestPathway:
     """Return the ingestion pathway for a document type."""
     return PATHWAY_MAP.get(doc_type, IngestPathway.BUILD_FROM_SCRATCH)
+
+
+DOCUMENT_TYPE_LABELS: dict[DocumentType, str] = {
+    DocumentType.FACTURA_VENTA: "Factura de venta",
+    DocumentType.FACTURA_COMPRA: "Factura de compra",
+    DocumentType.EXTRACTO_BANCARIO: "Extracto bancario",
+    DocumentType.NOTA_CREDITO: "Nota credito",
+    DocumentType.NOTA_DEBITO: "Nota debito",
+    DocumentType.DECLARACION_IVA: "Declaracion IVA",
+    DocumentType.DECLARACION_RETEICA: "Declaracion ReteICA",
+    DocumentType.ANEXO_TRIBUTARIO: "Anexo tributario",
+    DocumentType.AUXILIAR_IMPUESTO: "Auxiliar de impuesto",
+    DocumentType.DECLARACION_ICA: "Declaracion ICA",
+    DocumentType.AUTORRETENCION_ICA: "Autorretencion ICA",
+    DocumentType.ANEXO_IVA: "Anexo IVA",
+    DocumentType.AUXILIAR_IVA: "Auxiliar IVA",
+    DocumentType.COMPROBANTE_EGRESO: "Comprobante de egreso",
+    DocumentType.DOCUMENTO_SOPORTE: "Documento soporte",
+    DocumentType.RECIBO_CAJA: "Recibo de caja",
+    DocumentType.NOMINA: "Nomina",
+    DocumentType.CONCILIACION_BANCARIA: "Conciliacion bancaria",
+    DocumentType.CUENTA_COBRO: "Cuenta de cobro",
+    DocumentType.PLANILLA_SEGURIDAD_SOCIAL: "Planilla seguridad social",
+    DocumentType.RECIBO_PAGO_IMPUESTO: "Recibo de pago de impuesto",
+    DocumentType.BALANCE_GENERAL: "Balance general",
+    DocumentType.ESTADO_RESULTADOS: "Estado de resultados",
+    DocumentType.LIBRO_AUXILIAR: "Libro auxiliar",
+    DocumentType.FLUJO_DE_CAJA: "Flujo de caja",
+    DocumentType.CAMBIOS_PATRIMONIO: "Cambios en el patrimonio",
+    DocumentType.NOTAS_ESTADOS_FINANCIEROS: "Notas a estados financieros",
+    DocumentType.LIBRO_DIARIO: "Libro diario",
+    DocumentType.OTRO: "Otro",
+}
+
+
+def get_document_type_label(doc_type: DocumentType) -> str:
+    """Return the Spanish display label for a document type."""
+    return DOCUMENT_TYPE_LABELS.get(doc_type, doc_type.value)
+
+
+def list_document_type_options() -> list[dict[str, str]]:
+    """Return all document types as value/label pairs."""
+    return [
+        {"value": doc_type.value, "label": get_document_type_label(doc_type)}
+        for doc_type in DocumentType
+    ]

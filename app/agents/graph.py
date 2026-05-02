@@ -30,6 +30,7 @@ from app.agents.state import AgentState
 from app.agents.supervisor import (
     error_terminal_node,
     route_after_supervisor,
+    review_terminal_node,
     should_retry_agent,
     supervisor_node,
     validate_output_node,
@@ -71,6 +72,7 @@ def create_agent_graph() -> Any:
     graph.add_node("auditor", auditor_node)
     graph.add_node("reportero", reportero_node)
     graph.add_node("import_existing", import_existing_node)
+    graph.add_node("review_terminal", review_terminal_node)
 
     # --- supervisor dispatches to the correct worker ---
     graph.add_conditional_edges(
@@ -85,6 +87,7 @@ def create_agent_graph() -> Any:
             "reportero": "reportero",
             "import_existing": "import_existing",
             "error_terminal": "error_terminal",
+            "review_terminal": "review_terminal",
         },
     )
 
@@ -108,6 +111,7 @@ def create_agent_graph() -> Any:
     graph.add_edge("reportero", END)
     graph.add_edge("db_persist", END)
     graph.add_edge("error_terminal", END)
+    graph.add_edge("review_terminal", END)
 
     graph.set_entry_point("supervisor")
 

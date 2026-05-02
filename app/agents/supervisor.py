@@ -250,93 +250,141 @@ def supervisor_node(state: AgentState) -> AgentState:
                 "Supervisor: text preview extraction failed: %s", preview_err
             )
 
-        # Classify document by content using LLM
+        # Classify document by content using LLM (unless already confirmed)
+        classification = None
+        classification_dict = None
+        ingest_job = None
+        ingest_id = str(state.get("ingest_id") or "").strip()
         try:
-            from app.models.document_types import DocumentType, IngestPathway
+            from app.models.document_types import (
+                DocumentType,
+                IngestPathway,
+                get_pathway,
+            )
             from app.services.doc_classifier import classify_document
 
-            classification = classify_document(
-                text_preview=text_preview,
-                source_format=ext.lstrip("."),
-            )
-            classification_dict = classification.model_dump(mode="json")
-            classification_dict["entity_nit"] = normalize_optional_nit(
-                classification_dict.get("entity_nit")
-            )
-            # If the caller explicitly provided a company_nit, use it instead of
-            # the NIT auto-detected from the document content.
-            if state.get("company_nit"):
-                override_nit = normalize_optional_nit(state.get("company_nit"))
-                if not override_nit:
-                    state["error"] = (
-                        "Supervisor: provided company_nit is empty after normalization"
-                    )
-                    append_log(
-                        state,
-                        "supervisor",
-                        "routing_error",
-                        {
-                            "reason": "invalid_company_nit",
-                        },
-                    )
-                    return state
-                classification_dict["entity_nit"] = override_nit
-                logger.info(
-                    "Supervisor: company_nit override applied — using %s instead of auto-detected %s",
-                    override_nit,
-                    classification.entity_nit,
-                )
-            state["document_classification"] = classification_dict
-            state["pathway"] = classification.pathway.value
-
-            # Persist classification metadata early so it remains visible in
-            # GET /api/v1/ingest/{id} even if downstream ingest fails.
-            ingest_id = str(state.get("ingest_id") or "").strip()
             if ingest_id:
                 db = SessionLocal()
                 try:
                     ingest_job = db_service.get_ingest_job(db, ingest_id)
-                    if ingest_job:
-                        current_status = ingest_job.status
-                        if not isinstance(current_status, IngestStatus):
-                            current_status = IngestStatus(str(current_status))
-                        db_service.update_ingest_job(
-                            db,
-                            ingest_id,
-                            current_status,
-                            document_type=classification.doc_type.value,
-                            pathway=classification.pathway.value,
-                        )
-                except Exception as persist_meta_err:
-                    logger.warning(
-                        "Supervisor: failed to persist classification metadata: %s",
-                        persist_meta_err,
-                    )
                 finally:
                     db.close()
 
-            append_log(
-                state,
-                "supervisor",
-                "document_classified",
-                {
-                    "doc_type": classification.doc_type.value,
-                    "pathway": classification.pathway.value,
-                    "confidence": classification.confidence,
-                },
+            use_confirmed = bool(
+                ingest_job and getattr(ingest_job, "classification_confirmed", False)
             )
 
-            if classification.pathway == IngestPathway.WORK_WITH_EXISTING:
+            if use_confirmed:
+                doc_type_value = str(ingest_job.document_type or "").strip()
+                pathway_value = str(ingest_job.pathway or "").strip()
+                if doc_type_value and not pathway_value:
+                    try:
+                        pathway_value = get_pathway(DocumentType(doc_type_value)).value
+                    except ValueError:
+                        logger.warning(
+                            "Supervisor: invalid confirmed doc_type '%s' — falling back to classification",
+                            doc_type_value,
+                        )
+                        use_confirmed = False
+                if use_confirmed:
+                    classification_dict = {"doc_type": doc_type_value}
+                    if pathway_value:
+                        classification_dict["pathway"] = pathway_value
+                    state["document_classification"] = classification_dict
+                    if pathway_value:
+                        state["pathway"] = pathway_value
+
+            if not use_confirmed:
+                classification = classify_document(
+                    text_preview=text_preview,
+                    source_format=ext.lstrip("."),
+                )
+                classification_dict = classification.model_dump(mode="json")
+                classification_dict["entity_nit"] = normalize_optional_nit(
+                    classification_dict.get("entity_nit")
+                )
+                # If the caller explicitly provided a company_nit, use it instead of
+                # the NIT auto-detected from the document content.
+                if state.get("company_nit"):
+                    override_nit = normalize_optional_nit(state.get("company_nit"))
+                    if not override_nit:
+                        state["error"] = (
+                            "Supervisor: provided company_nit is empty after normalization"
+                        )
+                        append_log(
+                            state,
+                            "supervisor",
+                            "routing_error",
+                            {
+                                "reason": "invalid_company_nit",
+                            },
+                        )
+                        return state
+                    classification_dict["entity_nit"] = override_nit
+                    logger.info(
+                        "Supervisor: company_nit override applied — using %s instead of auto-detected %s",
+                        override_nit,
+                        classification.entity_nit,
+                    )
+                state["document_classification"] = classification_dict
+                state["pathway"] = classification.pathway.value
+
+                # Persist classification metadata early so it remains visible in
+                # GET /api/v1/ingest/{id} even if downstream ingest fails.
+                if ingest_id:
+                    db = SessionLocal()
+                    try:
+                        ingest_job = db_service.get_ingest_job(db, ingest_id)
+                        if ingest_job:
+                            current_status = ingest_job.status
+                            if not isinstance(current_status, IngestStatus):
+                                current_status = IngestStatus(str(current_status))
+                            db_service.update_ingest_job(
+                                db,
+                                ingest_id,
+                                current_status,
+                                document_type=classification.doc_type.value,
+                                pathway=classification.pathway.value,
+                                classification_confidence=Decimal(
+                                    str(classification.confidence)
+                                ),
+                            )
+                    except Exception as persist_meta_err:
+                        logger.warning(
+                            "Supervisor: failed to persist classification metadata: %s",
+                            persist_meta_err,
+                        )
+                    finally:
+                        db.close()
+
+                append_log(
+                    state,
+                    "supervisor",
+                    "document_classified",
+                    {
+                        "doc_type": classification.doc_type.value,
+                        "pathway": classification.pathway.value,
+                        "confidence": classification.confidence,
+                    },
+                )
+
+            resolved_doc_type = None
+            resolved_pathway = state.get("pathway")
+            if classification_dict:
+                resolved_doc_type = classification_dict.get("doc_type")
+
+            if resolved_pathway == IngestPathway.WORK_WITH_EXISTING.value:
                 if ext == ".xlsx" and "extracto" in file_name_lower:
                     logger.warning(
                         "Supervisor: forcing build_from_scratch for potential bank statement file %s",
                         file_path,
                     )
                     state["pathway"] = IngestPathway.BUILD_FROM_SCRATCH.value
-                    classification_dict["doc_type"] = (
-                        DocumentType.EXTRACTO_BANCARIO.value
-                    )
-                    state["document_classification"] = classification_dict
+                    if classification_dict is not None:
+                        classification_dict["doc_type"] = (
+                            DocumentType.EXTRACTO_BANCARIO.value
+                        )
+                        state["document_classification"] = classification_dict
                 else:
                     via_b_doc_types = {
                         DocumentType.BALANCE_GENERAL,
@@ -347,8 +395,16 @@ def supervisor_node(state: AgentState) -> AgentState:
                         DocumentType.NOTAS_ESTADOS_FINANCIEROS,
                         DocumentType.LIBRO_DIARIO,
                     }
+                    try:
+                        resolved_doc_enum = (
+                            DocumentType(resolved_doc_type)
+                            if resolved_doc_type
+                            else None
+                        )
+                    except ValueError:
+                        resolved_doc_enum = None
 
-                    if classification.doc_type in via_b_doc_types:
+                    if resolved_doc_enum in via_b_doc_types:
                         state["mode"] = "ingest"
                         # Vía B still needs typed extraction before persistence.
                         # Route through ingesta so interpreted_data is populated,
@@ -357,7 +413,7 @@ def supervisor_node(state: AgentState) -> AgentState:
                         logger.info(
                             "Supervisor: Vía B — routing to ingesta for %s (%s)",
                             file_path,
-                            classification.doc_type.value,
+                            resolved_doc_type,
                         )
                         append_log(
                             state,
@@ -373,9 +429,48 @@ def supervisor_node(state: AgentState) -> AgentState:
 
                     logger.warning(
                         "Supervisor: classifier returned work_with_existing for source doc_type=%s; forcing build_from_scratch",
-                        classification.doc_type.value,
+                        resolved_doc_type,
                     )
                     state["pathway"] = IngestPathway.BUILD_FROM_SCRATCH.value
+
+            if ingest_job and not getattr(
+                ingest_job, "classification_confirmed", False
+            ):
+                db = SessionLocal()
+                try:
+                    db_service.update_ingest_job(
+                        db,
+                        ingest_id,
+                        IngestStatus.PENDING_REVIEW,
+                        document_type=resolved_doc_type,
+                        pathway=state.get("pathway"),
+                        classification_confirmed=False,
+                        classification_confidence=(
+                            Decimal(str(classification.confidence))
+                            if classification
+                            else None
+                        ),
+                    )
+                except Exception as persist_review_err:
+                    logger.warning(
+                        "Supervisor: failed to mark ingest pending_review: %s",
+                        persist_review_err,
+                    )
+                finally:
+                    db.close()
+
+                state["current_agent"] = "review_terminal"
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "review_terminal",
+                        "mode": "ingest",
+                        "status": "pending_review",
+                    },
+                )
+                return state
         except Exception as classify_err:
             logger.warning(
                 "Supervisor: document classification failed (continuing with default): %s",
@@ -844,6 +939,22 @@ def error_terminal_node(state: AgentState) -> AgentState:
     return state
 
 
+def review_terminal_node(state: AgentState) -> AgentState:
+    """Terminal node for pending_review state without error."""
+    if not state.get("result"):
+        state["result"] = {}
+    state["result"]["status"] = "pending_review"
+    append_log(
+        state,
+        "supervisor",
+        "pipeline_paused",
+        {
+            "reason": "pending_review",
+        },
+    )
+    return state
+
+
 # ---------------------------------------------------------------------------
 # Routing function for unified graph
 # ---------------------------------------------------------------------------
@@ -867,5 +978,6 @@ def route_after_supervisor(state: AgentState) -> str:
         "db_persist": "db_persist",
         "persist": "db_persist",
         "reportero": "reportero",
+        "review_terminal": "review_terminal",
     }
     return routing_map.get(agent, "error_terminal")

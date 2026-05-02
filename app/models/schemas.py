@@ -23,6 +23,18 @@ class RawTransaction(BaseModel):
     items: Optional[List[Dict[str, Any]]] = None
 
 
+class ClassificationReviewOption(BaseModel):
+    value: str
+    label: str
+
+
+class ClassificationReviewResponse(BaseModel):
+    predicted_type: Optional[str] = None
+    predicted_label: Optional[str] = None
+    confidence: Optional[float] = None
+    available_types: List[ClassificationReviewOption] = Field(default_factory=list)
+
+
 class IngestDetailResponse(BaseModel):
     ingest_id: str
     file_name: str
@@ -39,6 +51,12 @@ class IngestDetailResponse(BaseModel):
     remediation: Optional[str] = None
     has_warnings: bool = False
     trace_url: Optional[str] = None
+    classification_review: Optional[ClassificationReviewResponse] = None
+
+
+class ClassificationReviewUpdateRequest(BaseModel):
+    doc_type: str
+    confirmed: bool = True
 
 
 class ProcessResponse(BaseModel):

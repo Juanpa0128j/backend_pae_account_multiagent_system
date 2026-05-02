@@ -87,6 +87,8 @@ def update_ingest_job(
     extraction_errors: List[str] = None,
     document_type: str = None,
     pathway: str = None,
+    classification_confirmed: Optional[bool] = None,
+    classification_confidence: Optional[Decimal] = None,
     commit: bool = True,
 ) -> Optional[IngestJob]:
     """Update an ingest job's status and preview data."""
@@ -103,6 +105,10 @@ def update_ingest_job(
         job.document_type = document_type
     if pathway is not None:
         job.pathway = pathway
+    if classification_confirmed is not None:
+        job.classification_confirmed = classification_confirmed
+    if classification_confidence is not None:
+        job.classification_confidence = classification_confidence
     if status in (IngestStatus.COMPLETED, IngestStatus.FAILED):
         job.completed_at = datetime.now(timezone.utc)
 
