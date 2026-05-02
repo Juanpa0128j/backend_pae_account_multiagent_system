@@ -493,11 +493,39 @@ REGLAS PRIORIDAD 2 — PREFIJOS Y SEÑALES ESTRUCTURALES
 - Cuentas de impuestos específicos (retención, ICA) en libro auxiliar → auxiliar_impuesto
 - Formulario 300 DIAN (IVA bimestral) → declaracion_iva
 
-REGLAS PRIORIDAD 3 — CONTENIDO
-- Activos + Pasivos + Patrimonio con saldos por cuenta PUC y sin título explícito → balance_general
-- Ingresos + Costos + Gastos con utilidad neta y sin título explícito → estado_resultados
+REGLAS PRIORIDAD 3 — HUELLAS DE CONTENIDO (aplica cuando no hay título explícito)
 
-Clasifica como "otro" SOLO si ninguna de las reglas anteriores coincide. Si el documento claramente es un estado financiero pero no encaja en una regla específica, elige el tipo más cercano en lugar de "otro".
+Busca los marcadores específicos en el CUERPO del documento. La primera coincidencia gana.
+
+Impuestos y declaraciones:
+- Contiene "IVA generado" Y "IVA descontable" Y ("base gravable por tarifa" O "tarifa 19%" O "tarifa 5%") → anexo_iva. CRÍTICO: tiene prioridad absoluta sobre estado_resultados aunque haya cifras numéricas.
+- Contiene "Formulario 300" O ("renglón" Y "DIAN" Y ("IVA" O "impuesto sobre las ventas")) → declaracion_iva
+- Contiene ("ICA" O "industria y comercio") Y "CIIU" Y ("tarifa por mil" O "ingresos brutos gravables") → declaracion_ica
+- Contiene ("autorretención" O "autorretencion") Y "ICA" Y "base gravable" → autorretencion_ica
+- Contiene "IVA descontable" Y "cuentas 2408" Y ("débito" O "crédito" O "saldo") → auxiliar_iva
+- Contiene ("retención en la fuente" O "retefuente") Y "tercero" Y "NIT" Y "base" Y "tarifa" → anexo_tributario
+
+Estados financieros:
+- Contiene "activos corrientes" Y "pasivos corrientes" Y "patrimonio" Y ("ecuación contable" O "total activos") → balance_general
+- Contiene ("utilidad operacional" O "utilidad neta") Y ("ingresos operacionales" O "ingresos ordinarios") Y ("gastos operacionales" O "gastos de administración") → estado_resultados. NOTA: solo aplica si NO hay marcadores de IVA generado/descontable.
+- Contiene "saldo inicial" Y "débito" Y "crédito" Y "saldo final" Y cuenta PUC (4 o más dígitos) → libro_auxiliar
+- Contiene ("flujo neto de operación" O "actividades de operación") Y ("actividades de inversión" O "actividades de financiación") → flujo_de_caja
+- Contiene "estado de cambios" Y ("capital social" O "reservas" O "resultados acumulados") Y "saldo inicial" → cambios_patrimonio
+- Contiene ("nota 1" O "nota 2") Y ("políticas contables" O "estimaciones" O "contingencias") → notas_estados_financieros
+- Contiene "partida" Y "comprobante" Y "cuenta" Y "tercero" Y ("débito" Y "crédito") con fechas cronológicas → libro_diario
+
+Documentos fuente y comprobantes:
+- Contiene "devengado" Y "deducciones" Y ("neto a pagar" O "salario básico") Y empleados → nomina
+- Contiene ("PILA" O "planilla") Y "ARL" Y "caja de compensación" Y ("salud" Y "pensión") → planilla_seguridad_social
+- Contiene "saldo anterior" Y "saldo final" Y movimientos con fecha/débito/crédito bancarios → extracto_bancario
+- Contiene "concilia" Y ("saldo en libros" O "saldo según libros") Y ("saldo en extracto" O "saldo según extracto") → conciliacion_bancaria
+- Contiene "beneficiario" Y ("retenciones aplicadas" O "valor neto") Y ("forma de pago" O "cheque" O "transferencia") SIN CUFE → comprobante_egreso
+- Contiene "recibido de" Y "concepto" Y "valor" Y ("forma de pago" O "efectivo") Y "recibo No" → recibo_caja
+- Contiene "prestador" Y "contratante" Y "concepto del servicio" Y "valor" SIN resolución DIAN → cuenta_cobro
+- Contiene empleados Y ("aporte salud" O "aporte pensión") Y ("salario base de cotización") → planilla_seguridad_social
+- Contiene "tipo de impuesto" Y ("valor principal" O "valor pagado") Y ("referencia de pago" O "banco") → recibo_pago_impuesto
+
+Clasifica como "otro" SOLO si ninguna regla de prioridad 1, 2 o 3 coincide.
 
 Extrae también el NIT de la entidad, el nombre, y el período si están presentes."""
 
