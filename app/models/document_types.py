@@ -142,3 +142,21 @@ def list_document_type_options() -> list[dict[str, str]]:
         {"value": doc_type.value, "label": get_document_type_label(doc_type)}
         for doc_type in DocumentType
     ]
+
+
+_VIA_B_TYPES: frozenset[DocumentType] = frozenset(
+    {
+        DocumentType.BALANCE_GENERAL,
+        DocumentType.ESTADO_RESULTADOS,
+        DocumentType.LIBRO_AUXILIAR,
+    }
+)
+
+
+def list_via_a_document_type_options() -> list[dict[str, str]]:
+    """Return document types valid for Vía A uploads (excludes Vía B financial statements)."""
+    return [
+        {"value": doc_type.value, "label": get_document_type_label(doc_type)}
+        for doc_type in DocumentType
+        if doc_type not in _VIA_B_TYPES
+    ]

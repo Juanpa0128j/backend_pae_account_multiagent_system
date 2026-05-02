@@ -23,7 +23,7 @@ from app.models.document_types import (
     DocumentType,
     get_document_type_label,
     get_pathway,
-    list_document_type_options,
+    list_via_a_document_type_options,
 )
 from app.models.schemas import (
     ClassificationReviewUpdateRequest,
@@ -179,7 +179,7 @@ def _build_ingest_detail_response(
             "confidence": float(job.classification_confidence)
             if job.classification_confidence is not None
             else None,
-            "available_types": list_document_type_options(),
+            "available_types": list_via_a_document_type_options(),
         }
 
     trace_url = (

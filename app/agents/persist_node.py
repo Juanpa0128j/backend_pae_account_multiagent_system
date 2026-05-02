@@ -382,10 +382,24 @@ def db_persist_node(state: AgentState) -> AgentState:
 
     append_log(state, "db_persist", "node_start", {"mode": state.get("mode", "ingest")})
 
-    logger.debug("db_persist: waiting for DB write semaphore (ingest_id=%s)", state.get("ingest_id"))
-    with DB_WRITE_SEMAPHORE:
-        logger.debug("db_persist: acquired DB write semaphore (ingest_id=%s)", state.get("ingest_id"))
+    logger.debug(
+        "db_persist: waiting for DB write semaphore (ingest_id=%s)",
+        state.get("ingest_id"),
+    )
+    acquired = DB_WRITE_SEMAPHORE.acquire(timeout=120)
+    if not acquired:
+        state["error"] = (
+            "db_persist: timed out waiting for DB write semaphore (another job may be stuck)"
+        )
+        append_log(state, "db_persist", "semaphore_timeout", {"error": state["error"]})
+        return state
+    logger.debug(
+        "db_persist: acquired DB write semaphore (ingest_id=%s)", state.get("ingest_id")
+    )
+    try:
         return _db_persist_node_inner(state)
+    finally:
+        DB_WRITE_SEMAPHORE.release()
 
 
 def _db_persist_node_inner(state: AgentState) -> AgentState:

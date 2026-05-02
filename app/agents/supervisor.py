@@ -373,6 +373,53 @@ def supervisor_node(state: AgentState) -> AgentState:
             if classification_dict:
                 resolved_doc_type = classification_dict.get("doc_type")
 
+            # Pause for user confirmation on Vía A documents. Vía B documents
+            # (balance_general, estado_resultados, libro_auxiliar) skip the review
+            # because the user explicitly selects the type via a dedicated upload area.
+            from app.models.document_types import _VIA_B_TYPES
+
+            is_via_b = bool(
+                resolved_doc_type
+                and resolved_doc_type in {t.value for t in _VIA_B_TYPES}
+            )
+            if ingest_job and not use_confirmed and not is_via_b:
+                db = SessionLocal()
+                try:
+                    db_service.update_ingest_job(
+                        db,
+                        ingest_id,
+                        IngestStatus.PENDING_REVIEW,
+                        document_type=resolved_doc_type,
+                        pathway=state.get("pathway"),
+                        classification_confirmed=False,
+                        classification_confidence=(
+                            Decimal(str(classification.confidence))
+                            if classification
+                            else None
+                        ),
+                    )
+                except Exception as persist_review_err:
+                    logger.warning(
+                        "Supervisor: failed to mark ingest pending_review: %s",
+                        persist_review_err,
+                    )
+                finally:
+                    db.close()
+
+                state["current_agent"] = "review_terminal"
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "review_terminal",
+                        "mode": "ingest",
+                        "status": "pending_review",
+                    },
+                )
+                return state
+
+            # Reached only when classification is confirmed by the user.
             if resolved_pathway == IngestPathway.WORK_WITH_EXISTING.value:
                 if ext == ".xlsx" and "extracto" in file_name_lower:
                     logger.warning(
@@ -432,45 +479,6 @@ def supervisor_node(state: AgentState) -> AgentState:
                         resolved_doc_type,
                     )
                     state["pathway"] = IngestPathway.BUILD_FROM_SCRATCH.value
-
-            if ingest_job and not getattr(
-                ingest_job, "classification_confirmed", False
-            ):
-                db = SessionLocal()
-                try:
-                    db_service.update_ingest_job(
-                        db,
-                        ingest_id,
-                        IngestStatus.PENDING_REVIEW,
-                        document_type=resolved_doc_type,
-                        pathway=state.get("pathway"),
-                        classification_confirmed=False,
-                        classification_confidence=(
-                            Decimal(str(classification.confidence))
-                            if classification
-                            else None
-                        ),
-                    )
-                except Exception as persist_review_err:
-                    logger.warning(
-                        "Supervisor: failed to mark ingest pending_review: %s",
-                        persist_review_err,
-                    )
-                finally:
-                    db.close()
-
-                state["current_agent"] = "review_terminal"
-                append_log(
-                    state,
-                    "supervisor",
-                    "routing_complete",
-                    {
-                        "next_agent": "review_terminal",
-                        "mode": "ingest",
-                        "status": "pending_review",
-                    },
-                )
-                return state
         except Exception as classify_err:
             logger.warning(
                 "Supervisor: document classification failed (continuing with default): %s",

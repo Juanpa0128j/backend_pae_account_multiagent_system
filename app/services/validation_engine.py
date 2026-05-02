@@ -9,6 +9,7 @@ automatic retry routing through the Supervisor.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -332,11 +333,14 @@ class OutputValidator:
 # ---------------------------------------------------------------------------
 
 _validator_instance: Optional[OutputValidator] = None
+_validator_lock = threading.Lock()
 
 
 def get_validator() -> OutputValidator:
     """Get or create the global OutputValidator singleton."""
     global _validator_instance
     if _validator_instance is None:
-        _validator_instance = OutputValidator()
+        with _validator_lock:
+            if _validator_instance is None:
+                _validator_instance = OutputValidator()
     return _validator_instance
