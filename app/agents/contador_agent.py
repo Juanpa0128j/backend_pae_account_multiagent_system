@@ -209,6 +209,78 @@ def contador_node(state: AgentState) -> AgentState:
         # Surface actionable, Spanish audit findings for known parse failures
         # before terminating, so the accountant gets a useful trace instead of
         # a generic "contador error".
+        if is_parse_error(exc) and is_double_entry_violation(exc):
+            # Recovery attempt: ask the LLM to balance via suspense account 139595.
+            # If it succeeds the pipeline continues with a WARNING instead of failing.
+            logger.warning(
+                "contador: double-entry violation after retries — attempting suspense recovery"
+            )
+            try:
+                suspense_feedback = (
+                    f"El asiento generado no está balanceado (débitos ≠ créditos). "
+                    f"Añade UNA línea adicional a la cuenta 139595 (Cuentas por "
+                    f"Aclarar) con el tipo de movimiento necesario para igualar los "
+                    f"totales. No omitas los asientos ya generados. Error original: {exc}"
+                )
+                contador_output = llm.extract_contador_output(
+                    raw_transactions=raw_transactions,
+                    doc_type=doc_type,
+                    rag_context=rag_context,
+                    correction_feedback=suspense_feedback,
+                    source_taxes=source_taxes,
+                )
+                # Recovery succeeded — emit WARNING so the accountant is notified
+                from app.agents.audit_utils import append_finding
+                from app.models.audit import AuditFinding, AuditTarget, Severity
+
+                append_finding(
+                    state,
+                    AuditFinding(
+                        target=AuditTarget.CONTADOR,
+                        rule_id="CONT-SUSPENSE-USED",
+                        severity=Severity.WARNING,
+                        fixable=True,
+                        responsible_agent="contador",
+                        technical_message=str(exc)[:500],
+                        user_message_es=(
+                            "El asiento no pudo balancearse automáticamente y se "
+                            "registró una línea en la cuenta 139595 (Cuentas por "
+                            "Aclarar) para mantener la partida doble."
+                        ),
+                        suggested_action_es=(
+                            "Revise el asiento generado y reclasifique la línea de "
+                            "139595 a la cuenta correcta según el documento fuente."
+                        ),
+                        evidence={"original_violation": str(exc)[:200]},
+                    ),
+                )
+
+                state["correction_feedback"] = None
+                state["contador_output"] = contador_output
+                state["interpreted_data"] = contador_output
+
+                if not state.get("result"):
+                    state["result"] = {}
+                state["result"]["contador_output"] = contador_output
+                state["result"]["status"] = "clasificado"
+
+                logger.info(
+                    "contador: suspense recovery succeeded — pipeline continues"
+                )
+                append_log(
+                    state,
+                    "contador",
+                    "node_complete",
+                    {"stage": "classifying", "suspense_recovery": True},
+                )
+                return state
+
+            except Exception as recovery_exc:
+                logger.error(
+                    "contador: suspense recovery also failed: %s", recovery_exc
+                )
+                # Fall through to hard failure below, using original exc
+
         if is_parse_error(exc):
             from app.agents.audit_utils import append_finding
             from app.models.audit import AuditFinding, AuditTarget, Severity
@@ -217,7 +289,8 @@ def contador_node(state: AgentState) -> AgentState:
                 rule_id = "CONT-BALANCE-UNFIXABLE"
                 user_msg_es = (
                     "El documento no contiene información suficiente para generar "
-                    "un asiento de doble entrada balanceado tras varios intentos. "
+                    "un asiento de doble entrada balanceado tras varios intentos, "
+                    "incluyendo el intento de recuperación con cuenta puente. "
                     "Revise el documento fuente: puede estar incompleto, ser de "
                     "una sola entrada (recibo, comprobante parcial), o tener "
                     "valores inconsistentes."
