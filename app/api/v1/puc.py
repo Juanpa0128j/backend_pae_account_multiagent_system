@@ -33,8 +33,8 @@ def list_puc(
     if search:
         return db_service.search_puc(db, search, limit, include_inactive=include_inactive)
     if include_inactive:
-        return db_service.get_all_puc_including_inactive(db)
-    return db_service.get_all_puc(db)
+        return db_service.get_all_puc_including_inactive(db)[:limit]
+    return db_service.get_all_puc(db)[:limit]
 
 
 @router.get("/{codigo}", response_model=CuentaPUCResponse)
@@ -66,6 +66,12 @@ def update_puc(
     codigo: str, body: CuentaPUCRequest, db: Session = Depends(get_db)
 ):
     """Update an existing PUC account."""
+    if body.codigo != codigo:
+        raise HTTPException(
+            status_code=400,
+            detail="Path parameter 'codigo' must match body field 'codigo'",
+        )
+
     row = db_service.update_puc(db, codigo, body.model_dump())
     if not row:
         raise HTTPException(
