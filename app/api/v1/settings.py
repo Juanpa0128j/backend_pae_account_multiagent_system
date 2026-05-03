@@ -2,14 +2,15 @@
 Company settings API — manage per-tenant tax configuration.
 
 Endpoints:
-  GET  /api/v1/settings/company/{nit}        — retrieve settings for a company
-  PUT  /api/v1/settings/company/{nit}        — create or replace settings (manual rates)
-  POST /api/v1/settings/company/{nit}/setup  — auto-compute rates from city/CIIU/régimen
+  GET    /api/v1/settings/company/{nit}        — retrieve settings for a company
+  PUT    /api/v1/settings/company/{nit}        — create or replace settings (manual rates)
+  DELETE /api/v1/settings/company/{nit}        — permanently delete a company
+  POST   /api/v1/settings/company/{nit}/setup  — auto-compute rates from city/CIIU/régimen
 """
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -49,6 +50,15 @@ def get_company_settings(nit: str, db: Session = Depends(get_db)):
 def list_companies(db: Session = Depends(get_db)):
     """Return all registered companies (used for the frontend company selector)."""
     return db_service.list_companies(db)
+
+
+@router.delete("/company/{nit}", status_code=204)
+def delete_company(nit: str, db: Session = Depends(get_db)):
+    """Permanently delete a company and its tax settings."""
+    deleted = db_service.delete_company(db, nit)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Company '{nit}' not found.")
+    return Response(status_code=204)
 
 
 @router.put("/company/{nit}", response_model=CompanySettingsResponse)

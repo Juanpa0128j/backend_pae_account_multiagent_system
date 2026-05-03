@@ -596,7 +596,9 @@ def get_all_puc(db: Session) -> List[CuentaPUC]:
     )
 
 
-def search_puc(db: Session, search_term: str, limit: int = 10, include_inactive: bool = False) -> List[CuentaPUC]:
+def search_puc(
+    db: Session, search_term: str, limit: int = 10, include_inactive: bool = False
+) -> List[CuentaPUC]:
     """Search PUC accounts by code or name. Optionally include inactive accounts."""
     query = db.query(CuentaPUC).filter(
         (CuentaPUC.codigo.ilike(f"%{search_term}%"))
@@ -624,7 +626,9 @@ def create_puc(db: Session, data: dict, commit: bool = True) -> CuentaPUC:
         raise
 
 
-def update_puc(db: Session, codigo: str, data: dict, commit: bool = True) -> Optional[CuentaPUC]:
+def update_puc(
+    db: Session, codigo: str, data: dict, commit: bool = True
+) -> Optional[CuentaPUC]:
     """Update existing PUC account. Returns None if not found."""
     row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
     if not row:
@@ -915,6 +919,16 @@ def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
 def list_companies(db: Session) -> list[CompanySettings]:
     """Return all CompanySettings rows ordered by NIT."""
     return db.query(CompanySettings).order_by(CompanySettings.nit).all()
+
+
+def delete_company(db: Session, nit: str) -> bool:
+    """Delete the CompanySettings row for the given NIT. Returns True if deleted."""
+    row = db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
+    if not row:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
 
 
 def upsert_company_settings(
