@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.database import ProcessStatus
+from app.models.database import ProcessJob, ProcessStatus
 from app.models.schemas import (
     ProcessResponse,
     ProcessStatusResponse,
@@ -200,12 +200,7 @@ async def get_process_status(
 
     # Extract audit_review data when status is pending_audit_review
     audit_review = None
-    _status_upper = (
-        process_job.status.value
-        if hasattr(process_job.status, "value")
-        else str(process_job.status)
-    ).upper()
-    if _status_upper == "PENDING_AUDIT_REVIEW":
+    if _enum_value(process_job.status).upper() == "PENDING_AUDIT_REVIEW":
         for entry in reversed(raw_log):
             if entry.get("event") == "audit_giveup":
                 audit_review = entry.get("details")
@@ -237,40 +232,69 @@ async def get_process_status(
     )
 
 
+_ES_STATUS = {
+    "queued": "en cola",
+    "running": "en ejecución",
+    "completed": "completado",
+    "failed": "fallido",
+    "cancelled": "cancelado",
+    "pending_audit_review": "pendiente de revisión",
+}
+
+
+def _enum_value(status) -> str:
+    return status.value if hasattr(status, "value") else str(status)
+
+
 @router.post("/{process_id}/audit-confirm", status_code=202)
 async def confirm_audit_review(process_id: str, db: Session = Depends(get_db)):
-    """User confirms to force-persist despite audit issues."""
-    process_job = db_service.get_process_job(db, process_id)
-    if not process_job:
-        raise HTTPException(
-            status_code=404, detail=f"Process job {process_id} not found"
+    """User confirms to force-persist despite audit issues.
+
+    Atomic: uses a guarded UPDATE that only succeeds when the row is still in
+    PENDING_AUDIT_REVIEW. This prevents double-confirm from spawning two
+    concurrent force-persist runs (which would write duplicate rows).
+    """
+    # Guarded transition PENDING_AUDIT_REVIEW → RUNNING.
+    # Returns 1 row updated only if the status was still pending.
+    rows_updated = (
+        db.query(ProcessJob)
+        .filter(
+            ProcessJob.id == process_id,
+            ProcessJob.status == ProcessStatus.PENDING_AUDIT_REVIEW,
         )
-    status_val = (
-        process_job.status.value
-        if hasattr(process_job.status, "value")
-        else str(process_job.status)
-    ).upper()
-    if status_val != "PENDING_AUDIT_REVIEW":
+        .update(
+            {
+                ProcessJob.status: ProcessStatus.RUNNING,
+                ProcessJob.current_stage: "supervisor",
+                ProcessJob.current_agent: "supervisor",
+                ProcessJob.progress: 10,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+
+    if rows_updated == 0:
+        # Either the job doesn't exist, or it's not in pending state.
+        process_job = db_service.get_process_job(db, process_id)
+        if not process_job:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontró el proceso {process_id}.",
+            )
+        es_status = _ES_STATUS.get(
+            _enum_value(process_job.status).lower(),
+            _enum_value(process_job.status),
+        )
         raise HTTPException(
             status_code=409,
             detail=(
-                f"El proceso {process_id} no está en estado de revisión pendiente "
-                f"(estado actual: {process_job.status.value if hasattr(process_job.status, 'value') else process_job.status})"
+                f"El proceso {process_id} no está en estado pendiente de revisión "
+                f"(estado actual: {es_status})."
             ),
         )
 
-    # Flip status synchronously so subsequent polls don't race the async task
-    # and see PENDING_AUDIT_REVIEW again before the pipeline re-enters RUNNING.
-    db_service.update_process_job(
-        db,
-        process_id=process_job.id,
-        status=ProcessStatus.RUNNING,
-        current_stage="supervisor",
-        current_agent="supervisor",
-        progress=10,
-    )
-
-    await jobs.start_process_job(process_job.id, force_persist=True)
+    await jobs.start_process_job(process_id, force_persist=True)
     return {
         "message": "Revisión confirmada. Reintentando persistencia.",
         "process_id": process_id,

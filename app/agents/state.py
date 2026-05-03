@@ -107,3 +107,4 @@ class AgentState(TypedDict):
     retry_budget: dict  # per-target remaining retries, e.g. {"contador": 2}
     giveup_record: Optional[dict]  # GiveUpRecord dict when loop gives up (Phase 4+)
     force_persist: bool  # If True, skip audit blocker checks and force DB persist
+    needs_hitl_review: bool  # Set by validation/persist nodes when HITL is required

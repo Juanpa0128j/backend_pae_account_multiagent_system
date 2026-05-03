@@ -309,10 +309,31 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             )
             return state
 
+        error_list = result.errors[:3] if result.errors else []
+
+        # If user already chose to force-persist, skip the HITL routing and
+        # let the pipeline continue with whatever output is available.
+        if state.get("force_persist"):
+            logger.warning(
+                "validate_contador: force_persist=True — bypassing schema exhaustion HITL"
+            )
+            state["correction_feedback"] = None
+            append_log(
+                state,
+                agent_name,
+                "validation_bypassed_force_persist",
+                {"attempt": attempt, "errors": error_list},
+            )
+            # Use the last raw_output as best-effort and continue
+            if result.validated_output:
+                state["result"]["validated_data"] = result.validated_output.model_dump(
+                    mode="json"
+                )
+            return state
+
         from app.agents.audit_utils import record_giveup
         from app.models.audit import AuditFinding, AuditTarget, Severity
 
-        error_list = result.errors[:3] if result.errors else []
         user_msg = (
             f"El agente '{agent_name}' no pudo generar una respuesta válida "
             f"después de {attempt} intentos. "
@@ -336,11 +357,12 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
                 "y estén en el formato esperado. Si el problema persiste, contacte soporte."
             ),
         )
-        record_giveup(state, agent_name, [schema_finding])
+        record_giveup(state, agent_name, [schema_finding], attempts=attempt)
         state["result"]["status"] = "validation_error"
         state["result"]["validation_errors"] = result.errors
         state["correction_feedback"] = None
         state["current_agent"] = "audit_review_terminal"
+        state["needs_hitl_review"] = True
         append_log(
             state,
             agent_name,
@@ -389,6 +411,36 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             )
             return state
 
+        # If user already chose to force-persist, remap missing PUC codes to
+        # the catch-all 519595 and continue. This avoids trapping users in
+        # an HITL loop when the LLM cannot self-correct.
+        if state.get("force_persist"):
+            logger.warning(
+                "validate_contador: force_persist=True — remapping missing PUC codes "
+                "to 519595: %s",
+                missing,
+            )
+            for asiento in validated.get("asientos", []):
+                if isinstance(asiento, dict):
+                    code = str(asiento.get("cuenta_puc", "")).strip()
+                    if code in missing:
+                        asiento["cuenta_puc"] = "519595"
+                        asiento["nombre_cuenta"] = "Otros gastos diversos"
+            state["result"]["validated_data"] = validated
+            state["correction_feedback"] = None
+            append_log(
+                state,
+                agent_name,
+                "validation_bypassed_force_persist",
+                {
+                    "attempt": attempt,
+                    "reason": "puc_not_found",
+                    "missing": missing,
+                    "remapped_to": "519595",
+                },
+            )
+            return state
+
         # Exhausted retries for PUC validation — pause for HITL review instead of
         # aborting, so the user can correct the document or override.
         from app.agents.audit_utils import record_giveup
@@ -412,8 +464,9 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
                 "o cargue un documento actualizado con los códigos correctos."
             ),
         )
-        record_giveup(state, agent_name, [puc_finding])
+        record_giveup(state, agent_name, [puc_finding], attempts=attempt)
         state["current_agent"] = "audit_review_terminal"
+        state["needs_hitl_review"] = True
         state["correction_feedback"] = None
         append_log(
             state,

@@ -687,7 +687,7 @@ def update_process_job(
     if not job:
         return None
 
-    if status:
+    if status is not None:
         job.status = status
         if status == ProcessStatus.RUNNING and not job.started_at:
             job.started_at = datetime.now(timezone.utc)
@@ -730,7 +730,12 @@ def get_active_process_job_for_ingest(
         .filter(
             ProcessJob.ingest_id == ingest_id,
             ProcessJob.status.in_(
-                [ProcessStatus.QUEUED, ProcessStatus.RUNNING, ProcessStatus.COMPLETED]
+                [
+                    ProcessStatus.QUEUED,
+                    ProcessStatus.RUNNING,
+                    ProcessStatus.COMPLETED,
+                    ProcessStatus.PENDING_AUDIT_REVIEW,
+                ]
             ),
         )
         .order_by(ProcessJob.created_at.desc())

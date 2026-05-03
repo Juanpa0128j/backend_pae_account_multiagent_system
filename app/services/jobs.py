@@ -32,21 +32,132 @@ def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _translate_pipeline_error(raw: str) -> str:
+    """Map known internal error strings to Spanish user-facing messages.
+
+    Keep raw English text only as ``technical`` metadata in the log entry.
+    """
+    if not raw:
+        return "El proceso finalizó con error."
+    low = raw.lower()
+    if "db persist error" in low or "puc code" in low and "not found" in low:
+        return (
+            "No fue posible registrar los asientos contables porque algún código "
+            "PUC no existe en la base de datos. Revise el documento e intente nuevamente."
+        )
+    if "no contador asientos to persist" in low or "no asientos" in low:
+        return (
+            "El sistema no generó asientos contables a partir del documento. "
+            "Verifique que el archivo contenga información contable válida."
+        )
+    if "schema validation" in low:
+        return (
+            "El agente no pudo generar una respuesta válida tras varios intentos. "
+            "Revise el documento fuente y vuelva a intentarlo."
+        )
+    if "puc validation" in low or "missing codes" in low:
+        return (
+            "Algunos códigos PUC del documento no existen en la base de datos. "
+            "Corrija el documento o use 'Continuar de todas formas' para registrarlos como Otros gastos."
+        )
+    return "Error en la ejecución del proceso contable. Revise el documento e intente nuevamente."
+
+
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _on_task_done(task: asyncio.Task) -> None:
+    _BACKGROUND_TASKS.discard(task)
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        logger.error(
+            "process job background task raised an unhandled exception",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
 async def start_process_job(process_id: str, force_persist: bool = False) -> None:
-    """Schedule a process job in the current event loop."""
-    asyncio.create_task(run_process_job(process_id, force_persist=force_persist))
+    """Schedule a process job in the current event loop.
+
+    The task reference is retained in a module-level set so it cannot be GC'd
+    before completion, and unhandled exceptions are logged.
+    """
+    task = asyncio.create_task(run_process_job(process_id, force_persist=force_persist))
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_on_task_done)
 
 
 async def run_process_job(process_id: str, force_persist: bool = False) -> None:
-    """Execute the accounting flow for a process job with timeout handling."""
-    # Limit concurrent process pipelines. This is a blocking acquire,
-    # so we run it in a thread to avoid blocking the event loop.
+    """Execute the accounting flow for a process job with timeout handling.
+
+    Wraps the implementation in an outer timeout (semaphore wait + execution)
+    and a top-level exception guard. If anything goes wrong before the inner
+    impl can update the DB, mark the job FAILED here so the frontend doesn't
+    poll RUNNING forever.
+    """
+    # Outer deadline = MAX_PROCESS_SECONDS plus a buffer for semaphore wait.
+    OUTER_DEADLINE = MAX_PROCESS_SECONDS + 60
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, PROCESS_PIPELINE_SEMAPHORE.acquire)
+    try:
+        await asyncio.wait_for(
+            loop.run_in_executor(None, PROCESS_PIPELINE_SEMAPHORE.acquire),
+            timeout=OUTER_DEADLINE,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "process job %s timed out waiting for pipeline semaphore", process_id
+        )
+        _mark_job_failed_safe(
+            process_id,
+            "El sistema está saturado. Intente nuevamente en unos minutos.",
+        )
+        return
+
     try:
         await _run_process_job_impl(process_id, force_persist=force_persist)
+    except Exception as e:
+        logger.exception("process job %s failed with unhandled exception", process_id)
+        _mark_job_failed_safe(
+            process_id,
+            "Error inesperado durante el procesamiento. Por favor reintente.",
+            technical=str(e),
+        )
     finally:
         PROCESS_PIPELINE_SEMAPHORE.release()
+
+
+def _mark_job_failed_safe(
+    process_id: str, user_message: str, technical: str = ""
+) -> None:
+    """Best-effort attempt to mark a process job FAILED. Never raises."""
+    try:
+        db = SessionLocal()
+        try:
+            db_service.update_process_job(
+                db,
+                process_id=process_id,
+                status=ProcessStatus.FAILED,
+                current_stage="failed",
+                progress=100,
+                error_message=user_message,
+                agent_log_entry={
+                    "timestamp": _utc_iso(),
+                    "agent": "supervisor",
+                    "stage": "failed",
+                    "event": "failed",
+                    "message": user_message,
+                    "technical": technical,
+                },
+            )
+        finally:
+            db.close()
+    except Exception:
+        logger.exception(
+            "_mark_job_failed_safe: failed to mark %s as FAILED", process_id
+        )
 
 
 async def _run_process_job_impl(process_id: str, force_persist: bool = False) -> None:
@@ -234,6 +345,8 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
             return
 
         if result.get("error"):
+            raw_error = str(result.get("error") or "")
+            user_message = _translate_pipeline_error(raw_error)
             db_service.update_process_job(
                 db,
                 process_id=process_id,
@@ -241,13 +354,14 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
                 current_stage="failed",
                 current_agent="supervisor",
                 progress=100,
-                error_message=result.get("error") or "El workflow finalizó con error",
+                error_message=user_message,
                 agent_log_entry={
                     "timestamp": _utc_iso(),
                     "agent": "supervisor",
                     "stage": "failed",
                     "event": "failed",
-                    "message": result.get("error") or "El workflow finalizó con error",
+                    "message": user_message,
+                    "technical": raw_error,
                 },
             )
             return

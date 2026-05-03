@@ -116,7 +116,8 @@ def create_agent_graph() -> Any:
         "db_persist",
         lambda s: (
             "audit_review_terminal"
-            if s.get("current_agent") == "audit_review_terminal"
+            if s.get("needs_hitl_review")
+            or s.get("current_agent") == "audit_review_terminal"
             else END
         ),
         {"audit_review_terminal": "audit_review_terminal", END: END},

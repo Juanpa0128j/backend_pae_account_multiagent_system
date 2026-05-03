@@ -95,6 +95,8 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
     overall_status: str
     if process_job.status == ProcessStatus.FAILED:
         overall_status = "failed"
+    elif process_job.status == ProcessStatus.PENDING_AUDIT_REVIEW:
+        overall_status = "pending_audit_review"
     else:
         overall_status = "completed"
 
@@ -112,7 +114,10 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
         f for f in all_findings if f.severity.value == "blocker" and not f.fixable
     ]
 
-    if blockers:
+    # Only let log-derived blockers downgrade status when the job actually
+    # failed or is pending review. A successful force-persist re-run will have
+    # the prior run's blockers in agent_log, but the job itself is COMPLETED.
+    if blockers and overall_status != "completed":
         overall_status = "failed"
     elif all_findings and overall_status == "completed":
         overall_status = "completed_with_warnings"
@@ -200,7 +205,13 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
             )
         )
 
-    give_up = _extract_giveup_from_log(raw_log)
+    # Only surface give_up on non-success terminal states. Otherwise a
+    # successful force-persist re-run would replay the prior run's
+    # audit_giveup event in the trace, misleading the user.
+    if overall_status in ("failed", "pending_audit_review"):
+        give_up = _extract_giveup_from_log(raw_log)
+    else:
+        give_up = None
 
     return PipelineTrace(
         process_id=process_id,
