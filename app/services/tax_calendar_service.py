@@ -367,7 +367,9 @@ def list_obligations(
     """
     if year not in SUPPORTED_YEARS:
         raise ValueError(
-            f"Unsupported year: {year}. Supported: {sorted(SUPPORTED_YEARS)}"
+            f"El calendario tributario solo está disponible para los años "
+            f"{sorted(SUPPORTED_YEARS)}. Año solicitado: {year}. "
+            "Actualice las tablas DIAN para soportar el nuevo año fiscal."
         )
     if iva_regime not in SUPPORTED_IVA_REGIMES:
         raise ValueError(

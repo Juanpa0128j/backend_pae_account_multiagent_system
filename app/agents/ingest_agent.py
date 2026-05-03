@@ -305,34 +305,15 @@ def ingest_node(state: AgentState) -> AgentState:
             append_log(state, "ingesta", "node_error", {"error": state["error"]})
             return state
 
-        # Legacy: old extract_transactions returned {"transactions": [...]}.
         # All document types now return rich structured content objects via
-        # dedicated extraction methods — the transactions-list path is no longer used.
-        _TRANSACTION_DOC_TYPES: set[str] = set()
-
-        if doc_type in _TRANSACTION_DOC_TYPES:
-            raw_txs = interpreted_data.get("transactions", [])
-            if not isinstance(raw_txs, list):
-                state["error"] = "LLM 'transactions' field is not a list"
-                logger.error(state["error"])
-                append_log(state, "ingesta", "node_error", {"error": state["error"]})
-                return state
-            if not raw_txs:
-                state["error"] = "LLM extracted zero transactions from document"
-                logger.warning(state["error"])
-                append_log(state, "ingesta", "node_error", {"error": state["error"]})
-                return state
-            state["raw_transactions"] = raw_txs
-            data_summary = {"tx_count": len(raw_txs)}
-            result_data = raw_txs
-        else:
-            # Non-transaction documents: store interpreted_data directly, raw_transactions empty
-            state["raw_transactions"] = []
-            data_summary = {
-                "doc_type": doc_type,
-                "fields": list(interpreted_data.keys()),
-            }
-            result_data = interpreted_data
+        # dedicated extraction methods. raw_transactions is always empty here;
+        # the contador agent derives transactions later from interpreted_data.
+        state["raw_transactions"] = []
+        data_summary = {
+            "doc_type": doc_type,
+            "fields": list(interpreted_data.keys()),
+        }
+        result_data = interpreted_data
 
         append_log(state, "ingesta", "interpretation_complete", data_summary)
 
