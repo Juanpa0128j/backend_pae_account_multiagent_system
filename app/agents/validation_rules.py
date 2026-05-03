@@ -309,20 +309,43 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             )
             return state
 
-        state["error"] = (
-            f"Schema validation failed for '{agent_name}' after {attempt} attempts. "
-            f"Last errors:\n{result.error_summary()}"
+        from app.agents.audit_utils import record_giveup
+        from app.models.audit import AuditFinding, Severity
+
+        error_list = result.errors[:3] if result.errors else []
+        user_msg = (
+            f"El agente '{agent_name}' no pudo generar una respuesta válida "
+            f"después de {attempt} intentos. "
+            + (
+                f"Errores: {'; '.join(str(e) for e in error_list)}"
+                if error_list
+                else ""
+            )
         )
+        schema_finding = AuditFinding(
+            rule_id="SCHEMA_VALIDATION_EXHAUSTED",
+            severity=Severity.BLOCKER,
+            fixable=False,
+            responsible_agent=agent_name,
+            evidence={"attempt": attempt, "errors": error_list},
+            user_message_es=user_msg,
+            suggested_action_es=(
+                "Revise el documento fuente y verifique que los datos sean legibles "
+                "y estén en el formato esperado. Si el problema persiste, contacte soporte."
+            ),
+        )
+        record_giveup(state, agent_name, [schema_finding])
         state["result"]["status"] = "validation_error"
         state["result"]["validation_errors"] = result.errors
         state["correction_feedback"] = None
+        state["current_agent"] = "audit_review_terminal"
         append_log(
             state,
             agent_name,
             "validation_exhausted",
             {
                 "attempt": attempt,
-                "errors": result.errors[:3],
+                "errors": error_list,
             },
         )
         return state

@@ -51,21 +51,21 @@ def _classify_process_error(
         return (
             "business_precondition",
             "MISSING_COMPANY_SETTINGS",
-            "Configure company tax profile via POST /api/v1/settings/company/{nit}/setup and retry.",
+            "Configure el perfil tributario de la empresa y vuelva a intentarlo.",
         )
 
     if "no staged transactions" in msg:
         return (
             "business_precondition",
             "NO_STAGED_TRANSACTIONS",
-            "Run ingest first and ensure transactions_pending contains rows for this ingest_id.",
+            "Ejecute primero la ingesta y verifique que existan transacciones pendientes antes de procesar.",
         )
 
     if "missing nit_receptor" in msg:
         return (
             "business_precondition",
             "MISSING_NIT_RECEPTOR",
-            "Ensure staged transactions contain nit_receptor before processing.",
+            "Las transacciones no contienen NIT receptor. Suba el documento nuevamente seleccionando una empresa.",
         )
 
     if "audit_blocker" in msg or "unfixable audit blockers" in msg:
@@ -116,11 +116,8 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
             detail={
                 "error_category": "business_precondition",
                 "error_code": "NO_STAGED_TRANSACTIONS",
-                "message": (
-                    "Cannot start process: no staged transactions found for this ingest_id. "
-                    "Run ingest successfully before accounting processing."
-                ),
-                "remediation": "Run POST /api/v1/ingest/upload and verify transactions before retrying /process/accounting.",
+                "message": "No se encontraron transacciones para procesar. Ejecute primero la ingesta del documento.",
+                "remediation": "Suba el documento y verifique que la ingesta haya completado correctamente antes de reintentar.",
             },
         )
 
@@ -140,8 +137,8 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
             detail={
                 "error_category": "business_precondition",
                 "error_code": "MISSING_NIT_RECEPTOR",
-                "message": "Cannot start process: staged transactions are missing nit_receptor and no company_nit was provided at upload time.",
-                "remediation": "Re-upload the document passing company_nit in the form data, or select a company in the UI before uploading.",
+                "message": "Las transacciones no contienen NIT receptor y no se seleccionó empresa al subir el documento.",
+                "remediation": "Seleccione una empresa antes de subir el documento y vuelva a intentarlo.",
             },
         )
 
@@ -152,10 +149,8 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
             detail={
                 "error_category": "business_precondition",
                 "error_code": "MISSING_COMPANY_SETTINGS",
-                "message": (
-                    f"Cannot start process: missing company tax settings for NIT {nit_receptor}."
-                ),
-                "remediation": f"Run POST /api/v1/settings/company/{nit_receptor}/setup and retry.",
+                "message": f"No se encontró configuración tributaria para el NIT {nit_receptor}.",
+                "remediation": f"Configure el perfil tributario de la empresa con NIT {nit_receptor} y vuelva a intentarlo.",
             },
         )
 
@@ -205,7 +200,7 @@ async def get_process_status(
 
     # Extract audit_review data when status is pending_audit_review
     audit_review = None
-    if process_job.status == ProcessStatus.PENDING_AUDIT_REVIEW:
+    if str(process_job.status).upper() == "PENDING_AUDIT_REVIEW":
         for entry in reversed(raw_log):
             if entry.get("event") == "audit_giveup":
                 audit_review = entry.get("details")
@@ -245,12 +240,12 @@ async def confirm_audit_review(process_id: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=404, detail=f"Process job {process_id} not found"
         )
-    if process_job.status != ProcessStatus.PENDING_AUDIT_REVIEW:
+    if str(process_job.status).upper() != "PENDING_AUDIT_REVIEW":
         raise HTTPException(
             status_code=409,
             detail=(
                 f"Process {process_id} is not in pending_audit_review state "
-                f"(current: {process_job.status.value})"
+                f"(current: {process_job.status})"
             ),
         )
 

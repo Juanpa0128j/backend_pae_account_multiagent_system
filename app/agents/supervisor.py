@@ -544,8 +544,19 @@ def supervisor_node(state: AgentState) -> AgentState:
                         "reason": "validation_failed",
                     },
                 )
+            elif state.get("current_agent") == "audit_review_terminal":
+                # Validation exhausted — routed to HITL, leave current_agent as-is
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "audit_review_terminal",
+                        "reason": "contador_validation_exhausted_hitl",
+                    },
+                )
             elif state.get("error"):
-                # Validation exhausted or non-retriable error — terminal
+                # Non-retriable error — terminal
                 state["current_agent"] = ""
                 append_log(
                     state,
