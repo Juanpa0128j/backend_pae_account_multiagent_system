@@ -200,7 +200,12 @@ async def get_process_status(
 
     # Extract audit_review data when status is pending_audit_review
     audit_review = None
-    if str(process_job.status).upper() == "PENDING_AUDIT_REVIEW":
+    _status_upper = (
+        process_job.status.value
+        if hasattr(process_job.status, "value")
+        else str(process_job.status)
+    ).upper()
+    if _status_upper == "PENDING_AUDIT_REVIEW":
         for entry in reversed(raw_log):
             if entry.get("event") == "audit_giveup":
                 audit_review = entry.get("details")
@@ -240,18 +245,23 @@ async def confirm_audit_review(process_id: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=404, detail=f"Process job {process_id} not found"
         )
-    if str(process_job.status).upper() != "PENDING_AUDIT_REVIEW":
+    status_val = (
+        process_job.status.value
+        if hasattr(process_job.status, "value")
+        else str(process_job.status)
+    ).upper()
+    if status_val != "PENDING_AUDIT_REVIEW":
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Process {process_id} is not in pending_audit_review state "
-                f"(current: {process_job.status})"
+                f"El proceso {process_id} no está en estado de revisión pendiente "
+                f"(estado actual: {process_job.status.value if hasattr(process_job.status, 'value') else process_job.status})"
             ),
         )
 
     await jobs.start_process_job(process_job.id, force_persist=True)
     return {
-        "message": "Audit review confirmed. Re-running persist.",
+        "message": "Revisión confirmada. Reintentando persistencia.",
         "process_id": process_id,
     }
 
