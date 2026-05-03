@@ -136,7 +136,7 @@ def test_get_process_result_not_completed_returns_202(monkeypatch):
 
     response = client.get("/api/v1/process/result/proc_123")
     assert response.status_code == 202
-    assert "still being processed" in response.json()["message"]
+    assert "aún está en curso" in response.json()["message"]
 
     app.dependency_overrides.clear()
 
