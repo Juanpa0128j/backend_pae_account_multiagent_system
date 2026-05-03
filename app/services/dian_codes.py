@@ -159,7 +159,7 @@ _REVERSE_NOMENCLATURA: list[tuple[str, str]] = sorted(
 )
 
 
-def expand_address(addr: str) -> str:
+def expand_address(addr: Optional[str]) -> Optional[str]:
     """Replace DIAN abbreviations with their full Spanish form.
 
     Matching is case-insensitive on tokens but preserves rest of input.
@@ -182,7 +182,7 @@ def expand_address(addr: str) -> str:
     return pattern.sub(_replace, addr)
 
 
-def normalize_address(addr: str) -> str:
+def normalize_address(addr: Optional[str]) -> Optional[str]:
     """Replace full Spanish forms with their DIAN abbreviation.
 
     Longer phrases match first so ``Avenida carrera`` resolves to ``AK``
@@ -221,7 +221,7 @@ _LOOKUP_BY_NAME_SQL = text("""
     """)
 
 
-def lookup_municipio(db: Session, codigo: str) -> Optional[dict]:
+def lookup_municipio(db: Session, codigo: Optional[str]) -> Optional[dict]:
     """Return the dian_municipios row for ``codigo``, or ``None`` if missing.
 
     ``codigo`` is normalised to a 5-character zero-padded string before
@@ -238,7 +238,7 @@ def lookup_municipio(db: Session, codigo: str) -> Optional[dict]:
     return dict(row._mapping)
 
 
-def lookup_municipio_by_name(db: Session, nombre: str) -> Optional[dict]:
+def lookup_municipio_by_name(db: Session, nombre: Optional[str]) -> Optional[dict]:
     """Return the first dian_municipios row where name matches case-insensitively."""
     if not nombre:
         return None
