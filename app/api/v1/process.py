@@ -259,6 +259,17 @@ async def confirm_audit_review(process_id: str, db: Session = Depends(get_db)):
             ),
         )
 
+    # Flip status synchronously so subsequent polls don't race the async task
+    # and see PENDING_AUDIT_REVIEW again before the pipeline re-enters RUNNING.
+    db_service.update_process_job(
+        db,
+        process_id=process_job.id,
+        status=ProcessStatus.RUNNING,
+        current_stage="supervisor",
+        current_agent="supervisor",
+        progress=10,
+    )
+
     await jobs.start_process_job(process_job.id, force_persist=True)
     return {
         "message": "Revisión confirmada. Reintentando persistencia.",
