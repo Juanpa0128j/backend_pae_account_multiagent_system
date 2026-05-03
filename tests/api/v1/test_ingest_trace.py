@@ -87,7 +87,7 @@ class TestBuildIngestTrace:
         assert trace.overall_status == "failed"
         assert len(trace.blockers) == 1
         assert trace.blockers[0].rule_id == "INGEST_ERROR"
-        assert "Failed to parse PDF" in trace.blockers[0].user_message_es
+        assert "Failed to parse PDF" in trace.blockers[0].technical_message
 
     def test_audit_finding_has_required_fields(self):
         """AuditFinding should have all required fields populated."""

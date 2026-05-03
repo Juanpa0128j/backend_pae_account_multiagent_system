@@ -310,7 +310,7 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             return state
 
         from app.agents.audit_utils import record_giveup
-        from app.models.audit import AuditFinding, Severity
+        from app.models.audit import AuditFinding, AuditTarget, Severity
 
         error_list = result.errors[:3] if result.errors else []
         user_msg = (
@@ -326,7 +326,9 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             rule_id="SCHEMA_VALIDATION_EXHAUSTED",
             severity=Severity.BLOCKER,
             fixable=False,
+            target=AuditTarget.CONTADOR,
             responsible_agent=agent_name,
+            technical_message=f"Schema validation failed for '{agent_name}' after {attempt} attempts. Errors: {'; '.join(str(e) for e in error_list)}",
             evidence={"attempt": attempt, "errors": error_list},
             user_message_es=user_msg,
             suggested_action_es=(
@@ -390,13 +392,15 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         # Exhausted retries for PUC validation — pause for HITL review instead of
         # aborting, so the user can correct the document or override.
         from app.agents.audit_utils import record_giveup
-        from app.models.audit import AuditFinding, Severity
+        from app.models.audit import AuditFinding, AuditTarget, Severity
 
         puc_finding = AuditFinding(
             rule_id="PUC_CODES_NOT_FOUND",
             severity=Severity.BLOCKER,
             fixable=False,
+            target=AuditTarget.CONTADOR,
             responsible_agent=agent_name,
+            technical_message=f"PUC validation exhausted after {attempt} attempts. Missing codes: {', '.join(missing)}",
             evidence={"missing_codes": missing},
             user_message_es=(
                 f"Los siguientes códigos PUC no existen en la base de datos: "

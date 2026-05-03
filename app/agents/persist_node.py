@@ -676,7 +676,7 @@ def _run_persist(state: AgentState) -> AgentState:
                 AuditFinding(**f) if isinstance(f, dict) else f for f in state_blockers
             ]
             first_rule = all_blockers[0].rule_id if all_blockers else "AUDIT-BLOCKER"
-            record_giveup(state, "db_persist", all_blockers)
+            record_giveup(state, "persist", all_blockers)
             state["current_agent"] = "audit_review_terminal"
             logger.warning(
                 "db_persist: pre-persist blocker detected — routing to HITL rule_id=%s",
