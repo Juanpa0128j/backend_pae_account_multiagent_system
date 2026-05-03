@@ -178,9 +178,11 @@ def ingest_node(state: AgentState) -> AgentState:
                         documents = parser.load_data(file_path)
                         raw_text = "\n\n".join([doc.text for doc in documents])
 
-                    # Save to cache (even if empty, to avoid re-hitting the API)
-                    _cache_dir.mkdir(parents=True, exist_ok=True)
-                    _cache_path.write_text(raw_text, encoding="utf-8")
+                    # Save to cache only if non-empty — caching transient
+                    # failures permanently breaks the file.
+                    if raw_text and raw_text.strip():
+                        _cache_dir.mkdir(parents=True, exist_ok=True)
+                        _cache_path.write_text(raw_text, encoding="utf-8")
 
                 state["raw_text"] = raw_text
             else:

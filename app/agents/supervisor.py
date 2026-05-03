@@ -299,6 +299,26 @@ def supervisor_node(state: AgentState) -> AgentState:
                     text_preview=text_preview,
                     source_format=ext.lstrip("."),
                 )
+                # `getattr` guards mocks that don't define the attribute; explicit
+                # str check avoids treating MagicMock auto-attrs as truthy.
+                classification_error = getattr(classification, "error", None)
+                if isinstance(classification_error, str) and classification_error:
+                    # LLM classification failed and returned a fallback. Surface
+                    # the error instead of silently routing as OTRO/build_from_scratch.
+                    state["error"] = (
+                        "No fue posible clasificar el documento automáticamente. "
+                        "Reintente en unos minutos o seleccione el tipo manualmente."
+                    )
+                    append_log(
+                        state,
+                        "supervisor",
+                        "routing_error",
+                        {
+                            "reason": "classification_failed",
+                            "technical": classification.error,
+                        },
+                    )
+                    return state
                 classification_dict = classification.model_dump(mode="json")
                 classification_dict["entity_nit"] = normalize_optional_nit(
                     classification_dict.get("entity_nit")
@@ -415,7 +435,11 @@ def supervisor_node(state: AgentState) -> AgentState:
 
             # Reached only when classification is confirmed by the user.
             if resolved_pathway == IngestPathway.WORK_WITH_EXISTING.value:
-                if ext == ".xlsx" and "extracto" in file_name_lower:
+                if (
+                    ext == ".xlsx"
+                    and "extracto" in file_name_lower
+                    and "iva" not in file_name_lower
+                ):
                     logger.warning(
                         "Supervisor: forcing build_from_scratch for potential bank statement file %s",
                         file_path,

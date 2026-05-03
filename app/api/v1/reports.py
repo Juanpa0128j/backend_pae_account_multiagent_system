@@ -523,8 +523,17 @@ async def get_financial_statements(
     source_mode: Optional[str] = Query(
         None, description="Filter: direct | derived | derived_from_journal"
     ),
+    limit: int = Query(
+        100, ge=1, le=500, description="Max records to return (1-500, default 100)"
+    ),
+    offset: int = Query(0, ge=0, description="Records to skip (for pagination)"),
 ):
-    """List stored FinancialStatement records for a company."""
+    """List stored FinancialStatement records for a company.
+
+    Pagination caps the response so a tenant with thousands of derived
+    statements doesn't blow up the payload. Use ``limit`` + ``offset`` or
+    progressively narrower date ranges.
+    """
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
@@ -543,13 +552,14 @@ async def get_financial_statements(
         else None
     )
 
-    return list_financial_statements(
+    rows = list_financial_statements(
         company_nit=normalized_nit,
         period_start=period_start,
         period_end=period_end,
         statement_type=statement_type,
         source_mode=source_mode,
     )
+    return rows[offset : offset + limit]
 
 
 @router.get("/statements/{statement_id}")

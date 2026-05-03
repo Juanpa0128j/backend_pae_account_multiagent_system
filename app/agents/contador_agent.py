@@ -222,12 +222,14 @@ def contador_node(state: AgentState) -> AgentState:
                     f"Aclarar) con el tipo de movimiento necesario para igualar los "
                     f"totales. No omitas los asientos ya generados. Error original: {exc}"
                 )
-                contador_output = llm.extract_contador_output(
+                contador_output = llm_with_parse_retry(
+                    llm.extract_contador_output,
                     raw_transactions=raw_transactions,
                     doc_type=doc_type,
                     rag_context=rag_context,
                     correction_feedback=suspense_feedback,
                     source_taxes=source_taxes,
+                    agent_label="contador-recovery",
                 )
                 # Recovery succeeded — emit WARNING so the accountant is notified
                 from app.agents.audit_utils import append_finding

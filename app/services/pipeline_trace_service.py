@@ -114,10 +114,7 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
         f for f in all_findings if f.severity.value == "blocker" and not f.fixable
     ]
 
-    # Only let log-derived blockers downgrade status when the job actually
-    # failed or is pending review. A successful force-persist re-run will have
-    # the prior run's blockers in agent_log, but the job itself is COMPLETED.
-    if blockers and overall_status != "completed":
+    if blockers:
         overall_status = "failed"
     elif all_findings and overall_status == "completed":
         overall_status = "completed_with_warnings"

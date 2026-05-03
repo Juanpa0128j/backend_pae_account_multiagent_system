@@ -9,8 +9,11 @@ reporting purposes.
 
 import logging
 
+from pydantic import ValidationError
+
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
+from app.models.ingest_schemas import INGEST_CONTENT_SCHEMAS
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,21 @@ def import_existing_node(state: AgentState) -> AgentState:
             },
         )
         return state
+
+    schema = INGEST_CONTENT_SCHEMAS.get(doc_type)
+    if schema is not None:
+        try:
+            schema.model_validate(interpreted)
+        except ValidationError as ve:
+            state["error"] = f"Esquema inválido para {doc_type}: {ve}"
+            logger.error(state["error"])
+            append_log(
+                state,
+                "import_existing",
+                "node_error",
+                {"error": state["error"]},
+            )
+            return state
 
     state["result"] = {
         "status": "completed",

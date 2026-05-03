@@ -107,9 +107,7 @@ def auditor_node(state: AgentState) -> AgentState:
         )
         # Also set unified field names used by the supervisor FSM
         state["audit_decision"] = "approved" if approved else "rejected"
-        state["audit_feedback"] = (
-            auditor_output.get("resumen") if not approved else None
-        )
+        state["audit_feedback"] = auditor_output.get("resumen") if not approved else ""
 
         if not state.get("result"):
             state["result"] = {}

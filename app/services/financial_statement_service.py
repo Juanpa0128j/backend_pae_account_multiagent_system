@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.core.database import SessionLocal
 from app.models.database import IngestStatus
 from app.services import db_service
@@ -297,11 +299,18 @@ def list_financial_statements(
     period_end: datetime | None = None,
     statement_type: str | None = None,
     source_mode: str | None = None,
+    db: Session | None = None,
 ) -> list[dict[str, Any]]:
-    """Internal read API for financial statements filtered by company and period."""
+    """Internal read API for financial statements filtered by company and period.
+
+    If ``db`` is provided (e.g. FastAPI request-scoped session), reuse it.
+    Otherwise open a short-lived session.
+    """
     normalized_nit = normalize_nit(company_nit)
 
-    db = SessionLocal()
+    owned_session = db is None
+    if owned_session:
+        db = SessionLocal()
     try:
         rows = db_service.get_financial_statements(
             db,
@@ -328,7 +337,8 @@ def list_financial_statements(
             for row in rows
         ]
     finally:
-        db.close()
+        if owned_session and db is not None:
+            db.close()
 
 
 def derive_financial_statements(
@@ -419,17 +429,40 @@ def derive_financial_statements(
                 elif codigo.startswith(("25", "26", "27")):
                     flujo_financiacion += saldo
 
-        # Try to retrieve opening cash balance from prior period or use prior statement
-        # If unavailable, start from zero as conservative estimate (note constraint in informacion_adicional)
+        # Opening cash balance = sum of class-11 journal entry net positions up to
+        # the day before period_start. get_balance_sheet does not expose a "cash"
+        # key (only class-1 totals), so compute directly from journal lines for
+        # accurate first-period derivation.
+        prior_efectivo = Decimal("0")
         try:
-            prior_balance_sheet = db_service.get_balance_sheet(
-                db,
-                cutoff_date=period_start - timedelta(days=1),
-                company_nit=normalized_nit,
+            prior_lines = (
+                db.query(db_service.JournalEntryLine)
+                .join(
+                    db_service.TransactionPosted,
+                    db_service.JournalEntryLine.transaction_posted_id
+                    == db_service.TransactionPosted.id,
+                )
+                .filter(
+                    db_service.TransactionPosted.status
+                    == db_service.TransactionStatus.POSTED,
+                    db_service.JournalEntryLine.fecha
+                    <= (period_start - timedelta(days=1)),
+                    db_service.JournalEntryLine.company_nit == normalized_nit,
+                )
+                .all()
             )
-            prior_efectivo = Decimal(str(prior_balance_sheet.get("cash", 0) or 0))
-        except Exception:
-            prior_efectivo = Decimal("0")
+            for line in prior_lines:
+                code = str(line.cuenta_puc or "")
+                if code.startswith("11"):
+                    prior_efectivo += (line.debito or Decimal("0")) - (
+                        line.credito or Decimal("0")
+                    )
+        except Exception as exc:
+            _log.warning(
+                "Cash flow derivation: failed to compute prior cash for %s: %s",
+                normalized_nit,
+                exc,
+            )
 
         efectivo_inicio = prior_efectivo
 

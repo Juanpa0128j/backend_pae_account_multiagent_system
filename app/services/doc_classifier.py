@@ -38,6 +38,14 @@ class DocumentClassification(BaseModel):
     entity_name: Optional[str] = Field(
         default=None, description="Entity name if detected in document"
     )
+    error: Optional[str] = Field(
+        default=None,
+        description=(
+            "When set, the LLM classification failed and the result is a "
+            "best-effort fallback. Callers should surface this to the user "
+            "rather than silently treating the doc as 'OTRO'."
+        ),
+    )
 
 
 def _classify_with_llm(text_preview: str) -> ClassificationResponse:
@@ -114,9 +122,14 @@ def classify_document(
 
     except Exception as e:
         logger.error("doc_classifier: LLM classification failed: %s", e)
+        # Surface the failure via the `error` field so the supervisor / caller
+        # can distinguish a real "OTRO" classification from an LLM outage.
+        # Caller should set state["error"] for upstream/permanent provider
+        # failures rather than silently treating this as a normal classification.
         return DocumentClassification(
             doc_type=DocumentType.OTRO,
             pathway=IngestPathway.BUILD_FROM_SCRATCH,
             confidence=0.0,
             source_format=source_format_literal,
+            error=f"Classification LLM error: {type(e).__name__}: {e}",
         )
