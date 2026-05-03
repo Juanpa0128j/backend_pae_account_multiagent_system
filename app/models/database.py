@@ -57,6 +57,7 @@ class ProcessStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    PENDING_AUDIT_REVIEW = "pending_audit_review"
 
 
 class IngestStatus(str, enum.Enum):

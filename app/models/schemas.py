@@ -84,6 +84,7 @@ class ProcessStatusResponse(BaseModel):
     completed_at: Optional[str] = None
     has_warnings: bool = False
     trace_url: Optional[str] = None
+    audit_review: Optional[Dict[str, Any]] = None
 
 
 class ProcessResultResponse(BaseModel):

@@ -615,6 +615,17 @@ def supervisor_node(state: AgentState) -> AgentState:
             return state
 
         if current == "auditor":
+            # If user confirmed force-persist, skip audit and go straight to db_persist.
+            if state.get("force_persist"):
+                state["current_agent"] = "db_persist"
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {"next_agent": "db_persist", "reason": "force_persist"},
+                )
+                return state
+
             # Validate AuditorOutput schema before deciding whether to persist.
             state = validate_auditor_output_node(state)
             if state.get("correction_feedback"):
@@ -663,7 +674,7 @@ def supervisor_node(state: AgentState) -> AgentState:
                 ]
 
                 if blockers:
-                    # Unfixable BLOCKER — cannot auto-recover, go to error terminal.
+                    # Unfixable BLOCKER — cannot auto-recover, pause for HITL review.
                     if state.get("unfixable_findings") is None:
                         state["unfixable_findings"] = []
                     state["unfixable_findings"].extend(
@@ -671,7 +682,8 @@ def supervisor_node(state: AgentState) -> AgentState:
                     )
                     rule_ids = [b.rule_id for b in blockers]
                     state["error"] = f"Unfixable audit blockers: {rule_ids}"
-                    state["current_agent"] = "error_terminal"
+                    record_giveup(state, "contador", blockers)
+                    state["current_agent"] = "audit_review_terminal"
                     logger.error(
                         "Supervisor: Unfixable audit blockers detected — %s", rule_ids
                     )
@@ -680,7 +692,7 @@ def supervisor_node(state: AgentState) -> AgentState:
                         "supervisor",
                         "routing_complete",
                         {
-                            "next_agent": "error_terminal",
+                            "next_agent": "audit_review_terminal",
                             "reason": "unfixable_blockers",
                             "rule_ids": rule_ids,
                         },
@@ -706,7 +718,7 @@ def supervisor_node(state: AgentState) -> AgentState:
                         or rejection_count > MAX_AUDITOR_RETRIES
                     ):
                         record_giveup(state, "contador", [])
-                        state["current_agent"] = "error_terminal"
+                        state["current_agent"] = "audit_review_terminal"
                         logger.warning(
                             "Supervisor: Audit give-up (no fixable findings), remaining_budget=%d rejection_count=%d",
                             retry_budget["contador"],
@@ -717,7 +729,7 @@ def supervisor_node(state: AgentState) -> AgentState:
                             "supervisor",
                             "routing_complete",
                             {
-                                "next_agent": "error_terminal",
+                                "next_agent": "audit_review_terminal",
                                 "reason": "audit_giveup_no_fixable_findings",
                                 "rejection_count": rejection_count,
                                 "remaining_budget": retry_budget["contador"],
@@ -767,7 +779,7 @@ def supervisor_node(state: AgentState) -> AgentState:
                         or global_failures >= GLOBAL_AUDIT_FAILURES
                     ):
                         record_giveup(state, target, fixable)
-                        state["current_agent"] = "error_terminal"
+                        state["current_agent"] = "audit_review_terminal"
                         logger.warning(
                             "Supervisor: Retry budget exhausted for target=%s global_failures=%d",
                             target,
@@ -778,7 +790,7 @@ def supervisor_node(state: AgentState) -> AgentState:
                             "supervisor",
                             "routing_complete",
                             {
-                                "next_agent": "error_terminal",
+                                "next_agent": "audit_review_terminal",
                                 "reason": "retry_budget_exhausted",
                                 "target": target,
                                 "remaining_budget": retry_budget[target],
@@ -957,6 +969,24 @@ def review_terminal_node(state: AgentState) -> AgentState:
     return state
 
 
+def audit_review_terminal_node(state: AgentState) -> AgentState:
+    """Terminal node: audit gave up — awaits user confirmation to force-persist."""
+    if not state.get("result"):
+        state["result"] = {}
+    state["result"]["status"] = "pending_audit_review"
+    state["result"]["giveup_record"] = state.get("giveup_record")
+    state["result"]["audit_rejection_reason"] = state.get(
+        "audit_rejection_reason"
+    ) or state.get("audit_feedback")
+    append_log(
+        state,
+        "supervisor",
+        "pipeline_paused",
+        {"reason": "pending_audit_review"},
+    )
+    return state
+
+
 # ---------------------------------------------------------------------------
 # Routing function for unified graph
 # ---------------------------------------------------------------------------
@@ -967,9 +997,13 @@ def route_after_supervisor(state: AgentState) -> str:
     Conditional edge: dispatch to the correct agent node after supervisor routing.
     Returns the node name that matches the routing_map in create_agent_graph().
     """
+    agent = state.get("current_agent", "ingesta")
+    # audit_review_terminal takes priority over error — it's the HITL path for
+    # recoverable audit give-ups (state["error"] is kept for backward compat only).
+    if agent == "audit_review_terminal":
+        return "audit_review_terminal"
     if state.get("error"):
         return "error_terminal"
-    agent = state.get("current_agent", "ingesta")
     routing_map = {
         "ingesta": "ingesta",
         "ingest": "ingesta",
@@ -981,5 +1015,6 @@ def route_after_supervisor(state: AgentState) -> str:
         "persist": "db_persist",
         "reportero": "reportero",
         "review_terminal": "review_terminal",
+        "audit_review_terminal": "audit_review_terminal",
     }
     return routing_map.get(agent, "error_terminal")

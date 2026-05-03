@@ -32,24 +32,24 @@ def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def start_process_job(process_id: str) -> None:
+async def start_process_job(process_id: str, force_persist: bool = False) -> None:
     """Schedule a process job in the current event loop."""
-    asyncio.create_task(run_process_job(process_id))
+    asyncio.create_task(run_process_job(process_id, force_persist=force_persist))
 
 
-async def run_process_job(process_id: str) -> None:
+async def run_process_job(process_id: str, force_persist: bool = False) -> None:
     """Execute the accounting flow for a process job with timeout handling."""
     # Limit concurrent process pipelines. This is a blocking acquire,
     # so we run it in a thread to avoid blocking the event loop.
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, PROCESS_PIPELINE_SEMAPHORE.acquire)
     try:
-        await _run_process_job_impl(process_id)
+        await _run_process_job_impl(process_id, force_persist=force_persist)
     finally:
         PROCESS_PIPELINE_SEMAPHORE.release()
 
 
-async def _run_process_job_impl(process_id: str) -> None:
+async def _run_process_job_impl(process_id: str, force_persist: bool = False) -> None:
     """Implementation of process job execution, protected by semaphore."""
     db = SessionLocal()
     try:
@@ -194,6 +194,7 @@ async def _run_process_job_impl(process_id: str) -> None:
         logger.info(f"Acquired process pipeline slot for: {process_id}")
         # Use dedicated thread pool to avoid blocking the default executor
         loop = asyncio.get_event_loop()
+        _force_persist = force_persist
         result = await asyncio.wait_for(
             loop.run_in_executor(
                 _GRAPH_EXECUTOR,
@@ -204,10 +205,33 @@ async def _run_process_job_impl(process_id: str) -> None:
                     process_id=process_id,
                     doc_type=doc_type,
                     source_document=source_document,
+                    force_persist=_force_persist,
                 ),
             ),
             timeout=MAX_PROCESS_SECONDS,
         )
+
+        result_status = result.get("status") or (result.get("result") or {}).get(
+            "status"
+        )
+        if result_status == "pending_audit_review":
+            db_service.update_process_job(
+                db,
+                process_id=process_id,
+                status=ProcessStatus.PENDING_AUDIT_REVIEW,
+                current_stage="pending_audit_review",
+                current_agent="supervisor",
+                progress=80,
+                agent_log_entry={
+                    "timestamp": _utc_iso(),
+                    "agent": "supervisor",
+                    "stage": "pending_audit_review",
+                    "event": "audit_giveup",
+                    "message": "Auditoría agotó reintentos. Se requiere confirmación manual para continuar.",
+                    "details": result.get("giveup_record"),
+                },
+            )
+            return
 
         if result.get("error"):
             db_service.update_process_job(

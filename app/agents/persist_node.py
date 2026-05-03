@@ -666,7 +666,11 @@ def _run_persist(state: AgentState) -> AgentState:
             if isinstance(f, dict) and str(f.get("severity", "")).lower() == "blocker"
         ]
 
-        if report_blockers or state_blockers:
+        if state.get("force_persist"):
+            logger.warning(
+                "db_persist: force_persist=True — skipping pre-persist audit blocker check"
+            )
+        elif report_blockers or state_blockers:
             first = report_blockers[0] if report_blockers else state_blockers[0]
             first_rule = (
                 first.rule_id

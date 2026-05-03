@@ -112,11 +112,22 @@ def record_giveup(
 
     Sets state["giveup_record"] and appends the explanation to agent_log.
     """
-    attempts = sum(
-        1
-        for r in (state.get("audit_reports") or [])
-        if r.get("target") == target and not r.get("approved", True)
+    # Determine attempt count by path:
+    # - LLM rejection path (empty findings): use audit_rejection_count from state
+    # - Deterministic fixable path (non-empty findings): count from retry_budget usage
+    if not findings:
+        attempts = max(state.get("audit_rejection_count", 0), 1)
+    else:
+        from app.agents.validation_rules import RETRY_BUDGETS
+
+        initial = RETRY_BUDGETS.get(target, 1)
+        remaining = (state.get("retry_budget") or {}).get(target, initial)
+        attempts = max(initial - remaining, 1)
+
+    rejection_reason = state.get("audit_rejection_reason") or state.get(
+        "audit_feedback"
     )
+
     finding_count = len(findings)
     rule_ids = (
         ", ".join(f.rule_id for f in findings)
@@ -129,12 +140,15 @@ def record_giveup(
         f"pero no logró resolver los problemas detectados ({rule_ids}). "
         "Se requiere revisión manual por parte del contador."
     )
+    if rejection_reason:
+        explanation_es += f" Motivo del rechazo: {rejection_reason}"
 
     record = GiveUpRecord(
         target=target,  # type: ignore[arg-type]
-        attempts=max(attempts, 1),
+        attempts=attempts,
         last_findings=findings,
         explanation_es=explanation_es,
+        rejection_reason=rejection_reason,
     )
     state["giveup_record"] = record.model_dump()
 

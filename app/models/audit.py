@@ -87,3 +87,6 @@ class GiveUpRecord(BaseModel):
     explanation_es: str = Field(
         ..., description="Plain Spanish explanation of why auto-fix failed"
     )
+    rejection_reason: Optional[str] = Field(
+        None, description="LLM or deterministic rejection reason surfaced to accountant"
+    )

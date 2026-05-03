@@ -185,12 +185,12 @@ class TestProcessGraphStructure:
         assert "db_persist" in node_names
 
     def test_process_graph_node_count(self):
-        """Unified agent graph should have exactly 11 nodes."""
+        """Unified agent graph should have exactly 12 nodes."""
         graph = create_agent_graph()
         node_names = [
             n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
         ]
-        assert len(node_names) == 11
+        assert len(node_names) == 12
 
 
 # ─── Test: Contador Node ──────────────────────────────────────────

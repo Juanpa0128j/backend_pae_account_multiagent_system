@@ -106,3 +106,4 @@ class AgentState(TypedDict):
     audit_reports: List[dict]  # AuditReport dicts (populated in Phase 3+)
     retry_budget: dict  # per-target remaining retries, e.g. {"contador": 2}
     giveup_record: Optional[dict]  # GiveUpRecord dict when loop gives up (Phase 4+)
+    force_persist: bool  # If True, skip audit blocker checks and force DB persist

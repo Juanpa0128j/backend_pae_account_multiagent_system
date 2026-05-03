@@ -654,7 +654,7 @@ class TestProcessGraphStructure:
         nodes = [
             n for n in graph.get_graph().nodes if n not in ("__start__", "__end__")
         ]
-        assert len(nodes) == 11
+        assert len(nodes) == 12
 
 
 # ===========================================================================
