@@ -54,7 +54,9 @@ class PipelineTrace(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     process_id: str
-    overall_status: Literal["completed", "completed_with_warnings", "failed"]
+    overall_status: Literal[
+        "completed", "completed_with_warnings", "failed", "pending_audit_review"
+    ]
     steps: List[TraceStep] = Field(default_factory=list)
     blockers: List[AuditFinding] = Field(default_factory=list)
     give_up: Optional[GiveUpRecord] = None
