@@ -67,8 +67,19 @@ def upsert_company_settings(
     body: CompanySettingsRequest,
     db: Session = Depends(get_db),
 ):
-    """Create or fully replace the tax configuration for the given company NIT."""
-    return db_service.upsert_company_settings(db, nit, body.model_dump())
+    """Update the tax configuration for the given company NIT.
+
+    PATCH semantics: only fields explicitly set by the client are persisted.
+    Omitted/None fields keep their current DB value. This prevents wiping out
+    `nombre`, `ciudad`, `codigo_ciiu`, etc. when a partial update is sent.
+    """
+    payload = body.model_dump(exclude_unset=True, exclude_none=True)
+    if not payload:
+        raise HTTPException(
+            status_code=400,
+            detail="Solicitud vacía: incluya al menos un campo a actualizar.",
+        )
+    return db_service.upsert_company_settings(db, nit, payload)
 
 
 @router.post("/company/{nit}/setup", response_model=CompanySettingsResponse)
@@ -90,30 +101,30 @@ def setup_company_tax_profile(
     Retefuente rates are always taken from national law (Art. 383/401 ET) — they
     do not vary by municipality.
     """
-    # ── Step 1: ReteICA and ICA — relational DB lookup (primary source) ─────────
-    # Both tasa_reteica and tasa_ica are sourced from reteica_tarifas, which stores
-    # the ICA tariff per municipality/CIIU. They are stored as separate fields because
-    # municipalities can set different retention rates (ReteICA) from the actual tax
-    # rate (ICA) — e.g. Bogotá historically uses a flat 2‰ ReteICA regardless of the
-    # per-activity ICA rate (4.14‰–13.8‰). Never conflate them.
+    # ── Step 1: ReteICA — relational DB lookup (primary source) ─────────────────
+    # reteica_tarifas only stores the ReteICA retention rate. ICA (the underlying
+    # activity tax) is tracked separately because municipalities like Bogotá apply
+    # a flat ReteICA regardless of the per-activity ICA rate (4.14‰–13.8‰).
+    # When no separate ICA source is available we use ReteICA as the best-effort
+    # fallback and surface a warning so the user knows the value may need review.
     tasa_reteica = db_service.get_reteica_tarifa(db, body.ciudad, body.codigo_ciiu)
-    tasa_ica = db_service.get_reteica_tarifa(db, body.ciudad, body.codigo_ciiu)
+    tasa_ica: float | None = None
     reteica_source = "db"
 
     if tasa_reteica is None:
         logger.info(
             f"Tax profile setup: No DB entry for ciudad={body.ciudad}, "
-            f"ciiu={body.codigo_ciiu} — falling back to RAG+Gemini"
+            f"ciiu={body.codigo_ciiu} — falling back to RAG+LLM"
         )
-        reteica_source = "gemini"
+        reteica_source = "llm"
 
-        # ── Step 2: RAG + Gemini fallback ────────────────────────────────────
+        # ── Step 2: RAG + LLM fallback ────────────────────────────────────────
         rag_context = ""
         try:
             rag = get_rag_service()
             queries = [
                 f"tasa ReteICA municipio {body.ciudad} impuesto industria comercio ICA",
-                f"retención ICA actividad CIIU {body.codigo_ciiu}",
+                f"tarifa ICA actividad CIIU {body.codigo_ciiu}",
             ]
             results = []
             for q in queries:
@@ -134,14 +145,27 @@ def setup_company_tax_profile(
                 rag_context=rag_context,
             )
             tasa_reteica = rate_lookup.tasa_reteica
-            tasa_ica = rate_lookup.tasa_reteica
-        except Exception as gemini_err:
+            tasa_ica = rate_lookup.tasa_ica
+        except Exception as llm_err:
             logger.warning(
-                f"Tax profile setup: Gemini failed ({gemini_err}), using national default"
+                f"Tax profile setup: LLM rate lookup failed ({llm_err}), "
+                "using national default"
             )
             tasa_reteica = 0.0069  # national reference rate
             tasa_ica = 0.0069
             reteica_source = "default"
+
+    if tasa_ica is None:
+        # Fell through the DB path which only stores ReteICA. Use it as the best
+        # available proxy for ICA, but warn the operator: this is wrong for any
+        # municipality where the activity tariff differs from the retention.
+        logger.warning(
+            "Tax profile setup for NIT %s: no separate ICA source available — "
+            "using ReteICA (%s) as ICA proxy. Verify against municipal acuerdo.",
+            nit,
+            tasa_reteica,
+        )
+        tasa_ica = tasa_reteica
 
     tasa_iva = 0.19 if body.iva_responsable else 0.0
 

@@ -204,7 +204,14 @@ class TaxRateLookup(BaseModel):
         description="Retefuente rate for lease/rent as decimal fraction"
     )
     tasa_reteica: Decimal = Field(
-        description="ReteICA rate for city/CIIU as decimal fraction"
+        description="ReteICA retention rate for city/CIIU as decimal fraction"
+    )
+    tasa_ica: Decimal = Field(
+        description=(
+            "ICA tax rate (impuesto sobre actividad económica) for city/CIIU as "
+            "decimal fraction. May differ from tasa_reteica — e.g. Bogotá ReteICA "
+            "is flat for non-self-retainers but ICA varies by activity (4.14‰–13.8‰)."
+        )
     )
     tasa_iva_general: Decimal = Field(
         description="IVA tariff as decimal fraction (0.19 or 0.0)"
@@ -218,6 +225,7 @@ class TaxRateLookup(BaseModel):
         "tasa_retefuente_bienes",
         "tasa_retefuente_arrendamiento",
         "tasa_reteica",
+        "tasa_ica",
         "tasa_iva_general",
         mode="before",
     )

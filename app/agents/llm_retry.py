@@ -42,6 +42,32 @@ def is_parse_error(exc: BaseException) -> bool:
     )
 
 
+_PERMANENT_AUTH_HINTS = (
+    "401",
+    "403",
+    "invalid_api_key",
+    "invalid api key",
+    "api key not valid",
+    "authentication",
+    "unauthorized",
+    "forbidden",
+    "permission_denied",
+    "permissiondenied",
+)
+
+
+def is_permanent_provider_error(exc: BaseException) -> bool:
+    """Return True if the exception looks like a non-retriable provider failure.
+
+    Auth errors, missing API keys, or permission denials will not improve on
+    retry — fail fast instead of burning the retry budget across N nodes.
+    """
+    if is_parse_error(exc):
+        return False
+    msg = str(exc).lower()
+    return any(hint in msg for hint in _PERMANENT_AUTH_HINTS)
+
+
 def is_double_entry_violation(exc: BaseException) -> bool:
     """Return True if the parse error message describes a double-entry violation."""
     return is_parse_error(exc) and "Double-entry violation" in str(exc)
@@ -77,6 +103,15 @@ def llm_with_parse_retry(
         try:
             return method(*args, correction_feedback=active_feedback, **kwargs)
         except _TRANSIENT_EXC as e:
+            # Fast-fail on permanent provider errors (e.g. 401/invalid key).
+            # Retrying these wastes budget across multiple nodes.
+            if is_permanent_provider_error(e):
+                logger.error(
+                    "%s: permanent provider error, not retrying: %s",
+                    agent_label,
+                    e,
+                )
+                raise
             last_exc = e
             logger.warning(
                 "%s: LLM transient/parse error attempt %d/%d: %s",
@@ -90,7 +125,13 @@ def llm_with_parse_retry(
                     "El intento anterior falló por un error de validación de esquema "
                     f"o JSON. Corrige y reintenta. Error: {e}"
                 )
-        except Exception:
+        except Exception as e:
+            if is_permanent_provider_error(e):
+                logger.error(
+                    "%s: permanent provider error, not retrying: %s",
+                    agent_label,
+                    e,
+                )
             raise
     if last_exc is not None:
         raise last_exc

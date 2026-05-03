@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     )
 
     def model_post_init(self, __context) -> None:
-        """Normalize DB URL and enforce SSL for Supabase-hosted Postgres."""
+        """Normalize DB URL, enforce SSL for Supabase, and reject insecure prod config."""
         normalized_url = self.database_url
 
         if normalized_url.startswith("postgres://"):
@@ -92,6 +92,16 @@ class Settings(BaseSettings):
 
         if normalized_url != self.database_url:
             object.__setattr__(self, "database_url", normalized_url)
+
+        # Refuse to boot in production with a default/empty SECRET_KEY. Better to
+        # crash now than expose signed cookies/tokens with a published value.
+        if self.app_env == "production":
+            insecure_keys = {"", "change-me-in-production", "changeme", "secret"}
+            if self.secret_key in insecure_keys or len(self.secret_key) < 32:
+                raise ValueError(
+                    "SECRET_KEY must be set to a strong (>=32 chars) random value "
+                    "when APP_ENV=production. Refusing to start with the default."
+                )
 
     @property
     def is_production(self) -> bool:

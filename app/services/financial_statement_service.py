@@ -43,14 +43,29 @@ def _first_level_type_exists(
     return len(rows) > 0
 
 
+# Sentinel file_path used to mark synthetic IngestJobs created only to satisfy
+# the FK constraint on FinancialStatement. Listing endpoints must filter these
+# out so the user does not see phantom "uploads" they never made.
+SYNTHETIC_INGEST_FILE_PATH = "internal://journal_derived"
+
+
+def is_synthetic_ingest_job(job) -> bool:
+    """True if the IngestJob was created only as an FK target for derived statements."""
+    file_path = getattr(job, "file_path", None)
+    return file_path == SYNTHETIC_INGEST_FILE_PATH
+
+
 def _create_derivation_ingest_job(
     db, company_nit: str, period_end: datetime, doc_type: str
 ):
-    """Create a synthetic IngestJob to satisfy the FK constraint on FinancialStatement."""
+    """Create a synthetic IngestJob to satisfy the FK constraint on FinancialStatement.
+
+    Tagged with SYNTHETIC_INGEST_FILE_PATH so listing endpoints can filter it out.
+    """
     ingest_job = db_service.create_ingest_job(
         db,
         file_name=f"journal_derived_{company_nit}_{period_end.date().isoformat()}_{doc_type}",
-        file_path="internal://journal_derived",
+        file_path=SYNTHETIC_INGEST_FILE_PATH,
         commit=False,
     )
     ingest_job.status = IngestStatus.COMPLETED
