@@ -14,8 +14,8 @@ is_supabase = (
     "supabase.co" in settings.database_url
     or "pooler.supabase.com" in settings.database_url
 )
-pool_size = 2 if is_supabase else 5
-max_overflow = 3 if is_supabase else 10
+pool_size = 10 if is_supabase else 20
+max_overflow = 15 if is_supabase else 25
 
 # PostgreSQL engine with connection pooling.
 # pool_timeout is generous: DB-write tasks queue via DB_WRITE_SEMAPHORE so they
@@ -26,8 +26,8 @@ engine = create_engine(
     pool_pre_ping=True,
     pool_size=pool_size,
     max_overflow=max_overflow,
-    pool_recycle=300,
-    pool_timeout=120,
+    pool_recycle=1800,
+    pool_timeout=180,
     connect_args={"connect_timeout": 60},
     echo=(settings.app_env == "development"),
 )
@@ -48,6 +48,13 @@ DB_WRITE_SEMAPHORE = threading.Semaphore(DB_WRITE_CONCURRENCY)
 # instead of running them all in parallel.
 INGEST_PIPELINE_CONCURRENCY = 2
 INGEST_PIPELINE_SEMAPHORE = threading.Semaphore(INGEST_PIPELINE_CONCURRENCY)
+
+# Global semaphore that limits concurrent process (accounting) pipelines.
+# Contador, Tributario, Auditor agents + persist phase all compete for DB
+# connections. With pool_size=10+overflow=15 (Supabase), we can safely run
+# 4 processes concurrently without contention. This semaphore queues jobs.
+PROCESS_PIPELINE_CONCURRENCY = 4
+PROCESS_PIPELINE_SEMAPHORE = threading.Semaphore(PROCESS_PIPELINE_CONCURRENCY)
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

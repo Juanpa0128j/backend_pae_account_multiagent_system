@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from app.agents.graph import invoke_accounting_pipeline
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, PROCESS_PIPELINE_SEMAPHORE
 from app.models.database import ProcessStatus
 from app.services import db_service
 
@@ -39,6 +39,18 @@ async def start_process_job(process_id: str) -> None:
 
 async def run_process_job(process_id: str) -> None:
     """Execute the accounting flow for a process job with timeout handling."""
+    # Limit concurrent process pipelines. This is a blocking acquire,
+    # so we run it in a thread to avoid blocking the event loop.
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, PROCESS_PIPELINE_SEMAPHORE.acquire)
+    try:
+        await _run_process_job_impl(process_id)
+    finally:
+        PROCESS_PIPELINE_SEMAPHORE.release()
+
+
+async def _run_process_job_impl(process_id: str) -> None:
+    """Implementation of process job execution, protected by semaphore."""
     db = SessionLocal()
     try:
         process_job = db_service.get_process_job(db, process_id)
@@ -179,6 +191,7 @@ async def run_process_job(process_id: str) -> None:
             )
             return
 
+        logger.info(f"Acquired process pipeline slot for: {process_id}")
         # Use dedicated thread pool to avoid blocking the default executor
         loop = asyncio.get_event_loop()
         result = await asyncio.wait_for(
