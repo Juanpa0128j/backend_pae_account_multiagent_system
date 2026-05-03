@@ -363,7 +363,6 @@ def test_db_persist_refuses_when_pre_persist_blocker_present(
 
     out = db_persist_node(_build_state())
 
-    assert out.get("error") is not None
-    assert "audit_blocker" in out["error"]
+    assert out.get("current_agent") == "audit_review_terminal"
+    assert out.get("giveup_record") is not None
     assert mock_create_posted.call_count == 0
-    assert mock_update_process.called

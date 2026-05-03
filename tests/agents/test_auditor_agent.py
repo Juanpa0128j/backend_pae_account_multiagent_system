@@ -575,13 +575,14 @@ class TestValidateContadorOutputNode:
             result = validate_contador_output_node(state)
         assert result["correction_feedback"] is not None or result["error"] is not None
 
-    def test_missing_puc_exhausted_retries_sets_error(self):
+    def test_missing_puc_exhausted_retries_routes_to_hitl(self):
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT), retry_count=3)
         with patch(
             "app.agents.validation_rules._missing_puc_codes", return_value=["9999"]
         ):
             result = validate_contador_output_node(state)
-        assert result["error"] is not None
+        assert result.get("current_agent") == "audit_review_terminal"
+        assert result.get("giveup_record") is not None
 
     def test_appends_to_validation_history(self):
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT))
@@ -923,8 +924,10 @@ class TestProcessGraphE2E:
 
     @patch("app.agents.contador_agent.get_llm_client")
     @patch("app.agents.validation_rules._missing_puc_codes", return_value=[])
-    def test_contador_exhausted_retries_sets_error(self, _mock_puc, mock_cnt_factory):
-        """When all retries are exhausted, graph stops with a hard error."""
+    def test_contador_exhausted_retries_routes_to_hitl(
+        self, _mock_puc, mock_cnt_factory
+    ):
+        """When all retries are exhausted, graph routes to HITL audit_review_terminal."""
         mock_cnt = MagicMock()
         mock_cnt.extract_contador_output.return_value = dict(INVALID_CONTADOR_OUTPUT)
         mock_cnt_factory.return_value = mock_cnt
@@ -935,7 +938,10 @@ class TestProcessGraphE2E:
             graph = create_agent_graph()
             final = graph.invoke(_base_state())
 
-        assert final.get("error") is not None
+        assert (
+            final.get("giveup_record") is not None
+            or final.get("current_agent") == "audit_review_terminal"
+        )
 
     @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.tributario_agent.get_llm_client")
