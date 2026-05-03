@@ -225,11 +225,15 @@ def lookup_municipio(db: Session, codigo: Optional[str]) -> Optional[dict]:
     """Return the dian_municipios row for ``codigo``, or ``None`` if missing.
 
     ``codigo`` is normalised to a 5-character zero-padded string before
-    querying so that integer-shaped inputs (``11001``) work too.
+    querying so that integer-shaped inputs (``11001``) work too. Empty or
+    whitespace-only inputs short-circuit to ``None`` without querying the DB.
     """
     if codigo is None:
         return None
-    normalized = str(codigo).zfill(5)
+    stripped = str(codigo).strip()
+    if not stripped:
+        return None
+    normalized = stripped.zfill(5)
     if len(normalized) != 5 or not normalized.isdigit():
         return None
     row = db.execute(_LOOKUP_BY_CODIGO_SQL, {"codigo": normalized}).fetchone()
@@ -239,10 +243,17 @@ def lookup_municipio(db: Session, codigo: Optional[str]) -> Optional[dict]:
 
 
 def lookup_municipio_by_name(db: Session, nombre: Optional[str]) -> Optional[dict]:
-    """Return the first dian_municipios row where name matches case-insensitively."""
+    """Return the first dian_municipios row where name matches case-insensitively.
+
+    Empty and whitespace-only inputs short-circuit to ``None`` without hitting
+    the DB.
+    """
     if not nombre:
         return None
-    row = db.execute(_LOOKUP_BY_NAME_SQL, {"nombre": nombre.strip()}).fetchone()
+    stripped = nombre.strip()
+    if not stripped:
+        return None
+    row = db.execute(_LOOKUP_BY_NAME_SQL, {"nombre": stripped}).fetchone()
     if not row:
         return None
     return dict(row._mapping)

@@ -13,7 +13,8 @@ Embeddings are generated via the HuggingFace Inference API (BAAI/bge-m3):
 Search modes:
   - search()        : Pure vector (cosine similarity via pgvector HNSW index)
   - search_hybrid() : Hybrid BM25+vector fused with Reciprocal Rank Fusion (RRF)
-                      Requires migration d4e5f6a7b8c9_add_fts_column to be applied.
+                      Requires migration f1b2c3d4e5f6 (and downstream alignments
+                      in b1c2d3e4f5a6) to provide content_tsv + indexes.
 """
 
 import json
@@ -165,8 +166,9 @@ class SupabaseVectorDB:
         where MAX_RRF = 2 / (rrf_k + 1).  This ensures _parse_search_results()
         produces scores in [0, 1] (score = 1 - dist/2 = rrf_score / MAX_RRF).
 
-        Requires migration d4e5f6a7b8c9_add_fts_column to be applied (adds the
-        GENERATED tsvector column and its GIN index).
+        Requires migration f1b2c3d4e5f6 to be applied (adds the GENERATED
+        tsvector column and its GIN index) and b1c2d3e4f5a6 to align the
+        column's tsvector config with plainto_tsquery('spanish', ...).
 
         Falls back automatically to pure vector search when no FTS matches exist.
         """
@@ -384,12 +386,17 @@ class SupabaseVectorDB:
         Logs a WARNING with concrete remediation steps when degraded so a
         broken pgvector schema is visible at startup, not at first user query.
         """
+        # Scope to current schema so a same-named table in another schema (e.g. a
+        # staging or shadow copy) cannot mask missing objects in the active one.
         cols_sql = text(
             "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'vector_documents'"
+            "WHERE table_name = 'vector_documents' "
+            "AND table_schema = current_schema()"
         )
         idx_sql = text(
-            "SELECT indexname FROM pg_indexes WHERE tablename = 'vector_documents'"
+            "SELECT indexname FROM pg_indexes "
+            "WHERE tablename = 'vector_documents' "
+            "AND schemaname = current_schema()"
         )
         with Session(self._engine) as session:
             try:

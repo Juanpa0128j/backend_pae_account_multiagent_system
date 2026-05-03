@@ -134,6 +134,16 @@ class TestLookupMunicipio:
         assert lookup_municipio(db, None) is None  # type: ignore[arg-type]
         db.execute.assert_not_called()
 
+    def test_lookup_by_code_rejects_empty_string(self):
+        db = MagicMock()
+        assert lookup_municipio(db, "") is None
+        db.execute.assert_not_called()
+
+    def test_lookup_by_code_rejects_whitespace_only(self):
+        db = MagicMock()
+        assert lookup_municipio(db, "   ") is None
+        db.execute.assert_not_called()
+
     def test_lookup_by_name_found(self):
         cali = {
             "codigo": "76001",
@@ -160,6 +170,11 @@ class TestLookupMunicipio:
         db = MagicMock()
         assert lookup_municipio_by_name(db, "") is None
         assert lookup_municipio_by_name(db, None) is None  # type: ignore[arg-type]
+        db.execute.assert_not_called()
+
+    def test_lookup_by_name_rejects_whitespace_only(self):
+        db = MagicMock()
+        assert lookup_municipio_by_name(db, "   ") is None
         db.execute.assert_not_called()
 
 
