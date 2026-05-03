@@ -364,14 +364,29 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             )
             return state
 
-        state["error"] = (
-            f"PUC validation failed for '{agent_name}' after {attempt} attempts. "
-            f"Missing codes: {', '.join(missing)}"
+        # Exhausted retries for PUC validation — pause for HITL review instead of
+        # aborting, so the user can correct the document or override.
+        from app.agents.audit_utils import record_giveup
+        from app.models.audit import AuditFinding, Severity
+
+        puc_finding = AuditFinding(
+            rule_id="PUC_CODES_NOT_FOUND",
+            severity=Severity.BLOCKER,
+            fixable=False,
+            responsible_agent=agent_name,
+            evidence={"missing_codes": missing},
+            user_message_es=(
+                f"Los siguientes códigos PUC no existen en la base de datos: "
+                f"{', '.join(missing)}. El agente no pudo corregirlos automáticamente "
+                f"tras {attempt} intentos."
+            ),
+            suggested_action_es=(
+                "Revise el documento y corrija los códigos PUC inválidos, "
+                "o cargue un documento actualizado con los códigos correctos."
+            ),
         )
-        state["result"]["status"] = "validation_error"
-        state["result"]["validation_errors"] = [
-            {"loc": ["asientos"], "msg": missing_msg, "type": "puc_not_found"}
-        ]
+        record_giveup(state, agent_name, [puc_finding])
+        state["current_agent"] = "audit_review_terminal"
         state["correction_feedback"] = None
         append_log(
             state,
@@ -381,6 +396,7 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
                 "attempt": attempt,
                 "reason": "puc_not_found",
                 "missing": missing,
+                "next_agent": "audit_review_terminal",
             },
         )
         return state

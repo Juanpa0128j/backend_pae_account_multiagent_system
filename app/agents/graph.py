@@ -112,7 +112,15 @@ def create_agent_graph() -> Any:
 
     # --- terminals ---
     graph.add_edge("reportero", END)
-    graph.add_edge("db_persist", END)
+    graph.add_conditional_edges(
+        "db_persist",
+        lambda s: (
+            "audit_review_terminal"
+            if s.get("current_agent") == "audit_review_terminal"
+            else END
+        ),
+        {"audit_review_terminal": "audit_review_terminal", END: END},
+    )
     graph.add_edge("error_terminal", END)
     graph.add_edge("review_terminal", END)
     graph.add_edge("audit_review_terminal", END)

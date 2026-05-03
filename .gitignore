@@ -52,3 +52,6 @@ test_*.pdf
 # Claude
 .claude/
 .mcp.json
+
+# Terminal Paste Image folder
+.cp-images/

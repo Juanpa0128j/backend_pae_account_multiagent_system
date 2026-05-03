@@ -72,13 +72,24 @@ def _classify_process_error(
         return (
             "audit_blocker",
             "AUDIT_BLOCKER",
-            "Review auditor findings and correct blocking accounting issues before retrying.",
+            "Revise los hallazgos del auditor y corrija los problemas contables bloqueantes antes de reintentar.",
+        )
+
+    if (
+        "puc validation failed" in msg
+        or "puc_not_found" in msg
+        or "missing codes" in msg
+    ):
+        return (
+            "validation_error",
+            "PUC_CODES_NOT_FOUND",
+            "Los códigos PUC indicados no existen en la base de datos. Corrija el documento y vuelva a cargarlo.",
         )
 
     return (
         "system_error",
         "PROCESS_EXECUTION_ERROR",
-        "Review process job logs and retry.",
+        "Error en la ejecución del proceso contable. Revise el documento cargado e intente nuevamente.",
     )
 
 

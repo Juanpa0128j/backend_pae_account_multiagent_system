@@ -11,7 +11,6 @@ IngestJob -> TransactionPending -> TransactionPosted -> JournalEntryLines.
 # SQLAlchemy model attributes are runtime values on instances; static typing
 # can mis-infer them as Column[...] in service/pipeline code.
 
-import json
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
@@ -652,7 +651,7 @@ def _run_persist(state: AgentState) -> AgentState:
     if mode == "process":
         from app.agents.audit_utils import append_audit_report
         from app.agents.auditors import pre_persist_auditor
-        from app.models.audit import Severity
+        from app.models.audit import AuditFinding, Severity
 
         pre_persist_report = pre_persist_auditor.run(state)
         append_audit_report(state, pre_persist_report)
@@ -671,41 +670,19 @@ def _run_persist(state: AgentState) -> AgentState:
                 "db_persist: force_persist=True — skipping pre-persist audit blocker check"
             )
         elif report_blockers or state_blockers:
-            first = report_blockers[0] if report_blockers else state_blockers[0]
-            first_rule = (
-                first.rule_id
-                if report_blockers
-                else str(first.get("rule_id", "AUDIT-BLOCKER"))
-            )
-            first_message = (
-                first.user_message_es
-                if report_blockers
-                else str(
-                    first.get("user_message_es", "Se detectó un bloqueo de auditoría.")
-                )
-            )
-            first_action = (
-                first.suggested_action_es
-                if report_blockers
-                else str(first.get("suggested_action_es", ""))
-            )
+            from app.agents.audit_utils import record_giveup
 
-            remediation = first_message
-            if first_action:
-                remediation = f"{remediation} {first_action}".strip()
-
-            payload = {
-                "error_category": "audit_blocker",
-                "error_code": first_rule,
-                "remediation": remediation,
-                "message": "Persist blocked due to pre-persist audit blocker.",
-            }
-            state["error"] = json.dumps(payload, ensure_ascii=False)
-            logger.error(
-                "db_persist: refusing persist due to blocker findings rule_id=%s",
+            all_blockers = report_blockers or [
+                AuditFinding(**f) if isinstance(f, dict) else f for f in state_blockers
+            ]
+            first_rule = all_blockers[0].rule_id if all_blockers else "AUDIT-BLOCKER"
+            record_giveup(state, "db_persist", all_blockers)
+            state["current_agent"] = "audit_review_terminal"
+            logger.warning(
+                "db_persist: pre-persist blocker detected — routing to HITL rule_id=%s",
                 first_rule,
             )
-            raise RuntimeError(state["error"])
+            return state
 
     if mode == "process":
         contador_output = state.get("contador_output") or interpreted

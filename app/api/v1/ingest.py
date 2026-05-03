@@ -59,9 +59,7 @@ def process_ingest_background(
     # Limit concurrent ingest pipelines to avoid exhausting the Supabase
     # connection pool. Uploads queue here instead of racing for connections.
     with INGEST_PIPELINE_SEMAPHORE:
-        logger.info(
-            f"Acquired ingest pipeline slot for: {ingest_id}"
-        )
+        logger.info(f"Acquired ingest pipeline slot for: {ingest_id}")
         _run_ingest_pipeline(temp_file_path, ingest_id, company_nit)
 
 
@@ -194,9 +192,11 @@ def _build_ingest_detail_response(
         classification_review = {
             "predicted_type": predicted_type,
             "predicted_label": predicted_label,
-            "confidence": float(job.classification_confidence)
-            if job.classification_confidence is not None
-            else None,
+            "confidence": (
+                float(job.classification_confidence)
+                if job.classification_confidence is not None
+                else None
+            ),
             "available_types": list_via_a_document_type_options(),
             "wrong_upload_area": is_wrong_area,
         }
@@ -216,10 +216,11 @@ def _build_ingest_detail_response(
         "extraction_errors": job.extraction_errors or [],
         "raw_transactions": raw_txs,
         "error_category": "extraction_error" if job.extraction_errors else None,
-        "error_code": None,
+        "error_code": "INGEST_ERROR" if job.extraction_errors else None,
         "remediation": (
-            "Revisa el formato del archivo. "
-            + " ".join(str(e) for e in job.extraction_errors)
+            "El sistema no pudo procesar el documento. "
+            "Verifique que el archivo esté completo y en un formato compatible (PDF, Excel, imagen), "
+            "luego intente cargarlo nuevamente."
             if job.extraction_errors
             else None
         ),
