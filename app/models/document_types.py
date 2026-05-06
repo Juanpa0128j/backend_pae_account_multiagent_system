@@ -35,7 +35,6 @@ class DocumentType(str, Enum):
     CUENTA_COBRO = "cuenta_cobro"
     PLANILLA_SEGURIDAD_SOCIAL = "planilla_seguridad_social"
     RECIBO_PAGO_IMPUESTO = "recibo_pago_impuesto"
-    LIBRO_DIARIO = "libro_diario"
 
     # Vía B — Existing financial statements (use for derived reports)
     BALANCE_GENERAL = "balance_general"
@@ -44,6 +43,7 @@ class DocumentType(str, Enum):
     FLUJO_DE_CAJA = "flujo_de_caja"
     CAMBIOS_PATRIMONIO = "cambios_patrimonio"
     NOTAS_ESTADOS_FINANCIEROS = "notas_estados_financieros"
+    LIBRO_DIARIO = "libro_diario"
 
     # Fallback
     OTRO = "otro"
@@ -87,7 +87,7 @@ PATHWAY_MAP: dict[DocumentType, IngestPathway] = {
     DocumentType.FLUJO_DE_CAJA: IngestPathway.WORK_WITH_EXISTING,
     DocumentType.CAMBIOS_PATRIMONIO: IngestPathway.WORK_WITH_EXISTING,
     DocumentType.NOTAS_ESTADOS_FINANCIEROS: IngestPathway.WORK_WITH_EXISTING,
-    DocumentType.LIBRO_DIARIO: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.LIBRO_DIARIO: IngestPathway.WORK_WITH_EXISTING,
     # Fallback
     DocumentType.OTRO: IngestPathway.BUILD_FROM_SCRATCH,
 }
