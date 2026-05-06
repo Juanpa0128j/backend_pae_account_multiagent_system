@@ -9,6 +9,7 @@ backward compatibility.
 from __future__ import annotations
 
 import logging
+import os
 from functools import lru_cache
 from typing import Any, Iterator, TypeVar
 
@@ -1218,7 +1219,16 @@ Responde en español."""
         )
 
 
+class E2ELLMFailure(RuntimeError):
+    """Raised by get_llm_client when E2E_FORCE_LLM_FAIL=1.
+
+    Gated on env var; default off. Used only by e2e tests to simulate LLM failure.
+    """
+
+
 @lru_cache(maxsize=1)
 def get_llm_client() -> LLMClient:
     """Return the singleton LLMClient instance."""
+    if os.environ.get("E2E_FORCE_LLM_FAIL") == "1":
+        raise E2ELLMFailure("E2E_FORCE_LLM_FAIL is set; simulated LLM failure")
     return LLMClient()
