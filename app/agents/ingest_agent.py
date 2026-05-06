@@ -2,17 +2,18 @@
 Ingesta (Ingest) worker node for the agent graph.
 
 Supports multiple document formats (PDF, XLSX, and images JPG/PNG) and routes
-interpretation to the appropriate Gemini extraction method based on document
+interpretation to the appropriate LLM extraction method based on document
 classification. Images are parsed via LlamaParse identical to PDFs.
 
 On retry (when correction_feedback is present), the agent re-sends the
-raw text to Gemini along with the schema errors so the model can self-correct.
+raw text to the LLM along with the schema errors so the model can self-correct.
 """
 
 import uuid
 from pathlib import Path
 
 from app.agents.agent_utils import append_log
+from app.agents.llm_retry import llm_with_parse_retry
 from app.agents.state import AgentState
 from app.core.config import get_settings
 from app.core.llm_client import get_llm_client
@@ -25,11 +26,8 @@ except ImportError:
 
 logger = get_logger("app.agents.ingest")
 
-MAX_NODE_RETRIES = 3
-_TRANSIENT_EXC = (TimeoutError, ConnectionError, OSError)
 
-
-# Dispatch table: doc_type → GeminiClient method name
+# Dispatch table: doc_type → LLMClient method name
 _EXTRACT_METHOD_MAP: dict[str, str] = {
     # Invoice-like documents
     "factura_venta": "extract_factura_venta",
@@ -78,42 +76,12 @@ _VIA_B_STATEMENT_TYPES: set[str] = {
 }
 
 
-def _gemini_with_retry(client, raw_text: str, correction_feedback=None):
-    """
-    Call client.extract_transactions() with up to MAX_NODE_RETRIES attempts
-    on transient network errors. Non-transient exceptions propagate immediately.
-    """
-    return _gemini_with_retry_generic(
-        client.extract_transactions, raw_text, correction_feedback=correction_feedback
-    )
-
-
-def _gemini_with_retry_generic(method, raw_text: str, correction_feedback=None):
-    """
-    Call any Gemini extraction method with transient error retry.
-    """
-    last_exc = None
-    for attempt in range(1, MAX_NODE_RETRIES + 1):
-        try:
-            return method(raw_text, correction_feedback=correction_feedback)
-        except _TRANSIENT_EXC as e:
-            last_exc = e
-            logger.warning(
-                f"Ingest: Gemini transient error attempt {attempt}/{MAX_NODE_RETRIES}: {e}"
-            )
-        except Exception:
-            raise
-    if last_exc is not None:
-        raise last_exc
-    raise RuntimeError("Gemini extraction failed without a captured exception")
-
-
 def ingest_node(state: AgentState) -> AgentState:
     """
-    Ingest node: Extracts from document (PDF/XLSX/XML/image) and interprets with Gemini.
+    Ingest node: Extracts from document (PDF/XLSX/XML/image) and interprets with the LLM.
 
     Supports multiple formats (PDF, XLSX, XML, JPG, JPEG, PNG) and routes interpretation
-    to the appropriate Gemini method based on document classification from the supervisor.
+    to the appropriate LLM method based on document classification from the supervisor.
     Images are parsed via LlamaParse exactly like PDFs.
     """
     # If supervisor already flagged an error, skip processing
@@ -210,9 +178,11 @@ def ingest_node(state: AgentState) -> AgentState:
                         documents = parser.load_data(file_path)
                         raw_text = "\n\n".join([doc.text for doc in documents])
 
-                    # Save to cache (even if empty, to avoid re-hitting the API)
-                    _cache_dir.mkdir(parents=True, exist_ok=True)
-                    _cache_path.write_text(raw_text, encoding="utf-8")
+                    # Save to cache only if non-empty — caching transient
+                    # failures permanently breaks the file.
+                    if raw_text and raw_text.strip():
+                        _cache_dir.mkdir(parents=True, exist_ok=True)
+                        _cache_path.write_text(raw_text, encoding="utf-8")
 
                 state["raw_text"] = raw_text
             else:
@@ -271,25 +241,25 @@ def ingest_node(state: AgentState) -> AgentState:
             },
         )
 
-        # Step 2: Send to Gemini for interpretation (doc-type-aware)
-        gemini_client = get_llm_client()
+        # Step 2: Send to LLM for interpretation (doc-type-aware)
+        llm = get_llm_client()
         correction_feedback = state.get("correction_feedback") if is_retry else None
         classification = state.get("document_classification") or {}
         doc_type = classification.get("doc_type", "otro")
 
         if is_retry:
             logger.info(
-                f"Ingest: Re-sending to Gemini with correction feedback "
+                f"Ingest: Re-sending to LLM with correction feedback "
                 f"(attempt {state.get('retry_count', 1)})"
             )
         else:
             logger.info(
-                "Ingest: Sending to Gemini for interpretation (doc_type=%s)", doc_type
+                "Ingest: Sending to LLM for interpretation (doc_type=%s)", doc_type
             )
 
         # Dispatch to the appropriate extraction method
         method_name = _EXTRACT_METHOD_MAP.get(doc_type, "extract_transactions")
-        if not hasattr(gemini_client, method_name):
+        if not hasattr(llm, method_name):
             state["error"] = (
                 f"Ingest dispatch error: method '{method_name}' is not available "
                 f"for doc_type '{doc_type}'"
@@ -313,53 +283,37 @@ def ingest_node(state: AgentState) -> AgentState:
             },
         )
 
-        extract_method = getattr(gemini_client, method_name)
-        interpreted_data = _gemini_with_retry_generic(
-            extract_method, raw_text, correction_feedback=correction_feedback
+        extract_method = getattr(llm, method_name)
+        interpreted_data = llm_with_parse_retry(
+            extract_method,
+            raw_text,
+            correction_feedback=correction_feedback,
+            agent_label="ingesta",
         )
         # Clear correction feedback after using it
         state["correction_feedback"] = None
 
         state["interpreted_data"] = interpreted_data
 
-        # Validate Gemini response structure
+        # Validate LLM response structure
         if not isinstance(interpreted_data, dict):
             state["error"] = (
-                f"Gemini returned invalid structure: expected dict, "
+                f"LLM returned invalid structure: expected dict, "
                 f"got {type(interpreted_data).__name__}"
             )
             logger.error(state["error"])
             append_log(state, "ingesta", "node_error", {"error": state["error"]})
             return state
 
-        # Legacy: old extract_transactions returned {"transactions": [...]}.
         # All document types now return rich structured content objects via
-        # dedicated extraction methods — the transactions-list path is no longer used.
-        _TRANSACTION_DOC_TYPES: set[str] = set()
-
-        if doc_type in _TRANSACTION_DOC_TYPES:
-            raw_txs = interpreted_data.get("transactions", [])
-            if not isinstance(raw_txs, list):
-                state["error"] = "Gemini 'transactions' field is not a list"
-                logger.error(state["error"])
-                append_log(state, "ingesta", "node_error", {"error": state["error"]})
-                return state
-            if not raw_txs:
-                state["error"] = "Gemini extracted zero transactions from document"
-                logger.warning(state["error"])
-                append_log(state, "ingesta", "node_error", {"error": state["error"]})
-                return state
-            state["raw_transactions"] = raw_txs
-            data_summary = {"tx_count": len(raw_txs)}
-            result_data = raw_txs
-        else:
-            # Non-transaction documents: store interpreted_data directly, raw_transactions empty
-            state["raw_transactions"] = []
-            data_summary = {
-                "doc_type": doc_type,
-                "fields": list(interpreted_data.keys()),
-            }
-            result_data = interpreted_data
+        # dedicated extraction methods. raw_transactions is always empty here;
+        # the contador agent derives transactions later from interpreted_data.
+        state["raw_transactions"] = []
+        data_summary = {
+            "doc_type": doc_type,
+            "fields": list(interpreted_data.keys()),
+        }
+        result_data = interpreted_data
 
         append_log(state, "ingesta", "interpretation_complete", data_summary)
 

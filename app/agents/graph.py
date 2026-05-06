@@ -28,8 +28,10 @@ from app.agents.persist_node import db_persist_node
 from app.agents.reportero_agent import reportero_node
 from app.agents.state import AgentState
 from app.agents.supervisor import (
+    audit_review_terminal_node,
     error_terminal_node,
     route_after_supervisor,
+    review_terminal_node,
     should_retry_agent,
     supervisor_node,
     validate_output_node,
@@ -43,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Core execution fields are intentionally excluded to prevent accidental
 # runtime corruption.
 _ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset(
-    {"ingest_id", "mode", "company_nit"}
+    {"ingest_id", "mode", "company_nit", "force_persist"}
 )
 
 
@@ -71,6 +73,8 @@ def create_agent_graph() -> Any:
     graph.add_node("auditor", auditor_node)
     graph.add_node("reportero", reportero_node)
     graph.add_node("import_existing", import_existing_node)
+    graph.add_node("review_terminal", review_terminal_node)
+    graph.add_node("audit_review_terminal", audit_review_terminal_node)
 
     # --- supervisor dispatches to the correct worker ---
     graph.add_conditional_edges(
@@ -85,6 +89,8 @@ def create_agent_graph() -> Any:
             "reportero": "reportero",
             "import_existing": "import_existing",
             "error_terminal": "error_terminal",
+            "review_terminal": "review_terminal",
+            "audit_review_terminal": "audit_review_terminal",
         },
     )
 
@@ -106,8 +112,19 @@ def create_agent_graph() -> Any:
 
     # --- terminals ---
     graph.add_edge("reportero", END)
-    graph.add_edge("db_persist", END)
+    graph.add_conditional_edges(
+        "db_persist",
+        lambda s: (
+            "audit_review_terminal"
+            if s.get("needs_hitl_review")
+            or s.get("current_agent") == "audit_review_terminal"
+            else END
+        ),
+        {"audit_review_terminal": "audit_review_terminal", END: END},
+    )
     graph.add_edge("error_terminal", END)
+    graph.add_edge("review_terminal", END)
+    graph.add_edge("audit_review_terminal", END)
 
     graph.set_entry_point("supervisor")
 
@@ -157,6 +174,7 @@ def _base_state() -> AgentState:
         "audit_reports": [],
         "retry_budget": dict(RETRY_BUDGETS),
         "giveup_record": None,
+        "force_persist": False,
     }
 
 
@@ -221,6 +239,7 @@ def invoke_accounting_pipeline(
     process_id: str | None = None,
     doc_type: str = "",
     source_document: dict | None = None,
+    force_persist: bool = False,
 ) -> dict:
     """
     Invoke the accounting process pipeline starting from staged transactions.
@@ -243,6 +262,7 @@ def invoke_accounting_pipeline(
     if doc_type:
         state["document_classification"] = {"doc_type": doc_type}
     state["source_document"] = source_document or {}
+    state["force_persist"] = force_persist
 
     final_state = graph.invoke(state)
     result = final_state["result"]

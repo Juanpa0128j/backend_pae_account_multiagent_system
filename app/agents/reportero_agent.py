@@ -643,7 +643,13 @@ def _build_iva(db, params: dict, svc) -> dict:
         _debit_nature_balance(descontable_row) if descontable_row else Decimal("0")
     )
     iva_a_pagar = iva_generado - iva_descontable
-    iva_status = "saldo_a_pagar" if iva_a_pagar > 0 else "saldo_a_favor" if iva_a_pagar < 0 else "saldo_cero"
+    iva_status = (
+        "saldo_a_pagar"
+        if iva_a_pagar > 0
+        else "saldo_a_favor"
+        if iva_a_pagar < 0
+        else "saldo_cero"
+    )
 
     rag_refs = _fetch_rag_referencias(
         "IVA impuesto ventas tarifa general artículo 468 477 Estatuto Tributario"
@@ -681,9 +687,23 @@ def _build_withholdings(db, params: dict, svc) -> dict:
     reteica = _credit_nature_balance(reteica_row) if reteica_row else Decimal("0")
     total = retefuente + reteica
 
-    retefuente_status = "saldo_a_pagar" if retefuente > 0 else "saldo_a_favor" if retefuente < 0 else "saldo_cero"
-    reteica_status = "saldo_a_pagar" if reteica > 0 else "saldo_a_favor" if reteica < 0 else "saldo_cero"
-    total_status = "saldo_a_pagar" if total > 0 else "saldo_a_favor" if total < 0 else "saldo_cero"
+    retefuente_status = (
+        "saldo_a_pagar"
+        if retefuente > 0
+        else "saldo_a_favor"
+        if retefuente < 0
+        else "saldo_cero"
+    )
+    reteica_status = (
+        "saldo_a_pagar"
+        if reteica > 0
+        else "saldo_a_favor"
+        if reteica < 0
+        else "saldo_cero"
+    )
+    total_status = (
+        "saldo_a_pagar" if total > 0 else "saldo_a_favor" if total < 0 else "saldo_cero"
+    )
 
     rag_refs = _fetch_rag_referencias(
         "retención en la fuente servicios honorarios artículo 383 392 Decreto 2048 Estatuto Tributario"

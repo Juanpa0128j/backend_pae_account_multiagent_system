@@ -624,7 +624,8 @@ Devuelve tasas como fracciones decimales para:
 - tasa_retefuente_servicios
 - tasa_retefuente_bienes
 - tasa_retefuente_arrendamiento
-- tasa_reteica
+- tasa_reteica (retención ICA aplicada por el agente retenedor)
+- tasa_ica (tarifa ICA real del impuesto sobre actividad — puede diferir de reteica)
 - tasa_iva_general
 Y cita fuentes legales."""
 

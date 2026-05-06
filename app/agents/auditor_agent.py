@@ -2,7 +2,7 @@
 Auditor worker node for the process graph.
 
 Receives the ContadorOutput (journal entries) and the original raw
-transactions, then uses Gemini to perform a qualitative audit review
+transactions, then uses the LLM to perform a qualitative audit review
 following Colombian NIIF/DIAN standards.
 
 The auditor node produces a structured AuditorOutput that includes:
@@ -17,12 +17,13 @@ performed *before* this node by validate_contador_output_node, so
 the LLM focuses purely on semantic/qualitative review.
 
 On retry (when correction_feedback is present), the invalid output
-and schema errors are re-sent to Gemini for self-correction.
+and schema errors are re-sent to the LLM for self-correction.
 """
 
 import logging
 
 from app.agents.agent_utils import append_log
+from app.agents.llm_retry import is_parse_error, llm_with_parse_retry
 from app.agents.state import AgentState
 from app.core.llm_client import get_llm_client
 
@@ -87,10 +88,12 @@ def auditor_node(state: AgentState) -> AgentState:
                 state.get("retry_count", 1),
             )
 
-        auditor_output = llm.extract_auditor_output(
+        auditor_output = llm_with_parse_retry(
+            llm.extract_auditor_output,
             contador_output=contador_output,
             raw_transactions=raw_transactions,
             correction_feedback=state.get("correction_feedback") if is_retry else None,
+            agent_label="auditor",
         )
 
         # Clear correction feedback after consuming it
@@ -104,9 +107,7 @@ def auditor_node(state: AgentState) -> AgentState:
         )
         # Also set unified field names used by the supervisor FSM
         state["audit_decision"] = "approved" if approved else "rejected"
-        state["audit_feedback"] = (
-            auditor_output.get("resumen") if not approved else None
-        )
+        state["audit_feedback"] = auditor_output.get("resumen") if not approved else ""
 
         if not state.get("result"):
             state["result"] = {}
@@ -130,6 +131,31 @@ def auditor_node(state: AgentState) -> AgentState:
         )
 
     except Exception as exc:
+        if is_parse_error(exc):
+            from app.agents.audit_utils import append_finding
+            from app.models.audit import AuditFinding, AuditTarget, Severity
+
+            append_finding(
+                state,
+                AuditFinding(
+                    target=AuditTarget.AUDITOR,
+                    rule_id="AUD-PARSE-EXHAUSTED",
+                    severity=Severity.BLOCKER,
+                    fixable=False,
+                    responsible_agent="auditor",
+                    technical_message=str(exc)[:500],
+                    user_message_es=(
+                        "El auditor no logró producir un dictamen válido tras "
+                        "varios intentos."
+                    ),
+                    suggested_action_es=(
+                        "Reintente el procesamiento. Si persiste, contacte al "
+                        "equipo técnico — puede haber un problema con el modelo."
+                    ),
+                    evidence={"exception_type": exc.__class__.__name__},
+                ),
+            )
+
         state["error"] = f"auditor error: {exc}"
         logger.error(state["error"], exc_info=True)
         append_log(state, "auditor", "node_error", {"error": str(exc)})

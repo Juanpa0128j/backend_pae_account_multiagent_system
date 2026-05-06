@@ -17,9 +17,19 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.agents.graph import invoke_ingest_pipeline
-from app.core.database import SessionLocal, get_db
-from app.models.database import IngestStatus
-from app.models.schemas import IngestDetailResponse, IngestResponse
+from app.core.database import INGEST_PIPELINE_SEMAPHORE, SessionLocal, get_db
+from app.models.database import IngestJob, IngestStatus
+from app.models.document_types import (
+    DocumentType,
+    get_document_type_label,
+    get_pathway,
+    list_via_a_document_type_options,
+)
+from app.models.schemas import (
+    ClassificationReviewUpdateRequest,
+    IngestDetailResponse,
+    IngestResponse,
+)
 from app.models.trace import PipelineTrace
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
@@ -44,8 +54,18 @@ def process_ingest_background(
     temp_file_path: str, ingest_id: str, company_nit: Optional[str] = None
 ):
     logger.info(
-        f"Invoking background agent for: {ingest_id} (company_nit={company_nit})"
+        f"Queueing background agent for: {ingest_id} (company_nit={company_nit})"
     )
+    # Limit concurrent ingest pipelines to avoid exhausting the Supabase
+    # connection pool. Uploads queue here instead of racing for connections.
+    with INGEST_PIPELINE_SEMAPHORE:
+        logger.info(f"Acquired ingest pipeline slot for: {ingest_id}")
+        _run_ingest_pipeline(temp_file_path, ingest_id, company_nit)
+
+
+def _run_ingest_pipeline(
+    temp_file_path: str, ingest_id: str, company_nit: Optional[str] = None
+):
     initial: dict = {"ingest_id": ingest_id}
     if company_nit:
         initial["company_nit"] = company_nit
@@ -100,7 +120,114 @@ def process_ingest_background(
         finally:
             db.close()
     finally:
-        Path(temp_file_path).unlink(missing_ok=True)
+        keep_file = False
+        db = SessionLocal()
+        try:
+            job = db_service.get_ingest_job(db, ingest_id)
+            keep_file = bool(job and job.status == IngestStatus.PENDING_REVIEW)
+        except Exception as status_err:
+            logger.error(
+                "Failed to read ingest %s for cleanup: %s",
+                ingest_id,
+                status_err,
+                exc_info=True,
+            )
+        finally:
+            db.close()
+
+        if not keep_file:
+            Path(temp_file_path).unlink(missing_ok=True)
+
+
+def _build_ingest_detail_response(
+    db: Session, job: IngestJob, base_url: Optional[str] = None
+) -> dict:
+    raw_txs = []
+    for tx in job.transactions_pending:
+        raw_txs.append(
+            {
+                "fecha": tx.fecha.isoformat() if tx.fecha else "",
+                "nit_emisor": tx.nit_emisor or "",
+                "nit_receptor": tx.nit_receptor or "",
+                "total": float(tx.total) if tx.total is not None else 0.0,
+                "descripcion": tx.descripcion,
+                "items": tx.items if isinstance(tx.items, list) else [],
+            }
+        )
+
+    # Reconcile stale ingest states: if transactions are already staged but the
+    # job is still pending/processing, mark it as completed so clients can
+    # advance to the accounting phase.
+    from datetime import datetime, timedelta, timezone
+
+    is_stale = job.created_at and (
+        datetime.now(timezone.utc) - job.created_at
+    ) > timedelta(seconds=60)
+    if (
+        raw_txs
+        and is_stale
+        and job.status in (IngestStatus.PENDING_PROCESSING, IngestStatus.PROCESSING)
+        and not job.extraction_errors
+    ):
+        updated = db_service.update_ingest_job(db, job.id, IngestStatus.COMPLETED)
+        if updated:
+            job = updated
+
+    classification_review = None
+    if job.status == IngestStatus.PENDING_REVIEW:
+        predicted_type = job.document_type
+        predicted_label = None
+        if predicted_type:
+            try:
+                predicted_label = get_document_type_label(DocumentType(predicted_type))
+            except ValueError:
+                predicted_label = predicted_type
+
+        from app.models.document_types import _VIA_B_TYPES
+
+        is_wrong_area = bool(
+            predicted_type and predicted_type in {t.value for t in _VIA_B_TYPES}
+        )
+
+        classification_review = {
+            "predicted_type": predicted_type,
+            "predicted_label": predicted_label,
+            "confidence": (
+                float(job.classification_confidence)
+                if job.classification_confidence is not None
+                else None
+            ),
+            "available_types": list_via_a_document_type_options(),
+            "wrong_upload_area": is_wrong_area,
+        }
+
+    trace_url = (
+        f"{base_url.rstrip('/')}/api/v1/ingest/{job.id}/trace" if base_url else None
+    )
+
+    return {
+        "ingest_id": job.id,
+        "file_name": job.file_name,
+        "status": job.status.value if job.status else "unknown",
+        "document_type": job.document_type,
+        "pathway": job.pathway,
+        "created_at": job.created_at,
+        "completed_at": job.completed_at,
+        "extraction_errors": job.extraction_errors or [],
+        "raw_transactions": raw_txs,
+        "error_category": "extraction_error" if job.extraction_errors else None,
+        "error_code": "INGEST_ERROR" if job.extraction_errors else None,
+        "remediation": (
+            "El sistema no pudo procesar el documento. "
+            "Verifique que el archivo esté completo y en un formato compatible (PDF, Excel, imagen), "
+            "luego intente cargarlo nuevamente."
+            if job.extraction_errors
+            else None
+        ),
+        "has_warnings": False,
+        "trace_url": trace_url,
+        "classification_review": classification_review,
+    }
 
 
 @router.post(
@@ -113,6 +240,10 @@ async def upload_file(
         None,
         description="Company NIT to associate with this document. If omitted, the NIT is auto-detected from the document content.",
     ),
+    doc_type: Optional[str] = Form(
+        None,
+        description="Pre-confirmed document type (e.g. 'balance_general'). When provided, classification review is skipped. Use for Vía B uploads where the user explicitly selects the document type.",
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -121,6 +252,7 @@ async def upload_file(
 
     Optionally pass `company_nit` as a form field to explicitly associate the document
     with a company, overriding the NIT auto-detected from the document content.
+    Pass `doc_type` to pre-confirm the document type and skip the classification review step.
     """
     # Validate file type
     if not file.filename.lower().endswith(
@@ -184,7 +316,45 @@ async def upload_file(
         temp_file_path = save_temp_file(file_content, file.filename)
         logger.info(f"Saved uploaded file to: {temp_file_path}")
 
-        ingest_job = db_service.create_ingest_job(db, file.filename, temp_file_path)
+        confirmed_doc_type = None
+        confirmed_pathway = None
+        if doc_type is not None:
+            try:
+                from app.models.document_types import (
+                    DocumentType,
+                    _VIA_B_TYPES,
+                    get_pathway,
+                )
+
+                parsed_doc_type = DocumentType(doc_type)
+                if parsed_doc_type not in _VIA_B_TYPES:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"El tipo de documento '{doc_type}' pertenece a Vía A (documentos fuente). "
+                            "El parámetro doc_type solo acepta tipos de Vía B: "
+                            "balance_general, estado_resultados, libro_auxiliar."
+                        ),
+                    )
+                confirmed_doc_type = parsed_doc_type.value
+                confirmed_pathway = get_pathway(parsed_doc_type).value
+            except HTTPException:
+                raise
+            except ValueError:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Tipo de documento '{doc_type}' no válido.",
+                )
+
+        ingest_job = db_service.create_ingest_job(
+            db,
+            file.filename,
+            temp_file_path,
+            company_nit=normalized_company_nit,
+            document_type=confirmed_doc_type,
+            pathway=confirmed_pathway,
+            classification_confirmed=True if confirmed_doc_type else None,
+        )
         logger.info(f"Created IngestJob: {ingest_job.id}")
 
         background_tasks.add_task(
@@ -220,61 +390,63 @@ async def get_ingest_status(
     if not job:
         raise HTTPException(status_code=404, detail=f"Ingest ID {ingest_id} not found")
 
-    raw_txs = []
-    # If using SQLAlchemy relationship properly
-    for tx in job.transactions_pending:
-        raw_txs.append(
-            {
-                "fecha": tx.fecha.isoformat() if tx.fecha else "",
-                "nit_emisor": tx.nit_emisor or "",
-                "nit_receptor": tx.nit_receptor or "",
-                "total": float(tx.total) if tx.total is not None else 0.0,
-                "descripcion": tx.descripcion,
-                "items": tx.items if isinstance(tx.items, list) else [],
-            }
+    return _build_ingest_detail_response(db, job, base_url=str(request.base_url))
+
+
+@router.patch("/{ingest_id}/classification", response_model=IngestDetailResponse)
+async def update_ingest_classification(
+    ingest_id: str,
+    payload: ClassificationReviewUpdateRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    job = db_service.get_ingest_job(db, ingest_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Ingest ID {ingest_id} not found")
+
+    try:
+        doc_type = DocumentType(payload.doc_type)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid doc_type '{payload.doc_type}'",
         )
 
-    # Reconcile stale ingest states: if transactions are already staged but the
-    # job is still pending/processing, mark it as completed so clients can
-    # advance to the accounting phase.
-    # Guard: only reconcile if the job was created more than 60 seconds ago
-    # to avoid racing with the background ingest task.
-    from datetime import datetime, timedelta, timezone
+    pathway = get_pathway(doc_type)
+    target_status = (
+        IngestStatus.PENDING_PROCESSING
+        if payload.confirmed
+        else IngestStatus.PENDING_REVIEW
+    )
 
-    is_stale = job.created_at and (
-        datetime.now(timezone.utc) - job.created_at
-    ) > timedelta(seconds=60)
-    if (
-        raw_txs
-        and is_stale
-        and job.status in (IngestStatus.PENDING_PROCESSING, IngestStatus.PROCESSING)
-        and not job.extraction_errors
-    ):
-        updated = db_service.update_ingest_job(db, ingest_id, IngestStatus.COMPLETED)
-        if updated:
-            job = updated
+    updated = db_service.update_ingest_job(
+        db,
+        ingest_id,
+        target_status,
+        document_type=doc_type.value,
+        pathway=pathway.value,
+        classification_confirmed=payload.confirmed,
+    )
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update ingest job")
 
-    return {
-        "ingest_id": job.id,
-        "file_name": job.file_name,
-        "status": job.status.value if job.status else "unknown",
-        "document_type": job.document_type,
-        "pathway": job.pathway,
-        "created_at": job.created_at,
-        "completed_at": job.completed_at,
-        "extraction_errors": job.extraction_errors or [],
-        "raw_transactions": raw_txs,
-        "error_category": "extraction_error" if job.extraction_errors else None,
-        "error_code": None,
-        "remediation": (
-            "Revisa el formato del archivo. "
-            + " ".join(str(e) for e in job.extraction_errors)
-            if job.extraction_errors
-            else None
-        ),
-        "has_warnings": False,
-        "trace_url": f"{str(request.base_url).rstrip('/')}/api/v1/ingest/{job.id}/trace",
-    }
+    if payload.confirmed:
+        if not job.file_path:
+            raise HTTPException(
+                status_code=422,
+                detail="Ingest job has no file_path to resume",
+            )
+        background_tasks.add_task(
+            process_ingest_background,
+            job.file_path,
+            str(job.id),
+        )
+
+    refreshed = db_service.get_ingest_job(db, ingest_id)
+    if not refreshed:
+        raise HTTPException(status_code=500, detail="Failed to refresh ingest job")
+    return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))
 
 
 @router.get("/{ingest_id}/trace", response_model=PipelineTrace)
@@ -299,8 +471,8 @@ async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
             detail={
                 "error_category": "job_not_ready",
                 "error_code": "INGEST_NOT_COMPLETE",
-                "message": f"Ingest job {ingest_id} is still processing (status: {job.status.value}).",
-                "remediation": "Wait for the ingest to complete and try again.",
+                "message": "El documento aún se está procesando. Por favor espera unos segundos y vuelve a intentarlo.",
+                "remediation": "Espera a que el procesamiento termine antes de continuar.",
             },
         )
 

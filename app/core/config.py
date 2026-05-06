@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # --- OpenAI (first fallback when Gemini quota is exhausted) ------------
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
-    openai_model: str = Field("gpt-4.1-nano", alias="OPENAI_MODEL")
+    openai_model: str = Field("gpt-4.1-mini", alias="OPENAI_MODEL")
     # Document classifier uses a stronger model — the pre-refactor
     # doc_classifier hardcoded gpt-4o-mini for this task and classification
     # accuracy regressed when the main extraction model (nano) took over.
@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     )
 
     def model_post_init(self, __context) -> None:
-        """Normalize DB URL and enforce SSL for Supabase-hosted Postgres."""
+        """Normalize DB URL, enforce SSL for Supabase, and reject insecure prod config."""
         normalized_url = self.database_url
 
         if normalized_url.startswith("postgres://"):
@@ -92,6 +92,16 @@ class Settings(BaseSettings):
 
         if normalized_url != self.database_url:
             object.__setattr__(self, "database_url", normalized_url)
+
+        # Refuse to boot in production with a default/empty SECRET_KEY. Better to
+        # crash now than expose signed cookies/tokens with a published value.
+        if self.app_env == "production":
+            insecure_keys = {"", "change-me-in-production", "changeme", "secret"}
+            if self.secret_key in insecure_keys or len(self.secret_key) < 32:
+                raise ValueError(
+                    "SECRET_KEY must be set to a strong (>=32 chars) random value "
+                    "when APP_ENV=production. Refusing to start with the default."
+                )
 
     @property
     def is_production(self) -> bool:

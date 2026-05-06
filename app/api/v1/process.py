@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.database import ProcessStatus
+from app.models.database import ProcessJob, ProcessStatus
 from app.models.schemas import (
     ProcessResponse,
     ProcessStatusResponse,
@@ -51,34 +51,45 @@ def _classify_process_error(
         return (
             "business_precondition",
             "MISSING_COMPANY_SETTINGS",
-            "Configure company tax profile via POST /api/v1/settings/company/{nit}/setup and retry.",
+            "Configure el perfil tributario de la empresa y vuelva a intentarlo.",
         )
 
     if "no staged transactions" in msg:
         return (
             "business_precondition",
             "NO_STAGED_TRANSACTIONS",
-            "Run ingest first and ensure transactions_pending contains rows for this ingest_id.",
+            "Ejecute primero la ingesta y verifique que existan transacciones pendientes antes de procesar.",
         )
 
     if "missing nit_receptor" in msg:
         return (
             "business_precondition",
             "MISSING_NIT_RECEPTOR",
-            "Ensure staged transactions contain nit_receptor before processing.",
+            "Las transacciones no contienen NIT receptor. Suba el documento nuevamente seleccionando una empresa.",
         )
 
     if "audit_blocker" in msg or "unfixable audit blockers" in msg:
         return (
             "audit_blocker",
             "AUDIT_BLOCKER",
-            "Review auditor findings and correct blocking accounting issues before retrying.",
+            "Revise los hallazgos del auditor y corrija los problemas contables bloqueantes antes de reintentar.",
+        )
+
+    if (
+        "puc validation failed" in msg
+        or "puc_not_found" in msg
+        or "missing codes" in msg
+    ):
+        return (
+            "validation_error",
+            "PUC_CODES_NOT_FOUND",
+            "Los códigos PUC indicados no existen en la base de datos. Corrija el documento y vuelva a cargarlo.",
         )
 
     return (
         "system_error",
         "PROCESS_EXECUTION_ERROR",
-        "Review process job logs and retry.",
+        "Error en la ejecución del proceso contable. Revise el documento cargado e intente nuevamente.",
     )
 
 
@@ -105,11 +116,8 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
             detail={
                 "error_category": "business_precondition",
                 "error_code": "NO_STAGED_TRANSACTIONS",
-                "message": (
-                    "Cannot start process: no staged transactions found for this ingest_id. "
-                    "Run ingest successfully before accounting processing."
-                ),
-                "remediation": "Run POST /api/v1/ingest/upload and verify transactions before retrying /process/accounting.",
+                "message": "No se encontraron transacciones para procesar. Ejecute primero la ingesta del documento.",
+                "remediation": "Suba el documento y verifique que la ingesta haya completado correctamente antes de reintentar.",
             },
         )
 
@@ -122,13 +130,15 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
         None,
     )
     if not nit_receptor:
+        nit_receptor = ingest_job.company_nit or None
+    if not nit_receptor:
         raise HTTPException(
             status_code=409,
             detail={
                 "error_category": "business_precondition",
                 "error_code": "MISSING_NIT_RECEPTOR",
-                "message": "Cannot start process: staged transactions are missing nit_receptor.",
-                "remediation": "Fix extraction/staging data so nit_receptor is present, then retry processing.",
+                "message": "Las transacciones no contienen NIT receptor y no se seleccionó empresa al subir el documento.",
+                "remediation": "Seleccione una empresa antes de subir el documento y vuelva a intentarlo.",
             },
         )
 
@@ -139,10 +149,8 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
             detail={
                 "error_category": "business_precondition",
                 "error_code": "MISSING_COMPANY_SETTINGS",
-                "message": (
-                    f"Cannot start process: missing company tax settings for NIT {nit_receptor}."
-                ),
-                "remediation": f"Run POST /api/v1/settings/company/{nit_receptor}/setup and retry.",
+                "message": f"No se encontró configuración tributaria para el NIT {nit_receptor}.",
+                "remediation": f"Configure el perfil tributario de la empresa con NIT {nit_receptor} y vuelva a intentarlo.",
             },
         )
 
@@ -190,6 +198,14 @@ async def get_process_status(
     base_url = str(request.base_url).rstrip("/")
     trace_url = f"{base_url}/api/v1/process/{process_id}/trace"
 
+    # Extract audit_review data when status is pending_audit_review
+    audit_review = None
+    if _enum_value(process_job.status).upper() == "PENDING_AUDIT_REVIEW":
+        for entry in reversed(raw_log):
+            if entry.get("event") == "audit_giveup":
+                audit_review = entry.get("details")
+                break
+
     return ProcessStatusResponse(
         process_id=process_job.id,
         status=process_job.status.value,
@@ -212,7 +228,77 @@ async def get_process_status(
         ),
         has_warnings=has_warnings,
         trace_url=trace_url,
+        audit_review=audit_review,
     )
+
+
+_ES_STATUS = {
+    "queued": "en cola",
+    "running": "en ejecución",
+    "completed": "completado",
+    "failed": "fallido",
+    "cancelled": "cancelado",
+    "pending_audit_review": "pendiente de revisión",
+}
+
+
+def _enum_value(status) -> str:
+    return status.value if hasattr(status, "value") else str(status)
+
+
+@router.post("/{process_id}/audit-confirm", status_code=202)
+async def confirm_audit_review(process_id: str, db: Session = Depends(get_db)):
+    """User confirms to force-persist despite audit issues.
+
+    Atomic: uses a guarded UPDATE that only succeeds when the row is still in
+    PENDING_AUDIT_REVIEW. This prevents double-confirm from spawning two
+    concurrent force-persist runs (which would write duplicate rows).
+    """
+    # Guarded transition PENDING_AUDIT_REVIEW → RUNNING.
+    # Returns 1 row updated only if the status was still pending.
+    rows_updated = (
+        db.query(ProcessJob)
+        .filter(
+            ProcessJob.id == process_id,
+            ProcessJob.status == ProcessStatus.PENDING_AUDIT_REVIEW,
+        )
+        .update(
+            {
+                ProcessJob.status: ProcessStatus.RUNNING,
+                ProcessJob.current_stage: "supervisor",
+                ProcessJob.current_agent: "supervisor",
+                ProcessJob.progress: 10,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+
+    if rows_updated == 0:
+        # Either the job doesn't exist, or it's not in pending state.
+        process_job = db_service.get_process_job(db, process_id)
+        if not process_job:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontró el proceso {process_id}.",
+            )
+        es_status = _ES_STATUS.get(
+            _enum_value(process_job.status).lower(),
+            _enum_value(process_job.status),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"El proceso {process_id} no está en estado pendiente de revisión "
+                f"(estado actual: {es_status})."
+            ),
+        )
+
+    await jobs.start_process_job(process_id, force_persist=True)
+    return {
+        "message": "Revisión confirmada. Reintentando persistencia.",
+        "process_id": process_id,
+    }
 
 
 @router.get("/{process_id}/trace", response_model=PipelineTrace)
@@ -262,11 +348,7 @@ async def get_process_result(process_id: str, db: Session = Depends(get_db)):
         return JSONResponse(
             status_code=202,
             content={
-                "message": (
-                    f"Process job {process_id} is still being processed "
-                    f"(current status: {process_job.status.value}). "
-                    f"Poll /api/v1/process/status/{process_id} for updates."
-                ),
+                "message": "El proceso contable aún está en curso. Por favor espera y consulta el estado nuevamente en unos segundos.",
                 "process_id": process_id,
                 "status": process_job.status.value,
                 "error_category": None,

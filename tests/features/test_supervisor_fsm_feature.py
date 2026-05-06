@@ -211,7 +211,7 @@ def dummy_pdf(tmp_path) -> str:
 
 
 class TestGraphStructure:
-    def test_all_nine_nodes_exist(self):
+    def test_all_nodes_exist(self):
         from app.agents.graph import create_agent_graph
 
         nodes = {
@@ -230,6 +230,8 @@ class TestGraphStructure:
             "auditor",
             "reportero",
             "import_existing",
+            "review_terminal",
+            "audit_review_terminal",
         }
         assert expected == nodes
 

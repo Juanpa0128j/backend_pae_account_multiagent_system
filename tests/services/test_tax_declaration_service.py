@@ -130,7 +130,13 @@ def _make_ledger():
 
 def _mock_db(settings):
     db = MagicMock()
+    # Default first() chain (e.g. CompanySettings lookup) returns settings.
     db.query.return_value.filter.return_value.first.return_value = settings
+    # F110 generation also calls .order_by().first() for the F2516 prerequisite
+    # check; provide a reviewed F2516 by default so generic tests don't fail.
+    f2516 = MagicMock()
+    f2516.status = "reviewed"
+    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = f2516
     return db
 
 

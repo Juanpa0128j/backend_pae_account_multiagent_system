@@ -129,7 +129,7 @@ class TestListObligations:
 
 class TestInputValidation:
     def test_unsupported_year_raises(self):
-        with pytest.raises(ValueError, match="Unsupported year"):
+        with pytest.raises(ValueError, match="solo está disponible"):
             list_obligations(_NIT, year=2025)
 
     def test_unsupported_iva_regime_raises(self):

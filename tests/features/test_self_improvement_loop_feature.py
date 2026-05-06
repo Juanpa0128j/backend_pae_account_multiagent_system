@@ -183,7 +183,7 @@ class TestSelfImprovementLoop:
         report = _audit_report(approved=False, findings=[blocker])
         state = _state(audit_approved=False, audit_reports=[report])
         result = _run_supervisor_auditor_branch(state)
-        assert result["current_agent"] == "error_terminal"
+        assert result["current_agent"] == "audit_review_terminal"
 
     def test_unfixable_blocker_populates_unfixable_findings(self):
         blocker = _finding(severity=Severity.BLOCKER, fixable=False)
@@ -219,7 +219,7 @@ class TestSelfImprovementLoop:
             audit_rejection_count=4,
         )
         result = _run_supervisor_auditor_branch(state)
-        assert result["current_agent"] == "error_terminal"
+        assert result["current_agent"] == "audit_review_terminal"
 
     def test_llm_rejection_budget_exhausted_sets_giveup_record(self):
         reports = [_audit_report(approved=False, findings=[])] * 4
@@ -260,7 +260,7 @@ class TestSelfImprovementLoop:
             audit_approved=False, audit_reports=[report], retry_budget=budget
         )
         result = _run_supervisor_auditor_branch(state)
-        assert result["current_agent"] == "error_terminal"
+        assert result["current_agent"] == "audit_review_terminal"
         assert result["giveup_record"] is not None
 
     def test_global_circuit_breaker_triggers_giveup(self):
@@ -272,7 +272,7 @@ class TestSelfImprovementLoop:
         ] * GLOBAL_AUDIT_FAILURES
         state = _state(audit_approved=False, audit_reports=reports)
         result = _run_supervisor_auditor_branch(state)
-        assert result["current_agent"] == "error_terminal"
+        assert result["current_agent"] == "audit_review_terminal"
         assert result["giveup_record"] is not None
 
     def test_fixable_finding_decrements_retry_budget(self):

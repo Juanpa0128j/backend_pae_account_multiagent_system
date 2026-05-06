@@ -95,6 +95,8 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
     overall_status: str
     if process_job.status == ProcessStatus.FAILED:
         overall_status = "failed"
+    elif process_job.status == ProcessStatus.PENDING_AUDIT_REVIEW:
+        overall_status = "pending_audit_review"
     else:
         overall_status = "completed"
 
@@ -117,6 +119,17 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
     elif all_findings and overall_status == "completed":
         overall_status = "completed_with_warnings"
 
+    # Pre-compute per-run start times so single-entry runs can borrow the
+    # next run's start as their ended_at instead of producing 0ms durations.
+    run_start_times: list[datetime] = []
+    for _, entries in runs:
+        if entries:
+            run_start_times.append(
+                min(_parse_ts(e.get("timestamp", "")) for e in entries)
+            )
+        else:
+            run_start_times.append(datetime.now(timezone.utc))
+
     steps: list[TraceStep] = []
     for run_idx, (agent, entries) in enumerate(runs):
         if not entries:
@@ -125,6 +138,17 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
         timestamps = [_parse_ts(e.get("timestamp", "")) for e in entries]
         started_at = min(timestamps)
         ended_at = max(timestamps)
+        # Zero-duration run: borrow the next run's started_at, or the job's
+        # updated_at for the final run (e.g. a supervisor routing step at the end).
+        if started_at == ended_at:
+            if run_idx + 1 < len(run_start_times):
+                ended_at = run_start_times[run_idx + 1]
+            elif process_job.completed_at is not None:
+                job_end = process_job.completed_at
+                if job_end.tzinfo is None:
+                    job_end = job_end.replace(tzinfo=timezone.utc)
+                if job_end > started_at:
+                    ended_at = job_end
 
         events = [e.get("event", "") for e in entries]
         run_finding_payloads = [
@@ -173,11 +197,18 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
                 summary_es=summary_es,
                 details_es=details_es,
                 suggested_action_es=suggested_action_es,
+                findings=run_findings,
                 technical_ref=f"run-{run_idx}-{agent}",
             )
         )
 
-    give_up = _extract_giveup_from_log(raw_log)
+    # Only surface give_up on non-success terminal states. Otherwise a
+    # successful force-persist re-run would replay the prior run's
+    # audit_giveup event in the trace, misleading the user.
+    if overall_status in ("failed", "pending_audit_review"):
+        give_up = _extract_giveup_from_log(raw_log)
+    else:
+        give_up = None
 
     return PipelineTrace(
         process_id=process_id,
@@ -225,18 +256,33 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
 
     steps: list[TraceStep] = []
     total = len(audit_logs)
+    # Collect timestamps up-front so each step's ended_at = next step's started_at
+    log_timestamps = [
+        (log.created_at or datetime.now(timezone.utc)) for log in audit_logs
+    ]
+    # Fallback end time for the last step when there is no successor timestamp
+    job_end: Optional[datetime] = ingest_job.completed_at or ingest_job.updated_at
+    if job_end is not None and job_end.tzinfo is None:
+        job_end = job_end.replace(tzinfo=timezone.utc)
+
     for idx, log in enumerate(audit_logs):
         details = log.details or {}
         agent = details.get("agent", "ingesta")
         is_last_and_failed = overall_status == "failed" and idx == total - 1
         step_status = "failed" if is_last_and_failed else "ok"
         detail_text = details.get("message") or details.get("summary") or ""
-        ts = log.created_at or datetime.now(timezone.utc)
+        started_at = log_timestamps[idx]
+        if idx + 1 < total:
+            ended_at = log_timestamps[idx + 1]
+        elif job_end is not None and job_end > started_at:
+            ended_at = job_end
+        else:
+            ended_at = started_at
         steps.append(
             TraceStep(
                 agent=agent,
-                started_at=ts,
-                ended_at=ts,
+                started_at=started_at,
+                ended_at=ended_at,
                 status=step_status,
                 summary_es=get_agent_summary_es(agent, failed=is_last_and_failed),
                 details_es=[detail_text] if detail_text else [],
@@ -251,7 +297,7 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
 
         msg, action = get_message("INGEST_ERROR", {})
         for err in ingest_job.extraction_errors:
-            err_str = str(err) or msg
+            err_str = str(err)
             blockers.append(
                 AuditFinding(
                     target=AuditTarget.INGEST,
@@ -260,7 +306,8 @@ def build_ingest_trace(ingest_id: str, db: Session) -> Optional[PipelineTrace]:
                     fixable=False,
                     responsible_agent="ingest",
                     technical_message=err_str,
-                    user_message_es=err_str,
+                    user_message_es=msg
+                    or "El agente de ingesta no pudo procesar el documento.",
                     suggested_action_es=action,
                     evidence={"ingest_id": ingest_id},
                 )

@@ -31,7 +31,9 @@ def list_puc(
 ):
     """List PUC accounts with optional search and filter for inactive."""
     if search:
-        return db_service.search_puc(db, search, limit, include_inactive=include_inactive)
+        return db_service.search_puc(
+            db, search, limit, include_inactive=include_inactive
+        )
     if include_inactive:
         return db_service.get_all_puc_including_inactive(db)[:limit]
     return db_service.get_all_puc(db)[:limit]
@@ -42,9 +44,7 @@ def get_puc(codigo: str, db: Session = Depends(get_db)):
     """Get a single PUC account by code."""
     row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
     if not row:
-        raise HTTPException(
-            status_code=404, detail=f"PUC code '{codigo}' not found"
-        )
+        raise HTTPException(status_code=404, detail=f"PUC code '{codigo}' not found")
     return row
 
 
@@ -62,9 +62,7 @@ def create_puc(body: CuentaPUCRequest, db: Session = Depends(get_db)):
 
 
 @router.put("/{codigo}", response_model=CuentaPUCResponse)
-def update_puc(
-    codigo: str, body: CuentaPUCRequest, db: Session = Depends(get_db)
-):
+def update_puc(codigo: str, body: CuentaPUCRequest, db: Session = Depends(get_db)):
     """Update an existing PUC account."""
     if body.codigo != codigo:
         raise HTTPException(
@@ -74,8 +72,6 @@ def update_puc(
 
     row = db_service.update_puc(db, codigo, body.model_dump())
     if not row:
-        raise HTTPException(
-            status_code=404, detail=f"PUC code '{codigo}' not found"
-        )
+        raise HTTPException(status_code=404, detail=f"PUC code '{codigo}' not found")
     logger.info(f"PUC updated: {codigo}")
     return row

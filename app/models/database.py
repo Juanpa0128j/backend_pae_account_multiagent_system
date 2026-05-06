@@ -57,10 +57,12 @@ class ProcessStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    PENDING_AUDIT_REVIEW = "pending_audit_review"
 
 
 class IngestStatus(str, enum.Enum):
     PENDING_PROCESSING = "pending_processing"
+    PENDING_REVIEW = "pending_review"
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -263,6 +265,18 @@ class IngestJob(Base):
     document_type = Column(String(50), nullable=True, comment="DocumentType enum value")
     pathway = Column(
         String(30), nullable=True, comment="build_from_scratch | work_with_existing"
+    )
+    classification_confirmed = Column(Boolean, default=False, nullable=False)
+    classification_confidence = Column(
+        Numeric(4, 3),
+        nullable=True,
+        comment="Classifier confidence 0-1 when available",
+    )
+    company_nit = Column(
+        String(20),
+        nullable=True,
+        index=True,
+        comment="Tenant NIT supplied by the caller at upload time",
     )
 
     raw_preview = Column(

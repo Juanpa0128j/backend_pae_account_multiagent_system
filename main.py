@@ -29,7 +29,7 @@ from app.core.exceptions import PAEException, DatabaseException
 # The default executor is used by asyncio.to_thread() and other operations.
 _loop = asyncio.get_event_loop()
 _loop.set_default_executor(
-    ThreadPoolExecutor(max_workers=20, thread_name_prefix="api_worker")
+    ThreadPoolExecutor(max_workers=8, thread_name_prefix="api_worker")
 )
 
 # Configure logging

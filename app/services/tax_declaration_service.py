@@ -118,14 +118,20 @@ def _build_f300(
     fields: List[DraftField] = []
     warnings: List[DraftWarning] = []
 
+    # IVA generado: scan all 2408xx subaccounts (240802=descontable, 240808=19% generado,
+    # plus rate-specific subaccounts for 5%/exempt/INC). Treat the standard 19% slot
+    # explicitly so the field downstream still reflects only that rate.
     iva_generado_19 = _exact_credit(ledger, "240808")
     iva_descontable = _exact_debit(ledger, "240802")
 
     # ── Prorrateo detection (Art. 490 ET) ──────────────────────────────────
-    iva_responsable = getattr(settings, "iva_responsable", True)
+    # Default to False (más seguro): only assume IVA responsibility when the
+    # company explicitly opted in via settings. A None value should NOT default
+    # to True — that produces misleading prorateo on simplified-régimen tenants.
+    iva_responsable = bool(getattr(settings, "iva_responsable", False))
     tasa_iva = (
         float(settings.tasa_iva_general)
-        if settings.tasa_iva_general is not None
+        if getattr(settings, "tasa_iva_general", None) is not None
         else 0.19
     )
     ingresos_totales = _sum_credits(ledger, "4")
@@ -143,6 +149,8 @@ def _build_f300(
         factor_prorrateo = base_gravada / ingresos_totales
         iva_descontable_prorateable = round(iva_descontable * factor_prorrateo, 2)
     else:
+        # Non-IVA-responsable: no proration applies. Pass-through preserves the
+        # ledger figure for accountant review without flagging a false warning.
         factor_prorrateo = 1.0
         iva_descontable_prorateable = iva_descontable
 
@@ -162,9 +170,11 @@ def _build_f300(
     fields.append(
         DraftField(
             "66",
-            "IVA descontable (compras y servicios)"
-            if not operaciones_mixtas
-            else f"IVA descontable prorateable (factor {factor_prorrateo:.4%})",
+            (
+                "IVA descontable (compras y servicios)"
+                if not operaciones_mixtas
+                else f"IVA descontable prorateable (factor {factor_prorrateo:.4%})"
+            ),
             round(iva_descontable_prorateable, 2),
             "cuenta_240802",
             "high",
@@ -718,23 +728,31 @@ def generate_declaration_draft(
     # Art. 772-1 ET obliges fiscal reconciliation before income tax filing.
     if form_type == "F110":
         year = period_end.year
-        f2516_exists = (
+        # Empty draft stubs do not satisfy the regulatory requirement: require
+        # the F2516 to have moved past 'draft' status (reviewed or filed) so
+        # we have evidence the accountant actually completed the reconciliation.
+        f2516 = (
             db.query(TaxDeclarationDraft)
             .filter(
                 TaxDeclarationDraft.company_nit == company_nit,
                 TaxDeclarationDraft.form_type == "F2516",
                 TaxDeclarationDraft.year == year,
             )
+            .order_by(TaxDeclarationDraft.created_at.desc())
             .first()
         )
-        if not f2516_exists:
+        if not f2516:
             raise ValueError(
                 f"F110 para {company_nit} año {year} requiere F2516 (Conciliación Fiscal) "
                 f"registrado previamente (Art. 772-1 ET). "
-                f"Genere primero el borrador F2516 mediante POST /api/v1/tax/declarations/generate "
-                f"con payload {{'company_nit': '{company_nit}', 'form_type': 'F2516', "
-                f"'period_start': 'YYYY-MM-DD', 'period_end': 'YYYY-MM-DD'}}. "
-                f"Luego genere el F110."
+                f"Genere primero el borrador F2516 y revíselo antes de generar el F110."
+            )
+        if str(f2516.status).lower() not in {"reviewed", "filed"}:
+            raise ValueError(
+                f"F110 para {company_nit} año {year} requiere que el F2516 esté "
+                f"revisado o presentado (estado actual: {f2516.status}). "
+                f"Complete los campos requeridos del F2516 y márquelo como 'reviewed' "
+                f"antes de generar el F110."
             )
 
     start_dt = datetime.combine(period_start, datetime.min.time())

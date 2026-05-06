@@ -296,6 +296,48 @@ class TestSchemaRegistry:
         assert INGEST_CONTENT_SCHEMAS["nota_credito"] is NotaCreditoContent
         assert INGEST_CONTENT_SCHEMAS["nota_debito"] is NotaDebitoContent
 
+
+class TestBalanceGeneralContentDeduplication:
+    def _make_acct(self, cuenta_puc: str, saldo: str = "1000") -> dict:
+        return {"cuenta_puc": cuenta_puc, "nombre": "Test", "saldo": saldo}
+
+    def test_duplicate_accounts_collapsed(self):
+        data = {
+            "accounts": [
+                self._make_acct("135518"),
+                self._make_acct("135518"),
+                self._make_acct("135518"),
+                self._make_acct("240815"),
+            ]
+        }
+        result = BalanceGeneralContent.model_validate(data)
+        assert result.accounts is not None
+        codes = [a.cuenta_puc for a in result.accounts]
+        assert codes.count("135518") == 1
+        assert len(codes) == 2
+
+    def test_whitespace_variants_collapsed(self):
+        data = {
+            "accounts": [
+                self._make_acct("135518"),
+                self._make_acct(" 135518"),
+                self._make_acct("135518 "),
+            ]
+        }
+        result = BalanceGeneralContent.model_validate(data)
+        assert result.accounts is not None
+        assert len(result.accounts) == 1
+
+    def test_truncated_to_300(self):
+        data = {"accounts": [self._make_acct(str(i)) for i in range(400)]}
+        result = BalanceGeneralContent.model_validate(data)
+        assert result.accounts is not None
+        assert len(result.accounts) == 300
+
+    def test_empty_accounts_unchanged(self):
+        result = BalanceGeneralContent.model_validate({"accounts": []})
+        assert result.accounts == [] or result.accounts is None
+
     def test_declarations_use_tax_declaration(self):
         assert INGEST_CONTENT_SCHEMAS["declaracion_iva"] is TaxDeclarationContent
         assert INGEST_CONTENT_SCHEMAS["declaracion_reteica"] is TaxDeclarationContent

@@ -642,12 +642,16 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="gathering_data",
-            label="Datos financieros recolectados"
-            if needs_data
-            else "Sin recolección de datos (consulta general)",
-            detail=f"tarjetas={len(data_cards)}"
-            if needs_data
-            else "no se requirieron datos",
+            label=(
+                "Datos financieros recolectados"
+                if needs_data
+                else "Sin recolección de datos (consulta general)"
+            ),
+            detail=(
+                f"tarjetas={len(data_cards)}"
+                if needs_data
+                else "no se requirieron datos"
+            ),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -660,9 +664,11 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
         _thinking_step(
             phase="rag",
             label="Contexto normativo (RAG)",
-            detail=f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
-            if rag_query
-            else "sin consulta normativa",
+            detail=(
+                f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
+                if rag_query
+                else "sin consulta normativa"
+            ),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -800,12 +806,16 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="gathering_data",
-            label="Datos financieros recolectados"
-            if needs_data
-            else "Sin recolección de datos (consulta general)",
-            detail=f"tarjetas={len(data_cards)}"
-            if needs_data
-            else "no se requirieron datos",
+            label=(
+                "Datos financieros recolectados"
+                if needs_data
+                else "Sin recolección de datos (consulta general)"
+            ),
+            detail=(
+                f"tarjetas={len(data_cards)}"
+                if needs_data
+                else "no se requirieron datos"
+            ),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -817,9 +827,11 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
         _thinking_step(
             phase="rag",
             label="Contexto normativo (RAG)",
-            detail=f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
-            if rag_query
-            else "sin consulta normativa",
+            detail=(
+                f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
+                if rag_query
+                else "sin consulta normativa"
+            ),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )

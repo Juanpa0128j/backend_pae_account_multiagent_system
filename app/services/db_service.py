@@ -59,7 +59,14 @@ def _commit_or_flush(db: Session, commit: bool) -> None:
 
 
 def create_ingest_job(
-    db: Session, file_name: str, file_path: str = None, commit: bool = True
+    db: Session,
+    file_name: str,
+    file_path: str = None,
+    company_nit: Optional[str] = None,
+    document_type: Optional[str] = None,
+    pathway: Optional[str] = None,
+    classification_confirmed: Optional[bool] = None,
+    commit: bool = True,
 ) -> IngestJob:
     """Create a new ingest job for a document upload."""
     job = IngestJob(
@@ -67,6 +74,10 @@ def create_ingest_job(
         file_name=file_name,
         file_path=file_path,
         status=IngestStatus.PENDING_PROCESSING,
+        company_nit=company_nit or None,
+        document_type=document_type or None,
+        pathway=pathway or None,
+        classification_confirmed=classification_confirmed,
     )
     db.add(job)
     # Stage audit log before the single commit/flush so job + log are atomic
@@ -87,6 +98,8 @@ def update_ingest_job(
     extraction_errors: List[str] = None,
     document_type: str = None,
     pathway: str = None,
+    classification_confirmed: Optional[bool] = None,
+    classification_confidence: Optional[Decimal] = None,
     commit: bool = True,
 ) -> Optional[IngestJob]:
     """Update an ingest job's status and preview data."""
@@ -103,6 +116,10 @@ def update_ingest_job(
         job.document_type = document_type
     if pathway is not None:
         job.pathway = pathway
+    if classification_confirmed is not None:
+        job.classification_confirmed = classification_confirmed
+    if classification_confidence is not None:
+        job.classification_confidence = classification_confidence
     if status in (IngestStatus.COMPLETED, IngestStatus.FAILED):
         job.completed_at = datetime.now(timezone.utc)
 
@@ -579,7 +596,9 @@ def get_all_puc(db: Session) -> List[CuentaPUC]:
     )
 
 
-def search_puc(db: Session, search_term: str, limit: int = 10, include_inactive: bool = False) -> List[CuentaPUC]:
+def search_puc(
+    db: Session, search_term: str, limit: int = 10, include_inactive: bool = False
+) -> List[CuentaPUC]:
     """Search PUC accounts by code or name. Optionally include inactive accounts."""
     query = db.query(CuentaPUC).filter(
         (CuentaPUC.codigo.ilike(f"%{search_term}%"))
@@ -607,7 +626,9 @@ def create_puc(db: Session, data: dict, commit: bool = True) -> CuentaPUC:
         raise
 
 
-def update_puc(db: Session, codigo: str, data: dict, commit: bool = True) -> Optional[CuentaPUC]:
+def update_puc(
+    db: Session, codigo: str, data: dict, commit: bool = True
+) -> Optional[CuentaPUC]:
     """Update existing PUC account. Returns None if not found."""
     row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
     if not row:
@@ -666,7 +687,7 @@ def update_process_job(
     if not job:
         return None
 
-    if status:
+    if status is not None:
         job.status = status
         if status == ProcessStatus.RUNNING and not job.started_at:
             job.started_at = datetime.now(timezone.utc)
@@ -709,7 +730,12 @@ def get_active_process_job_for_ingest(
         .filter(
             ProcessJob.ingest_id == ingest_id,
             ProcessJob.status.in_(
-                [ProcessStatus.QUEUED, ProcessStatus.RUNNING, ProcessStatus.COMPLETED]
+                [
+                    ProcessStatus.QUEUED,
+                    ProcessStatus.RUNNING,
+                    ProcessStatus.COMPLETED,
+                    ProcessStatus.PENDING_AUDIT_REVIEW,
+                ]
             ),
         )
         .order_by(ProcessJob.created_at.desc())
@@ -898,6 +924,16 @@ def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
 def list_companies(db: Session) -> list[CompanySettings]:
     """Return all CompanySettings rows ordered by NIT."""
     return db.query(CompanySettings).order_by(CompanySettings.nit).all()
+
+
+def delete_company(db: Session, nit: str) -> bool:
+    """Delete the CompanySettings row for the given NIT. Returns True if deleted."""
+    row = db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
+    if not row:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
 
 
 def upsert_company_settings(

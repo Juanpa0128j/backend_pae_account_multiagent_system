@@ -56,6 +56,7 @@ _fake_config.settings = SimpleNamespace(
 sys.modules.setdefault("app.core.config", _fake_config)
 
 from app.agents import ingest_agent  # noqa: E402
+from app.agents.llm_retry import llm_with_parse_retry  # noqa: E402
 from tests.conftest import base_state  # noqa: E402
 
 
@@ -97,7 +98,7 @@ class TestGeminiRetryHelper:
                 raise TimeoutError("temporary")
             return {"ok": True}
 
-        result = ingest_agent._gemini_with_retry_generic(method, "abc")
+        result = llm_with_parse_retry(method, "abc")
         assert result == {"ok": True}
         assert calls["n"] == 3
 
@@ -107,7 +108,7 @@ class TestGeminiRetryHelper:
             raise ConnectionError("network")
 
         with pytest.raises(ConnectionError):
-            ingest_agent._gemini_with_retry_generic(method, "abc")
+            llm_with_parse_retry(method, "abc")
 
     def test_non_transient_is_not_retried(self):
         calls = {"n": 0}
@@ -118,7 +119,7 @@ class TestGeminiRetryHelper:
             raise ValueError("bad schema")
 
         with pytest.raises(ValueError):
-            ingest_agent._gemini_with_retry_generic(method, "abc")
+            llm_with_parse_retry(method, "abc")
         assert calls["n"] == 1
 
 

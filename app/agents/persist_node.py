@@ -11,7 +11,6 @@ IngestJob -> TransactionPending -> TransactionPosted -> JournalEntryLines.
 # SQLAlchemy model attributes are runtime values on instances; static typing
 # can mis-infer them as Column[...] in service/pipeline code.
 
-import json
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
@@ -20,7 +19,7 @@ from sqlalchemy.exc import OperationalError as SAOperationalError
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
-from app.core.database import SessionLocal
+from app.core.database import DB_WRITE_SEMAPHORE, SessionLocal
 from app.core.logger import get_logger
 from app.models.database import IngestStatus, ProcessStatus, TransactionPending
 from app.services import db_service
@@ -369,14 +368,41 @@ def _resolve_company_nit(
 
 
 def db_persist_node(state: AgentState) -> AgentState:
-    """Persist current state output to DB for ingest/process mode."""
+    """Persist current state output to DB for ingest/process mode.
 
+    Acquires DB_WRITE_SEMAPHORE before any writes so that concurrent document
+    uploads serialize at this point instead of racing on shared DB rows or
+    exhausting the connection pool. LLM extraction upstream runs in parallel;
+    only the write phase is serialized.
+    """
     if state.get("error"):
         logger.warning("db_persist: Skipping due to upstream error: %s", state["error"])
         return state
 
     append_log(state, "db_persist", "node_start", {"mode": state.get("mode", "ingest")})
 
+    logger.debug(
+        "db_persist: waiting for DB write semaphore (ingest_id=%s)",
+        state.get("ingest_id"),
+    )
+    acquired = DB_WRITE_SEMAPHORE.acquire(timeout=120)
+    if not acquired:
+        state["error"] = (
+            "db_persist: timed out waiting for DB write semaphore (another job may be stuck)"
+        )
+        append_log(state, "db_persist", "semaphore_timeout", {"error": state["error"]})
+        return state
+    logger.debug(
+        "db_persist: acquired DB write semaphore (ingest_id=%s)", state.get("ingest_id")
+    )
+    try:
+        return _db_persist_node_inner(state)
+    finally:
+        DB_WRITE_SEMAPHORE.release()
+
+
+def _db_persist_node_inner(state: AgentState) -> AgentState:
+    """Execute DB writes — called only while holding DB_WRITE_SEMAPHORE."""
     for _attempt in range(1, MAX_NODE_RETRIES + 1):
         try:
             _db_persist_inner(state)
@@ -402,46 +428,46 @@ def db_persist_node(state: AgentState) -> AgentState:
                 )
                 append_log(state, "db_persist", "node_error", {"error": str(e)})
                 return state
-        except Exception:
-            # Non-transient — if this is a structured audit blocker, do not retry.
-            if state.get("error") and "audit_blocker" in str(state.get("error")):
-                if state.get("mode") == "process":
-                    process_id = _as_str(state.get("process_id"), "")
-                    if process_id:
-                        db = SessionLocal()
-                        try:
-                            db_service.update_process_job(
-                                db,
-                                process_id,
-                                status=ProcessStatus.FAILED,
-                                current_stage="failed",
-                                current_agent="db_persist",
-                                error_message=str(state.get("error")),
-                                progress=100,
-                                agent_log_entry={
-                                    "agent": "db_persist",
-                                    "stage": "failed",
-                                    "status": "failed",
-                                },
-                            )
-                        except Exception as status_err:
-                            logger.debug(
-                                "persist_node: failed to mark process job FAILED for audit blocker: %s",
-                                status_err,
-                            )
-                        finally:
-                            db.close()
-                append_log(
-                    state,
-                    "db_persist",
-                    "node_error",
-                    {"error": state.get("error")},
-                )
-                return state
-            # Fall through to original error handling below
-            break
+        except Exception as e:
+            # Non-transient: mark process FAILED and exit. Never re-run _run_persist
+            # — that risks duplicate TransactionPosted / JournalEntryLine rows.
+            err_msg = state.get("error") or f"DB persist error: {str(e)}"
+            state["error"] = err_msg
+            logger.error(
+                "db_persist: non-transient exception, aborting without retry: %s",
+                err_msg,
+                exc_info=True,
+            )
+            if state.get("mode") == "process":
+                process_id = _as_str(state.get("process_id"), "")
+                if process_id:
+                    db = SessionLocal()
+                    try:
+                        db_service.update_process_job(
+                            db,
+                            process_id,
+                            status=ProcessStatus.FAILED,
+                            current_stage="failed",
+                            current_agent="db_persist",
+                            error_message=str(err_msg),
+                            progress=100,
+                            agent_log_entry={
+                                "agent": "db_persist",
+                                "stage": "failed",
+                                "status": "failed",
+                            },
+                        )
+                    except Exception as status_err:
+                        logger.debug(
+                            "persist_node: failed to mark process job FAILED: %s",
+                            status_err,
+                        )
+                    finally:
+                        db.close()
+            append_log(state, "db_persist", "node_error", {"error": str(err_msg)})
+            return state
 
-    # Non-retry path: wrap in try/except to handle non-transient exceptions
+    # Retry budget exhausted on transient errors only — try one final cleanup pass.
     try:
         _db_persist_inner_with_cleanup(state)
         if state.get("error"):
@@ -623,58 +649,58 @@ def _run_persist(state: AgentState) -> AgentState:
         return state
 
     if mode == "process":
-        from app.agents.audit_utils import append_audit_report
-        from app.agents.auditors import pre_persist_auditor
-        from app.models.audit import Severity
-
-        pre_persist_report = pre_persist_auditor.run(state)
-        append_audit_report(state, pre_persist_report)
-
-        report_blockers = [
-            f for f in pre_persist_report.findings if f.severity == Severity.BLOCKER
-        ]
-        state_blockers = [
-            f
-            for f in (state.get("unfixable_findings") or [])
-            if isinstance(f, dict) and str(f.get("severity", "")).lower() == "blocker"
-        ]
-
-        if report_blockers or state_blockers:
-            first = report_blockers[0] if report_blockers else state_blockers[0]
-            first_rule = (
-                first.rule_id
-                if report_blockers
-                else str(first.get("rule_id", "AUDIT-BLOCKER"))
+        if state.get("force_persist"):
+            # User has explicitly chosen to override audit issues — do not run the
+            # pre-persist auditor at all (it would pollute state["unfixable_findings"]
+            # and surface stale blockers in the success response).
+            logger.warning(
+                "db_persist: force_persist=True — skipping pre-persist auditor entirely"
             )
-            first_message = (
-                first.user_message_es
-                if report_blockers
-                else str(
-                    first.get("user_message_es", "Se detectó un bloqueo de auditoría.")
+            # Strip any blockers carried over from a prior run.
+            state["unfixable_findings"] = [
+                f
+                for f in (state.get("unfixable_findings") or [])
+                if not (
+                    isinstance(f, dict)
+                    and str(f.get("severity", "")).lower() == "blocker"
                 )
-            )
-            first_action = (
-                first.suggested_action_es
-                if report_blockers
-                else str(first.get("suggested_action_es", ""))
-            )
+            ]
+        else:
+            from app.agents.audit_utils import append_audit_report
+            from app.agents.auditors import pre_persist_auditor
+            from app.models.audit import AuditFinding, Severity
 
-            remediation = first_message
-            if first_action:
-                remediation = f"{remediation} {first_action}".strip()
+            pre_persist_report = pre_persist_auditor.run(state)
+            append_audit_report(state, pre_persist_report)
 
-            payload = {
-                "error_category": "audit_blocker",
-                "error_code": first_rule,
-                "remediation": remediation,
-                "message": "Persist blocked due to pre-persist audit blocker.",
-            }
-            state["error"] = json.dumps(payload, ensure_ascii=False)
-            logger.error(
-                "db_persist: refusing persist due to blocker findings rule_id=%s",
-                first_rule,
-            )
-            raise RuntimeError(state["error"])
+            report_blockers = [
+                f for f in pre_persist_report.findings if f.severity == Severity.BLOCKER
+            ]
+            state_blockers = [
+                f
+                for f in (state.get("unfixable_findings") or [])
+                if isinstance(f, dict)
+                and str(f.get("severity", "")).lower() == "blocker"
+            ]
+
+            if report_blockers or state_blockers:
+                from app.agents.audit_utils import record_giveup
+
+                all_blockers = report_blockers or [
+                    AuditFinding(**f) if isinstance(f, dict) else f
+                    for f in state_blockers
+                ]
+                first_rule = (
+                    all_blockers[0].rule_id if all_blockers else "AUDIT-BLOCKER"
+                )
+                record_giveup(state, "persist", all_blockers, attempts=1)
+                state["current_agent"] = "audit_review_terminal"
+                state["needs_hitl_review"] = True
+                logger.warning(
+                    "db_persist: pre-persist blocker detected — routing to HITL rule_id=%s",
+                    first_rule,
+                )
+                return state
 
     if mode == "process":
         contador_output = state.get("contador_output") or interpreted
@@ -920,10 +946,26 @@ def _run_persist(state: AgentState) -> AgentState:
             if puc_record:
                 puc_descripcion = _as_str(getattr(puc_record, "nombre", ""), "")
             elif mode == "process":
-                msg = f"DB persist error: PUC code {cuenta_puc} not found"
-                logger.error(msg)
-                state["error"] = msg
-                raise RuntimeError(msg)
+                if state.get("force_persist"):
+                    # User chose to override audit issues — fall back to the
+                    # catch-all 519595 instead of failing the whole pipeline.
+                    logger.warning(
+                        "db_persist: force_persist=True — PUC code %s not found, "
+                        "falling back to 519595",
+                        cuenta_puc,
+                    )
+                    cuenta_puc = "519595"
+                    fallback = db_service.validate_puc_exists(db, cuenta_puc)
+                    puc_descripcion = (
+                        _as_str(getattr(fallback, "nombre", ""), "")
+                        if fallback
+                        else "Otros gastos diversos"
+                    )
+                else:
+                    msg = f"DB persist error: PUC code {cuenta_puc} not found"
+                    logger.error(msg)
+                    state["error"] = msg
+                    raise RuntimeError(msg)
             else:
                 logger.warning(f"db_persist: PUC code {cuenta_puc} not found")
 

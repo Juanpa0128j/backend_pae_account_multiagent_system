@@ -8,7 +8,6 @@ from app.core.database import Base
 from app.models.database import AuditLog
 from app.services import db_service
 
-
 NIT_A = "900111111"
 NIT_B = "900222222"
 

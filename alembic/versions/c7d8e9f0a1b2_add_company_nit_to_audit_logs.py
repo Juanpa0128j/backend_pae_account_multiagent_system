@@ -56,8 +56,7 @@ def upgrade() -> None:
         )
 
     # Backfill 1: entity_type='transaction' against transactions_pending
-    op.execute(
-        """
+    op.execute("""
         UPDATE audit_logs AS al
         SET company_nit = tp.company_nit
         FROM transactions_pending AS tp
@@ -65,13 +64,11 @@ def upgrade() -> None:
           AND al.entity_id = tp.id
           AND al.company_nit IS NULL
           AND tp.company_nit IS NOT NULL
-        """
-    )
+        """)
 
     # Backfill 2: entity_type='transaction' against transactions_posted
     # (same entity_type, but TransactionPosted ids use 'posted_' prefix)
-    op.execute(
-        """
+    op.execute("""
         UPDATE audit_logs AS al
         SET company_nit = tposted.company_nit
         FROM transactions_posted AS tposted
@@ -79,13 +76,11 @@ def upgrade() -> None:
           AND al.entity_id = tposted.id
           AND al.company_nit IS NULL
           AND tposted.company_nit IS NOT NULL
-        """
-    )
+        """)
 
     # Backfill 3: entity_type='ingest' via any transaction sharing the
     # ingest_id. IngestJob itself has no company_nit column.
-    op.execute(
-        """
+    op.execute("""
         UPDATE audit_logs AS al
         SET company_nit = sub.company_nit
         FROM (
@@ -99,8 +94,7 @@ def upgrade() -> None:
         WHERE al.entity_type = 'ingest'
           AND al.entity_id = sub.ingest_id
           AND al.company_nit IS NULL
-        """
-    )
+        """)
 
     # entity_type='process' rows are not backfilled — ProcessJob has no
     # company_nit column. They remain NULL and will be excluded from

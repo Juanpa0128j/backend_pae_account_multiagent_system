@@ -309,20 +309,67 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             )
             return state
 
-        state["error"] = (
-            f"Schema validation failed for '{agent_name}' after {attempt} attempts. "
-            f"Last errors:\n{result.error_summary()}"
+        error_list = result.errors[:3] if result.errors else []
+
+        # If user already chose to force-persist, skip the HITL routing and
+        # let the pipeline continue with whatever output is available.
+        if state.get("force_persist"):
+            logger.warning(
+                "validate_contador: force_persist=True — bypassing schema exhaustion HITL"
+            )
+            state["correction_feedback"] = None
+            append_log(
+                state,
+                agent_name,
+                "validation_bypassed_force_persist",
+                {"attempt": attempt, "errors": error_list},
+            )
+            # Use the last raw_output as best-effort and continue
+            if result.validated_output:
+                state["result"]["validated_data"] = result.validated_output.model_dump(
+                    mode="json"
+                )
+            return state
+
+        from app.agents.audit_utils import record_giveup
+        from app.models.audit import AuditFinding, AuditTarget, Severity
+
+        user_msg = (
+            f"El agente '{agent_name}' no pudo generar una respuesta válida "
+            f"después de {attempt} intentos. "
+            + (
+                f"Errores: {'; '.join(str(e) for e in error_list)}"
+                if error_list
+                else ""
+            )
         )
+        schema_finding = AuditFinding(
+            rule_id="SCHEMA_VALIDATION_EXHAUSTED",
+            severity=Severity.BLOCKER,
+            fixable=False,
+            target=AuditTarget.CONTADOR,
+            responsible_agent=agent_name,
+            technical_message=f"Schema validation failed for '{agent_name}' after {attempt} attempts. Errors: {'; '.join(str(e) for e in error_list)}",
+            evidence={"attempt": attempt, "errors": error_list},
+            user_message_es=user_msg,
+            suggested_action_es=(
+                "Revise el documento fuente y verifique que los datos sean legibles "
+                "y estén en el formato esperado. Si el problema persiste, contacte soporte."
+            ),
+        )
+        record_giveup(state, agent_name, [schema_finding], attempts=attempt)
         state["result"]["status"] = "validation_error"
         state["result"]["validation_errors"] = result.errors
         state["correction_feedback"] = None
+        state["current_agent"] = "audit_review_terminal"
+        state["needs_hitl_review"] = True
         append_log(
             state,
             agent_name,
             "validation_exhausted",
             {
                 "attempt": attempt,
-                "errors": result.errors[:3],
+                "errors": error_list,
             },
         )
         return state
@@ -364,14 +411,62 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             )
             return state
 
-        state["error"] = (
-            f"PUC validation failed for '{agent_name}' after {attempt} attempts. "
-            f"Missing codes: {', '.join(missing)}"
+        # If user already chose to force-persist, remap missing PUC codes to
+        # the catch-all 519595 and continue. This avoids trapping users in
+        # an HITL loop when the LLM cannot self-correct.
+        if state.get("force_persist"):
+            logger.warning(
+                "validate_contador: force_persist=True — remapping missing PUC codes "
+                "to 519595: %s",
+                missing,
+            )
+            for asiento in validated.get("asientos", []):
+                if isinstance(asiento, dict):
+                    code = str(asiento.get("cuenta_puc", "")).strip()
+                    if code in missing:
+                        asiento["cuenta_puc"] = "519595"
+                        asiento["nombre_cuenta"] = "Otros gastos diversos"
+            state["result"]["validated_data"] = validated
+            state["correction_feedback"] = None
+            append_log(
+                state,
+                agent_name,
+                "validation_bypassed_force_persist",
+                {
+                    "attempt": attempt,
+                    "reason": "puc_not_found",
+                    "missing": missing,
+                    "remapped_to": "519595",
+                },
+            )
+            return state
+
+        # Exhausted retries for PUC validation — pause for HITL review instead of
+        # aborting, so the user can correct the document or override.
+        from app.agents.audit_utils import record_giveup
+        from app.models.audit import AuditFinding, AuditTarget, Severity
+
+        puc_finding = AuditFinding(
+            rule_id="PUC_CODES_NOT_FOUND",
+            severity=Severity.BLOCKER,
+            fixable=False,
+            target=AuditTarget.CONTADOR,
+            responsible_agent=agent_name,
+            technical_message=f"PUC validation exhausted after {attempt} attempts. Missing codes: {', '.join(missing)}",
+            evidence={"missing_codes": missing},
+            user_message_es=(
+                f"Los siguientes códigos PUC no existen en la base de datos: "
+                f"{', '.join(missing)}. El agente no pudo corregirlos automáticamente "
+                f"tras {attempt} intentos."
+            ),
+            suggested_action_es=(
+                "Revise el documento y corrija los códigos PUC inválidos, "
+                "o cargue un documento actualizado con los códigos correctos."
+            ),
         )
-        state["result"]["status"] = "validation_error"
-        state["result"]["validation_errors"] = [
-            {"loc": ["asientos"], "msg": missing_msg, "type": "puc_not_found"}
-        ]
+        record_giveup(state, agent_name, [puc_finding], attempts=attempt)
+        state["current_agent"] = "audit_review_terminal"
+        state["needs_hitl_review"] = True
         state["correction_feedback"] = None
         append_log(
             state,
@@ -381,6 +476,7 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
                 "attempt": attempt,
                 "reason": "puc_not_found",
                 "missing": missing,
+                "next_agent": "audit_review_terminal",
             },
         )
         return state

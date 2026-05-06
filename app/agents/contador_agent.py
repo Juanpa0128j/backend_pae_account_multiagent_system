@@ -2,16 +2,22 @@
 Contador (Accountant) worker node for the process graph.
 
 Receives staged raw transactions from state, queries the RAG service for
-relevant PUC codes/normativa, and uses Gemini to produce a balanced
+relevant PUC codes/normativa, and uses the LLM to produce a balanced
 ContadorOutput (partida doble) following Colombian PUC standards.
 
 On retry (when correction_feedback is present), the previous invalid
-output and the schema errors are re-sent to Gemini for self-correction.
+output and the schema errors are re-sent to the LLM for self-correction.
 """
 
 import logging
 
 from app.agents.agent_utils import append_log
+from app.agents.llm_retry import (
+    is_double_entry_violation,
+    is_invalid_puc,
+    is_parse_error,
+    llm_with_parse_retry,
+)
 from app.agents.state import AgentState
 from app.core.llm_client import get_llm_client
 
@@ -175,12 +181,14 @@ def contador_node(state: AgentState) -> AgentState:
         if source_doc:
             source_taxes = _extract_source_taxes_summary(source_doc)
 
-        contador_output = llm.extract_contador_output(
+        contador_output = llm_with_parse_retry(
+            llm.extract_contador_output,
             raw_transactions=raw_transactions,
             doc_type=doc_type,
             rag_context=rag_context,
             correction_feedback=state.get("correction_feedback") if is_retry else None,
             source_taxes=source_taxes,
+            agent_label="contador",
         )
 
         # Clear correction feedback after consuming it
@@ -198,6 +206,141 @@ def contador_node(state: AgentState) -> AgentState:
         append_log(state, "contador", "node_complete", {"stage": "classifying"})
 
     except Exception as exc:
+        # Surface actionable, Spanish audit findings for known parse failures
+        # before terminating, so the accountant gets a useful trace instead of
+        # a generic "contador error".
+        if is_parse_error(exc) and is_double_entry_violation(exc):
+            # Recovery attempt: ask the LLM to balance via suspense account 139595.
+            # If it succeeds the pipeline continues with a WARNING instead of failing.
+            logger.warning(
+                "contador: double-entry violation after retries — attempting suspense recovery"
+            )
+            try:
+                suspense_feedback = (
+                    f"El asiento generado no está balanceado (débitos ≠ créditos). "
+                    f"Añade UNA línea adicional a la cuenta 139595 (Cuentas por "
+                    f"Aclarar) con el tipo de movimiento necesario para igualar los "
+                    f"totales. No omitas los asientos ya generados. Error original: {exc}"
+                )
+                contador_output = llm_with_parse_retry(
+                    llm.extract_contador_output,
+                    raw_transactions=raw_transactions,
+                    doc_type=doc_type,
+                    rag_context=rag_context,
+                    correction_feedback=suspense_feedback,
+                    source_taxes=source_taxes,
+                    agent_label="contador-recovery",
+                )
+                # Recovery succeeded — emit WARNING so the accountant is notified
+                from app.agents.audit_utils import append_finding
+                from app.models.audit import AuditFinding, AuditTarget, Severity
+
+                append_finding(
+                    state,
+                    AuditFinding(
+                        target=AuditTarget.CONTADOR,
+                        rule_id="CONT-SUSPENSE-USED",
+                        severity=Severity.WARNING,
+                        fixable=True,
+                        responsible_agent="contador",
+                        technical_message=str(exc)[:500],
+                        user_message_es=(
+                            "El asiento no pudo balancearse automáticamente y se "
+                            "registró una línea en la cuenta 139595 (Cuentas por "
+                            "Aclarar) para mantener la partida doble."
+                        ),
+                        suggested_action_es=(
+                            "Revise el asiento generado y reclasifique la línea de "
+                            "139595 a la cuenta correcta según el documento fuente."
+                        ),
+                        evidence={"original_violation": str(exc)[:200]},
+                    ),
+                )
+
+                state["correction_feedback"] = None
+                state["contador_output"] = contador_output
+                state["interpreted_data"] = contador_output
+
+                if not state.get("result"):
+                    state["result"] = {}
+                state["result"]["contador_output"] = contador_output
+                state["result"]["status"] = "clasificado"
+
+                logger.info(
+                    "contador: suspense recovery succeeded — pipeline continues"
+                )
+                append_log(
+                    state,
+                    "contador",
+                    "node_complete",
+                    {"stage": "classifying", "suspense_recovery": True},
+                )
+                return state
+
+            except Exception as recovery_exc:
+                logger.error(
+                    "contador: suspense recovery also failed: %s", recovery_exc
+                )
+                # Fall through to hard failure below, using original exc
+
+        if is_parse_error(exc):
+            from app.agents.audit_utils import append_finding
+            from app.models.audit import AuditFinding, AuditTarget, Severity
+
+            if is_double_entry_violation(exc):
+                rule_id = "CONT-BALANCE-UNFIXABLE"
+                user_msg_es = (
+                    "El documento no contiene información suficiente para generar "
+                    "un asiento de doble entrada balanceado tras varios intentos, "
+                    "incluyendo el intento de recuperación con cuenta puente. "
+                    "Revise el documento fuente: puede estar incompleto, ser de "
+                    "una sola entrada (recibo, comprobante parcial), o tener "
+                    "valores inconsistentes."
+                )
+                action_es = (
+                    "Verifique que el documento incluya tanto el cargo como el "
+                    "abono. Si es un documento parcial, complete la contraparte "
+                    "manualmente o use una cuenta puente (139595 - Cuentas por "
+                    "Aclarar) y reclasifique después."
+                )
+            elif is_invalid_puc(exc):
+                rule_id = "CONT-INVALID-PUC"
+                user_msg_es = (
+                    "El modelo generó un código PUC inválido (placeholder o "
+                    "formato incorrecto) y no logró corregirlo tras varios "
+                    "intentos."
+                )
+                action_es = (
+                    "Reintente con un documento más legible o reclasifique "
+                    "manualmente el asiento usando códigos PUC reales del plan "
+                    "de cuentas (1-6 dígitos numéricos)."
+                )
+            else:
+                rule_id = "CONT-PARSE-EXHAUSTED"
+                user_msg_es = (
+                    "El modelo no logró producir una salida válida tras varios "
+                    "intentos."
+                )
+                action_es = (
+                    "Reintente el procesamiento. Si persiste, revise el "
+                    "documento fuente o reclasifique manualmente."
+                )
+
+            append_finding(
+                state,
+                AuditFinding(
+                    target=AuditTarget.CONTADOR,
+                    rule_id=rule_id,
+                    severity=Severity.BLOCKER,
+                    fixable=False,
+                    responsible_agent="contador",
+                    technical_message=str(exc)[:500],
+                    user_message_es=user_msg_es,
+                    suggested_action_es=action_es,
+                    evidence={"exception_type": exc.__class__.__name__},
+                ),
+            )
+
         state["error"] = f"contador error: {exc}"
         logger.error(state["error"], exc_info=True)
         append_log(state, "contador", "node_error", {"error": str(exc)})
