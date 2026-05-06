@@ -1,0 +1,161 @@
+"""Tests for Via A/B mutual exclusion — get/set_company_locked_pathway and upload enforcement."""
+
+from unittest.mock import MagicMock, patch
+
+from fastapi.testclient import TestClient
+
+from app.services import db_service
+
+
+# ---------------------------------------------------------------------------
+# db_service unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetCompanyLockedPathway:
+    def test_returns_none_when_company_not_found(self):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        result = db_service.get_company_locked_pathway(db, "999999999")
+        assert result is None
+
+    def test_returns_none_when_pathway_not_set(self):
+        db = MagicMock()
+        row = MagicMock()
+        row.__getitem__ = lambda self, i: None  # row[0] = None
+        db.query.return_value.filter.return_value.first.return_value = (None,)
+        result = db_service.get_company_locked_pathway(db, "800999888")
+        assert result is None
+
+    def test_returns_locked_pathway_when_set(self):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = ("build_from_scratch",)
+        result = db_service.get_company_locked_pathway(db, "800999888")
+        assert result == "build_from_scratch"
+
+
+class TestSetCompanyLockedPathway:
+    def test_sets_pathway_when_not_locked(self):
+        db = MagicMock()
+        company = MagicMock()
+        company.locked_pathway = None
+        db.query.return_value.filter.return_value.first.return_value = company
+
+        db_service.set_company_locked_pathway(db, "800999888", "work_with_existing")
+
+        assert company.locked_pathway == "work_with_existing"
+        db.commit.assert_called_once()
+
+    def test_noop_when_already_locked(self):
+        db = MagicMock()
+        company = MagicMock()
+        company.locked_pathway = "build_from_scratch"
+        db.query.return_value.filter.return_value.first.return_value = company
+
+        db_service.set_company_locked_pathway(db, "800999888", "work_with_existing")
+
+        assert company.locked_pathway == "build_from_scratch"
+        db.commit.assert_not_called()
+
+    def test_noop_when_company_not_found(self):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None
+
+        db_service.set_company_locked_pathway(db, "999999999", "build_from_scratch")
+
+        db.commit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Upload endpoint enforcement tests
+# ---------------------------------------------------------------------------
+
+
+class TestUploadPathwayEnforcement:
+    """Test 409 enforcement in the upload endpoint when company is locked."""
+
+    def _make_upload_request(self, client, doc_type: str = None, company_nit: str = "800999888"):
+        import io
+        fake_pdf = b"%PDF-1.4 fake content"
+        data = {"company_nit": company_nit}
+        if doc_type:
+            data["doc_type"] = doc_type
+        return client.post(
+            "/api/v1/ingest/upload",
+            files={"file": ("test.pdf", io.BytesIO(fake_pdf), "application/pdf")},
+            data=data,
+        )
+
+    def test_via_b_upload_blocked_when_locked_to_via_a(self):
+        # Via B upload (doc_type=balance_general) → company locked to Via A → 409
+        from main import app
+        with TestClient(app) as client:
+            with (
+                patch("app.api.v1.ingest.db_service.get_company_locked_pathway") as mock_lock,
+                patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
+                patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
+            ):
+                mock_lock.return_value = "build_from_scratch"
+                response = self._make_upload_request(client, doc_type="balance_general")
+
+        assert response.status_code == 409
+        assert "Vía A" in response.json()["detail"]
+        mock_create.assert_not_called()
+
+    def test_via_a_upload_blocked_when_locked_to_via_b(self):
+        # Via A upload (no doc_type = unclassified) → company locked to Via B → 409
+        from main import app
+        with TestClient(app) as client:
+            with (
+                patch("app.api.v1.ingest.db_service.get_company_locked_pathway") as mock_lock,
+                patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
+                patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
+            ):
+                mock_lock.return_value = "work_with_existing"
+                response = self._make_upload_request(client)  # no doc_type = Via A
+
+        assert response.status_code == 409
+        assert "Vía B" in response.json()["detail"]
+        mock_create.assert_not_called()
+
+    def test_upload_allowed_when_not_locked(self):
+        # Via B upload, company has no lock yet → 202
+        from main import app
+        with TestClient(app) as client:
+            with (
+                patch("app.api.v1.ingest.db_service.get_company_locked_pathway") as mock_lock,
+                patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
+                patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
+                patch("app.api.v1.ingest.process_ingest_background"),
+            ):
+                mock_lock.return_value = None
+                mock_job = MagicMock()
+                mock_job.id = "ing_test"
+                mock_job.status.value = "pending_processing"
+                mock_job.created_at = None
+                mock_create.return_value = mock_job
+
+                response = self._make_upload_request(client, doc_type="balance_general")
+
+        assert response.status_code == 202
+
+    def test_upload_allowed_when_same_pathway(self):
+        # Via B upload, company already locked to Via B → 202
+        from main import app
+        with TestClient(app) as client:
+            with (
+                patch("app.api.v1.ingest.db_service.get_company_locked_pathway") as mock_lock,
+                patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
+                patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
+                patch("app.api.v1.ingest.process_ingest_background"),
+            ):
+                mock_lock.return_value = "work_with_existing"
+                mock_job = MagicMock()
+                mock_job.id = "ing_test"
+                mock_job.status.value = "pending_processing"
+                mock_job.created_at = None
+                mock_create.return_value = mock_job
+
+                response = self._make_upload_request(client, doc_type="balance_general")
+
+        assert response.status_code == 202

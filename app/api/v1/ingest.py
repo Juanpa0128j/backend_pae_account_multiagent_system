@@ -364,27 +364,34 @@ async def upload_file(
                 )
 
         # Enforce Via A / Via B mutual exclusion per company.
-        # When the pathway is known at upload time (Via B always; Via A with explicit doc_type),
-        # reject if the company is already locked to the opposing pathway.
-        if normalized_company_nit and confirmed_pathway:
+        # Via B uploads always have confirmed_pathway set → check directly.
+        # Via A uploads without doc_type have confirmed_pathway=None (unclassified),
+        # but a company locked to Via B must not accept them either.
+        if normalized_company_nit:
             locked = db_service.get_company_locked_pathway(db, normalized_company_nit)
-            if locked and locked != confirmed_pathway:
-                locked_label = (
-                    "Vía A (documentos fuente)"
-                    if locked == "build_from_scratch"
-                    else "Vía B (estados financieros)"
+            if locked:
+                conflict = (
+                    confirmed_pathway is not None and locked != confirmed_pathway
+                ) or (
+                    confirmed_pathway is None and locked == "work_with_existing"
                 )
-                incoming_label = (
-                    "Vía B" if confirmed_pathway == "work_with_existing" else "Vía A"
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Esta empresa ya está usando {locked_label}. "
-                        f"No se pueden mezclar documentos de {incoming_label} con los existentes. "
-                        "Selecciona otra empresa o usa el mismo tipo de vía."
-                    ),
-                )
+                if conflict:
+                    locked_label = (
+                        "Vía A (documentos fuente)"
+                        if locked == "build_from_scratch"
+                        else "Vía B (estados financieros)"
+                    )
+                    incoming_label = (
+                        "Vía B" if confirmed_pathway == "work_with_existing" else "Vía A"
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Esta empresa ya está usando {locked_label}. "
+                            f"No se pueden mezclar documentos de {incoming_label} con los existentes. "
+                            "Selecciona otra empresa o usa el mismo tipo de vía."
+                        ),
+                    )
 
         ingest_job = db_service.create_ingest_job(
             db,
