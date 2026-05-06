@@ -8,7 +8,6 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.models.database import CuentaPUC
-from app.models.schemas import CuentaPUCRequest
 from main import app
 
 
@@ -81,8 +80,12 @@ def test_list_puc_empty(client: TestClient, db: Session):
 def test_list_puc_with_defaults(client: TestClient, db: Session):
     """GET /puc returns active PUC accounts by default."""
     # Create one active, one inactive
-    active = CuentaPUC(codigo="100000", nombre="Active", clase=1, naturaleza="debito", activa=True)
-    inactive = CuentaPUC(codigo="200000", nombre="Inactive", clase=2, naturaleza="debito", activa=False)
+    active = CuentaPUC(
+        codigo="100000", nombre="Active", clase=1, naturaleza="debito", activa=True
+    )
+    inactive = CuentaPUC(
+        codigo="200000", nombre="Inactive", clase=2, naturaleza="debito", activa=False
+    )
     db.add_all([active, inactive])
     db.commit()
 
@@ -98,8 +101,12 @@ def test_list_puc_include_inactive(client: TestClient, db: Session):
     db.query(CuentaPUC).delete()
     db.commit()
 
-    active = CuentaPUC(codigo="100000", nombre="Active", clase=1, naturaleza="debito", activa=True)
-    inactive = CuentaPUC(codigo="200000", nombre="Inactive", clase=2, naturaleza="debito", activa=False)
+    active = CuentaPUC(
+        codigo="100000", nombre="Active", clase=1, naturaleza="debito", activa=True
+    )
+    inactive = CuentaPUC(
+        codigo="200000", nombre="Inactive", clase=2, naturaleza="debito", activa=False
+    )
     db.add_all([active, inactive])
     db.commit()
 
@@ -114,7 +121,13 @@ def test_list_puc_search(client: TestClient, db: Session):
     db.query(CuentaPUC).delete()
     db.commit()
 
-    account = CuentaPUC(codigo="110000", nombre="Inventario Bienes", clase=1, naturaleza="debito", activa=True)
+    account = CuentaPUC(
+        codigo="110000",
+        nombre="Inventario Bienes",
+        clase=1,
+        naturaleza="debito",
+        activa=True,
+    )
     db.add(account)
     db.commit()
 
@@ -130,8 +143,20 @@ def test_list_puc_search_with_include_inactive(client: TestClient, db: Session):
     db.query(CuentaPUC).delete()
     db.commit()
 
-    active = CuentaPUC(codigo="110000", nombre="Inventario Activo", clase=1, naturaleza="debito", activa=True)
-    inactive = CuentaPUC(codigo="210000", nombre="Inventario Inactivo", clase=2, naturaleza="debito", activa=False)
+    active = CuentaPUC(
+        codigo="110000",
+        nombre="Inventario Activo",
+        clase=1,
+        naturaleza="debito",
+        activa=True,
+    )
+    inactive = CuentaPUC(
+        codigo="210000",
+        nombre="Inventario Inactivo",
+        clase=2,
+        naturaleza="debito",
+        activa=False,
+    )
     db.add_all([active, inactive])
     db.commit()
 
@@ -146,7 +171,9 @@ def test_get_puc_by_codigo(client: TestClient, db: Session):
     db.query(CuentaPUC).delete()
     db.commit()
 
-    account = CuentaPUC(codigo="110000", nombre="Inventario", clase=1, naturaleza="debito", activa=True)
+    account = CuentaPUC(
+        codigo="110000", nombre="Inventario", clase=1, naturaleza="debito", activa=True
+    )
     db.add(account)
     db.commit()
 
@@ -199,7 +226,9 @@ def test_update_puc_success(client: TestClient, db: Session):
     db.query(CuentaPUC).delete()
     db.commit()
 
-    original = CuentaPUC(codigo="110000", nombre="Original", clase=1, naturaleza="debito", activa=True)
+    original = CuentaPUC(
+        codigo="110000", nombre="Original", clase=1, naturaleza="debito", activa=True
+    )
     db.add(original)
     db.commit()
 
@@ -238,7 +267,9 @@ def test_update_puc_codigo_immutable(client: TestClient, db: Session):
     db.query(CuentaPUC).delete()
     db.commit()
 
-    account = CuentaPUC(codigo="110000", nombre="Test", clase=1, naturaleza="debito", activa=True)
+    account = CuentaPUC(
+        codigo="110000", nombre="Test", clase=1, naturaleza="debito", activa=True
+    )
     db.add(account)
     db.commit()
 

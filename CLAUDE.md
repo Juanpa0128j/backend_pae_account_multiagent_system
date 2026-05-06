@@ -166,3 +166,12 @@ The system handles 13+ Colombian financial document types (facturas, extractos b
 - Never force-push, `git reset --hard`, or `git clean -f` without explicit instruction.
 - Never commit `.env`, secrets, or API keys.
 - One concern per commit.
+
+## Operational Notes
+
+- `seed_company.py` and `scripts/seed_ci_settings.py` populate the test NIT
+  `800999888`. They MUST NOT run in production. Verified absent from
+  `main.py`, `app/core/*`, `render.yaml`, and Dockerfile startup paths.
+- `scripts/dev/` contains developer-only utilities with synthetic data
+  (`FakeLlamaParse`, `FakeGeminiClient`, simulated pipelines). Never invoke
+  from CI, production startup, or the FastAPI app.
