@@ -57,18 +57,6 @@ from app.models.ingest_schemas import (  # noqa: F401
     ReciboPagoImpuestoContent,
     TaxDeclarationContent,
 )
-from app.models.llm_schemas import (  # noqa: F401
-    AsientoContableGemini,
-    AuditorHallazgoGemini,
-    AuditorOutputGemini,
-    ChatbotResponseGemini,
-    ContadorOutputGemini,
-    ExplicacionResultadoGemini,
-    InterpretacionRatioGemini,
-    PrediccionPeriodoGemini,
-    ReporteroAnalysisGemini,
-    ReporteroBriefAnalysisGemini,
-)
 
 # Extraction instructions constant (used by some tests/scripts)
 GENERAL_EXTRACTION_INSTRUCTIONS = """
