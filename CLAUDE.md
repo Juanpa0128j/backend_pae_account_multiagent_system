@@ -84,6 +84,10 @@ FastAPI (main.py) → /api/v1/* routers
 - `GET /api/v1/ingest/{ingest_id}/trace` returns an ingest-focused Spanish `PipelineTrace`
 - Process persistence is blocked on pre-persist `BLOCKER` findings and surfaces `error_category="audit_blocker"`
 
+### Dashboard Aggregations
+
+- `GET /api/v1/dashboard/monthly-trend` returns monthly ingresos vs gastos via `db_service.get_monthly_totals_by_class()` (class 4 = revenue/ingresos, class 5 = expenses/gastos). Accepts `company_nit` (optional, normalized) and `months` (1–24, default 6). Responds with `MonthlyTrendResponse` containing month labels in Spanish.
+
 ### Key Module Roles
 
 | Path | Role |
@@ -106,6 +110,7 @@ FastAPI (main.py) → /api/v1/* routers
 | `app/services/retencion_table.py` | Full 2026 retention table (UVT=$52.374, 28 concepts). Source: Carolina García, H&G Abogados |
 | `app/services/tax_declaration_service.py` | Generates pre-filled F300/F350/F110/ICA drafts from journal entries; persists as `TaxDeclarationDraft` |
 | `app/services/tax_calendar_service.py` | DIAN 2026 deadlines per NIT last digit; `list_obligations()` returns sorted `CalendarEntry` list |
+| `app/api/v1/dashboard.py` | Dashboard aggregations: `/stats` (top-level KPIs), `/financial-summary` (complete overview), `/monthly-trend` (ingresos/gastos by month) |
 | `data/` | Static seed data: 41 PUC accounts, 50 Estatuto Tributario articles, 16 Ley 43/1990 entries |
 
 ### LLM Usage Convention
