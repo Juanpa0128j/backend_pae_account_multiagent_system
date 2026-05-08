@@ -372,9 +372,7 @@ async def upload_file(
             if locked:
                 conflict = (
                     confirmed_pathway is not None and locked != confirmed_pathway
-                ) or (
-                    confirmed_pathway is None and locked == "work_with_existing"
-                )
+                ) or (confirmed_pathway is None and locked == "work_with_existing")
                 if conflict:
                     locked_label = (
                         "Vía A (documentos fuente)"
@@ -382,7 +380,9 @@ async def upload_file(
                         else "Vía B (estados financieros)"
                     )
                     incoming_label = (
-                        "Vía B" if confirmed_pathway == "work_with_existing" else "Vía A"
+                        "Vía B"
+                        if confirmed_pathway == "work_with_existing"
+                        else "Vía A"
                     )
                     raise HTTPException(
                         status_code=409,
@@ -494,6 +494,7 @@ async def update_ingest_classification(
             process_ingest_background,
             job.file_path,
             str(job.id),
+            job.company_nit,
         )
 
     refreshed = db_service.get_ingest_job(db, ingest_id)
