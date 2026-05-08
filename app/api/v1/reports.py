@@ -8,7 +8,11 @@ from app.agents.graph import invoke_reporting_pipeline
 from app.core.database import SessionLocal
 from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutput
 from app.models.database import FinancialStatement
-from app.services.financial_statement_service import list_financial_statements
+from app.services.financial_statement_service import (
+    BusinessRuleError,
+    derive_financial_statements,
+    list_financial_statements,
+)
 from app.services.nit_utils import normalize_nit
 from app.services.report_export_service import (
     BalanceSheetExporter,
@@ -1030,3 +1034,103 @@ async def download_notas_excel(
             "notas_estados_financieros", "xlsx", resolved_end_date, start_date
         ),
     )
+
+
+# ─── Vía B Manual Derivation ──────────────────────────────────────────────────
+
+_REQUIRED_SOURCE_TYPES = ("balance_general", "estado_resultados", "libro_auxiliar")
+
+
+@router.get("/derivation/status")
+async def get_derivation_status(
+    company_nit: str = Query(..., description="Company NIT"),
+):
+    """Report which Vía B source statements are uploaded for a company.
+
+    Returns one entry per source type with its periods (if any), plus a
+    `ready_periods` list showing which `(period_start, period_end)` windows
+    have all 3 source statements present and would therefore allow derivation.
+    """
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    sources: dict[str, list[dict]] = {t: [] for t in _REQUIRED_SOURCE_TYPES}
+    rows = list_financial_statements(
+        company_nit=normalized_nit,
+        statement_type=None,
+        source_mode="direct",
+    )
+    for row in rows:
+        st = row.get("statement_type")
+        if st in sources:
+            sources[st].append(
+                {
+                    "id": row.get("id"),
+                    "period_start": row.get("period_start"),
+                    "period_end": row.get("period_end"),
+                }
+            )
+
+    # A period is "ready" if all 3 source types have a statement covering it.
+    # Use period_end as the matching key (a balance is a snapshot at period_end).
+    period_end_sets: dict[str, set] = {
+        t: {item["period_end"] for item in sources[t] if item["period_end"]}
+        for t in _REQUIRED_SOURCE_TYPES
+    }
+    common_period_ends = set.intersection(*period_end_sets.values()) if period_end_sets.values() else set()
+
+    ready_periods = []
+    for pe in sorted(common_period_ends, reverse=True):
+        # For each common period_end, find the matching period_start of estado_resultados (rango)
+        # Balance is snapshot, so it uses period_end as both. Use ER's range as the canonical period.
+        er_match = next(
+            (item for item in sources["estado_resultados"] if item["period_end"] == pe),
+            None,
+        )
+        if er_match:
+            ready_periods.append(
+                {
+                    "period_start": er_match["period_start"],
+                    "period_end": pe,
+                }
+            )
+
+    return {
+        "company_nit": normalized_nit,
+        "sources": sources,
+        "ready_periods": ready_periods,
+        "is_ready": len(ready_periods) > 0,
+    }
+
+
+@router.post("/derivation/run")
+async def run_derivation(
+    company_nit: str = Query(..., description="Company NIT"),
+    start_date: date = Query(..., description="Period start YYYY-MM-DD"),
+    end_date: date = Query(..., description="Period end YYYY-MM-DD"),
+):
+    """Manually trigger Vía B derivation for the given company and period."""
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    period_start = datetime(
+        start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc
+    )
+    period_end = datetime(
+        end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc
+    )
+
+    try:
+        result = derive_financial_statements(
+            company_nit=normalized_nit,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except BusinessRuleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    return {"status": "ok", "result": result}

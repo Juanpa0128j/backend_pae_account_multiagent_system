@@ -363,6 +363,13 @@ async def upload_file(
                     detail=f"Tipo de documento '{doc_type}' no válido.",
                 )
 
+        # Vía B requires a company NIT — without it, persist will fail.
+        if confirmed_pathway == "work_with_existing" and not normalized_company_nit:
+            raise HTTPException(
+                status_code=422,
+                detail="Los documentos de Vía B requieren seleccionar una empresa (company_nit).",
+            )
+
         # Enforce Via A / Via B mutual exclusion per company.
         # Via B uploads always have confirmed_pathway set → check directly.
         # Via A uploads without doc_type have confirmed_pathway=None (unclassified),

@@ -1289,33 +1289,7 @@ def _persist_financial_statement(state: AgentState) -> None:
         )
         db.commit()
 
-        # Via B auto-derivation: if all 3 source statements present, derive second-level
-        if (
-            doc_type in ("balance_general", "estado_resultados", "libro_auxiliar")
-            and company_nit
-        ):
-            derive_result = _try_via_b_auto_derive(
-                db,
-                company_nit=company_nit,
-                period_start=period_start,
-                period_end=period_end,
-            )
-            if derive_result is False:
-                from app.agents.audit_utils import append_finding
-                from app.models.audit import AuditFinding, AuditTarget, Severity
-
-                append_finding(
-                    state,
-                    AuditFinding(
-                        target=AuditTarget.PRE_PERSIST,
-                        rule_id="PERS-VIA-B-PARTIAL",
-                        severity=Severity.WARNING,
-                        fixable=False,
-                        responsible_agent="persist",
-                        technical_message="Via B: not all 3 source statements uploaded yet.",
-                        user_message_es="Vía B: faltan documentos fuente. Cargue balance general, estado de resultados y libro auxiliar para generar los estados financieros derivados.",
-                    ),
-                )
+        # Vía B derivation is now manual — triggered via POST /api/v1/reports/derivation/run.
 
         state["db_result"] = {
             "ingest_id": ingest_id,
