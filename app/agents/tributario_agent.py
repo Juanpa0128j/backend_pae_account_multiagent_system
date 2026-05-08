@@ -59,7 +59,7 @@ TASA_ICA_DEFAULT = Decimal("0.00690")  # 6.9‰ — conservative national refere
 CUENTA_ICA_GASTO_ADMIN = "511505"  # Gasto ICA administración
 CUENTA_ICA_GASTO_VENTAS = "521505"  # Gasto ICA ventas
 CUENTA_ICA_GASTO = "511505"  # alias for backward compat — default to admin
-CUENTA_ICA_PASIVO = "240808"  # ICA por Pagar
+CUENTA_ICA_PASIVO = "2368"  # ReteICA por pagar (2026)
 
 # Renta — Art. 240 ET (Ley 2277/2022, vigente año fiscal 2023+)
 TASA_RENTA = Decimal("0.35")  # 35% tarifa general sociedades

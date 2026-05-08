@@ -240,7 +240,7 @@ class ICADeclaracionOutput(BaseModel):
     tasa_ica: float
     ica_a_pagar: float
     cuenta_gasto_puc: str = "540101"
-    cuenta_pasivo_puc: str = "240808"
+    cuenta_pasivo_puc: str = "2368"
     referencias: List[str]
 
 

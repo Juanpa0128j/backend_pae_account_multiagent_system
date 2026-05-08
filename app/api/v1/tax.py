@@ -97,7 +97,7 @@ async def get_ica_declaration(
     end_date: Optional[date] = Query(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
-    nit: Optional[str] = Query(
+    company_nit: Optional[str] = Query(
         None, description="Company NIT (nit_receptor) to filter by"
     ),
     db: Session = Depends(get_db),
@@ -111,11 +111,11 @@ async def get_ica_declaration(
     """
     period_end = end_date or date.today()
 
-    where_nit = "AND tp.nit_receptor = :nit" if nit else ""
+    where_nit = "AND tp.nit_receptor = :nit" if company_nit else ""
     where_start = "AND j.fecha >= :period_start" if start_date else ""
     query_params: dict = {"period_end": period_end}
-    if nit:
-        query_params["nit"] = nit
+    if company_nit:
+        query_params["nit"] = company_nit
     if start_date:
         query_params["period_start"] = start_date
 
@@ -134,8 +134,8 @@ async def get_ica_declaration(
     ingresos_brutos = Decimal(str(row.ingresos if row else 0))
 
     tasa_ica = TASA_ICA_DEFAULT
-    if nit:
-        settings = db_service.get_company_settings(db, nit)
+    if company_nit:
+        settings = db_service.get_company_settings(db, company_nit)
         if settings and settings.tasa_ica:
             tasa_ica = Decimal(str(settings.tasa_ica))
 
@@ -162,7 +162,7 @@ async def get_renta_provision(
     end_date: Optional[date] = Query(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
-    nit: Optional[str] = Query(None, description="Company NIT to filter by"),
+    company_nit: Optional[str] = Query(None, description="Company NIT to filter by"),
     db: Session = Depends(get_db),
 ):
     """
@@ -173,14 +173,14 @@ async def get_renta_provision(
     period_end = end_date or date.today()
 
     tasa_renta = TASA_RENTA
-    if nit:
-        settings = db_service.get_company_settings(db, nit)
+    if company_nit:
+        settings = db_service.get_company_settings(db, company_nit)
         if settings and settings.tasa_renta:
             tasa_renta = Decimal(str(settings.tasa_renta))
 
     result = calc_period_renta_provision(
         db_session=db,
-        nit_receptor=nit or "",
+        nit_receptor=company_nit or "",
         period_start=start_date,
         period_end=period_end,
         tasa_renta=tasa_renta,

@@ -39,6 +39,32 @@ class DashboardStatsResponse(BaseModel):
     transacciones_por_estado: Dict[str, int] = Field(default_factory=dict)
 
 
+SPANISH_MONTHS = {
+    1: "Ene",
+    2: "Feb",
+    3: "Mar",
+    4: "Abr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Ago",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dic",
+}
+
+
+class MonthlyTrendPoint(BaseModel):
+    month: str
+    ingresos: float
+    gastos: float
+
+
+class MonthlyTrendResponse(BaseModel):
+    data: List[MonthlyTrendPoint]
+
+
 class DashboardFinancialSummaryResponse(BaseModel):
     total_activos: float = 0.0
     total_pasivos: float = 0.0
@@ -232,3 +258,53 @@ async def get_financial_summary(
         transacciones_por_estado=txn_counts,
         actividad_reciente=recent,
     )
+
+
+@router.get("/monthly-trend", response_model=MonthlyTrendResponse)
+async def get_monthly_trend(
+    db: Session = Depends(get_db),
+    company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+    months: int = Query(6, ge=1, le=24, description="Number of months to look back"),
+):
+    """
+    Returns monthly ingresos vs gastos for the last N months.
+    Used to power the Tendencia bar chart on the dashboard.
+    """
+    if company_nit:
+        try:
+            company_nit = normalize_nit(company_nit)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    totals = db_service.get_monthly_totals_by_class(
+        db, months=months, company_nit=company_nit
+    )
+
+    ingresos_by_month: dict[str, float] = {
+        row["month"]: float(row.get("total_credit", 0) - row.get("total_debit", 0))
+        for row in totals.get("ingresos", [])
+    }
+    gastos_by_month: dict[str, float] = {
+        row["month"]: float(row.get("total_debit", 0) - row.get("total_credit", 0))
+        for row in totals.get("gastos", [])
+    }
+
+    all_months = sorted(set(ingresos_by_month) | set(gastos_by_month))
+
+    def _label(ym: str) -> str:
+        try:
+            year, month = ym.split("-")
+            return SPANISH_MONTHS.get(int(month), ym)
+        except (ValueError, AttributeError):
+            return ym
+
+    data = [
+        MonthlyTrendPoint(
+            month=_label(ym),
+            ingresos=ingresos_by_month.get(ym, 0.0),
+            gastos=gastos_by_month.get(ym, 0.0),
+        )
+        for ym in all_months
+    ]
+
+    return MonthlyTrendResponse(data=data)

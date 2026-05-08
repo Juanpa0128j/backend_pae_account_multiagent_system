@@ -28,7 +28,9 @@ router = APIRouter()
 
 # Retefuente national rates (Art. 383 / Art. 401 ET) — these are fixed by law
 # and do not vary by municipality, so they are always taken from the code.
-_TASA_RETEFUENTE_SERVICIOS = 0.11
+_TASA_RETEFUENTE_SERVICIOS = (
+    0.04  # Retefuente servicios generales, declarantes (DIAN 2026)
+)
 _TASA_RETEFUENTE_BIENES = 0.03
 _TASA_RETEFUENTE_ARRENDAMIENTO = 0.10
 

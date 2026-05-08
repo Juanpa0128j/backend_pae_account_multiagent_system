@@ -372,7 +372,7 @@ Documento:
             ),
             "declaracion_ica": (
                 "REGLA DECLARACION ICA: Asiento de pago ICA. "
-                "Debita ICA por pagar (240808) por el total a pagar. "
+                "Debita ICA por pagar (2368) por el total a pagar. "
                 "Acredita banco (111005). "
                 "NO agregues otros impuestos — este documento solo liquida ICA."
             ),
@@ -420,7 +420,7 @@ Documento:
             ),
             "recibo_pago_impuesto": (
                 "REGLA RECIBO PAGO IMPUESTO: Debita la cuenta de impuesto por pagar correspondiente "
-                "(240802 IVA, 240815 Retefuente, 240808 ICA, 240405 Renta) y acredita banco (111005). "
+                "(240802 IVA, 240815 Retefuente, 2368 ICA, 240405 Renta) y acredita banco (111005). "
                 "Un asiento por impuesto pagado."
             ),
         }

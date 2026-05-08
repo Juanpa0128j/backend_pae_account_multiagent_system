@@ -590,8 +590,8 @@ def test_ica_applied_for_income_transaction(mock_llm_fn, mock_rag_cls):
     assert "511505" in puc_codes, (
         "Gasto ICA admin (511505) missing from asientos_enriquecidos"
     )
-    assert "240808" in puc_codes, (
-        "ICA por Pagar (240808) missing from asientos_enriquecidos"
+    assert "2368" in puc_codes, (
+        "ICA por Pagar (2368) missing from asientos_enriquecidos"
     )
 
 
