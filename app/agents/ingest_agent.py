@@ -141,13 +141,25 @@ def ingest_node(state: AgentState) -> AgentState:
                         "Install llama-parse and configure LLAMA_CLOUD_API_KEY."
                     )
 
-                # Cache parsed text next to the source file to avoid redundant API calls.
+                # Cache parsed text by content hash — keying by filename caused
+                # collisions when different uploads shared a name (e.g. every user
+                # uploading "balance_general_2024.pdf" got the first user's data).
+                import hashlib
+
                 _cache_dir = Path(file_path).parent / ".parse_cache"
-                _safe_name = Path(file_path).name.replace(" ", "_")
-                _cache_path = _cache_dir / f"{_safe_name}.md"
-                if _cache_path.exists():
+                try:
+                    _file_bytes = Path(file_path).read_bytes()
+                    _content_hash = hashlib.sha256(_file_bytes).hexdigest()
+                except OSError:
+                    _content_hash = None
+                _cache_path = (
+                    _cache_dir / f"{_content_hash}.md" if _content_hash else None
+                )
+                if _cache_path and _cache_path.exists():
                     logger.info(
-                        "Ingest: Using cached parse for %s", Path(file_path).name
+                        "Ingest: Using cached parse for %s (hash=%s...)",
+                        Path(file_path).name,
+                        _content_hash[:12],
                     )
                     raw_text = _cache_path.read_text(encoding="utf-8")
                 else:
@@ -178,9 +190,11 @@ def ingest_node(state: AgentState) -> AgentState:
                         documents = parser.load_data(file_path)
                         raw_text = "\n\n".join([doc.text for doc in documents])
 
-                    # Save to cache only if non-empty — caching transient
-                    # failures permanently breaks the file.
-                    if raw_text and raw_text.strip():
+                    # Save to cache only if non-empty AND we have a content
+                    # hash — caching transient failures permanently breaks the
+                    # file, and caching without a content key collides across
+                    # uploads that share a filename.
+                    if raw_text and raw_text.strip() and _cache_path is not None:
                         _cache_dir.mkdir(parents=True, exist_ok=True)
                         _cache_path.write_text(raw_text, encoding="utf-8")
 
