@@ -18,6 +18,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Idempotent: a parallel branch may have applied the same column already.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing = {c["name"] for c in inspector.get_columns("company_settings")}
+    if "locked_pathway" in existing:
+        return
     op.add_column(
         "company_settings",
         sa.Column(
@@ -30,4 +36,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing = {c["name"] for c in inspector.get_columns("company_settings")}
+    if "locked_pathway" not in existing:
+        return
     op.drop_column("company_settings", "locked_pathway")
