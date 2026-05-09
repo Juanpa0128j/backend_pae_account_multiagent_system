@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.database import get_db
 from app.models.database import (
+    FinancialStatement,
     TransactionPending,
     TransactionPosted,
     TransactionStatus,
@@ -37,6 +38,79 @@ class DashboardStatsResponse(BaseModel):
     iva_por_pagar: float = 0.0
     total_retenciones: float = 0.0
     transacciones_por_estado: Dict[str, int] = Field(default_factory=dict)
+    # Vía-aware fields — clients can switch the KPI cards based on `pathway`.
+    pathway: Optional[str] = None  # 'build_from_scratch' | 'work_with_existing' | None
+    via_b_statements_count: int = 0
+    latest_via_b_period: Optional[str] = None
+    derivation_ready: bool = False
+
+
+def _via_b_dashboard_overrides(
+    db: Session, company_nit: str
+) -> Dict[str, Any]:
+    """Compute Vía B financial totals from FinancialStatement rows.
+
+    Returns a dict with the same keys the Vía A flow computes from journal
+    entries (total_activos, total_pasivos, etc.) plus Vía B metadata
+    (statements_count, latest_period, derivation_ready).
+    """
+    rows = (
+        db.query(FinancialStatement)
+        .filter(FinancialStatement.entity_nit == company_nit)
+        .order_by(FinancialStatement.period_end.desc())
+        .all()
+    )
+    bg = next((r for r in rows if r.statement_type == "balance_general"), None)
+    er = next((r for r in rows if r.statement_type == "estado_resultados"), None)
+    la = next((r for r in rows if r.statement_type == "libro_auxiliar"), None)
+
+    def _f(d: Optional[dict], key: str) -> float:
+        if not isinstance(d, dict):
+            return 0.0
+        try:
+            return float(d.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    bg_data = bg.data if bg and isinstance(bg.data, dict) else {}
+    er_data = er.data if er and isinstance(er.data, dict) else {}
+
+    total_activos = _f(bg_data, "total_activos")
+    total_pasivos = _f(bg_data, "total_pasivos")
+    utilidad_neta = _f(er_data, "utilidad_neta")
+
+    # Efectivo from libro_auxiliar lines on PUC class 11 if available.
+    efectivo = 0.0
+    if la and isinstance(la.data, dict):
+        lines = la.data.get("lines") or la.data.get("accounts") or []
+        if isinstance(lines, list):
+            for line in lines:
+                if not isinstance(line, dict):
+                    continue
+                code = str(line.get("cuenta_puc") or line.get("codigo") or "")
+                if code.startswith("11"):
+                    efectivo += float(line.get("debito") or 0) - float(
+                        line.get("credito") or 0
+                    )
+
+    direct = [r for r in rows if r.source_mode == "direct"]
+    period_ends_by_type: Dict[str, list] = {}
+    for r in direct:
+        period_ends_by_type.setdefault(r.statement_type, []).append(r.period_end)
+    derivation_ready = all(
+        period_ends_by_type.get(t) for t in ("balance_general", "estado_resultados", "libro_auxiliar")
+    )
+    latest = max((r.period_end for r in direct if r.period_end), default=None)
+
+    return {
+        "total_activos": total_activos,
+        "total_pasivos": total_pasivos,
+        "utilidad_neta": utilidad_neta,
+        "efectivo": efectivo,
+        "statements_count": len(direct),
+        "latest_period": latest.isoformat() if latest else None,
+        "derivation_ready": derivation_ready,
+    }
 
 
 class DashboardFinancialSummaryResponse(BaseModel):
@@ -67,6 +141,36 @@ async def get_dashboard_stats(
             company_nit = normalize_nit(company_nit)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    # Detect pathway so we can branch to Vía B-aware figures.
+    pathway: Optional[str] = None
+    if company_nit:
+        try:
+            pathway = db_service.get_company_locked_pathway(db, company_nit)
+        except Exception:
+            pathway = None
+
+    # ── Vía B branch ────────────────────────────────────────────────────────
+    # Source financial figures from FinancialStatement rows; transaction
+    # counters stay 0 because Vía B doesn't produce TransactionPending rows.
+    if pathway == "work_with_existing" and company_nit:
+        vb = _via_b_dashboard_overrides(db, company_nit)
+        return DashboardStatsResponse(
+            documentos_pendientes=0,
+            transacciones_procesadas_mes=0,
+            alertas_activas=0,
+            total_activos_cop=vb["total_activos"],
+            total_pasivos_cop=vb["total_pasivos"],
+            utilidad_neta_cop=vb["utilidad_neta"],
+            efectivo_disponible_cop=vb["efectivo"],
+            iva_por_pagar=0.0,
+            total_retenciones=0.0,
+            transacciones_por_estado={},
+            pathway=pathway,
+            via_b_statements_count=vb["statements_count"],
+            latest_via_b_period=vb["latest_period"],
+            derivation_ready=vb["derivation_ready"],
+        )
 
     # Pending documents
     pending_q = db.query(func.count(TransactionPending.id)).filter(
@@ -150,6 +254,7 @@ async def get_dashboard_stats(
         iva_por_pagar=iva_por_pagar,
         total_retenciones=retfte + retica,
         transacciones_por_estado=txn_counts,
+        pathway=pathway,
     )
 
 

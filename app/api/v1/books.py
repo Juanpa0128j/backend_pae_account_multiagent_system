@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.models.database import FinancialStatement
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
 
@@ -20,6 +21,63 @@ def _parse_date(date_str: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _via_b_libro_auxiliar(db: Session, company_nit: str) -> list[dict]:
+    """Return libro_auxiliar lines as book rows for Vía B-locked companies."""
+    stmt = (
+        db.query(FinancialStatement)
+        .filter(
+            FinancialStatement.entity_nit == company_nit,
+            FinancialStatement.statement_type == "libro_auxiliar",
+        )
+        .order_by(FinancialStatement.period_end.desc())
+        .first()
+    )
+    if stmt is None or not isinstance(stmt.data, dict):
+        return []
+    lines = stmt.data.get("lines") or stmt.data.get("accounts") or []
+    if not isinstance(lines, list):
+        return []
+    out = []
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        out.append(
+            {
+                "fecha": str(line.get("fecha") or ""),
+                "comprobante": str(line.get("comprobante") or ""),
+                "cuenta": str(line.get("cuenta_puc") or ""),
+                "tercero_nit": str(line.get("tercero_nit") or ""),
+                "descripcion": str(
+                    line.get("detalle") or line.get("cuenta_nombre") or ""
+                ),
+                "debito": float(line.get("debito") or 0),
+                "credito": float(line.get("credito") or 0),
+                "saldo": float(line.get("saldo") or 0),
+            }
+        )
+    return out
+
+
+def _via_b_balance(db: Session, company_nit: str) -> dict:
+    """Return balance_general data as a balance-sheet response for Vía B."""
+    stmt = (
+        db.query(FinancialStatement)
+        .filter(
+            FinancialStatement.entity_nit == company_nit,
+            FinancialStatement.statement_type == "balance_general",
+        )
+        .order_by(FinancialStatement.period_end.desc())
+        .first()
+    )
+    if stmt is None or not isinstance(stmt.data, dict):
+        return {}
+    return {
+        "source": "via_b",
+        "period_end": stmt.period_end.isoformat() if stmt.period_end else None,
+        "data": stmt.data,
+    }
+
+
 @router.get("/")
 async def get_books(
     tipo: str = Query(..., description="diario, mayor, auxiliar, or balance"),
@@ -32,7 +90,9 @@ async def get_books(
 ) -> Any:
     """
     Queries the accounting books (Diario, Mayor, Auxiliar, Balance General).
-    Data is read from PostgreSQL journal_entry_lines table.
+    Data is read from PostgreSQL journal_entry_lines table for Vía A.
+    For Vía B-locked companies, auxiliar and balance read from FinancialStatement;
+    diario and mayor return an empty result with a `not_available_for_via_b` flag.
     """
     fi = _parse_date(fecha_inicio)
     ff = _parse_date(fecha_fin)
@@ -52,6 +112,27 @@ async def get_books(
                 f"{', '.join(sorted(valid_tipos))}"
             ),
         )
+
+    # Vía B branch: source data from FinancialStatement table for the relevant tipos.
+    if normalized_company_nit:
+        try:
+            locked = db_service.get_company_locked_pathway(db, normalized_company_nit)
+        except Exception:
+            locked = None
+        if locked == "work_with_existing":
+            if tipo == "auxiliar":
+                return _via_b_libro_auxiliar(db, normalized_company_nit)
+            if tipo == "balance":
+                return _via_b_balance(db, normalized_company_nit)
+            # diario / mayor — only meaningful for Vía A.
+            return {
+                "available": False,
+                "reason": "via_b",
+                "message": (
+                    f"El libro {tipo} solo está disponible para empresas en Vía A "
+                    "(documentos fuente). Esta empresa está usando Vía B."
+                ),
+            }
 
     if tipo == "diario":
         lines = db_service.get_daily_journal(db, fi, ff, normalized_company_nit)
