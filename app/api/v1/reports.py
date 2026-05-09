@@ -13,7 +13,7 @@ from app.services.financial_statement_service import (
     derive_financial_statements,
     list_financial_statements,
 )
-from app.services.nit_utils import normalize_nit
+from app.services.nit_utils import normalize_nit, normalize_optional_nit
 from app.services.report_export_service import (
     BalanceSheetExporter,
     CashFlowExporter,
@@ -441,7 +441,7 @@ def _resolve_report(
         if not company_nit:
             raise HTTPException(
                 status_code=422,
-                detail="company_nit is required when statement_id is provided",
+                detail="El campo company_nit es obligatorio cuando se proporciona statement_id",
             )
         try:
             normalized_company_nit = normalize_nit(company_nit)
@@ -483,7 +483,7 @@ def _resolve_report(
             if stmt_nit_normalized and stmt_nit_normalized != normalized_company_nit:
                 raise HTTPException(
                     status_code=403,
-                    detail="Statement does not belong to provided company_nit",
+                    detail="El estado financiero no pertenece al company_nit proporcionado",
                 )
 
             raw = stmt.data or {}
@@ -632,7 +632,10 @@ async def get_financial_statements(
 
 
 @router.get("/statements/{statement_id}")
-async def get_financial_statement_by_id(statement_id: str):
+async def get_financial_statement_by_id(
+    statement_id: str,
+    company_nit: Optional[str] = Query(None),
+):
     """Get a specific FinancialStatement by ID."""
     db = SessionLocal()
     try:
@@ -645,6 +648,10 @@ async def get_financial_statement_by_id(statement_id: str):
             raise HTTPException(
                 status_code=404, detail=f"Statement {statement_id} not found"
             )
+        if company_nit is not None and stmt.company_nit != normalize_optional_nit(
+            company_nit
+        ):
+            raise HTTPException(status_code=403, detail="Acceso denegado")
         return {
             "id": stmt.id,
             "ingest_id": stmt.ingest_id,

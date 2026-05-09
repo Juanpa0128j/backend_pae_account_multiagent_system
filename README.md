@@ -268,6 +268,14 @@ Rules:
 | `add_empresa_doc` | `(nit, text, metadata=None)` | Store new company document |
 | `rerank` | `(query, docs, top_n=3)` | Cross-encoder reranking via bge-reranker-v2-m3 |
 
+### Dashboard Endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/v1/dashboard/stats` | GET | Top-level aggregated metrics (pending docs, processed transactions, alerts, balance totals) |
+| `/api/v1/dashboard/financial-summary` | GET | Complete financial overview (balance sheet, P&L, cash, tax payables, recent activity) |
+| `/api/v1/dashboard/monthly-trend` | GET | Monthly ingresos vs gastos trend data; accepts `company_nit` (optional) and `months` (1–24, default 6) for chart rendering |
+
 ### Seeding the Normativa Collection
 
 ```bash

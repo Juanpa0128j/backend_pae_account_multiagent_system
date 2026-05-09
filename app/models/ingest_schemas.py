@@ -20,6 +20,19 @@ def _parse_decimal(v):
         return None
     if isinstance(v, (int, float)):
         return Decimal(str(v))
+    if isinstance(v, str):
+        v = v.strip().replace("\xa0", "").replace(" ", "")
+        if not v:
+            return None
+        # Colombian format: 3.075.206,00 → 3075206.00
+        if "," in v and v.count(".") >= 1:
+            v = v.replace(".", "").replace(",", ".")
+        elif "," in v:
+            v = v.replace(",", ".")
+        try:
+            return Decimal(v)
+        except Exception:
+            return None
     if isinstance(v, dict):
         # LLM sometimes returns a breakdown dict instead of a flat total.
         # Sum all numeric leaf values as a best-effort total.

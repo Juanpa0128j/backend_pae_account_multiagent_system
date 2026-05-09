@@ -1,7 +1,7 @@
 """add locked_pathway to company_settings
 
-Revision ID: h6i7j8k9l0m1
-Revises: g5h6i7j8k9l0
+Revision ID: j8k9l0m1n2o3
+Revises: fb08f11836cb
 Create Date: 2026-05-05 00:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "h6i7j8k9l0m1"
-down_revision: Union[str, Sequence[str], None] = "33c6ac057344"
+revision: str = "j8k9l0m1n2o3"
+down_revision: Union[str, Sequence[str], None] = "fb08f11836cb"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

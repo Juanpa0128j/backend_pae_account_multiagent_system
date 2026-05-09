@@ -136,6 +136,7 @@ FastAPI (main.py) → /api/v1/* routers
 | `app/models/database.py` | SQLAlchemy ORM models — includes `FinancialStatement` |
 | `app/models/document_types.py` | `DocumentType` enum + pathway constants |
 | `app/models/ingest_schemas.py` | Polymorphic extraction schemas per doc type |
+| `app/api/v1/dashboard.py` | Dashboard endpoints: `/stats`, `/financial-summary`, `/monthly-trend` for real-time KPI and trend rendering |
 | `data/` | Static seed data: 41 PUC accounts, 50 Estatuto Tributario articles, 16 Ley 43/1990 entries |
 
 ### Tech Stack
