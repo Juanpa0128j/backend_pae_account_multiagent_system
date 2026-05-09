@@ -58,8 +58,13 @@ def _via_b_libro_auxiliar(db: Session, company_nit: str) -> list[dict]:
     return out
 
 
-def _via_b_balance(db: Session, company_nit: str) -> dict:
-    """Return balance_general data as a balance-sheet response for Vía B."""
+def _via_b_balance(db: Session, company_nit: str) -> list[dict]:
+    """Return balance_general accounts as book rows for Vía B.
+
+    Reads the most recent uploaded balance_general FinancialStatement and
+    flattens its `accounts` array into the same row shape BookTable expects
+    for tipo=balance (cuenta + nombre + saldo).
+    """
     stmt = (
         db.query(FinancialStatement)
         .filter(
@@ -70,12 +75,57 @@ def _via_b_balance(db: Session, company_nit: str) -> dict:
         .first()
     )
     if stmt is None or not isinstance(stmt.data, dict):
-        return {}
-    return {
-        "source": "via_b",
-        "period_end": stmt.period_end.isoformat() if stmt.period_end else None,
-        "data": stmt.data,
-    }
+        return []
+    accounts = stmt.data.get("accounts") or []
+    if not isinstance(accounts, list):
+        return []
+    period_end_str = stmt.period_end.date().isoformat() if stmt.period_end else ""
+    out = []
+    for acc in accounts:
+        if not isinstance(acc, dict):
+            continue
+        out.append(
+            {
+                "fecha": period_end_str,
+                "cuenta": str(acc.get("cuenta_puc") or ""),
+                "descripcion": str(acc.get("nombre") or ""),
+                "debito": 0.0,
+                "credito": 0.0,
+                "saldo": float(acc.get("saldo") or 0),
+            }
+        )
+    return out
+
+
+def _via_a_balance_as_rows(balance: dict) -> list[dict]:
+    """Convert get_balance_sheet's summary dict into book rows for tipo=balance.
+
+    BookTable expects a list of rows. The legacy endpoint returned a single
+    summary dict ({assets, liabilities, ...}) which made the UI render empty.
+    """
+    if not isinstance(balance, dict):
+        return []
+    rows = [
+        ("1", "Activos", balance.get("assets")),
+        ("2", "Pasivos", balance.get("liabilities")),
+        ("3", "Patrimonio", balance.get("equity")),
+        ("4", "Ingresos", balance.get("revenue")),
+        ("5", "Gastos", balance.get("expenses")),
+        ("6", "Costo de ventas", balance.get("cost_of_sales")),
+        ("3", "Utilidad neta", balance.get("net_profit")),
+        ("3", "Patrimonio total", balance.get("total_equity")),
+    ]
+    return [
+        {
+            "fecha": "",
+            "cuenta": codigo,
+            "descripcion": nombre,
+            "debito": 0.0,
+            "credito": 0.0,
+            "saldo": float(saldo or 0),
+        }
+        for codigo, nombre, saldo in rows
+    ]
 
 
 @router.get("/")
@@ -170,4 +220,7 @@ async def get_books(
         ]
 
     elif tipo == "balance":
-        return db_service.get_balance_sheet(db, ff, normalized_company_nit)
+        # Return rows so BookTable (which expects list[BookEntry]) can render.
+        # Vía A summary dict gets flattened into class-level rows.
+        balance = db_service.get_balance_sheet(db, ff, normalized_company_nit)
+        return _via_a_balance_as_rows(balance)
