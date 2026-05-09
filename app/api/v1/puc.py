@@ -58,7 +58,7 @@ def create_puc(body: CuentaPUCRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.error(f"PUC create error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create PUC account")
+        raise HTTPException(status_code=500, detail="Error al crear la cuenta PUC")
 
 
 @router.put("/{codigo}", response_model=CuentaPUCResponse)
@@ -67,7 +67,7 @@ def update_puc(codigo: str, body: CuentaPUCRequest, db: Session = Depends(get_db
     if body.codigo != codigo:
         raise HTTPException(
             status_code=400,
-            detail="Path parameter 'codigo' must match body field 'codigo'",
+            detail="El parámetro 'codigo' en la URL debe coincidir con el campo 'codigo' del cuerpo",
         )
 
     row = db_service.update_puc(db, codigo, body.model_dump())

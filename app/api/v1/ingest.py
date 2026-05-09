@@ -260,7 +260,7 @@ async def upload_file(
     ):
         raise HTTPException(
             status_code=422,
-            detail="Unsupported file type. Accepted: PDF, Excel, XML, JPG, PNG",
+            detail="Tipo de archivo no soportado. Formatos aceptados: PDF, Excel, XML, JPG, PNG",
             headers={"error_code": "INVALID_FILE_TYPE"},
         )
 
@@ -278,7 +278,7 @@ async def upload_file(
 
         # Validate file is not empty
         if not file_content:
-            raise HTTPException(status_code=422, detail="Uploaded file is empty")
+            raise HTTPException(status_code=422, detail="El archivo cargado está vacío")
 
         # Magic-byte check: reject obviously wrong/corrupt files early
         _MAGIC: dict[str, bytes] = {
@@ -429,13 +429,15 @@ async def update_ingest_classification(
         classification_confirmed=payload.confirmed,
     )
     if not updated:
-        raise HTTPException(status_code=500, detail="Failed to update ingest job")
+        raise HTTPException(
+            status_code=500, detail="Error al actualizar el trabajo de ingesta"
+        )
 
     if payload.confirmed:
         if not job.file_path:
             raise HTTPException(
                 status_code=422,
-                detail="Ingest job has no file_path to resume",
+                detail="El trabajo de ingesta no tiene ruta de archivo para reanudar",
             )
         background_tasks.add_task(
             process_ingest_background,
@@ -445,7 +447,9 @@ async def update_ingest_classification(
 
     refreshed = db_service.get_ingest_job(db, ingest_id)
     if not refreshed:
-        raise HTTPException(status_code=500, detail="Failed to refresh ingest job")
+        raise HTTPException(
+            status_code=500, detail="Error al refrescar el trabajo de ingesta"
+        )
     return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))
 
 

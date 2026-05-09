@@ -372,7 +372,7 @@ def _resolve_report(
         if not company_nit:
             raise HTTPException(
                 status_code=422,
-                detail="company_nit is required when statement_id is provided",
+                detail="El campo company_nit es obligatorio cuando se proporciona statement_id",
             )
         try:
             normalized_company_nit = normalize_nit(company_nit)
@@ -414,7 +414,7 @@ def _resolve_report(
             if stmt_nit_normalized and stmt_nit_normalized != normalized_company_nit:
                 raise HTTPException(
                     status_code=403,
-                    detail="Statement does not belong to provided company_nit",
+                    detail="El estado financiero no pertenece al company_nit proporcionado",
                 )
 
             raw = stmt.data or {}
