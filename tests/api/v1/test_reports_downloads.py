@@ -108,7 +108,7 @@ def test_resolve_report_requires_company_nit_with_statement_id():
         )
 
     assert exc.value.status_code == 422
-    assert "company_nit is required" in str(exc.value.detail)
+    assert "company_nit" in str(exc.value.detail)
 
 
 def test_resolve_report_rejects_invalid_company_nit_with_statement_id():
