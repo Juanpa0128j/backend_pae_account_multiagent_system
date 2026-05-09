@@ -17,6 +17,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.agents.graph import invoke_ingest_pipeline
+from app.core.auth import CurrentUser, get_current_user
 from app.core.database import INGEST_PIPELINE_SEMAPHORE, SessionLocal, get_db
 from app.models.database import IngestJob, IngestStatus
 from app.models.document_types import (
@@ -245,6 +246,7 @@ async def upload_file(
         description="Pre-confirmed document type (e.g. 'balance_general'). When provided, classification review is skipped. Use for Vía B uploads where the user explicitly selects the document type.",
     ),
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Upload and process a PDF/Excel/XML/image file (receipt/invoice/scan).
@@ -383,7 +385,10 @@ async def upload_file(
 
 @router.get("/{ingest_id}", response_model=IngestDetailResponse)
 async def get_ingest_status(
-    ingest_id: str, request: Request, db: Session = Depends(get_db)
+    ingest_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Get the status of an ingest job."""
     job = db_service.get_ingest_job(db, ingest_id)
@@ -400,6 +405,7 @@ async def update_ingest_classification(
     background_tasks: BackgroundTasks,
     request: Request,
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     job = db_service.get_ingest_job(db, ingest_id)
     if not job:
