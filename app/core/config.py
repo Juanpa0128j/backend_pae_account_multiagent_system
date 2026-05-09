@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     app_env: str = Field("development", alias="APP_ENV")
     secret_key: str = Field("change-me-in-production", alias="SECRET_KEY")
     supabase_jwt_secret: str = Field("", alias="SUPABASE_JWT_SECRET")
+    supabase_url: str = Field("", alias="SUPABASE_URL")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
 
     # --- FastAPI -----------------------------------------------------------
