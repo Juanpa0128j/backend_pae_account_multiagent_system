@@ -169,7 +169,9 @@ async def process_accounting(
         )
 
     # Create a new ProcessJob only if no active one exists
-    process_job = db_service.create_process_job(db, ingest_id)
+    process_job = db_service.create_process_job(
+        db, ingest_id, created_by=str(current_user.id)
+    )
     await jobs.start_process_job(process_job.id)
 
     return ProcessResponse(

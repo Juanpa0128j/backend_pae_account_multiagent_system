@@ -356,6 +356,7 @@ async def upload_file(
             document_type=confirmed_doc_type,
             pathway=confirmed_pathway,
             classification_confirmed=True if confirmed_doc_type else None,
+            created_by=str(current_user.id),
         )
         logger.info(f"Created IngestJob: {ingest_job.id}")
 
