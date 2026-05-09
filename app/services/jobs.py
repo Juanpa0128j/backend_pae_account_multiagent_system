@@ -317,6 +317,7 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
                     doc_type=doc_type,
                     source_document=source_document,
                     force_persist=_force_persist,
+                    company_nit=fallback_nit,
                 ),
             ),
             timeout=MAX_PROCESS_SECONDS,

@@ -339,7 +339,10 @@ Documento:
                 "El valor del asiento debe ser el campo 'debito' o 'credito' del movimiento, NO el saldo."
             ),
             "factura_venta": (
-                "REGLA FACTURA VENTA: debita cuentas por cobrar (130505) y acredita ingresos (4xxx). "
+                "REGLA FACTURA VENTA: debita cuentas por cobrar (130505) y acredita la cuenta de ingreso "
+                "específica que corresponda al concepto. Códigos PUC válidos: 4135 (Comercio al por mayor "
+                "y al por menor), 4170 (Actividades inmobiliarias y de alquiler), 4175 (Servicios), "
+                "4145 (Transporte). NUNCA escribas '4xxx' literal — elige el código completo. "
                 "NO dupliques el IVA ni las retenciones — el agente tributario las maneja."
             ),
             "factura_compra": (
@@ -347,14 +350,16 @@ Documento:
                 "NO dupliques el IVA ni las retenciones — el agente tributario las maneja."
             ),
             "nota_credito": (
-                "REGLA NOTA CREDITO: Asiento de reversión. Debita ingresos (4xxx) o cuentas por pagar (220505) "
-                "segun el concepto (devolucion/descuento/anulacion), y acredita cuentas por cobrar (130505). "
+                "REGLA NOTA CREDITO: Asiento de reversión. Debita la cuenta de ingreso específica "
+                "(4135/4170/4175 según concepto) o cuentas por pagar (220505), "
+                "y acredita cuentas por cobrar (130505). NUNCA uses '4xxx' literal. "
                 "Referencia el numero de factura asociada en descripcion_general. "
                 "NO dupliques impuestos — el agente tributario los maneja."
             ),
             "nota_debito": (
                 "REGLA NOTA DEBITO: Asiento de ajuste adicional. Debita cuentas por cobrar (130505) "
-                "y acredita ingresos (4xxx) o intereses por cobrar (130xxx) segun el concepto. "
+                "y acredita la cuenta de ingreso específica (4135/4170/4175) o intereses por cobrar (130505) "
+                "segun el concepto. NUNCA uses '4xxx' o '130xxx' literal. "
                 "Referencia el numero de factura asociada en descripcion_general. "
                 "NO dupliques impuestos — el agente tributario los maneja."
             ),
@@ -399,7 +404,8 @@ Documento:
             ),
             "recibo_caja": (
                 "REGLA RECIBO CAJA: Debita banco o caja (111005/110505) por el valor recibido. "
-                "Acredita cuentas por cobrar (130505) si es cobro de cartera, o ingresos (4xxx) si es venta directa. "
+                "Acredita cuentas por cobrar (130505) si es cobro de cartera, o la cuenta de ingreso específica "
+                "(4135/4170/4175) si es venta directa. NUNCA uses '4xxx' literal. "
                 "NO dupliques impuestos — el agente tributario los maneja."
             ),
             "documento_soporte": (

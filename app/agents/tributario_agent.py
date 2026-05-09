@@ -433,12 +433,16 @@ def tributario_node(state: AgentState) -> AgentState:
         # ------------------------------------------------------------------
         mode = state.get("mode", "ingest")
         company_config = state.get("company_config")
-        nit_receptor = None
+        # Use the tenant's NIT (owner of the ingest), not nit_receptor (which is the
+        # customer in sales invoices). Matches the fix applied in process.py:124.
+        nit_receptor = state.get("company_nit") or None
         if not company_config:
-            for tx in state.get("raw_transactions") or []:
-                nit_receptor = tx.get("nit_receptor")
-                if nit_receptor:
-                    break
+            if not nit_receptor:
+                # Fallback if company_nit wasn't propagated to state.
+                for tx in state.get("raw_transactions") or []:
+                    nit_receptor = tx.get("company_nit") or tx.get("nit_receptor")
+                    if nit_receptor:
+                        break
 
             if nit_receptor:
                 try:

@@ -240,6 +240,7 @@ def invoke_accounting_pipeline(
     doc_type: str = "",
     source_document: dict | None = None,
     force_persist: bool = False,
+    company_nit: str | None = None,
 ) -> dict:
     """
     Invoke the accounting process pipeline starting from staged transactions.
@@ -249,6 +250,9 @@ def invoke_accounting_pipeline(
         source_document: Full structured extraction dict persisted as raw_data by the
             ingest pipeline. Gives contador/tributario access to explicit tax fields
             (retenciones_aplicadas, total_iva, item-level flags) from the source document.
+        company_nit: NIT of the tenant that owns the ingest. Used by tributario to
+            load tax settings (must be the tenant, not nit_receptor which is the
+            customer in sales invoices).
     """
     graph = create_agent_graph()
 
@@ -259,6 +263,7 @@ def invoke_accounting_pipeline(
     state["pending_transaction_id"] = pending_transaction_id
     state["process_id"] = process_id
     state["current_stage"] = "queued"
+    state["company_nit"] = company_nit
     if doc_type:
         state["document_classification"] = {"doc_type": doc_type}
     state["source_document"] = source_document or {}

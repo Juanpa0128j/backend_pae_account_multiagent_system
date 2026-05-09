@@ -936,10 +936,10 @@ def _run_persist(state: AgentState) -> AgentState:
                 if not cuenta_puc:
                     logger.warning(
                         "db_persist: No PUC code in ingest data — "
-                        "defaulting to 519595 (Otros Gastos). "
+                        "defaulting to 5195 (Gastos Diversos). "
                         "Run accounting pipeline to classify properly."
                     )
-                    cuenta_puc = "519595"
+                    cuenta_puc = "5195"
                 puc_descripcion = _as_str(tx_data.get("cuenta_nombre"), "")
 
             puc_record = db_service.validate_puc_exists(db, cuenta_puc)
@@ -948,13 +948,13 @@ def _run_persist(state: AgentState) -> AgentState:
             elif mode == "process":
                 if state.get("force_persist"):
                     # User chose to override audit issues — fall back to the
-                    # catch-all 519595 instead of failing the whole pipeline.
+                    # catch-all 5195 instead of failing the whole pipeline.
                     logger.warning(
                         "db_persist: force_persist=True — PUC code %s not found, "
-                        "falling back to 519595",
+                        "falling back to 5195",
                         cuenta_puc,
                     )
-                    cuenta_puc = "519595"
+                    cuenta_puc = "5195"
                     fallback = db_service.validate_puc_exists(db, cuenta_puc)
                     puc_descripcion = (
                         _as_str(getattr(fallback, "nombre", ""), "")

@@ -121,36 +121,27 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
             },
         )
 
-    nit_receptor = next(
-        (
-            getattr(tx, "nit_receptor", None)
-            for tx in staged
-            if getattr(tx, "nit_receptor", None)
-        ),
-        None,
-    )
-    if not nit_receptor:
-        nit_receptor = ingest_job.company_nit or None
-    if not nit_receptor:
+    company_nit = ingest_job.company_nit or None
+    if not company_nit:
         raise HTTPException(
             status_code=409,
             detail={
                 "error_category": "business_precondition",
-                "error_code": "MISSING_NIT_RECEPTOR",
-                "message": "Las transacciones no contienen NIT receptor y no se seleccionó empresa al subir el documento.",
+                "error_code": "MISSING_COMPANY_NIT",
+                "message": "No se seleccionó empresa al subir el documento.",
                 "remediation": "Seleccione una empresa antes de subir el documento y vuelva a intentarlo.",
             },
         )
 
-    company_settings = db_service.get_company_settings(db, nit_receptor)
+    company_settings = db_service.get_company_settings(db, company_nit)
     if not company_settings:
         raise HTTPException(
             status_code=409,
             detail={
                 "error_category": "business_precondition",
                 "error_code": "MISSING_COMPANY_SETTINGS",
-                "message": f"No se encontró configuración tributaria para el NIT {nit_receptor}.",
-                "remediation": f"Configure el perfil tributario de la empresa con NIT {nit_receptor} y vuelva a intentarlo.",
+                "message": f"No se encontró configuración tributaria para la empresa con NIT {company_nit}.",
+                "remediation": "Configure el perfil tributario de su empresa en /settings y vuelva a intentarlo.",
             },
         )
 
