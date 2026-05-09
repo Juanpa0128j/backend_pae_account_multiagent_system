@@ -52,8 +52,60 @@ def _build_params(
     return params
 
 
+_REPORT_TYPE_TO_STATEMENT_TYPE: dict[str, str] = {
+    "balance": "balance_general",
+    "pnl": "estado_resultados",
+    "cashflow": "flujo_de_caja",
+}
+
+
+def _try_stored_statement(
+    report_type: str, params: dict, normalized_company_nit: Optional[str]
+) -> Optional[dict]:
+    """Return the latest matching stored FinancialStatement as report data, or None.
+
+    Vía B users upload statements directly; the journal-based reporting pipeline
+    can't see them. Read the FinancialStatement table first and normalize to the
+    exporter shape so /balance, /pnl, /cashflow work for both pathways.
+    """
+    if not normalized_company_nit:
+        return None
+    statement_type = _REPORT_TYPE_TO_STATEMENT_TYPE.get(report_type)
+    if not statement_type:
+        return None
+
+    end_date_str = params.get("end_date")
+    period_end = None
+    if end_date_str:
+        try:
+            period_end = datetime.fromisoformat(end_date_str).replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            period_end = None
+
+    db = SessionLocal()
+    try:
+        q = db.query(FinancialStatement).filter(
+            FinancialStatement.entity_nit == normalized_company_nit,
+            FinancialStatement.statement_type == statement_type,
+        )
+        if period_end is not None:
+            q = q.filter(FinancialStatement.period_end <= period_end)
+        stmt = q.order_by(FinancialStatement.period_end.desc()).first()
+        if stmt is None:
+            return None
+        return _normalize_stored_statement(report_type, stmt.data or {})
+    finally:
+        db.close()
+
+
 def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> dict:
-    """Invoke the reporting pipeline and raise HTTP 500 on agent error."""
+    """Invoke the reporting pipeline and raise HTTP 500 on agent error.
+
+    For Vía B users, prefer the stored FinancialStatement when present — the
+    journal-based pipeline can't see direct uploads.
+    """
     normalized_company_nit = None
     if company_nit:
         try:
@@ -62,6 +114,19 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
             raise HTTPException(
                 status_code=422, detail=f"Invalid company_nit: {nit_err}"
             )
+
+    stored = _try_stored_statement(report_type, params, normalized_company_nit)
+    if stored is not None:
+        # Provide the fields BalanceSheetOutput / PnLOutput / CashFlowOutput require
+        # but that the stored shape doesn't include.
+        from datetime import datetime as _dt
+
+        stored.setdefault("report_type", report_type)
+        stored.setdefault("company_nit", normalized_company_nit)
+        stored.setdefault("generated_at", _dt.now(timezone.utc).isoformat())
+        stored.setdefault("period_end", params.get("end_date") or "")
+        stored.setdefault("notas_normativas", [])
+        return stored
 
     result = invoke_reporting_pipeline(
         report_type=report_type,
