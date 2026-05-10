@@ -720,13 +720,21 @@ class TaxDeclarationDraft(Base):
 
 
 class UserCompany(Base):
-    """Association table linking users to companies they manage."""
+    """Association table linking users to companies they manage.
+
+    user_email is denormalized so memberships can be re-associated to a fresh
+    Supabase user_id when the same email signs up again (Supabase issues a new
+    UUID per signup; without this column past memberships orphan).
+    """
 
     __tablename__ = "user_company"
 
     user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     company_nit: Mapped[str] = mapped_column(
         String, ForeignKey("company_settings.nit", ondelete="CASCADE"), primary_key=True
+    )
+    user_email: Mapped[str | None] = mapped_column(
+        String(320), index=True, nullable=True
     )
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
