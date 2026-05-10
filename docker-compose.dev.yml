@@ -1,0 +1,35 @@
+# Local development database. Mirrors the schema layer of the production
+# Supabase project: a Postgres instance with the pgvector extension. Auth
+# (Supabase Auth) is NOT replicated locally — JWTs are still validated
+# against the live Supabase JWKS endpoint, so set SUPABASE_URL +
+# SUPABASE_JWT_SECRET in your .env even when running against this DB.
+#
+# Usage:
+#   make db-up        # start (port 5433)
+#   make db-migrate   # apply alembic migrations
+#   make db-down      # stop
+#   make db-reset     # destroy + recreate
+#
+# DATABASE_URL for local: postgresql://pae:pae@localhost:5433/pae
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: pae-pg-dev
+    environment:
+      POSTGRES_USER: pae
+      POSTGRES_PASSWORD: pae
+      POSTGRES_DB: pae
+    ports:
+      - "5433:5432"
+    volumes:
+      - pae-pg-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pae -d pae"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pae-pg-dev-data:
+    name: pae-pg-dev-data
