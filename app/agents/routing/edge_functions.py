@@ -5,7 +5,11 @@ from app.agents.validation_rules import MAX_AUDITOR_RETRIES, MAX_CONTADOR_RETRIE
 
 
 def should_retry_agent(state: AgentState) -> str:
-    """Conditional edge for ingest graph: retry, error bypass, or proceed."""
+    """Conditional edge for ingest graph: retry, error bypass, or proceed.
+
+    Note: ingest graph retries are bounded by validate_output_node, not by
+    this edge function. This function only decides the edge direction.
+    """
     if state.get("error"):
         return "error"
     if state.get("correction_feedback"):

@@ -53,6 +53,10 @@ class TestShouldRetryContador:
         state = _make_state(retry_count=0)
         assert should_retry_contador(state) == "end"
 
+    def test_missing_retry_count_defaults_to_zero(self):
+        state = {"correction_feedback": "fix this"}
+        assert should_retry_contador(state) == "retry"
+
     def test_over_max_returns_end(self):
         state = _make_state(
             correction_feedback="fix this",
@@ -80,6 +84,10 @@ class TestShouldRetryAuditor:
     def test_no_feedback_returns_end(self):
         state = _make_state(retry_count=0)
         assert should_retry_auditor(state) == "end"
+
+    def test_missing_retry_count_defaults_to_zero(self):
+        state = {"correction_feedback": "fix this"}
+        assert should_retry_auditor(state) == "retry"
 
     def test_over_max_returns_end(self):
         state = _make_state(
