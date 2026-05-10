@@ -13,6 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.database import CuentaPUC
 from app.models.schemas import CuentaPUCRequest, CuentaPUCResponse
@@ -28,6 +29,7 @@ def list_puc(
     include_inactive: bool = False,
     limit: int = 200,
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """List PUC accounts with optional search and filter for inactive."""
     if search:
@@ -40,7 +42,11 @@ def list_puc(
 
 
 @router.get("/{codigo}", response_model=CuentaPUCResponse)
-def get_puc(codigo: str, db: Session = Depends(get_db)):
+def get_puc(
+    codigo: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Get a single PUC account by code."""
     row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
     if not row:
@@ -49,7 +55,11 @@ def get_puc(codigo: str, db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=CuentaPUCResponse, status_code=201)
-def create_puc(body: CuentaPUCRequest, db: Session = Depends(get_db)):
+def create_puc(
+    body: CuentaPUCRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Create a new PUC account."""
     try:
         return db_service.create_puc(db, body.model_dump())
@@ -62,7 +72,12 @@ def create_puc(body: CuentaPUCRequest, db: Session = Depends(get_db)):
 
 
 @router.put("/{codigo}", response_model=CuentaPUCResponse)
-def update_puc(codigo: str, body: CuentaPUCRequest, db: Session = Depends(get_db)):
+def update_puc(
+    codigo: str,
+    body: CuentaPUCRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Update an existing PUC account."""
     if body.codigo != codigo:
         raise HTTPException(

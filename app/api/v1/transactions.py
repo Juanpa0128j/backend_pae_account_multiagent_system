@@ -3,6 +3,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.services import db_service
 from app.models.database import FinancialStatement, TransactionStatus
@@ -84,6 +85,7 @@ async def list_transactions(
     offset: int = Query(0, ge=0),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Returns a list of transactions from the database, optionally filtered by status.
@@ -137,6 +139,7 @@ async def search_transactions(
     status: Optional[str] = None,
     limit: int = Query(50, le=200),
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Search transactions with multiple filters."""
     from datetime import datetime
@@ -180,7 +183,11 @@ async def search_transactions(
 
 
 @router.get("/{id}")
-async def get_transaction(id: str, db: Session = Depends(get_db)):
+async def get_transaction(
+    id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Returns a single transaction by ID."""
     from app.models.database import TransactionPending
 

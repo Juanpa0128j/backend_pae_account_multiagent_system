@@ -12,6 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.database import (
     FinancialStatement,
@@ -157,6 +158,7 @@ class DashboardFinancialSummaryResponse(BaseModel):
 async def get_dashboard_stats(
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Returns aggregated top-level metrics for the Dashboard view.
@@ -288,6 +290,7 @@ async def get_dashboard_stats(
 async def get_financial_summary(
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Complete financial summary for the dashboard.
@@ -370,6 +373,7 @@ async def get_monthly_trend(
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
     months: int = Query(6, ge=1, le=24, description="Number of months to look back"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Returns monthly ingresos vs gastos for the last N months.
