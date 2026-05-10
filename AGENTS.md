@@ -76,7 +76,29 @@ alembic upgrade head
 alembic revision --autogenerate -m "short description"
 # IMPORTANT: inspect the generated file before committing — autogenerate
 # may pick up unrelated schema drift. Only include changes relevant to your PR.
+make migrate-check-heads  # CI gate: fails if alembic has >1 head
+
+# Local Postgres+pgvector (docker-compose.dev.yml, port 5433)
+make db-up                # start local DB
+make db-migrate           # alembic upgrade head against local
+make db-reset             # destroy volume + remigrate
+make db-shell             # psql shell on local DB
 ```
+
+### Database environments
+
+The schema runs against three Postgres instances:
+
+- **Local (dev):** docker-compose pgvector container, point
+  `DATABASE_URL=postgresql://pae:pae@localhost:5433/pae` in `.env`.
+- **CI (pull requests):** ephemeral `pgvector/pgvector:pg16` service in
+  GitHub Actions; migrations run fresh per workflow.
+- **Production:** Supabase Postgres; only merged-to-main migrations touch it.
+
+When two PRs each add a migration on top of the same parent, alembic ends
+up with multiple heads. CI runs `make migrate-check-heads` before tests
+and fails until the second author rebases. Never merge a PR with multiple
+heads.
 
 ## Architecture
 
