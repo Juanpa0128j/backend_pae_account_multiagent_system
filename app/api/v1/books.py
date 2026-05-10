@@ -3,6 +3,7 @@ from typing import Optional, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
@@ -29,6 +30,7 @@ async def get_books(
     tercero_nit: Optional[str] = None,
     company_nit: Optional[str] = None,
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> Any:
     """
     Queries the accounting books (Diario, Mayor, Auxiliar, Balance General).
