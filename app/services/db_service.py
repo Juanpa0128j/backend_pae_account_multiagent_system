@@ -948,10 +948,22 @@ def get_company_locked_pathway(db: Session, nit: str) -> Optional[str]:
 
 
 def set_company_locked_pathway(db: Session, nit: str, pathway: str) -> None:
-    """Set locked_pathway on first upload. No-op if already locked or company not found."""
-    row = db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
-    if row and not row.locked_pathway:
-        row.locked_pathway = pathway
+    """Set locked_pathway on first upload — atomic so concurrent first uploads
+    can't race and pick different pathways. The conditional UPDATE only
+    succeeds when the column is still NULL; subsequent callers are a no-op.
+    """
+    rows = (
+        db.query(CompanySettings)
+        .filter(
+            CompanySettings.nit == nit,
+            CompanySettings.locked_pathway.is_(None),
+        )
+        .update(
+            {CompanySettings.locked_pathway: pathway},
+            synchronize_session=False,
+        )
+    )
+    if rows:
         db.commit()
 
 

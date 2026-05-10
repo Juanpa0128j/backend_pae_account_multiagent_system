@@ -4,8 +4,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from app.agents.graph import invoke_reporting_pipeline
 from app.core.auth import CurrentUser, get_current_user
+from app.agents.graph import invoke_reporting_pipeline
 from app.core.database import SessionLocal
 from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutput
 from app.models.database import FinancialStatement
@@ -786,8 +786,8 @@ async def download_pnl_excel(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
-    company_name: str = Query("Empresa", description="Company name for Excel header"),
     current_user: CurrentUser = Depends(get_current_user),
+    company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Profit & Loss as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -978,8 +978,8 @@ async def download_libro_auxiliar_excel(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
-    company_name: str = Query("Empresa", description="Company name for Excel header"),
     current_user: CurrentUser = Depends(get_current_user),
+    company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Libro Auxiliar as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -1136,7 +1136,6 @@ _REQUIRED_SOURCE_TYPES = ("balance_general", "estado_resultados", "libro_auxilia
 @router.get("/derivation/status")
 async def get_derivation_status(
     company_nit: str = Query(..., description="Company NIT"),
-    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Report which Vía B source statements are uploaded for a company.
 

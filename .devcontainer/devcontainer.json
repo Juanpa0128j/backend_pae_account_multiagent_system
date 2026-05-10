@@ -38,7 +38,6 @@
     "postCreateCommand": "uv sync && uv run pre-commit install",
     "remoteUser": "vscode",
     "remoteEnv": {},
-    "runArgs": ["--dns=8.8.8.8", "--dns=1.1.1.1", "--dns=192.168.65.7"],
     "mounts": [
         "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
         "source=${localEnv:HOME}/.local/share/claude,target=/home/vscode/.local/share/claude,type=bind,consistency=cached",

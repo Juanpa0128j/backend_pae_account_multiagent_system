@@ -12,7 +12,7 @@ IngestJob -> TransactionPending -> TransactionPosted -> JournalEntryLines.
 # can mis-infer them as Column[...] in service/pipeline code.
 
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any, Optional
 
 from sqlalchemy.exc import OperationalError as SAOperationalError
@@ -24,361 +24,26 @@ from app.core.logger import get_logger
 from app.models.database import IngestStatus, ProcessStatus, TransactionPending
 from app.services import db_service
 from app.services.db_service import financial_statements_exist, get_journal_entry_period
+from app.account_process.journal_builder import JournalBuilder
+from app.account_process.persist_orchestrator import PersistOrchestrator
 from app.services.financial_statement_service import (
     BusinessRuleError,
-    build_first_level_from_journal_entries,
 )
 from app.services.financial_statement_service import (
     derive_financial_statements as _derive_financial_statements,
 )
 from app.services.nit_utils import normalize_optional_nit
+from app.services.document_mappers import (
+    as_str,
+    build_structured_transactions,
+    safe_decimal,
+    safe_datetime,
+)
+from app.core.retry import with_db_retry
 
 logger = get_logger("app.agents.persist")
 
 MAX_NODE_RETRIES = 3
-
-
-def _as_str(value: Any, default: str = "") -> str:
-    """Normalize possibly-ORM values to plain strings."""
-
-    if value is None:
-        return default
-    return str(value)
-
-
-def _sanitize_for_json(value: Any) -> Any:
-    """Recursively convert non-JSON-serializable types to safe types."""
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {k: _sanitize_for_json(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_for_json(v) for v in value]
-    return value
-
-
-def _safe_decimal(value: Any) -> Optional[Decimal]:
-
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return None
-
-
-def _safe_datetime(value: Any) -> Optional[datetime]:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value
-    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(str(value), fmt).replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-    return None
-
-
-def _infer_total_from_items(items: Any) -> Optional[Decimal]:
-    """Best-effort total inference from extracted line items."""
-    if not isinstance(items, list) or not items:
-        return None
-
-    inferred = Decimal("0")
-    used_any = False
-
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-
-        # Prefer explicit per-line totals when present.
-        for key in ("valor_total_sin_impuesto", "valor_total", "total", "subtotal"):
-            line_total = _safe_decimal(item.get(key))
-            if line_total is not None:
-                inferred += line_total
-                used_any = True
-                break
-        else:
-            # Fallback to unit value if line total is absent.
-            unit_value = _safe_decimal(item.get("valor_unitario"))
-            if unit_value is not None:
-                qty = _safe_decimal(item.get("cantidad"))
-                if qty is not None and qty > 0 and qty <= Decimal("10000"):
-                    inferred += unit_value * qty
-                else:
-                    inferred += unit_value
-                used_any = True
-
-    if not used_any:
-        return None
-    return inferred
-
-
-def _build_structured_transactions(
-    interpreted: dict[str, Any], doc_type: str
-) -> list[dict[str, Any]]:
-    """Map rich document schemas into one or more tx rows for persistence."""
-
-    emisor = interpreted.get("emisor") or {}
-    receptor = interpreted.get("receptor") or {}
-    totales = interpreted.get("totales") or {}
-    items_payload = interpreted.get("items") or interpreted.get("detalle_items") or []
-
-    # --- Doc-type specific mapping ---
-    if doc_type == "extracto_bancario":
-        titular = interpreted.get("titular") or {}
-        movements = interpreted.get("movements") or []
-        txs: list[dict[str, Any]] = []
-
-        if isinstance(movements, list):
-            for movement in movements:
-                if not isinstance(movement, dict):
-                    continue
-
-                debito = _safe_decimal(movement.get("debito")) or Decimal("0")
-                credito = _safe_decimal(movement.get("credito")) or Decimal("0")
-                # Bank statement convention: a `debito` value means the bank
-                # debited (charged) the account = OUTFLOW; `credito` means the
-                # bank credited (received) the account = INFLOW.
-                if debito > Decimal("0"):
-                    valor = debito
-                    bank_direction = "salida"
-                elif credito > Decimal("0"):
-                    valor = credito
-                    bank_direction = "entrada"
-                else:
-                    continue
-
-                descripcion = _as_str(
-                    movement.get("descripcion"), "Movimiento bancario"
-                )
-                referencia = _as_str(movement.get("referencia"), "").strip()
-                if referencia:
-                    descripcion = f"{descripcion} (ref: {referencia})"
-
-                txs.append(
-                    {
-                        "fecha": movement.get("fecha")
-                        or interpreted.get("periodo_fin")
-                        or interpreted.get("periodo_inicio"),
-                        "nit_emisor": _as_str(
-                            titular.get("nit") or interpreted.get("nit_emisor"), ""
-                        ),
-                        "nit_receptor": _as_str(
-                            interpreted.get("nit_receptor") or receptor.get("nit"), ""
-                        ),
-                        "total": str(valor),
-                        "concepto": descripcion,
-                        "descripcion": descripcion,
-                        "bank_direction": bank_direction,
-                        "items": [_sanitize_for_json(movement)],
-                    }
-                )
-
-        if txs:
-            return txs
-
-        resumen = interpreted.get("resumen") or {}
-        fallback_total = (
-            _safe_decimal((resumen or {}).get("total_debitos"))
-            or _safe_decimal((resumen or {}).get("total_creditos"))
-            or _safe_decimal(interpreted.get("saldo_final"))
-            or Decimal("0")
-        )
-        return [
-            {
-                "fecha": interpreted.get("periodo_fin")
-                or interpreted.get("periodo_inicio"),
-                "nit_emisor": _as_str(titular.get("nit"), ""),
-                "nit_receptor": _as_str(
-                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
-                ),
-                "total": str(fallback_total),
-                "concepto": "Extracto bancario",
-                "descripcion": "Extracto bancario",
-                "items": _sanitize_for_json(
-                    movements if isinstance(movements, list) else []
-                ),
-            }
-        ]
-
-    if doc_type == "nomina":
-        empresa = interpreted.get("empresa") or {}
-        periodo_inicio = _as_str(interpreted.get("periodo_inicio"), "")
-        periodo_fin = _as_str(interpreted.get("periodo_fin"), "")
-        periodo_txt = ""
-        if periodo_inicio and periodo_fin:
-            periodo_txt = f"Periodo {periodo_inicio} a {periodo_fin}"
-        elif periodo_inicio:
-            periodo_txt = f"Periodo desde {periodo_inicio}"
-        elif periodo_fin:
-            periodo_txt = f"Periodo hasta {periodo_fin}"
-
-        raw_total = (
-            interpreted.get("total_neto_pagar")
-            or interpreted.get("total_devengado")
-            or interpreted.get("total")
-        )
-        parsed_total = _safe_decimal(raw_total)
-        if parsed_total is None:
-            empleados = interpreted.get("empleados") or []
-            if isinstance(empleados, list):
-                parsed_total = sum(
-                    [
-                        _safe_decimal((e or {}).get("neto_pagar")) or Decimal("0")
-                        for e in empleados
-                        if isinstance(e, dict)
-                    ],
-                    Decimal("0"),
-                )
-            else:
-                parsed_total = Decimal("0")
-
-        concepto = "Nomina"
-        if periodo_txt:
-            concepto = f"Nomina - {periodo_txt}"
-
-        return [
-            {
-                "fecha": interpreted.get("periodo_fin")
-                or interpreted.get("periodo_inicio")
-                or interpreted.get("fecha"),
-                "nit_emisor": _as_str(
-                    empresa.get("nit") or interpreted.get("nit_emisor"), ""
-                ),
-                "nit_receptor": _as_str(
-                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
-                ),
-                "total": str(parsed_total),
-                "concepto": concepto,
-                "descripcion": concepto,
-                "items": _sanitize_for_json(interpreted.get("empleados") or []),
-            }
-        ]
-
-    if doc_type == "recibo_pago_impuesto":
-        raw_total = (
-            interpreted.get("total_pagado")
-            or interpreted.get("valor_principal")
-            or interpreted.get("total")
-        )
-        parsed_total = _safe_decimal(raw_total) or Decimal("0")
-        tipo_impuesto = _as_str(interpreted.get("tipo_impuesto"), "")
-        periodo_gravable = _as_str(interpreted.get("periodo_gravable"), "")
-        concepto = "Pago de impuesto"
-        if tipo_impuesto:
-            concepto = f"Pago de impuesto {tipo_impuesto}"
-        if periodo_gravable:
-            concepto = f"{concepto} ({periodo_gravable})"
-
-        return [
-            {
-                "fecha": interpreted.get("fecha_pago") or interpreted.get("fecha"),
-                "nit_emisor": _as_str(
-                    interpreted.get("nit_declarante") or interpreted.get("nit_emisor"),
-                    "",
-                ),
-                "nit_receptor": _as_str(
-                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
-                ),
-                "total": str(parsed_total),
-                "concepto": concepto,
-                "descripcion": concepto,
-                "items": _sanitize_for_json(
-                    [
-                        {
-                            "numero_recibo": interpreted.get("numero_recibo"),
-                            "entidad_fiscal": interpreted.get("entidad_fiscal"),
-                            "banco": interpreted.get("banco"),
-                            "referencia_pago": interpreted.get("referencia_pago"),
-                            "valor_principal": interpreted.get("valor_principal"),
-                            "sanciones": interpreted.get("sanciones"),
-                            "intereses": interpreted.get("intereses"),
-                            "total_pagado": interpreted.get("total_pagado"),
-                        }
-                    ]
-                ),
-            }
-        ]
-
-    # --- Generic fallback mapping ---
-    raw_total = (
-        # Invoice-like schemas
-        totales.get("total_a_pagar")
-        or totales.get("total")
-        # Voucher-like schemas
-        or interpreted.get("valor_neto")
-        or interpreted.get("valor_bruto")
-        # Generic fallbacks
-        or interpreted.get("total")
-        or interpreted.get("valor_total")
-        or interpreted.get("valor")
-        or interpreted.get("monto")
-    )
-    parsed_total = _safe_decimal(raw_total)
-    if parsed_total is None or parsed_total == Decimal("0"):
-        inferred_total = _infer_total_from_items(items_payload)
-        if inferred_total is not None and inferred_total > Decimal("0"):
-            logger.info(
-                "db_persist: inferred total=%s from line items for structured ingest",
-                inferred_total,
-            )
-            parsed_total = inferred_total
-
-    # Derive a meaningful descripcion. Order: explicit fields → notas →
-    # concat of first item descriptions → consecutivo-based fallback. Without
-    # this FVs persist with empty `descripcion` and the UI shows "—".
-    derived_concepto = _as_str(
-        interpreted.get("descripcion_general")
-        or interpreted.get("concepto")
-        or interpreted.get("notas"),
-        "",
-    ).strip()
-    if not derived_concepto and isinstance(items_payload, list) and items_payload:
-        item_descs: list[str] = []
-        for item in items_payload[:3]:
-            if isinstance(item, dict):
-                desc = _as_str(
-                    item.get("descripcion") or item.get("concepto"), ""
-                ).strip()
-                if desc:
-                    item_descs.append(desc)
-        if item_descs:
-            derived_concepto = " · ".join(item_descs)[:200]
-    if not derived_concepto:
-        consecutivo = _as_str(
-            interpreted.get("consecutivo") or interpreted.get("numero"), ""
-        ).strip()
-        emisor_nit = _as_str(emisor.get("nit") or interpreted.get("nit_emisor"), "")
-        tipo = _as_str(doc_type or interpreted.get("tipo_documento", ""), "")
-        if consecutivo:
-            derived_concepto = (
-                f"{tipo} {consecutivo}".strip() if tipo else f"Doc {consecutivo}"
-            )
-        elif emisor_nit:
-            derived_concepto = f"{tipo} - NIT {emisor_nit}".strip(" -")
-        else:
-            derived_concepto = tipo
-
-    tx_data = {
-        "fecha": (
-            interpreted.get("fecha_emision")
-            or interpreted.get("fecha_registro")
-            or interpreted.get("fecha")
-        ),
-        "nit_emisor": _as_str(emisor.get("nit") or interpreted.get("nit_emisor"), ""),
-        "nit_receptor": _as_str(
-            receptor.get("nit") or interpreted.get("nit_receptor"), ""
-        ),
-        "total": str(parsed_total if parsed_total is not None else Decimal("0")),
-        "concepto": derived_concepto,
-        "descripcion": derived_concepto,
-        "items": _sanitize_for_json(items_payload),
-    }
-    return [tx_data]
 
 
 def _resolve_company_nit(
@@ -437,91 +102,15 @@ def db_persist_node(state: AgentState) -> AgentState:
 
 def _db_persist_node_inner(state: AgentState) -> AgentState:
     """Execute DB writes — called only while holding DB_WRITE_SEMAPHORE."""
-    for _attempt in range(1, MAX_NODE_RETRIES + 1):
-        try:
-            _db_persist_inner(state)
-            if state.get("error"):
-                append_log(state, "db_persist", "node_error", {"error": state["error"]})
-                return state
-            append_log(
-                state,
-                "db_persist",
-                "node_complete",
-                {
-                    "ingest_id": state.get("ingest_id"),
-                },
-            )
-            return state
-        except SAOperationalError as e:
-            logger.warning(
-                f"db_persist: transient DB error attempt {_attempt}/{MAX_NODE_RETRIES}: {e}"
-            )
-            if _attempt == MAX_NODE_RETRIES:
-                state["error"] = (
-                    f"DB persist failed after {MAX_NODE_RETRIES} attempts: {e}"
-                )
-                append_log(state, "db_persist", "node_error", {"error": str(e)})
-                return state
-        except Exception as e:
-            # Non-transient: mark process FAILED and exit. Never re-run _run_persist
-            # — that risks duplicate TransactionPosted / JournalEntryLine rows.
-            err_msg = state.get("error") or f"DB persist error: {str(e)}"
-            state["error"] = err_msg
-            logger.error(
-                "db_persist: non-transient exception, aborting without retry: %s",
-                err_msg,
-                exc_info=True,
-            )
-            if state.get("mode") == "process":
-                process_id = _as_str(state.get("process_id"), "")
-                if process_id:
-                    db = SessionLocal()
-                    try:
-                        db_service.update_process_job(
-                            db,
-                            process_id,
-                            status=ProcessStatus.FAILED,
-                            current_stage="failed",
-                            current_agent="db_persist",
-                            error_message=str(err_msg),
-                            progress=100,
-                            agent_log_entry={
-                                "agent": "db_persist",
-                                "stage": "failed",
-                                "status": "failed",
-                            },
-                        )
-                    except Exception as status_err:
-                        logger.debug(
-                            "persist_node: failed to mark process job FAILED: %s",
-                            status_err,
-                        )
-                    finally:
-                        db.close()
-            append_log(state, "db_persist", "node_error", {"error": str(err_msg)})
-            return state
 
-    # Retry budget exhausted on transient errors only — try one final cleanup pass.
-    try:
-        _db_persist_inner_with_cleanup(state)
-        if state.get("error"):
-            append_log(state, "db_persist", "node_error", {"error": state["error"]})
-        else:
-            append_log(
-                state,
-                "db_persist",
-                "node_complete",
-                {
-                    "ingest_id": state.get("ingest_id"),
-                },
-            )
-    except Exception as e:
-        logger.error(
-            f"db_persist: Non-transient exception in cleanup path: {e}", exc_info=True
-        )
-        state["error"] = f"DB persist error: {str(e)}"
+    def _persist() -> None:
+        _db_persist_inner(state)
+
+    def _on_non_transient(e: Exception) -> None:
+        err_msg = state.get("error") or f"DB persist error: {str(e)}"
+        state["error"] = err_msg
         if state.get("mode") == "process":
-            process_id = _as_str(state.get("process_id"), "")
+            process_id = as_str(state.get("process_id"), "")
             if process_id:
                 db = SessionLocal()
                 try:
@@ -531,7 +120,7 @@ def _db_persist_node_inner(state: AgentState) -> AgentState:
                         status=ProcessStatus.FAILED,
                         current_stage="failed",
                         current_agent="db_persist",
-                        error_message=state["error"],
+                        error_message=str(err_msg),
                         progress=100,
                         agent_log_entry={
                             "agent": "db_persist",
@@ -541,14 +130,34 @@ def _db_persist_node_inner(state: AgentState) -> AgentState:
                     )
                 except Exception as status_err:
                     logger.debug(
-                        "persist_node: failed to mark process job FAILED in cleanup path: %s",
+                        "persist_node: failed to mark process job FAILED: %s",
                         status_err,
                     )
                 finally:
                     db.close()
-        append_log(state, "db_persist", "node_error", {"error": str(e)})
+        append_log(state, "db_persist", "node_error", {"error": str(err_msg)})
 
-    return state
+    try:
+        with_db_retry(
+            _persist,
+            max_retries=MAX_NODE_RETRIES,
+            logger=logger,
+            on_non_transient=_on_non_transient,
+        )
+        if state.get("error"):
+            append_log(state, "db_persist", "node_error", {"error": state["error"]})
+            return state
+        append_log(
+            state, "db_persist", "node_complete", {"ingest_id": state.get("ingest_id")}
+        )
+        return state
+    except SAOperationalError as e:
+        state["error"] = f"DB persist failed after {MAX_NODE_RETRIES} attempts: {e}"
+        append_log(state, "db_persist", "node_error", {"error": str(e)})
+        return state
+    except Exception:
+        # _on_non_transient already handled process job failure and logging
+        return state
 
 
 def _db_persist_inner(state: AgentState) -> None:
@@ -562,8 +171,10 @@ def _db_persist_inner_with_cleanup(state: AgentState) -> AgentState:
     return state
 
 
-def _auto_derive_statements(db, company_nit: str) -> Optional[bool]:
-    """Build first-level statements from JournalEntryLines then derive second-level.
+def _auto_derive_statements(
+    db, company_nit: str, *, ingest_id: str = ""
+) -> Optional[bool]:
+    """Derive financial statements from all journal entries for the company/period.
 
     Non-fatal: logs warnings on failure but never raises.
     """
@@ -590,36 +201,38 @@ def _auto_derive_statements(db, company_nit: str) -> Optional[bool]:
         return None
 
     logger.info(
-        "[persist] Building first-level statements for %s (%s -> %s)",
+        "[persist] Deriving statements for %s (%s -> %s)",
         company_nit,
         period_start.date(),
         period_end.date(),
     )
 
     try:
-        build_first_level_from_journal_entries(
+        entries = db_service.get_journal_entry_lines(
             db,
             company_nit=company_nit,
-            period_start=period_start,
-            period_end=period_end,
+            start_date=period_start,
+            end_date=period_end,
         )
-    except Exception as exc:
-        # Non-fatal: missing derived statements don't break the accounting pipeline.
-        # The request still succeeds; derivation can be re-triggered on next run.
-        logger.warning(
-            "[persist] build_first_level failed (non-fatal): %s", exc, exc_info=True
-        )
-        return False
-
-    try:
-        _derive_financial_statements(
+        mapped = [
+            {
+                "fecha": e.get("fecha"),
+                "cuenta": e.get("cuenta_puc", ""),
+                "descripcion": e.get("descripcion", ""),
+                "tercero_nit": e.get("tercero_nit", ""),
+                "detalle": e.get("descripcion", ""),
+                "debito": e.get("debito", "0"),
+                "credito": e.get("credito", "0"),
+            }
+            for e in entries
+        ]
+        PersistOrchestrator(db).derive_and_persist_statements(
+            mapped,
+            ingest_id=ingest_id,
             company_nit=company_nit,
             period_start=period_start,
             period_end=period_end,
         )
-    except BusinessRuleError as exc:
-        logger.warning("[persist] derive skipped (missing source inputs): %s", exc)
-        return False
     except Exception as exc:
         logger.warning("[persist] derive failed (non-fatal): %s", exc, exc_info=True)
         return False
@@ -673,7 +286,7 @@ def _run_persist(state: AgentState) -> AgentState:
     pathway = state.get("pathway", "build_from_scratch")
     interpreted = state.get("interpreted_data", {}) or {}
     classification = state.get("document_classification") or {}
-    doc_type = _as_str(classification.get("doc_type"), "")
+    doc_type = as_str(classification.get("doc_type"), "")
     contador_output: dict = {}
     company_nit: Optional[str] = None
 
@@ -816,7 +429,7 @@ def _run_persist(state: AgentState) -> AgentState:
         # New rich-schema path: interpreted_data is a typed content dict (FacturaVentaContent, etc.)
         # Build one or multiple tx rows from structured fields.
         if isinstance(interpreted, dict) and "transactions" not in interpreted:
-            transactions = _build_structured_transactions(interpreted, doc_type)
+            transactions = build_structured_transactions(interpreted, doc_type)
         else:
             transactions = (
                 interpreted.get("transactions", [])
@@ -833,8 +446,9 @@ def _run_persist(state: AgentState) -> AgentState:
         if not state.get("raw_transactions"):
             state["raw_transactions"] = transactions
 
-    ingest_id = _as_str(state.get("ingest_id"), "")
+    ingest_id = as_str(state.get("ingest_id"), "")
     db = SessionLocal()
+    orchestrator = PersistOrchestrator(db)
 
     try:
         # ── 1. Create or update IngestJob ──
@@ -853,7 +467,7 @@ def _run_persist(state: AgentState) -> AgentState:
             ingest_job = db_service.create_ingest_job(
                 db, file_name, state.get("file_path")
             )
-            ingest_id = _as_str(getattr(ingest_job, "id", ""), "")
+            ingest_id = as_str(getattr(ingest_job, "id", ""), "")
             state["ingest_id"] = ingest_id
 
         total_lines = 0
@@ -862,7 +476,7 @@ def _run_persist(state: AgentState) -> AgentState:
         pending_ids: list[str] = []
 
         if mode == "process":
-            process_id = _as_str(state.get("process_id"), "")
+            process_id = as_str(state.get("process_id"), "")
             if process_id:
                 db_service.update_process_job(
                     db,
@@ -879,12 +493,12 @@ def _run_persist(state: AgentState) -> AgentState:
                 )
 
         for tx_data in transactions:
-            fecha = _safe_datetime(tx_data.get("fecha")) or datetime.now(timezone.utc)
-            total = _safe_decimal(
+            fecha = safe_datetime(tx_data.get("fecha")) or datetime.now(timezone.utc)
+            total = safe_decimal(
                 tx_data.get("total") or tx_data.get("valor_total")
             ) or Decimal("0")
-            nit_emisor = _as_str(tx_data.get("nit_emisor"), "").strip()
-            nit_receptor = _as_str(tx_data.get("nit_receptor"), "").strip()
+            nit_emisor = as_str(tx_data.get("nit_emisor"), "").strip()
+            nit_receptor = as_str(tx_data.get("nit_receptor"), "").strip()
             company_nit = _resolve_company_nit(state, tx_data)
             if not company_nit:
                 logger.warning(
@@ -898,13 +512,13 @@ def _run_persist(state: AgentState) -> AgentState:
                     "db_persist: nit_receptor missing in extracted transaction; using company_nit=%s",
                     company_nit,
                 )
-            descripcion = _as_str(
+            descripcion = as_str(
                 tx_data.get("concepto") or tx_data.get("descripcion"), ""
             )
             items = tx_data.get("items") or tx_data.get("detalle_items") or []
 
             if mode == "process" and state.get("pending_transaction_id"):
-                pending_id = _as_str(state.get("pending_transaction_id"), "")
+                pending_id = as_str(state.get("pending_transaction_id"), "")
                 txn_pending = (
                     db.query(TransactionPending)
                     .filter(TransactionPending.id == pending_id)
@@ -930,16 +544,16 @@ def _run_persist(state: AgentState) -> AgentState:
                 )
                 logger.info(f"db_persist: Created TransactionPending {txn_pending.id}")
 
-            pending_ids.append(_as_str(getattr(txn_pending, "id", ""), ""))
+            pending_ids.append(as_str(getattr(txn_pending, "id", ""), ""))
 
             duplicates = []
             if nit_emisor and total and fecha:
                 duplicates = db_service.check_duplicates(db, nit_emisor, total, fecha)
-                txn_pending_id = _as_str(getattr(txn_pending, "id", ""), "")
+                txn_pending_id = as_str(getattr(txn_pending, "id", ""), "")
                 duplicates = [
                     d
                     for d in duplicates
-                    if _as_str(getattr(d, "id", ""), "") != txn_pending_id
+                    if as_str(getattr(d, "id", ""), "") != txn_pending_id
                 ]
                 if duplicates:
                     total_duplicates += len(duplicates)
@@ -958,40 +572,40 @@ def _run_persist(state: AgentState) -> AgentState:
                     ),
                     None,
                 )
-                cuenta_puc = _as_str((debit_line or {}).get("cuenta_puc"), "")
-                puc_descripcion = _as_str((debit_line or {}).get("nombre_cuenta"), "")
+                cuenta_puc = as_str((debit_line or {}).get("cuenta_puc"), "")
+                puc_descripcion = as_str((debit_line or {}).get("nombre_cuenta"), "")
                 if not cuenta_puc:
                     msg = "DB persist error: contador output missing debit cuenta_puc"
                     logger.error(msg)
                     state["error"] = msg
                     raise RuntimeError(msg)
             else:
-                cuenta_puc = _as_str(tx_data.get("cuenta_puc"), "")
+                cuenta_puc = as_str(tx_data.get("cuenta_puc"), "")
                 if not cuenta_puc:
                     logger.warning(
                         "db_persist: No PUC code in ingest data — "
-                        "defaulting to 5195 (Gastos Diversos). "
+                        "defaulting to 519595 (Otros Gastos). "
                         "Run accounting pipeline to classify properly."
                     )
-                    cuenta_puc = "5195"
-                puc_descripcion = _as_str(tx_data.get("cuenta_nombre"), "")
+                    cuenta_puc = "519595"
+                puc_descripcion = as_str(tx_data.get("cuenta_nombre"), "")
 
             puc_record = db_service.validate_puc_exists(db, cuenta_puc)
             if puc_record:
-                puc_descripcion = _as_str(getattr(puc_record, "nombre", ""), "")
+                puc_descripcion = as_str(getattr(puc_record, "nombre", ""), "")
             elif mode == "process":
                 if state.get("force_persist"):
                     # User chose to override audit issues — fall back to the
-                    # catch-all 5195 instead of failing the whole pipeline.
+                    # catch-all 519595 instead of failing the whole pipeline.
                     logger.warning(
                         "db_persist: force_persist=True — PUC code %s not found, "
-                        "falling back to 5195",
+                        "falling back to 519595",
                         cuenta_puc,
                     )
-                    cuenta_puc = "5195"
+                    cuenta_puc = "519595"
                     fallback = db_service.validate_puc_exists(db, cuenta_puc)
                     puc_descripcion = (
-                        _as_str(getattr(fallback, "nombre", ""), "")
+                        as_str(getattr(fallback, "nombre", ""), "")
                         if fallback
                         else "Otros gastos diversos"
                     )
@@ -1003,17 +617,17 @@ def _run_persist(state: AgentState) -> AgentState:
             else:
                 logger.warning(f"db_persist: PUC code {cuenta_puc} not found")
 
-            retefuente = _safe_decimal(tx_data.get("retefuente")) or Decimal("0")
-            reteica = _safe_decimal(tx_data.get("reteica")) or Decimal("0")
-            iva = _safe_decimal(
+            retefuente = safe_decimal(tx_data.get("retefuente")) or Decimal("0")
+            reteica = safe_decimal(tx_data.get("reteica")) or Decimal("0")
+            iva = safe_decimal(
                 tx_data.get("iva") or tx_data.get("iva_valor")
             ) or Decimal("0")
-            ica = _safe_decimal(tx_data.get("ica")) or Decimal("0")
-            provision_renta = _safe_decimal(tx_data.get("renta")) or Decimal("0")
-            neto = _safe_decimal(tx_data.get("neto_a_pagar")) or total
+            ica = safe_decimal(tx_data.get("ica")) or Decimal("0")
+            provision_renta = safe_decimal(tx_data.get("renta")) or Decimal("0")
+            neto = safe_decimal(tx_data.get("neto_a_pagar")) or total
 
             if mode == "process":
-                journal_json = _journal_entries_from_contador(
+                journal_json = JournalBuilder.build_from_contador(
                     fecha=fecha,
                     asientos=tx_data.get("_contador_asientos", []),
                     nit=nit_emisor,
@@ -1027,7 +641,7 @@ def _run_persist(state: AgentState) -> AgentState:
                     "auditor": auditor_out,
                 }
             else:
-                journal_json = _build_journal_entries(
+                journal_json = JournalBuilder.build_from_ingest(
                     fecha=fecha,
                     cuenta_puc=cuenta_puc,
                     puc_descripcion=puc_descripcion,
@@ -1042,7 +656,7 @@ def _run_persist(state: AgentState) -> AgentState:
                 # gasto + 220505 CxP). For bank-outflow doc subtypes the credit
                 # side must hit 111005 (Banco), not CxP. Swap 220505 cred ->
                 # 111005 to mirror the contador-stage corrector.
-                doc_type_full = _as_str(
+                doc_type_full = as_str(
                     (state.get("document_classification") or {}).get("doc_type"),
                     "",
                 )
@@ -1053,14 +667,14 @@ def _run_persist(state: AgentState) -> AgentState:
                 }:
                     for _entry in journal_json:
                         if (
-                            _as_str(_entry.get("cuenta"), "") == "220505"
-                            and _safe_decimal(_entry.get("credito"))
-                            and _safe_decimal(_entry.get("credito")) > Decimal("0")
+                            as_str(_entry.get("cuenta"), "") == "220505"
+                            and safe_decimal(_entry.get("credito"))
+                            and safe_decimal(_entry.get("credito")) > Decimal("0")
                         ):
                             logger.info(
                                 "db_persist[ingest]: %s 220505 cred -> 111005 — descripcion=%r",
                                 doc_type_full,
-                                _as_str(_entry.get("detalle"), "")[:120],
+                                as_str(_entry.get("detalle"), "")[:120],
                             )
                             _entry["cuenta"] = "111005"
                             _entry["descripcion"] = "Bancos Nacionales"
@@ -1070,7 +684,7 @@ def _run_persist(state: AgentState) -> AgentState:
                 # inflow movement (bank received funds) the asiento must be
                 # inverted: DEBIT 111005 + CREDIT cuenta. Swap each entry's
                 # debito/credito sides while preserving the cuenta and amounts.
-                bank_direction = _as_str(tx_data.get("bank_direction"), "")
+                bank_direction = as_str(tx_data.get("bank_direction"), "")
                 if doc_type_full == "extracto_bancario" and bank_direction == "entrada":
                     logger.info(
                         "db_persist[ingest]: inverting extracto entrada asiento — descripcion=%r",
@@ -1081,29 +695,32 @@ def _run_persist(state: AgentState) -> AgentState:
                         _c = _entry.get("credito") or "0"
                         _entry["debito"] = str(_c)
                         _entry["credito"] = str(_d)
-                # Also try to specialize the 5195 fallback via the keyword
-                # corrector when the description identifies a concrete gasto.
-                if cuenta_puc == "5195":
+
+                # Specialize 5195 fallback via the keyword corrector when the
+                # description identifies a concrete gasto.
+                if cuenta_puc == "519595" or cuenta_puc == "5195":
                     from app.agents.contador_puc_corrector import _suggest_puc
 
                     suggested = _suggest_puc(descripcion or "")
                     if suggested:
                         logger.info(
-                            "db_persist[ingest]: rewriting 5195 -> %s based on descripcion=%r",
+                            "db_persist[ingest]: rewriting %s -> %s based on descripcion=%r",
+                            cuenta_puc,
                             suggested,
                             (descripcion or "")[:120],
                         )
                         for _entry in journal_json:
-                            if _as_str(_entry.get("cuenta"), "") == "5195":
+                            if as_str(_entry.get("cuenta"), "") in {"519595", "5195"}:
                                 _entry["cuenta"] = suggested
                         cuenta_puc = suggested
                         suggested_record = db_service.validate_puc_exists(
                             db, cuenta_puc
                         )
                         if suggested_record:
-                            puc_descripcion = _as_str(
+                            puc_descripcion = as_str(
                                 getattr(suggested_record, "nombre", ""), ""
                             )
+
                 tax_references = interpreted.get("referencias_legales", [])
                 raw_reasoning = tx_data.get("agent_reasoning")
                 agent_reasoning = (
@@ -1112,7 +729,7 @@ def _run_persist(state: AgentState) -> AgentState:
 
             txn_posted = db_service.create_transaction_posted(
                 db,
-                transaction_pending_id=_as_str(getattr(txn_pending, "id", "")),
+                transaction_pending_id=as_str(getattr(txn_pending, "id", "")),
                 company_nit=company_nit,
                 cuenta_puc=cuenta_puc,
                 puc_descripcion=puc_descripcion,
@@ -1126,22 +743,21 @@ def _run_persist(state: AgentState) -> AgentState:
                 tax_references=tax_references,
                 agent_reasoning=agent_reasoning,
             )
-            posted_ids.append(_as_str(getattr(txn_posted, "id", ""), ""))
+            posted_ids.append(as_str(getattr(txn_posted, "id", ""), ""))
             logger.info("db_persist: Created TransactionPosted %s", txn_posted.id)
 
-            lines = db_service.create_journal_entry_lines(
-                db,
-                _as_str(getattr(txn_posted, "id", "")),
+            lines = orchestrator.persist_journal_entries(
                 journal_json,
-                company_nit=company_nit,
+                transaction_posted_id=as_str(getattr(txn_posted, "id", "")),
+                company_nit=company_nit or "",
             )
             total_lines += len(lines)
             logger.info("db_persist: Created %d journal entry lines", len(lines))
 
         auditor_out = state.get("auditor_output") or {}
         classification = state.get("document_classification") or {}
-        doc_type = _as_str(classification.get("doc_type"), "")
-        pathway_value = _as_str(state.get("pathway"), "")
+        doc_type = as_str(classification.get("doc_type"), "")
+        pathway_value = as_str(state.get("pathway"), "")
 
         if mode == "ingest":
             db_service.update_ingest_job(
@@ -1152,7 +768,7 @@ def _run_persist(state: AgentState) -> AgentState:
                 pathway=pathway_value,
             )
         else:
-            process_id = _as_str(state.get("process_id"), "")
+            process_id = as_str(state.get("process_id"), "")
             if process_id:
                 db_service.update_process_job(
                     db,
@@ -1181,7 +797,9 @@ def _run_persist(state: AgentState) -> AgentState:
 
         # Auto-derive financial statements after process completes (non-fatal)
         if mode == "process" and company_nit:
-            derive_result = _auto_derive_statements(db, company_nit)
+            derive_result = _auto_derive_statements(
+                db, company_nit, ingest_id=ingest_id
+            )
             if derive_result is False:
                 from app.agents.audit_utils import append_finding
                 from app.models.audit import AuditFinding, AuditTarget, Severity
@@ -1258,7 +876,7 @@ def _run_persist(state: AgentState) -> AgentState:
                 )
 
         if mode == "process":
-            process_id = _as_str(state.get("process_id"), "")
+            process_id = as_str(state.get("process_id"), "")
             if process_id:
                 try:
                     db_service.update_process_job(
@@ -1291,29 +909,6 @@ def _run_persist(state: AgentState) -> AgentState:
 # ---------------------------------------------------------------------------
 
 
-def _journal_entries_from_contador(
-    *, fecha: datetime, asientos: list, nit: str, descripcion: str
-) -> list:
-
-    fecha_iso = fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
-    entries = []
-    for asiento in asientos:
-        tipo = str(asiento.get("tipo_movimiento", "")).lower()
-        valor = _safe_decimal(asiento.get("valor")) or Decimal("0")
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": str(asiento.get("cuenta_puc", "")),
-                "descripcion": asiento.get("nombre_cuenta") or descripcion,
-                "tercero_nit": nit,
-                "detalle": asiento.get("descripcion") or descripcion,
-                "debito": str(valor if tipo == "debito" else Decimal("0")),
-                "credito": str(valor if tipo == "credito" else Decimal("0")),
-            }
-        )
-    return entries
-
-
 def _persist_financial_statement(state: AgentState) -> None:
     """Persist a Vía B financial statement (balance, PnL, or libro auxiliar)."""
     from app.models.database import IngestStatus
@@ -1330,7 +925,7 @@ def _persist_financial_statement(state: AgentState) -> None:
         state["error"] = msg
         raise RuntimeError(msg)
 
-    ingest_id = _as_str(state.get("ingest_id"), "")
+    ingest_id = as_str(state.get("ingest_id"), "")
     db = SessionLocal()
 
     try:
@@ -1342,13 +937,13 @@ def _persist_financial_statement(state: AgentState) -> None:
             ingest_job = db_service.create_ingest_job(
                 db, file_name, state.get("file_path"), commit=False
             )
-            ingest_id = _as_str(getattr(ingest_job, "id", ""), "")
+            ingest_id = as_str(getattr(ingest_job, "id", ""), "")
             state["ingest_id"] = ingest_id
 
         # Populate routing metadata on the job
         if ingest_job:
             ingest_job.document_type = doc_type
-            ingest_job.pathway = _as_str(state.get("pathway"), "work_with_existing")
+            ingest_job.pathway = as_str(state.get("pathway"), "work_with_existing")
 
         company_nit = _resolve_company_nit(state)
         if company_nit is None:
@@ -1356,10 +951,10 @@ def _persist_financial_statement(state: AgentState) -> None:
                 "Vía B persistence requires a company NIT (provided or detected)"
             )
 
-        period_start = _safe_datetime(
+        period_start = safe_datetime(
             classification.get("period_start") or interpreted.get("periodo_inicio")
         )
-        period_end = _safe_datetime(
+        period_end = safe_datetime(
             classification.get("period_end")
             or interpreted.get("periodo_fin")
             or interpreted.get("periodo_corte")
@@ -1439,7 +1034,7 @@ def _persist_financial_statement(state: AgentState) -> None:
 
 
 def _build_preview(interpreted: dict, doc_type: str = "") -> dict:
-    concepto = _as_str(interpreted.get("concepto"), "").strip()
+    concepto = as_str(interpreted.get("concepto"), "").strip()
     if not concepto:
         default_by_type = {
             "extracto_bancario": "Extracto bancario",
@@ -1458,112 +1053,3 @@ def _build_preview(interpreted: dict, doc_type: str = "") -> dict:
         "concepto": concepto[:100],
         "items_count": items_count,
     }
-
-
-def _build_journal_entries(
-    fecha: datetime,
-    cuenta_puc: str,
-    puc_descripcion: str,
-    total: Decimal,
-    iva: Decimal,
-    retefuente: Decimal,
-    reteica: Decimal,
-    nit: str,
-    descripcion: str,
-) -> list:
-    """
-    Build double-entry (partida doble) journal entries for the ingest path.
-
-    For a typical purchase/expense:
-    - DEBIT the expense account (PUC) for base (total - IVA)
-    - DEBIT IVA descontable (240802) if IVA > 0
-    - CREDIT vendor payable (220505) for base + IVA - retenciones
-    - CREDIT retefuente (2365) if retention > 0
-    - CREDIT reteICA (2368) if reteica > 0
-    """
-
-    entries = []
-    base = total - iva
-    fecha_iso = fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
-
-    if base > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": cuenta_puc,
-                "descripcion": puc_descripcion or descripcion,
-                "tercero_nit": nit,
-                "detalle": descripcion,
-                "debito": str(base),
-                "credito": "0",
-            }
-        )
-
-    if iva > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": "240802",
-                "descripcion": "IVA Descontable",
-                "tercero_nit": nit,
-                "detalle": f"IVA por {descripcion}",
-                "debito": str(iva),
-                "credito": "0",
-            }
-        )
-
-    total_credito_proveedor = total - retefuente - reteica
-    if total_credito_proveedor > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": "220505",
-                "descripcion": "Proveedores Nacionales",
-                "tercero_nit": nit,
-                "detalle": f"CxP {descripcion}",
-                "debito": "0",
-                "credito": str(total_credito_proveedor),
-            }
-        )
-
-    if retefuente > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": "2365",
-                "descripcion": "Retencion en la Fuente por pagar",
-                "tercero_nit": nit,
-                "detalle": f"Retefuente {descripcion}",
-                "debito": "0",
-                "credito": str(retefuente),
-            }
-        )
-
-    if reteica > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": "2368",
-                "descripcion": "Retencion ICA por pagar",
-                "tercero_nit": nit,
-                "detalle": f"ReteICA {descripcion}",
-                "debito": "0",
-                "credito": str(reteica),
-            }
-        )
-
-    # Validate double-entry principle (partida doble)
-    total_debitos = sum(Decimal(e["debito"]) for e in entries)
-    total_creditos = sum(Decimal(e["credito"]) for e in entries)
-    if total_debitos != total_creditos:
-        logger.error(
-            "Double-entry violation in _build_journal_entries: "
-            "debits (%s) != credits (%s)",
-            total_debitos,
-            total_creditos,
-        )
-        raise RuntimeError(
-            f"Unbalanced journal entries: D={total_debitos} C={total_creditos}"
-        )
-
-    return entries

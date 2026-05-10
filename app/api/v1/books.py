@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.models.database import FinancialStatement
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
+from app.services.parse_utils import safe_float
 
 router = APIRouter()
 
@@ -51,9 +52,9 @@ def _via_b_libro_auxiliar(db: Session, company_nit: str) -> list[dict]:
                 "descripcion": str(
                     line.get("detalle") or line.get("cuenta_nombre") or ""
                 ),
-                "debito": float(line.get("debito") or 0),
-                "credito": float(line.get("credito") or 0),
-                "saldo": float(line.get("saldo") or 0),
+                "debito": safe_float(line.get("debito")),
+                "credito": safe_float(line.get("credito")),
+                "saldo": safe_float(line.get("saldo")),
             }
         )
     return out
@@ -92,7 +93,7 @@ def _via_b_balance(db: Session, company_nit: str) -> list[dict]:
                 "descripcion": str(acc.get("nombre") or ""),
                 "debito": 0.0,
                 "credito": 0.0,
-                "saldo": float(acc.get("saldo") or 0),
+                "saldo": safe_float(acc.get("saldo")),
             }
         )
     return out
