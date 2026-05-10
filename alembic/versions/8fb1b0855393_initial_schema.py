@@ -519,8 +519,7 @@ def upgrade() -> None:
     #   G=Commerce, H=Transport, I=Hotels/Restaurants, J=Tech/Info, K=Finance,
     #   L=Real estate, M=Professional services, N=Admin services, P=Education,
     #   Q=Health, R=Entertainment, S=Other services
-    op.get_bind().execute(
-        sa.text("""
+    op.get_bind().execute(sa.text("""
         INSERT INTO reteica_tarifas (municipio, ciiu_seccion, tasa, fuente) VALUES
 
         -- ─── Nacional fallback (used when city not in table) ────────────────
@@ -638,12 +637,10 @@ def upgrade() -> None:
 
         -- ─── Florencia [REFERENCIA] ───────────────────────────────────────────
         ('florencia', 'general', 0.00690000, 'Referencia - Florencia ~6.9‰ - verificar estatuto')
-    """)
-    )
+    """))
 
     # ── Seed: new PUC accounts for ICA and Renta (Plan step 1d) ─────────────
-    op.get_bind().execute(
-        sa.text("""
+    op.get_bind().execute(sa.text("""
         INSERT INTO cuentas_puc (codigo, nombre, clase, naturaleza, descripcion, activa) VALUES
         ('540101', 'Gasto ICA',
          5, 'DEBITO',
@@ -662,8 +659,7 @@ def upgrade() -> None:
          'Pasivo estimado por impuesto de renta del período. Contrapartida de la provisión (540502). Art. 240 ET.',
          true)
         ON CONFLICT (codigo) DO NOTHING
-    """)
-    )
+    """))
 
 
 def downgrade() -> None:

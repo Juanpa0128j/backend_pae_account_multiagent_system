@@ -15,9 +15,7 @@ semantics exposed by `validation_engine.OutputValidator`.
 
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
-from app.core.database import SessionLocal
 from app.core.logger import get_logger
-from app.services import db_service
 from app.services.validation_engine import ValidationResult, get_validator
 
 logger = get_logger("app.agents.validation_rules")
@@ -44,6 +42,8 @@ def _resolve_puc_code(db, raw_code: str) -> tuple[str | None, str | None]:
 
     Returns a tuple of (resolved_code, resolved_name).
     """
+    from app.agents.supervisor import db_service
+
     code = str(raw_code or "").strip()
     if not code:
         return None, None
@@ -86,6 +86,8 @@ def _resolve_puc_code(db, raw_code: str) -> tuple[str | None, str | None]:
 
 def _normalize_contador_puc_codes(contador_output: dict) -> dict:
     """Replace missing/non-active PUC codes with active fallback equivalents."""
+    from app.agents.supervisor import SessionLocal
+
     asientos = (
         contador_output.get("asientos", []) if isinstance(contador_output, dict) else []
     )
@@ -121,6 +123,8 @@ def _normalize_contador_puc_codes(contador_output: dict) -> dict:
 
 def _missing_puc_codes(contador_output: dict) -> list[str]:
     """Return missing PUC codes from DB for a contador output payload."""
+    from app.agents.supervisor import SessionLocal, db_service
+
     asientos = contador_output.get("asientos", [])
     codes = sorted(
         {str(a.get("cuenta_puc", "")).strip() for a in asientos if a.get("cuenta_puc")}
@@ -147,6 +151,8 @@ def _hydrate_contador_account_names(contador_output: dict) -> dict:
     2) Existing asiento `descripcion`
     3) Fallback to the account code itself
     """
+    from app.agents.supervisor import SessionLocal, db_service
+
     asientos = (
         contador_output.get("asientos", []) if isinstance(contador_output, dict) else []
     )

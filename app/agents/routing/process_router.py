@@ -11,8 +11,6 @@ from app.agents.validation_rules import (
     GLOBAL_AUDIT_FAILURES,
     MAX_AUDITOR_RETRIES,
     RETRY_BUDGETS,
-    validate_auditor_output_node,
-    validate_contador_output_node,
 )
 from app.core.logger import get_logger
 from app.models.audit import AuditFinding, Severity
@@ -59,6 +57,8 @@ def route(state: AgentState) -> AgentState:
 
 
 def _route_after_contador(state: AgentState) -> AgentState:
+    from app.agents.supervisor import validate_contador_output_node
+
     state = validate_contador_output_node(state)
     if state.get("correction_feedback"):
         state["current_agent"] = "contador"
@@ -126,6 +126,8 @@ def _route_after_tributario(state: AgentState) -> AgentState:
 
 
 def _route_after_auditor(state: AgentState) -> AgentState:
+    from app.agents.supervisor import validate_auditor_output_node
+
     if state.get("force_persist"):
         state["current_agent"] = "db_persist"
         append_log(

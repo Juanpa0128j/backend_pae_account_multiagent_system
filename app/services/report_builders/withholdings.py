@@ -34,16 +34,12 @@ def build_withholdings(db, params: dict, svc) -> dict:
     retefuente_status = (
         "saldo_a_pagar"
         if retefuente > 0
-        else "saldo_a_favor"
-        if retefuente < 0
-        else "saldo_cero"
+        else "saldo_a_favor" if retefuente < 0 else "saldo_cero"
     )
     reteica_status = (
         "saldo_a_pagar"
         if reteica > 0
-        else "saldo_a_favor"
-        if reteica < 0
-        else "saldo_cero"
+        else "saldo_a_favor" if reteica < 0 else "saldo_cero"
     )
     total_status = (
         "saldo_a_pagar" if total > 0 else "saldo_a_favor" if total < 0 else "saldo_cero"

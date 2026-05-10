@@ -48,7 +48,7 @@ class TestProcessRouter:
         assert result["agent_log"][-1]["details"]["next_agent"] == "contador"
         assert result["agent_log"][-1]["details"]["mode"] == "process"
 
-    @patch("app.agents.routing.process_router.validate_contador_output_node")
+    @patch("app.agents.supervisor.validate_contador_output_node")
     def test_route_contador_validation_failed(self, mock_validate):
         def _side_effect(s):
             s["correction_feedback"] = "Fix the PUC codes"
@@ -64,7 +64,7 @@ class TestProcessRouter:
         assert result["agent_log"][-1]["event"] == "routing_complete"
         assert result["agent_log"][-1]["details"]["reason"] == "validation_failed"
 
-    @patch("app.agents.routing.process_router.validate_contador_output_node")
+    @patch("app.agents.supervisor.validate_contador_output_node")
     def test_route_contador_success_to_tributario(self, mock_validate):
         mock_validate.return_value = _make_state(current_agent="contador")
 
@@ -102,7 +102,7 @@ class TestProcessRouter:
         assert result["agent_log"][-1]["event"] == "routing_complete"
         assert result["agent_log"][-1]["details"]["reason"] == "force_persist"
 
-    @patch("app.agents.routing.process_router.validate_auditor_output_node")
+    @patch("app.agents.supervisor.validate_auditor_output_node")
     def test_route_auditor_approved(self, mock_validate):
         def _side_effect(s):
             s["audit_approved"] = True
@@ -117,7 +117,7 @@ class TestProcessRouter:
         assert result["agent_log"][-1]["event"] == "routing_complete"
         assert result["agent_log"][-1]["details"]["decision"] == "approved"
 
-    @patch("app.agents.routing.process_router.validate_auditor_output_node")
+    @patch("app.agents.supervisor.validate_auditor_output_node")
     def test_route_auditor_rejected_no_fixable(self, mock_validate):
         def _side_effect(s):
             s["audit_approved"] = False

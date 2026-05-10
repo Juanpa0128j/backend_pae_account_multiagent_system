@@ -6,8 +6,8 @@ app/agents/routing/ submodules.
 
 from app.agents.routing.edge_functions import (
     should_retry_agent,
-    should_retry_contador,
     should_retry_auditor,
+    should_retry_contador,
 )
 from app.agents.routing.supervisor_node import (
     process_supervisor_node,
@@ -30,15 +30,19 @@ from app.agents.validation_rules import (
     validate_contador_output_node,
     validate_output_node,
 )
+from app.core.database import SessionLocal
+from app.services import db_service
 
 __all__ = [
     "MAX_AUDITOR_RETRIES",
     "MAX_CONTADOR_RETRIES",
+    "SessionLocal",
     "_hydrate_contador_account_names",
     "_missing_puc_codes",
     "_normalize_contador_puc_codes",
     "_resolve_puc_code",
     "audit_review_terminal_node",
+    "db_service",
     "error_terminal_node",
     "review_terminal_node",
     "process_supervisor_node",
