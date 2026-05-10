@@ -2,10 +2,9 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-
-from app.core.auth import CurrentUser, get_current_user
 from fastapi.responses import StreamingResponse
 
+from app.core.auth import CurrentUser, get_current_user
 from app.agents.graph import invoke_reporting_pipeline
 from app.core.database import SessionLocal
 from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutput
@@ -119,6 +118,8 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
 
     stored = _try_stored_statement(report_type, params, normalized_company_nit)
     if stored is not None:
+        # Provide the fields BalanceSheetOutput / PnLOutput / CashFlowOutput require
+        # but that the stored shape doesn't include.
         from datetime import datetime as _dt
 
         stored.setdefault("report_type", report_type)
@@ -785,8 +786,8 @@ async def download_pnl_excel(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
-    company_name: str = Query("Empresa", description="Company name for Excel header"),
     current_user: CurrentUser = Depends(get_current_user),
+    company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Profit & Loss as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -977,8 +978,8 @@ async def download_libro_auxiliar_excel(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
-    company_name: str = Query("Empresa", description="Company name for Excel header"),
     current_user: CurrentUser = Depends(get_current_user),
+    company_name: str = Query("Empresa", description="Company name for Excel header"),
 ):
     """Download Libro Auxiliar as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -1135,9 +1136,13 @@ _REQUIRED_SOURCE_TYPES = ("balance_general", "estado_resultados", "libro_auxilia
 @router.get("/derivation/status")
 async def get_derivation_status(
     company_nit: str = Query(..., description="Company NIT"),
-    current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Report which Vía B source statements are uploaded for a company."""
+    """Report which Vía B source statements are uploaded for a company.
+
+    Returns one entry per source type with its periods (if any), plus a
+    `ready_periods` list showing which `(period_start, period_end)` windows
+    have all 3 source statements present and would therefore allow derivation.
+    """
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
@@ -1160,16 +1165,18 @@ async def get_derivation_status(
                 }
             )
 
+    # A period is "ready" if all 3 source types have a statement covering it.
+    # Use period_end as the matching key (a balance is a snapshot at period_end).
     period_end_sets: dict[str, set] = {
         t: {item["period_end"] for item in sources[t] if item["period_end"]}
         for t in _REQUIRED_SOURCE_TYPES
     }
-    common_period_ends = (
-        set.intersection(*period_end_sets.values()) if period_end_sets.values() else set()
-    )
+    common_period_ends = set.intersection(*period_end_sets.values()) if period_end_sets.values() else set()
 
     ready_periods = []
     for pe in sorted(common_period_ends, reverse=True):
+        # For each common period_end, find the matching period_start of estado_resultados (rango)
+        # Balance is snapshot, so it uses period_end as both. Use ER's range as the canonical period.
         er_match = next(
             (item for item in sources["estado_resultados"] if item["period_end"] == pe),
             None,
