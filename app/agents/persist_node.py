@@ -24,9 +24,10 @@ from app.core.logger import get_logger
 from app.models.database import IngestStatus, ProcessStatus, TransactionPending
 from app.services import db_service
 from app.services.db_service import financial_statements_exist, get_journal_entry_period
+from app.account_process.journal_builder import JournalBuilder
+from app.account_process.persist_orchestrator import PersistOrchestrator
 from app.services.financial_statement_service import (
     BusinessRuleError,
-    build_first_level_from_journal_entries,
 )
 from app.services.financial_statement_service import (
     derive_financial_statements as _derive_financial_statements,
@@ -60,7 +61,6 @@ def _sanitize_for_json(value: Any) -> Any:
 
 
 def _safe_decimal(value: Any) -> Optional[Decimal]:
-
     if value is None:
         return None
     try:
@@ -528,8 +528,10 @@ def _db_persist_inner_with_cleanup(state: AgentState) -> AgentState:
     return state
 
 
-def _auto_derive_statements(db, company_nit: str) -> Optional[bool]:
-    """Build first-level statements from JournalEntryLines then derive second-level.
+def _auto_derive_statements(
+    db, company_nit: str, *, ingest_id: str = ""
+) -> Optional[bool]:
+    """Derive financial statements from all journal entries for the company/period.
 
     Non-fatal: logs warnings on failure but never raises.
     """
@@ -556,36 +558,38 @@ def _auto_derive_statements(db, company_nit: str) -> Optional[bool]:
         return None
 
     logger.info(
-        "[persist] Building first-level statements for %s (%s -> %s)",
+        "[persist] Deriving statements for %s (%s -> %s)",
         company_nit,
         period_start.date(),
         period_end.date(),
     )
 
     try:
-        build_first_level_from_journal_entries(
+        entries = db_service.get_journal_entry_lines(
             db,
             company_nit=company_nit,
-            period_start=period_start,
-            period_end=period_end,
+            start_date=period_start,
+            end_date=period_end,
         )
-    except Exception as exc:
-        # Non-fatal: missing derived statements don't break the accounting pipeline.
-        # The request still succeeds; derivation can be re-triggered on next run.
-        logger.warning(
-            "[persist] build_first_level failed (non-fatal): %s", exc, exc_info=True
-        )
-        return False
-
-    try:
-        _derive_financial_statements(
+        mapped = [
+            {
+                "fecha": e.get("fecha"),
+                "cuenta": e.get("cuenta_puc", ""),
+                "descripcion": e.get("descripcion", ""),
+                "tercero_nit": e.get("tercero_nit", ""),
+                "detalle": e.get("descripcion", ""),
+                "debito": e.get("debito", "0"),
+                "credito": e.get("credito", "0"),
+            }
+            for e in entries
+        ]
+        PersistOrchestrator(db).derive_and_persist_statements(
+            mapped,
+            ingest_id=ingest_id,
             company_nit=company_nit,
             period_start=period_start,
             period_end=period_end,
         )
-    except BusinessRuleError as exc:
-        logger.warning("[persist] derive skipped (missing source inputs): %s", exc)
-        return False
     except Exception as exc:
         logger.warning("[persist] derive failed (non-fatal): %s", exc, exc_info=True)
         return False
@@ -801,6 +805,7 @@ def _run_persist(state: AgentState) -> AgentState:
 
     ingest_id = _as_str(state.get("ingest_id"), "")
     db = SessionLocal()
+    orchestrator = PersistOrchestrator(db)
 
     try:
         # ── 1. Create or update IngestJob ──
@@ -979,7 +984,7 @@ def _run_persist(state: AgentState) -> AgentState:
             neto = _safe_decimal(tx_data.get("neto_a_pagar")) or total
 
             if mode == "process":
-                journal_json = _journal_entries_from_contador(
+                journal_json = JournalBuilder.build_from_contador(
                     fecha=fecha,
                     asientos=tx_data.get("_contador_asientos", []),
                     nit=nit_emisor,
@@ -993,7 +998,7 @@ def _run_persist(state: AgentState) -> AgentState:
                     "auditor": auditor_out,
                 }
             else:
-                journal_json = _build_journal_entries(
+                journal_json = JournalBuilder.build_from_ingest(
                     fecha=fecha,
                     cuenta_puc=cuenta_puc,
                     puc_descripcion=puc_descripcion,
@@ -1029,11 +1034,10 @@ def _run_persist(state: AgentState) -> AgentState:
             posted_ids.append(_as_str(getattr(txn_posted, "id", ""), ""))
             logger.info("db_persist: Created TransactionPosted %s", txn_posted.id)
 
-            lines = db_service.create_journal_entry_lines(
-                db,
-                _as_str(getattr(txn_posted, "id", "")),
+            lines = orchestrator.persist_journal_entries(
                 journal_json,
-                company_nit=company_nit,
+                transaction_posted_id=_as_str(getattr(txn_posted, "id", "")),
+                company_nit=company_nit or "",
             )
             total_lines += len(lines)
             logger.info("db_persist: Created %d journal entry lines", len(lines))
@@ -1070,7 +1074,9 @@ def _run_persist(state: AgentState) -> AgentState:
 
         # Auto-derive financial statements after process completes (non-fatal)
         if mode == "process" and company_nit:
-            derive_result = _auto_derive_statements(db, company_nit)
+            derive_result = _auto_derive_statements(
+                db, company_nit, ingest_id=ingest_id
+            )
             if derive_result is False:
                 from app.agents.audit_utils import append_finding
                 from app.models.audit import AuditFinding, AuditTarget, Severity
@@ -1178,29 +1184,6 @@ def _run_persist(state: AgentState) -> AgentState:
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
-
-
-def _journal_entries_from_contador(
-    *, fecha: datetime, asientos: list, nit: str, descripcion: str
-) -> list:
-
-    fecha_iso = fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
-    entries = []
-    for asiento in asientos:
-        tipo = str(asiento.get("tipo_movimiento", "")).lower()
-        valor = _safe_decimal(asiento.get("valor")) or Decimal("0")
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": str(asiento.get("cuenta_puc", "")),
-                "descripcion": asiento.get("nombre_cuenta") or descripcion,
-                "tercero_nit": nit,
-                "detalle": asiento.get("descripcion") or descripcion,
-                "debito": str(valor if tipo == "debito" else Decimal("0")),
-                "credito": str(valor if tipo == "credito" else Decimal("0")),
-            }
-        )
-    return entries
 
 
 def _persist_financial_statement(state: AgentState) -> None:
@@ -1373,112 +1356,3 @@ def _build_preview(interpreted: dict, doc_type: str = "") -> dict:
         "concepto": concepto[:100],
         "items_count": items_count,
     }
-
-
-def _build_journal_entries(
-    fecha: datetime,
-    cuenta_puc: str,
-    puc_descripcion: str,
-    total: Decimal,
-    iva: Decimal,
-    retefuente: Decimal,
-    reteica: Decimal,
-    nit: str,
-    descripcion: str,
-) -> list:
-    """
-    Build double-entry (partida doble) journal entries for the ingest path.
-
-    For a typical purchase/expense:
-    - DEBIT the expense account (PUC) for base (total - IVA)
-    - DEBIT IVA descontable (240802) if IVA > 0
-    - CREDIT vendor payable (220505) for base + IVA - retenciones
-    - CREDIT retefuente (2365) if retention > 0
-    - CREDIT reteICA (2368) if reteica > 0
-    """
-
-    entries = []
-    base = total - iva
-    fecha_iso = fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
-
-    if base > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": cuenta_puc,
-                "descripcion": puc_descripcion or descripcion,
-                "tercero_nit": nit,
-                "detalle": descripcion,
-                "debito": str(base),
-                "credito": "0",
-            }
-        )
-
-    if iva > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": "240802",
-                "descripcion": "IVA Descontable",
-                "tercero_nit": nit,
-                "detalle": f"IVA por {descripcion}",
-                "debito": str(iva),
-                "credito": "0",
-            }
-        )
-
-    total_credito_proveedor = total - retefuente - reteica
-    if total_credito_proveedor > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": "220505",
-                "descripcion": "Proveedores Nacionales",
-                "tercero_nit": nit,
-                "detalle": f"CxP {descripcion}",
-                "debito": "0",
-                "credito": str(total_credito_proveedor),
-            }
-        )
-
-    if retefuente > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": "2365",
-                "descripcion": "Retencion en la Fuente por pagar",
-                "tercero_nit": nit,
-                "detalle": f"Retefuente {descripcion}",
-                "debito": "0",
-                "credito": str(retefuente),
-            }
-        )
-
-    if reteica > 0:
-        entries.append(
-            {
-                "fecha": fecha_iso,
-                "cuenta": "2368",
-                "descripcion": "Retencion ICA por pagar",
-                "tercero_nit": nit,
-                "detalle": f"ReteICA {descripcion}",
-                "debito": "0",
-                "credito": str(reteica),
-            }
-        )
-
-    # Validate double-entry principle (partida doble)
-    total_debitos = sum(Decimal(e["debito"]) for e in entries)
-    total_creditos = sum(Decimal(e["credito"]) for e in entries)
-    if total_debitos != total_creditos:
-        logger.error(
-            "Double-entry violation in _build_journal_entries: "
-            "debits (%s) != credits (%s)",
-            total_debitos,
-            total_creditos,
-        )
-        raise RuntimeError(
-            f"Unbalanced journal entries: D={total_debitos} C={total_creditos}"
-        )
-
-    return entries
