@@ -216,11 +216,11 @@ class TestDeriveAndPersistStatements:
         bg = result["balance_general"]
         assert bg.statement_type == "balance_general"
         assert bg.entity_nit == "900123456"
-        assert bg.data["total_activos"] == 2000000.0
-        assert bg.data["total_pasivos"] == 500000.0
-        assert bg.data["patrimonio_sin_utilidad"] == 1000000.0
+        assert bg.data["activos"][0]["saldo"] == 2000000.0
+        assert bg.data["pasivos"][0]["saldo"] == 500000.0
+        assert bg.data["patrimonio"][0]["saldo"] == 1000000.0
         assert bg.data["utilidad_neta"] == 500000.0
-        assert bg.data["total_patrimonio"] == 1500000.0
+        assert bg.data["patrimonio_total"] == 1500000.0
         assert bg.data["cuadre"] is True
 
         er = result["estado_resultados"]
@@ -279,8 +279,15 @@ class TestDeriveAndPersistStatements:
         )
 
         bg = result["balance_general"]
-        assert bg.data["total_activos"] == 0.0
+        assert bg.data["activos"] == []
+        assert bg.data["pasivos"] == []
+        assert bg.data["patrimonio"] == []
+        assert bg.data["utilidad_neta"] == 0.0
+        assert bg.data["patrimonio_total"] == 0.0
         assert bg.data["cuadre"] is True
 
         er = result["estado_resultados"]
+        assert er.data["ingresos"] == []
+        assert er.data["gastos"] == []
+        assert er.data["costo_ventas"] == []
         assert er.data["utilidad_neta"] == 0.0

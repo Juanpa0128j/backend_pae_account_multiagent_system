@@ -47,9 +47,7 @@ class DashboardStatsResponse(BaseModel):
     derivation_ready: bool = False
 
 
-def _via_b_dashboard_overrides(
-    db: Session, company_nit: str
-) -> Dict[str, Any]:
+def _via_b_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
     """Compute Vía B financial totals from FinancialStatement rows.
 
     Returns a dict with the same keys the Vía A flow computes from journal

@@ -46,7 +46,6 @@ logger = get_logger("app.agents.persist")
 MAX_NODE_RETRIES = 3
 
 
-
 def _resolve_company_nit(
     state: AgentState, tx_data: dict[str, Any] | None = None
 ) -> Optional[str]:

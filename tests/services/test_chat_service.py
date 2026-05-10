@@ -88,7 +88,9 @@ class TestGatherFinancialData:
     """Tests for data gathering from reportero builders."""
 
     @patch("app.core.database.SessionLocal")
-    @patch("app.agents.reportero_agent._build_balance", return_value=_MOCK_BALANCE_DATA)
+    @patch(
+        "app.services.report_builders.build_balance", return_value=_MOCK_BALANCE_DATA
+    )
     def test_gather_balance_data(self, mock_build, mock_session_cls):
         from app.services.chat_service import gather_financial_data
 
