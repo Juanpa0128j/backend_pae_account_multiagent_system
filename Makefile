@@ -1,4 +1,4 @@
-.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new pipeline-test pipeline-setup-nit
+.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new migrate-check-heads pipeline-test pipeline-setup-nit db-up db-down db-logs db-reset db-shell db-migrate
 
 # Default target
 help:
@@ -25,8 +25,17 @@ help:
 	@echo "  format-check   Check formatting without writing"
 	@echo ""
 	@echo "Database"
-	@echo "  migrate        Apply pending Alembic migrations"
-	@echo "  migrate-new    Generate a new migration: make migrate-new MSG='description'"
+	@echo "  migrate              Apply pending Alembic migrations to DATABASE_URL"
+	@echo "  migrate-new          Generate a new migration: make migrate-new MSG='description'"
+	@echo "  migrate-check-heads  Fail if alembic has more than one head (CI gate)"
+	@echo ""
+	@echo "Local Postgres+pgvector (docker-compose, port 5433)"
+	@echo "  db-up          Start the local DB container"
+	@echo "  db-down        Stop the local DB container (data preserved)"
+	@echo "  db-reset       Stop, destroy volume, restart, run migrations"
+	@echo "  db-migrate     Run alembic upgrade head against the local DB"
+	@echo "  db-logs        Tail the local DB logs"
+	@echo "  db-shell       Open a psql shell on the local DB"
 	@echo ""
 	@echo "Cleanup"
 	@echo "  clean          Remove __pycache__, .pytest_cache, .ruff_cache, *.pyc"
@@ -143,6 +152,48 @@ migrate:
 migrate-new:
 	@test -n "$(MSG)" || (echo "Usage: make migrate-new MSG='description'" && exit 1)
 	uv run alembic revision --autogenerate -m "$(MSG)"
+
+# Fails when two branches each generated a head — forces a rebase before
+# the migrations can be merged. Wired into CI to catch concurrent edits
+# from parallel PRs before they reach prod.
+migrate-check-heads:
+	@HEADS=$$(uv run alembic heads 2>/dev/null | grep -c '^.' || true); \
+		if [ "$$HEADS" != "1" ]; then \
+			echo "ERROR: alembic has $$HEADS heads (expected 1). Concurrent migrations detected — rebase + merge required."; \
+			uv run alembic heads; \
+			exit 1; \
+		fi; \
+		echo "OK: single migration head."
+
+# ── Local Postgres (docker-compose.dev.yml) ───────────────────────────────────
+
+LOCAL_DATABASE_URL ?= postgresql://pae:pae@localhost:5433/pae
+
+db-up:
+	docker compose -f docker-compose.dev.yml up -d
+	@echo ">>> Waiting for Postgres to be ready..."
+	@for i in $$(seq 1 20); do \
+		docker compose -f docker-compose.dev.yml exec -T db pg_isready -U pae -d pae >/dev/null 2>&1 && break; \
+		sleep 1; \
+	done
+	@echo ">>> Local DB ready at $(LOCAL_DATABASE_URL)"
+
+db-down:
+	docker compose -f docker-compose.dev.yml down
+
+db-reset:
+	docker compose -f docker-compose.dev.yml down -v
+	$(MAKE) db-up
+	$(MAKE) db-migrate
+
+db-migrate:
+	DATABASE_URL=$(LOCAL_DATABASE_URL) uv run alembic upgrade head
+
+db-logs:
+	docker compose -f docker-compose.dev.yml logs -f db
+
+db-shell:
+	docker compose -f docker-compose.dev.yml exec db psql -U pae -d pae
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
