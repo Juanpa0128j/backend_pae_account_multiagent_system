@@ -13,6 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.core.llm_client import get_llm_client
 from app.models.schemas import (
@@ -36,7 +37,11 @@ _TASA_RETEFUENTE_ARRENDAMIENTO = 0.10
 
 
 @router.get("/company/{nit}", response_model=CompanySettingsResponse)
-def get_company_settings(nit: str, db: Session = Depends(get_db)):
+def get_company_settings(
+    nit: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Return the tax configuration for the given company NIT."""
     row = db_service.get_company_settings(db, nit)
     if not row:
@@ -49,13 +54,19 @@ def get_company_settings(nit: str, db: Session = Depends(get_db)):
 
 
 @router.get("/companies", response_model=list[CompanySettingsResponse])
-def list_companies(db: Session = Depends(get_db)):
+def list_companies(
+    db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)
+):
     """Return all registered companies (used for the frontend company selector)."""
     return db_service.list_companies(db)
 
 
 @router.delete("/company/{nit}", status_code=204)
-def delete_company(nit: str, db: Session = Depends(get_db)):
+def delete_company(
+    nit: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Permanently delete a company and its tax settings."""
     deleted = db_service.delete_company(db, nit)
     if not deleted:
@@ -68,6 +79,7 @@ def upsert_company_settings(
     nit: str,
     body: CompanySettingsRequest,
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Update the tax configuration for the given company NIT.
 
@@ -89,6 +101,7 @@ def setup_company_tax_profile(
     nit: str,
     body: CompanyProfileSetupRequest,
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Auto-compute and save the correct Colombian tax rates for a company.

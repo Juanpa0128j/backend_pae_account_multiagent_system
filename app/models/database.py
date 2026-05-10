@@ -17,6 +17,7 @@ Tables:
 """
 
 import enum
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -35,7 +36,7 @@ from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.types import JSON
 
 JSONB = JSON().with_variant(PG_JSONB(), "postgresql")
-from sqlalchemy.orm import relationship  # noqa: E402
+from sqlalchemy.orm import relationship, mapped_column, Mapped  # noqa: E402
 from sqlalchemy.sql import func  # noqa: E402
 
 from app.core.database import Base  # noqa: E402
@@ -503,6 +504,11 @@ class AuditLog(Base):
         String(20), nullable=True, index=True, comment="Owning company NIT (tenant)"
     )
     details = Column(JSONB, nullable=True)
+    created_by = Column(
+        Text,
+        nullable=True,
+        comment="UUID of the authenticated user who triggered the action",
+    )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -717,3 +723,20 @@ class TaxDeclarationDraft(Base):
 
     def __repr__(self):
         return f"<TaxDeclarationDraft(id={self.id}, form={self.form_type}, nit={self.company_nit}, period={self.period_end})>"
+
+
+class UserCompany(Base):
+    """Association table linking users to companies they manage."""
+
+    __tablename__ = "user_company"
+
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_nit: Mapped[str] = mapped_column(
+        String, ForeignKey("company_settings.nit", ondelete="CASCADE"), primary_key=True
+    )
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self):
+        return f"<UserCompany(user_id={self.user_id}, company_nit={self.company_nit})>"

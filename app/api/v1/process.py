@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.database import ProcessJob, ProcessStatus
 from app.models.schemas import (
@@ -94,7 +95,11 @@ def _classify_process_error(
 
 
 @router.post("/accounting/{ingest_id}", response_model=ProcessResponse)
-async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
+async def process_accounting(
+    ingest_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """
     Create a process job and execute the graph asynchronously.
 
@@ -155,7 +160,9 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
         )
 
     # Create a new ProcessJob only if no active one exists
-    process_job = db_service.create_process_job(db, ingest_id)
+    process_job = db_service.create_process_job(
+        db, ingest_id, created_by=str(current_user.id)
+    )
     await jobs.start_process_job(process_job.id)
 
     return ProcessResponse(
@@ -167,7 +174,10 @@ async def process_accounting(ingest_id: str, db: Session = Depends(get_db)):
 
 @router.get("/status/{process_id}", response_model=ProcessStatusResponse)
 async def get_process_status(
-    process_id: str, request: Request, db: Session = Depends(get_db)
+    process_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Polling endpoint for async process job status and progress."""
     process_job = db_service.get_process_job(db, process_id)
@@ -238,7 +248,11 @@ def _enum_value(status) -> str:
 
 
 @router.post("/{process_id}/audit-confirm", status_code=202)
-async def confirm_audit_review(process_id: str, db: Session = Depends(get_db)):
+async def confirm_audit_review(
+    process_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """User confirms to force-persist despite audit issues.
 
     Atomic: uses a guarded UPDATE that only succeeds when the row is still in
@@ -293,7 +307,11 @@ async def confirm_audit_review(process_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{process_id}/trace", response_model=PipelineTrace)
-async def get_process_trace(process_id: str, db: Session = Depends(get_db)):
+async def get_process_trace(
+    process_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Accountant-facing trace for a process run.
 
     Returns a structured Spanish-language timeline of each pipeline step,
@@ -308,7 +326,11 @@ async def get_process_trace(process_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/result/{process_id}", response_model=ProcessResultResponse)
-async def get_process_result(process_id: str, db: Session = Depends(get_db)):
+async def get_process_result(
+    process_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Return final processed transactions for a completed process job."""
     process_job = db_service.get_process_job(db, process_id)
     if not process_job:

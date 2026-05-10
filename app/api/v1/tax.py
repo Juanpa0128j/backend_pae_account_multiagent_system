@@ -14,6 +14,7 @@ from app.agents.tributario_agent import (
     _calc_ica,
     calc_period_renta_provision,
 )
+from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.agent_outputs import IVAOutput, WithholdingsOutput
 from app.models.schemas import ICADeclaracionOutput, RentaProvisionOutput
@@ -65,6 +66,7 @@ async def get_iva_report(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Reporte IVA.
@@ -81,6 +83,7 @@ async def get_withholdings_report(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Reporte Retenciones.
@@ -101,6 +104,7 @@ async def get_ica_declaration(
         None, description="Company NIT (nit_receptor) to filter by"
     ),
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Declaración ICA — Impuesto de Industria y Comercio.
@@ -164,6 +168,7 @@ async def get_renta_provision(
     ),
     company_nit: Optional[str] = Query(None, description="Company NIT to filter by"),
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Provisión Impuesto de Renta — tarifa general 35% (Art. 240 ET, Ley 2277/2022).
@@ -229,6 +234,7 @@ class UpdateFieldRequest(BaseModel):
 def api_generate_draft(
     body: GenerateDraftRequest,
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Generate a pre-filled declaration draft (F300, F350, F110, ICA).
@@ -267,6 +273,7 @@ def api_generate_draft(
 def api_get_draft(
     draft_id: str,
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Retrieve a draft by ID including all pre-filled renglones and warnings."""
     draft = get_draft(db, draft_id)
@@ -295,6 +302,7 @@ def api_update_draft_field(
     draft_id: str,
     body: UpdateFieldRequest,
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Accountant updates a field value (requires_review=True fields).
@@ -325,6 +333,7 @@ def api_tax_calendar(
     iva_regime: str = Query("bimestral", description="bimestral | cuatrimestral"),
     alert_days: int = Query(30, description="Days-until threshold for alert flag"),
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Return the full tax obligation calendar for 2026 sorted by deadline.
@@ -387,6 +396,7 @@ def api_generate_f220(
     company_nit: str = Query(..., description="Company NIT (retenedor)"),
     year: int = Query(..., description="Tax year (e.g. 2025)"),
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Generate F220 Certificado de Retención en la Fuente for every tercero
@@ -423,6 +433,7 @@ def api_exogena(
     company_nit: str = Query(..., description="Reporting company NIT"),
     year: int = Query(..., description="Tax year (e.g. 2025)"),
     db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Generate normalized exógena data for DIAN medios magnéticos.

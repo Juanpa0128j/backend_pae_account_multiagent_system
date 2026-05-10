@@ -12,6 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.database import (
     FinancialStatement,
@@ -45,9 +46,7 @@ class DashboardStatsResponse(BaseModel):
     derivation_ready: bool = False
 
 
-def _via_b_dashboard_overrides(
-    db: Session, company_nit: str
-) -> Dict[str, Any]:
+def _via_b_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
     """Compute Vía B financial totals from FinancialStatement rows.
 
     Returns a dict with the same keys the Vía A flow computes from journal
@@ -98,7 +97,8 @@ def _via_b_dashboard_overrides(
     for r in direct:
         period_ends_by_type.setdefault(r.statement_type, []).append(r.period_end)
     derivation_ready = all(
-        period_ends_by_type.get(t) for t in ("balance_general", "estado_resultados", "libro_auxiliar")
+        period_ends_by_type.get(t)
+        for t in ("balance_general", "estado_resultados", "libro_auxiliar")
     )
     latest = max((r.period_end for r in direct if r.period_end), default=None)
 
@@ -157,6 +157,7 @@ class DashboardFinancialSummaryResponse(BaseModel):
 async def get_dashboard_stats(
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Returns aggregated top-level metrics for the Dashboard view.
@@ -288,6 +289,7 @@ async def get_dashboard_stats(
 async def get_financial_summary(
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Complete financial summary for the dashboard.
@@ -370,6 +372,7 @@ async def get_monthly_trend(
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
     months: int = Query(6, ge=1, le=24, description="Number of months to look back"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Returns monthly ingresos vs gastos for the last N months.

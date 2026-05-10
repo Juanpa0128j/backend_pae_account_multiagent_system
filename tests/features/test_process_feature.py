@@ -66,7 +66,7 @@ def test_start_process_job_returns_process_id(monkeypatch):
     monkeypatch.setattr(
         db_service,
         "create_process_job",
-        lambda db, ingest_id: SimpleNamespace(
+        lambda db, ingest_id, **kwargs: SimpleNamespace(
             id="proc_123",
             ingest_id=ingest_id,
             status=ProcessStatus.QUEUED,
@@ -228,7 +228,7 @@ def test_post_accounting_returns_existing_process_job_idempotent(monkeypatch):
     monkeypatch.setattr(
         db_service,
         "create_process_job",
-        lambda db, ingest_id: new_job,
+        lambda db, ingest_id, **kwargs: new_job,
     )
 
     async def _start(pid: str):
@@ -284,7 +284,7 @@ def test_post_accounting_creates_new_job_if_previous_failed(monkeypatch):
 
     call_count = {"count": 0}
 
-    def _create_job(db, ingest_id):
+    def _create_job(db, ingest_id, **kwargs):
         call_count["count"] += 1
         if call_count["count"] == 1:
             return first_job
