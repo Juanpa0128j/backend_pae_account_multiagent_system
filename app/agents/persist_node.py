@@ -696,9 +696,9 @@ def _run_persist(state: AgentState) -> AgentState:
                         _entry["debito"] = str(_c)
                         _entry["credito"] = str(_d)
 
-                # Specialize 5195 fallback via the keyword corrector when the
-                # description identifies a concrete gasto.
-                if cuenta_puc == "519595" or cuenta_puc == "5195":
+                # Specialize 5195/519595 fallback via the keyword corrector
+                # when the description identifies a concrete gasto.
+                if cuenta_puc in {"5195", "519595"}:
                     from app.agents.contador_puc_corrector import _suggest_puc
 
                     suggested = _suggest_puc(descripcion or "")
@@ -710,7 +710,7 @@ def _run_persist(state: AgentState) -> AgentState:
                             (descripcion or "")[:120],
                         )
                         for _entry in journal_json:
-                            if as_str(_entry.get("cuenta"), "") in {"519595", "5195"}:
+                            if as_str(_entry.get("cuenta"), "") in {"5195", "519595"}:
                                 _entry["cuenta"] = suggested
                         cuenta_puc = suggested
                         suggested_record = db_service.validate_puc_exists(

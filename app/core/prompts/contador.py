@@ -178,8 +178,8 @@ def contador_output(
 ) -> str:
     """Return the contador journal-entry prompt string.
 
-    `doc_type` is the contador-enum value sent to the LLM as the document
-    type hint. `doc_subtype` is the granular frontend value (e.g.
+    `doc_type` is the normalized contador-enum value embedded as a hint in
+    the prompt. `doc_subtype` is the granular frontend doc type (e.g.
     factura_venta vs factura_compra) used to look up the specific
     `_DOC_GUIDANCE` rules. When `doc_subtype` is empty the lookup falls
     back to `doc_type`.
