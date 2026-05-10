@@ -13,9 +13,9 @@ pytest.importorskip("sqlalchemy")
 
 from app.agents.persist_node import (
     _build_preview,
-    _build_structured_transactions,
     db_persist_node,
 )
+from app.services.document_mappers import build_structured_transactions
 from app.models.audit import AuditFinding, AuditReport, AuditTarget, Severity
 
 
@@ -211,7 +211,7 @@ def test_db_persist_falls_back_to_company_nit_when_nit_receptor_missing(
     assert kwargs["nit_receptor"] == "800999888"
 
 
-def test_build_structured_transactions_extracto_bancario_uses_movements_as_rows():
+def testbuild_structured_transactions_extracto_bancario_uses_movements_as_rows():
     interpreted = {
         "titular": {"nit": "900111222"},
         "periodo_inicio": "2026-01-01",
@@ -236,7 +236,7 @@ def test_build_structured_transactions_extracto_bancario_uses_movements_as_rows(
         ],
     }
 
-    rows = _build_structured_transactions(interpreted, "extracto_bancario")
+    rows = build_structured_transactions(interpreted, "extracto_bancario")
 
     assert len(rows) == 2
     assert rows[0]["total"] == "120000"
@@ -244,7 +244,7 @@ def test_build_structured_transactions_extracto_bancario_uses_movements_as_rows(
     assert "TRX123" in rows[0]["descripcion"]
 
 
-def test_build_structured_transactions_nomina_uses_total_neto_pagar():
+def testbuild_structured_transactions_nomina_uses_total_neto_pagar():
     interpreted = {
         "empresa": {"nit": "900222333"},
         "periodo_inicio": "2026-02-01",
@@ -256,7 +256,7 @@ def test_build_structured_transactions_nomina_uses_total_neto_pagar():
         ],
     }
 
-    rows = _build_structured_transactions(interpreted, "nomina")
+    rows = build_structured_transactions(interpreted, "nomina")
 
     assert len(rows) == 1
     assert rows[0]["total"] == "3450000"
@@ -264,7 +264,7 @@ def test_build_structured_transactions_nomina_uses_total_neto_pagar():
     assert "Nomina" in rows[0]["concepto"]
 
 
-def test_build_structured_transactions_recibo_impuesto_uses_total_pagado_and_fecha_pago():
+def testbuild_structured_transactions_recibo_impuesto_uses_total_pagado_and_fecha_pago():
     interpreted = {
         "numero_recibo": "RPI-001",
         "fecha_pago": "2026-03-15",
@@ -274,7 +274,7 @@ def test_build_structured_transactions_recibo_impuesto_uses_total_pagado_and_fec
         "total_pagado": "780000",
     }
 
-    rows = _build_structured_transactions(interpreted, "recibo_pago_impuesto")
+    rows = build_structured_transactions(interpreted, "recibo_pago_impuesto")
 
     assert len(rows) == 1
     assert rows[0]["fecha"] == "2026-03-15"
