@@ -12,6 +12,7 @@ output and the schema errors are re-sent to the LLM for self-correction.
 import logging
 
 from app.agents.agent_utils import append_log
+from app.agents.contador_puc_corrector import correct_contador_output
 from app.agents.llm_retry import (
     is_double_entry_violation,
     is_invalid_puc,
@@ -22,6 +23,36 @@ from app.agents.state import AgentState
 from app.core.llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
+
+
+# Frontend DocumentType → ContadorOutput.tipo_documento Pydantic enum.
+# The frontend HITL UI sends granular values (factura_venta vs factura_compra)
+# but the contador schema only accepts the coarser set defined in
+# app/models/llm_schemas.py. Without normalization the LLM echoes the input
+# value verbatim and Pydantic rejects it (SCHEMA_VALIDATION_EXHAUSTED).
+_DOC_TYPE_TO_CONTADOR_ENUM = {
+    "factura_venta": "factura",
+    "factura_compra": "factura",
+    "comprobante_egreso": "comprobante_egreso",
+    "documento_soporte": "factura",
+    "cuenta_cobro": "factura",
+    "extracto_bancario": "extracto",
+    "conciliacion_bancaria": "extracto",
+    "recibo_caja": "recibo",
+    "recibo_pago_impuesto": "recibo",
+    "nota_credito": "nota_credito",
+    "nota_debito": "nota_debito",
+    "declaracion_iva": "otro",
+    "declaracion_ica": "otro",
+    "autorretencion_ica": "otro",
+    "anexo_iva": "otro",
+    "auxiliar_iva": "otro",
+    "nomina": "otro",
+}
+
+
+def _normalize_doc_type_for_schema(doc_type: str) -> str:
+    return _DOC_TYPE_TO_CONTADOR_ENUM.get(doc_type, "otro")
 
 
 def _extract_source_taxes_summary(source_doc: dict) -> dict | None:
@@ -173,7 +204,8 @@ def contador_node(state: AgentState) -> AgentState:
                 state.get("retry_count", 1),
             )
 
-        doc_type = (state.get("document_classification") or {}).get("doc_type", "")
+        doc_type_full = (state.get("document_classification") or {}).get("doc_type", "")
+        doc_type_normalized = _normalize_doc_type_for_schema(doc_type_full)
 
         # Extract tax summary from the rich source document (populated by ingest pipeline)
         source_doc = state.get("source_document") or {}
@@ -184,11 +216,19 @@ def contador_node(state: AgentState) -> AgentState:
         contador_output = llm_with_parse_retry(
             llm.extract_contador_output,
             raw_transactions=raw_transactions,
-            doc_type=doc_type,
+            doc_type=doc_type_normalized,
+            doc_subtype=doc_type_full,
             rag_context=rag_context,
             correction_feedback=state.get("correction_feedback") if is_retry else None,
             source_taxes=source_taxes,
             agent_label="contador",
+        )
+
+        # Rewrite generic 5195 fallbacks to specific PUC subaccounts, swap CE
+        # 220505 cred -> 111005, and specialize 4-digit class codes. Runs
+        # before the validator so the persisted asiento uses concrete codes.
+        contador_output = correct_contador_output(
+            contador_output, doc_subtype=doc_type_full
         )
 
         # Clear correction feedback after consuming it
@@ -225,11 +265,15 @@ def contador_node(state: AgentState) -> AgentState:
                 contador_output = llm_with_parse_retry(
                     llm.extract_contador_output,
                     raw_transactions=raw_transactions,
-                    doc_type=doc_type,
+                    doc_type=doc_type_normalized,
+                    doc_subtype=doc_type_full,
                     rag_context=rag_context,
                     correction_feedback=suspense_feedback,
                     source_taxes=source_taxes,
                     agent_label="contador-recovery",
+                )
+                contador_output = correct_contador_output(
+                    contador_output, doc_subtype=doc_type_full
                 )
                 # Recovery succeeded — emit WARNING so the accountant is notified
                 from app.agents.audit_utils import append_finding

@@ -1216,3 +1216,65 @@ class TestProcessGraphDBIntegration:
         # persist was refused — db_result should not contain a posted transaction
         db_res = result.get("db_result") or {}
         assert db_res.get("transaction_posted_id") is None
+
+
+# ===========================================================================
+# 13. Auditor prompt — whitelist for legitimate duplicate cuenta_puc
+# ===========================================================================
+
+
+class TestAuditorPromptWhitelist:
+    """The auditor prompt must explicitly whitelist patterns that are legitimate
+    in Colombian accounting (e.g. 2368 used twice in the same asiento for
+    Reteica + ICA por pagar) so the LLM does not reject them as duplicates.
+    """
+
+    def _build_prompt(self) -> str:
+        from app.core.llm_client import LLMClient
+
+        # Capture the prompt string passed to _invoke without contacting any
+        # provider. We bypass __init__ so we don't require API keys in tests.
+        client = LLMClient.__new__(LLMClient)
+        captured: dict[str, str] = {}
+
+        def _fake_invoke(_schema, prompt):  # type: ignore[no-untyped-def]
+            captured["prompt"] = prompt
+            return MagicMock(
+                fecha_auditoria="2026-01-16",
+                documento_referencia="X",
+                aprobado=True,
+                nivel_riesgo="bajo",
+                hallazgos=[],
+                puntaje_calidad=100.0,
+                resumen="ok",
+            )
+
+        client._invoke = _fake_invoke  # type: ignore[assignment]
+        client._as_dict = lambda x: {  # type: ignore[assignment]
+            "fecha_auditoria": x.fecha_auditoria,
+            "documento_referencia": x.documento_referencia,
+            "aprobado": x.aprobado,
+            "nivel_riesgo": x.nivel_riesgo,
+            "hallazgos": x.hallazgos,
+            "puntaje_calidad": x.puntaje_calidad,
+            "resumen": x.resumen,
+        }
+        client.extract_auditor_output(
+            contador_output=dict(VALID_CONTADOR_OUTPUT),
+            raw_transactions=list(VALID_RAW_TRANSACTIONS),
+        )
+        return captured["prompt"]
+
+    def test_prompt_includes_valid_patterns_section(self):
+        prompt = self._build_prompt()
+        assert "PATRONES VÁLIDOS" in prompt
+
+    def test_prompt_explicitly_allows_repeated_2368(self):
+        prompt = self._build_prompt()
+        assert "2368" in prompt
+        assert "Reteica" in prompt or "ICA" in prompt
+
+    def test_prompt_lists_explicit_rejection_criteria(self):
+        prompt = self._build_prompt()
+        assert "RECHAZO" in prompt
+        assert "desbalanceado" in prompt

@@ -140,8 +140,16 @@ def _build_structured_transactions(
 
                 debito = _safe_decimal(movement.get("debito")) or Decimal("0")
                 credito = _safe_decimal(movement.get("credito")) or Decimal("0")
-                valor = debito if debito > Decimal("0") else credito
-                if valor <= Decimal("0"):
+                # Bank statement convention: a `debito` value means the bank
+                # debited (charged) the account = OUTFLOW; `credito` means the
+                # bank credited (received) the account = INFLOW.
+                if debito > Decimal("0"):
+                    valor = debito
+                    bank_direction = "salida"
+                elif credito > Decimal("0"):
+                    valor = credito
+                    bank_direction = "entrada"
+                else:
                     continue
 
                 descripcion = _as_str(
@@ -165,6 +173,7 @@ def _build_structured_transactions(
                         "total": str(valor),
                         "concepto": descripcion,
                         "descripcion": descripcion,
+                        "bank_direction": bank_direction,
                         "items": [_sanitize_for_json(movement)],
                     }
                 )
@@ -319,6 +328,41 @@ def _build_structured_transactions(
             )
             parsed_total = inferred_total
 
+    # Derive a meaningful descripcion. Order: explicit fields → notas →
+    # concat of first item descriptions → consecutivo-based fallback. Without
+    # this FVs persist with empty `descripcion` and the UI shows "—".
+    derived_concepto = _as_str(
+        interpreted.get("descripcion_general")
+        or interpreted.get("concepto")
+        or interpreted.get("notas"),
+        "",
+    ).strip()
+    if not derived_concepto and isinstance(items_payload, list) and items_payload:
+        item_descs: list[str] = []
+        for item in items_payload[:3]:
+            if isinstance(item, dict):
+                desc = _as_str(
+                    item.get("descripcion") or item.get("concepto"), ""
+                ).strip()
+                if desc:
+                    item_descs.append(desc)
+        if item_descs:
+            derived_concepto = " · ".join(item_descs)[:200]
+    if not derived_concepto:
+        consecutivo = _as_str(
+            interpreted.get("consecutivo") or interpreted.get("numero"), ""
+        ).strip()
+        emisor_nit = _as_str(emisor.get("nit") or interpreted.get("nit_emisor"), "")
+        tipo = _as_str(doc_type or interpreted.get("tipo_documento", ""), "")
+        if consecutivo:
+            derived_concepto = (
+                f"{tipo} {consecutivo}".strip() if tipo else f"Doc {consecutivo}"
+            )
+        elif emisor_nit:
+            derived_concepto = f"{tipo} - NIT {emisor_nit}".strip(" -")
+        else:
+            derived_concepto = tipo
+
     tx_data = {
         "fecha": (
             interpreted.get("fecha_emision")
@@ -330,18 +374,8 @@ def _build_structured_transactions(
             receptor.get("nit") or interpreted.get("nit_receptor"), ""
         ),
         "total": str(parsed_total if parsed_total is not None else Decimal("0")),
-        "concepto": _as_str(
-            interpreted.get("descripcion_general")
-            or interpreted.get("concepto")
-            or interpreted.get("tipo_documento", ""),
-            "",
-        ),
-        "descripcion": _as_str(
-            interpreted.get("descripcion_general")
-            or interpreted.get("concepto")
-            or interpreted.get("tipo_documento", ""),
-            "",
-        ),
+        "concepto": derived_concepto,
+        "descripcion": derived_concepto,
         "items": _sanitize_for_json(items_payload),
     }
     return [tx_data]
@@ -1004,6 +1038,72 @@ def _run_persist(state: AgentState) -> AgentState:
                     nit=nit_emisor,
                     descripcion=descripcion,
                 )
+                # Ingest path uses a hardcoded factura_compra pattern (cuenta de
+                # gasto + 220505 CxP). For bank-outflow doc subtypes the credit
+                # side must hit 111005 (Banco), not CxP. Swap 220505 cred ->
+                # 111005 to mirror the contador-stage corrector.
+                doc_type_full = _as_str(
+                    (state.get("document_classification") or {}).get("doc_type"),
+                    "",
+                )
+                if doc_type_full in {
+                    "comprobante_egreso",
+                    "extracto_bancario",
+                    "conciliacion_bancaria",
+                }:
+                    for _entry in journal_json:
+                        if (
+                            _as_str(_entry.get("cuenta"), "") == "220505"
+                            and _safe_decimal(_entry.get("credito"))
+                            and _safe_decimal(_entry.get("credito")) > Decimal("0")
+                        ):
+                            logger.info(
+                                "db_persist[ingest]: %s 220505 cred -> 111005 — descripcion=%r",
+                                doc_type_full,
+                                _as_str(_entry.get("detalle"), "")[:120],
+                            )
+                            _entry["cuenta"] = "111005"
+                            _entry["descripcion"] = "Bancos Nacionales"
+
+                # Bank statement INFLOW: the default builder produces
+                # "DEBIT cuenta + CREDIT 111005" (outflow pattern). For an
+                # inflow movement (bank received funds) the asiento must be
+                # inverted: DEBIT 111005 + CREDIT cuenta. Swap each entry's
+                # debito/credito sides while preserving the cuenta and amounts.
+                bank_direction = _as_str(tx_data.get("bank_direction"), "")
+                if doc_type_full == "extracto_bancario" and bank_direction == "entrada":
+                    logger.info(
+                        "db_persist[ingest]: inverting extracto entrada asiento — descripcion=%r",
+                        (descripcion or "")[:120],
+                    )
+                    for _entry in journal_json:
+                        _d = _entry.get("debito") or "0"
+                        _c = _entry.get("credito") or "0"
+                        _entry["debito"] = str(_c)
+                        _entry["credito"] = str(_d)
+                # Also try to specialize the 5195 fallback via the keyword
+                # corrector when the description identifies a concrete gasto.
+                if cuenta_puc == "5195":
+                    from app.agents.contador_puc_corrector import _suggest_puc
+
+                    suggested = _suggest_puc(descripcion or "")
+                    if suggested:
+                        logger.info(
+                            "db_persist[ingest]: rewriting 5195 -> %s based on descripcion=%r",
+                            suggested,
+                            (descripcion or "")[:120],
+                        )
+                        for _entry in journal_json:
+                            if _as_str(_entry.get("cuenta"), "") == "5195":
+                                _entry["cuenta"] = suggested
+                        cuenta_puc = suggested
+                        suggested_record = db_service.validate_puc_exists(
+                            db, cuenta_puc
+                        )
+                        if suggested_record:
+                            puc_descripcion = _as_str(
+                                getattr(suggested_record, "nombre", ""), ""
+                            )
                 tax_references = interpreted.get("referencias_legales", [])
                 raw_reasoning = tx_data.get("agent_reasoning")
                 agent_reasoning = (
@@ -1066,6 +1166,17 @@ def _run_persist(state: AgentState) -> AgentState:
                         "stage": "completed",
                         "status": "completed",
                     },
+                )
+            # Mode=process still owns the ingest_job lifecycle: once persistence
+            # finishes the source ingest is conceptually done. Without this the
+            # row stays at PROCESSING indefinitely while the UI shows COMPLETADO.
+            if ingest_id:
+                db_service.update_ingest_job(
+                    db,
+                    ingest_id,
+                    IngestStatus.COMPLETED,
+                    document_type=doc_type,
+                    pathway=pathway_value,
                 )
 
         # Auto-derive financial statements after process completes (non-fatal)

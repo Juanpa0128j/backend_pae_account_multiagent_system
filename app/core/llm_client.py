@@ -291,6 +291,7 @@ Documento:
         raw_transactions: list,
         *,
         doc_type: str = "",
+        doc_subtype: str = "",
         rag_context: list[dict] | None = None,
         correction_feedback: str | None = None,
         source_taxes: dict | None = None,
@@ -347,7 +348,16 @@ Documento:
             ),
             "factura_compra": (
                 "REGLA FACTURA COMPRA: debita el gasto/activo y acredita cuentas por pagar (220505). "
-                "NO dupliques el IVA ni las retenciones — el agente tributario las maneja."
+                "NO dupliques el IVA ni las retenciones — el agente tributario las maneja.\n"
+                "CUENTAS DE GASTO COMUNES (úsalas SIEMPRE en lugar de 5195):\n"
+                "- 510505 Sueldos        - 510510 Cesantías          - 510515 Intereses cesantías\n"
+                "- 510518 Prima servicios- 510521 Vacaciones         - 510527 Aportes EPS\n"
+                "- 510530 Aportes ARP    - 510533 Aportes pensión    - 511505 Honorarios\n"
+                "- 511510 Comisiones     - 511525 Servicios técnicos - 511595 Otros honorarios\n"
+                "- 513025 Combustibles   - 513540 Servicios públicos - 514505 Mantenimiento\n"
+                "- 519520 Cuotas afiliación - 521505 ICA gasto ventas - 529505 Diversos\n"
+                "- 143005 Inventario     - 152405 Equipo cómputo     - 152805 Equipo oficina\n"
+                "SOLO usa 5195 si el concepto es realmente ambiguo (último recurso)."
             ),
             "nota_credito": (
                 "REGLA NOTA CREDITO: Asiento de reversión. Debita la cuenta de ingreso específica "
@@ -365,9 +375,24 @@ Documento:
                 "NO dupliques impuestos — el agente tributario los maneja."
             ),
             "comprobante_egreso": (
-                "REGLA COMPROBANTE EGRESO: Debita la cuenta de gasto o proveedor correspondiente "
-                "y acredita banco o caja (111005/110505). Un asiento por linea de pago. "
-                "NO dupliques impuestos — el agente tributario los maneja."
+                "REGLA COMPROBANTE DE EGRESO (CE):\n"
+                "- SIEMPRE acredita 111005 (Banco) o 110505 (Caja). El CE representa salida de fondos.\n"
+                "- NUNCA acredites 220505 (Proveedores). 220505 solo aparece en DEBITO cuando el CE "
+                "salda una factura previa cuya CxP ya fue creada por la factura.\n"
+                "- Patrón estándar:\n"
+                "    DEBIT  5xxxxx (gasto concreto, no 5195) o 220505 (anula CxP)\n"
+                "    CREDIT 111005 (Banco)\n"
+                "    DEBIT/CREDIT retenciones si aplican (2365 retefuente, 2368 reteICA)\n"
+                "- Un asiento por linea de pago.\n"
+                "- NO dupliques impuestos — el agente tributario los maneja.\n"
+                "CUENTAS DE GASTO COMUNES (úsalas SIEMPRE en lugar de 5195):\n"
+                "- 510505 Sueldos        - 510510 Cesantías          - 510515 Intereses cesantías\n"
+                "- 510518 Prima servicios- 510521 Vacaciones         - 510527 Aportes EPS\n"
+                "- 510530 Aportes ARP    - 510533 Aportes pensión    - 511505 Honorarios\n"
+                "- 511510 Comisiones     - 511525 Servicios técnicos - 511595 Otros honorarios\n"
+                "- 513025 Combustibles   - 513540 Servicios públicos - 514505 Mantenimiento\n"
+                "- 519520 Cuotas afiliación - 521505 ICA gasto ventas - 529505 Diversos\n"
+                "SOLO usa 5195 si el concepto es realmente ambiguo (último recurso)."
             ),
             "declaracion_iva": (
                 "REGLA DECLARACION IVA: Asiento de pago/liquidacion de IVA. "
@@ -431,7 +456,11 @@ Documento:
                 "Un asiento por impuesto pagado."
             ),
         }
-        doc_guidance = _DOC_GUIDANCE.get(doc_type, "")
+        # Prefer the granular frontend doc_subtype for prompt routing (e.g.
+        # factura_venta vs factura_compra produce different asientos), and
+        # fall back to doc_type when no subtype is supplied.
+        guidance_key = doc_subtype or doc_type
+        doc_guidance = _DOC_GUIDANCE.get(guidance_key, "")
         doc_guidance_section = f"\n{doc_guidance}\n" if doc_guidance else ""
 
         prompt = f"""Eres un contador experto en normativa colombiana (PUC).
@@ -446,6 +475,7 @@ REGLAS GENERALES:
 - OBLIGATORIO: total_debitos == total_creditos (partida doble perfecta)
 - tipo_movimiento debe ser 'debito' o 'credito'
 - tipo_documento debe estar en: recibo, factura, extracto, nota_credito, nota_debito, comprobante_egreso, otro
+- cuenta_puc DEBE tener 6 dígitos para clases 4 (ingresos), 5 (gastos), 6 (costos). Solo usa 4 dígitos para activos (1xxx), pasivos (2xxx) o patrimonio (3xxx) cuando el PUC no tenga subcuenta más específica disponible.
 - Si el documento tiene multiples movimientos, genera un asiento por movimiento y consolida los totales
 
 Contexto normativo/RAG:
@@ -517,6 +547,28 @@ Salida del contador:
 {asientos_text or "- Sin asientos"}
 
 Evalua coherencia semantica, soporte documental, riesgo fiscal y calidad de la descripcion.
+
+PATRONES VÁLIDOS — NO marcar como hallazgo, NO rechazar:
+- Una misma cuenta puede aparecer en múltiples líneas si el tipo_movimiento es distinto
+  o si representa retenciones distintas (ej. 2368 acreditado dos veces: una para Reteica
+  causada y otra para ICA por pagar; o 2365 retefuente con varias bases gravables).
+- 130505 (CxC) puede aparecer en >1 línea cuando una factura tiene anticipos parciales
+  o múltiples plazos de cobro.
+- 5xxxxx (gasto) puede coexistir con 220505 (CxP) en factura_compra a crédito
+  — patrón estándar gasto + cuenta por pagar.
+- IVA descontable (2408xx) y IVA generado (2408xx) pueden coexistir en notas crédito
+  o documentos mixtos sin ser duplicado.
+- 240802 / 240805 acreditados ambos en factura_venta cuando el documento tiene IVA
+  generado y otros impuestos descontables aplican.
+
+RECHAZO (aprobado=false) SOLO cuando se cumple alguno de:
+- Asiento desbalanceado (Σ debitos ≠ Σ creditos).
+- cuenta_puc con formato inválido (no es código PUC reconocible).
+- tipo_documento inconsistente con el contenido de los asientos.
+- Valores negativos sin justificación clara en la descripción.
+- Falta una contraparte obligatoria (FV sin línea de ingreso, CE sin línea de banco/caja).
+- Coherencia semantica gravemente rota (ej. ingreso clasificado como gasto).
+
 Devuelve una salida estructurada que incluya obligatoriamente:
 - fecha_auditoria (YYYY-MM-DD)
 - documento_referencia
@@ -525,7 +577,7 @@ Devuelve una salida estructurada que incluya obligatoriamente:
 - hallazgos (lista de objetos con codigo AUD-XXX, severidad, descripcion, campo_afectado opcional, recomendacion)
 - puntaje_calidad (0-100)
 - resumen
-Si detectas errores graves, marca aprobado=false y explica claramente en resumen."""
+Si NO se cumple ningún criterio de rechazo, marca aprobado=true aunque encuentres mejoras menores (regístralas como hallazgos de severidad baja sin bloquear)."""
 
         if correction_feedback:
             prompt += f"""
