@@ -937,6 +937,36 @@ def get_company_settings(db: Session, nit: str) -> Optional[CompanySettings]:
     return db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
 
 
+def get_company_locked_pathway(db: Session, nit: str) -> Optional[str]:
+    """Return the locked_pathway for the given NIT, or None if not set/found."""
+    row = (
+        db.query(CompanySettings.locked_pathway)
+        .filter(CompanySettings.nit == nit)
+        .first()
+    )
+    return row[0] if row else None
+
+
+def set_company_locked_pathway(db: Session, nit: str, pathway: str) -> None:
+    """Set locked_pathway on first upload — atomic so concurrent first uploads
+    can't race and pick different pathways. The conditional UPDATE only
+    succeeds when the column is still NULL; subsequent callers are a no-op.
+    """
+    rows = (
+        db.query(CompanySettings)
+        .filter(
+            CompanySettings.nit == nit,
+            CompanySettings.locked_pathway.is_(None),
+        )
+        .update(
+            {CompanySettings.locked_pathway: pathway},
+            synchronize_session=False,
+        )
+    )
+    if rows:
+        db.commit()
+
+
 def list_companies(db: Session) -> list[CompanySettings]:
     """Return all CompanySettings rows ordered by NIT."""
     return db.query(CompanySettings).order_by(CompanySettings.nit).all()

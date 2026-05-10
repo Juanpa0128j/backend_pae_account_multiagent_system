@@ -147,6 +147,12 @@ class CompanySettings(Base):
         comment="Tarifa impuesto de renta societario — Art. 240 ET, 35% (Ley 2277/2022).",
     )
 
+    locked_pathway = Column(
+        String(30),
+        nullable=True,
+        comment="'build_from_scratch' (Vía A) or 'work_with_existing' (Vía B) — set on first upload, immutable after",
+    )
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

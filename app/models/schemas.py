@@ -148,6 +148,7 @@ class CompanySettingsResponse(CompanySettingsRequest):
     """Response body for company tax settings endpoints."""
 
     nit: str
+    locked_pathway: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

@@ -99,6 +99,23 @@ def _run_ingest_pipeline(
                 )
             finally:
                 db.close()
+        elif company_nit and isinstance(result, dict):
+            # Lock the company to the pathway determined by the classifier.
+            # This covers Via A uploads where doc_type was not pre-confirmed.
+            pathway = result.get("pathway")
+            if pathway:
+                db = SessionLocal()
+                try:
+                    db_service.set_company_locked_pathway(db, company_nit, pathway)
+                except Exception as lock_err:
+                    logger.warning(
+                        "Failed to set locked_pathway for company %s after ingest %s: %s",
+                        company_nit,
+                        ingest_id,
+                        lock_err,
+                    )
+                finally:
+                    db.close()
     except Exception as e:
         logger.error(f"Error in background ingest {ingest_id}: {e}", exc_info=True)
         # Prevent clients from waiting forever on pending_processing when the
@@ -348,6 +365,43 @@ async def upload_file(
                     detail=f"Tipo de documento '{doc_type}' no válido.",
                 )
 
+        # Vía B requires a company NIT — without it, persist will fail.
+        if confirmed_pathway == "work_with_existing" and not normalized_company_nit:
+            raise HTTPException(
+                status_code=422,
+                detail="Los documentos de Vía B requieren seleccionar una empresa (company_nit).",
+            )
+
+        # Enforce Via A / Via B mutual exclusion per company.
+        # Via B uploads always have confirmed_pathway set → check directly.
+        # Via A uploads without doc_type have confirmed_pathway=None (unclassified),
+        # but a company locked to Via B must not accept them either.
+        if normalized_company_nit:
+            locked = db_service.get_company_locked_pathway(db, normalized_company_nit)
+            if locked:
+                conflict = (
+                    confirmed_pathway is not None and locked != confirmed_pathway
+                ) or (confirmed_pathway is None and locked == "work_with_existing")
+                if conflict:
+                    locked_label = (
+                        "Vía A (documentos fuente)"
+                        if locked == "build_from_scratch"
+                        else "Vía B (estados financieros)"
+                    )
+                    incoming_label = (
+                        "Vía B"
+                        if confirmed_pathway == "work_with_existing"
+                        else "Vía A"
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Esta empresa ya está usando {locked_label}. "
+                            f"No se pueden mezclar documentos de {incoming_label} con los existentes. "
+                            "Selecciona otra empresa o usa el mismo tipo de vía."
+                        ),
+                    )
+
         ingest_job = db_service.create_ingest_job(
             db,
             file.filename,
@@ -359,6 +413,12 @@ async def upload_file(
             created_by=str(current_user.id),
         )
         logger.info(f"Created IngestJob: {ingest_job.id}")
+
+        # Lock the company to this pathway on first upload (when pathway is known).
+        if normalized_company_nit and confirmed_pathway:
+            db_service.set_company_locked_pathway(
+                db, normalized_company_nit, confirmed_pathway
+            )
 
         background_tasks.add_task(
             process_ingest_background,
@@ -450,6 +510,7 @@ async def update_ingest_classification(
             process_ingest_background,
             job.file_path,
             str(job.id),
+            job.company_nit,
         )
 
     refreshed = db_service.get_ingest_job(db, ingest_id)
