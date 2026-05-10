@@ -195,10 +195,14 @@ class TestIngestNodeRoutes:
         assert out["result"]["status"] == "error"
 
     def test_pdf_cache_hit_skips_llamaparse(self, pdf_file, monkeypatch):
+        import hashlib
+
         cache_dir = Path(pdf_file).parent / ".parse_cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = Path(pdf_file).name.replace(" ", "_")
-        cache_file = cache_dir / f"{safe_name}.md"
+        # Cache is keyed by content hash, not filename, so two uploads of
+        # different files with the same name don't collide.
+        content_hash = hashlib.sha256(Path(pdf_file).read_bytes()).hexdigest()
+        cache_file = cache_dir / f"{content_hash}.md"
         cache_file.write_text("cached parsed text for ingest", encoding="utf-8")
 
         llama_cls = MagicMock()
@@ -248,11 +252,10 @@ class TestIngestNodeRoutes:
         assert out["error"] is None
         assert llama_cls.call_count == 2
 
-        cache_file = (
-            Path(pdf_file).parent
-            / ".parse_cache"
-            / f"{Path(pdf_file).name.replace(' ', '_')}.md"
-        )
+        import hashlib
+
+        content_hash = hashlib.sha256(Path(pdf_file).read_bytes()).hexdigest()
+        cache_file = Path(pdf_file).parent / ".parse_cache" / f"{content_hash}.md"
         assert cache_file.exists()
         assert "text mode output" in cache_file.read_text(encoding="utf-8")
 

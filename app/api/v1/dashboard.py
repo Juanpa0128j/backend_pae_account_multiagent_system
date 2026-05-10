@@ -21,6 +21,7 @@ from app.models.database import (
 )
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
+from app.services.parse_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -89,17 +90,25 @@ def _via_b_dashboard_overrides(
                     continue
                 code = str(line.get("cuenta_puc") or line.get("codigo") or "")
                 if code.startswith("11"):
-                    efectivo += float(line.get("debito") or 0) - float(
-                        line.get("credito") or 0
+                    efectivo += safe_float(line.get("debito")) - safe_float(
+                        line.get("credito")
                     )
 
+    # `derivation_ready` matches the logic in /reports/derivation/status: all 3
+    # source statement types must share at least one common period_end (a single
+    # statement of each type isn't enough if the periods don't line up).
     direct = [r for r in rows if r.source_mode == "direct"]
-    period_ends_by_type: Dict[str, list] = {}
+    required_types = ("balance_general", "estado_resultados", "libro_auxiliar")
+    period_ends_by_type: Dict[str, set] = {t: set() for t in required_types}
     for r in direct:
-        period_ends_by_type.setdefault(r.statement_type, []).append(r.period_end)
-    derivation_ready = all(
-        period_ends_by_type.get(t) for t in ("balance_general", "estado_resultados", "libro_auxiliar")
+        if r.statement_type in period_ends_by_type and r.period_end is not None:
+            period_ends_by_type[r.statement_type].add(r.period_end)
+    common_period_ends = (
+        set.intersection(*period_ends_by_type.values())
+        if all(period_ends_by_type[t] for t in required_types)
+        else set()
     )
+    derivation_ready = bool(common_period_ends)
     latest = max((r.period_end for r in direct if r.period_end), default=None)
 
     return {

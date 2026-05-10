@@ -35,31 +35,35 @@ class TestGetCompanyLockedPathway:
 
 
 class TestSetCompanyLockedPathway:
+    """The new implementation issues an atomic conditional UPDATE
+    (`WHERE locked_pathway IS NULL`) so concurrent first uploads can't race.
+    Mocks must reflect that — `db.query(...).filter(...).update(...)` returns
+    the rowcount, and commit only happens when a row was actually updated.
+    """
+
     def test_sets_pathway_when_not_locked(self):
         db = MagicMock()
-        company = MagicMock()
-        company.locked_pathway = None
-        db.query.return_value.filter.return_value.first.return_value = company
+        # Conditional UPDATE matched the NULL row → 1 row affected.
+        db.query.return_value.filter.return_value.update.return_value = 1
 
         db_service.set_company_locked_pathway(db, "800999888", "work_with_existing")
 
-        assert company.locked_pathway == "work_with_existing"
+        db.query.return_value.filter.return_value.update.assert_called_once()
         db.commit.assert_called_once()
 
     def test_noop_when_already_locked(self):
         db = MagicMock()
-        company = MagicMock()
-        company.locked_pathway = "build_from_scratch"
-        db.query.return_value.filter.return_value.first.return_value = company
+        # Conditional UPDATE skipped because locked_pathway IS NOT NULL.
+        db.query.return_value.filter.return_value.update.return_value = 0
 
         db_service.set_company_locked_pathway(db, "800999888", "work_with_existing")
 
-        assert company.locked_pathway == "build_from_scratch"
         db.commit.assert_not_called()
 
     def test_noop_when_company_not_found(self):
         db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = None
+        # Conditional UPDATE matched no rows.
+        db.query.return_value.filter.return_value.update.return_value = 0
 
         db_service.set_company_locked_pathway(db, "999999999", "build_from_scratch")
 

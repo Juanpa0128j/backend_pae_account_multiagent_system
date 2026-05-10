@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.services import db_service
+from app.services.nit_utils import normalize_optional_nit
+from app.services.parse_utils import safe_float
 from app.models.database import FinancialStatement, TransactionStatus
 
 router = APIRouter()
@@ -50,8 +52,8 @@ def _libro_auxiliar_lines_as_transactions(
     for idx, line in enumerate(lines):
         if not isinstance(line, dict):
             continue
-        debito = float(line.get("debito") or 0)
-        credito = float(line.get("credito") or 0)
+        debito = safe_float(line.get("debito"))
+        credito = safe_float(line.get("credito"))
         total = debito if debito > 0 else credito
         concepto_parts = []
         if line.get("cuenta_puc") or line.get("cuenta_nombre"):
@@ -91,16 +93,20 @@ async def list_transactions(
     For Vía B-locked companies (no posted transactions exist), returns
     libro_auxiliar lines mapped to the same shape so the UI stays consistent.
     """
+    # Normalize the company NIT consistently with /reports/* and /dashboard/* —
+    # otherwise a NIT with dots/spaces would silently miss the lock check.
+    normalized_company_nit = normalize_optional_nit(company_nit) if company_nit else None
+
     # Vía B branch: when the company is locked to 'work_with_existing', surface
     # libro_auxiliar lines instead of posted transactions.
-    if company_nit:
+    if normalized_company_nit:
         try:
-            locked = db_service.get_company_locked_pathway(db, company_nit)
+            locked = db_service.get_company_locked_pathway(db, normalized_company_nit)
         except Exception:
             locked = None
         if locked == "work_with_existing":
             return _libro_auxiliar_lines_as_transactions(
-                db, company_nit, limit, offset
+                db, normalized_company_nit, limit, offset
             )
 
     txn_status = None
@@ -111,7 +117,7 @@ async def list_transactions(
             pass
 
     txns = db_service.get_transactions_by_status(
-        db, txn_status, limit, offset, company_nit
+        db, txn_status, limit, offset, normalized_company_nit
     )
 
     return [
