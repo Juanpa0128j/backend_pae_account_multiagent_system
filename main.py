@@ -18,6 +18,7 @@ from app.api.v1 import (
     settings as settings_router_mod,
     chat,
     puc as puc_router_mod,
+    auth as auth_router_mod,
 )
 from app.core.config import settings
 from app.core.database import check_db_connection
@@ -151,6 +152,7 @@ app.include_router(
 )
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat Financiero"])
 app.include_router(puc_router_mod.router, prefix="/api/v1/puc", tags=["PUC"])
+app.include_router(auth_router_mod.router, prefix="/api/v1/auth", tags=["Auth"])
 
 if __name__ == "__main__":
     import uvicorn

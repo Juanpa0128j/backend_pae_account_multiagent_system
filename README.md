@@ -406,7 +406,42 @@ SHA-256-seeded embeddings. No HuggingFace API calls are made during testing.
 
 ## Database Migrations
 
-Migrations are managed with **Alembic** against Supabase PostgreSQL.
+Migrations are managed with **Alembic**. The schema runs against three
+distinct Postgres databases depending on environment:
+
+| Environment | Where | How |
+|---|---|---|
+| **Local development** | `docker-compose.dev.yml` (Postgres 16 + pgvector, port 5433) | `make db-up && make db-migrate` |
+| **CI / pull requests** | Ephemeral `pgvector/pgvector:pg16` service in GitHub Actions | Runs `alembic upgrade head` per workflow invocation against a fresh DB |
+| **Production** | Supabase Postgres (project URL in `DATABASE_URL`) | `alembic upgrade head` after merge |
+
+This separation prevents the "all PRs share one prod DB" problem: each
+developer iterates locally, each PR validates against an ephemeral CI
+database, and only merged-to-main migrations touch Supabase.
+
+### Local development workflow
+
+```bash
+make db-up         # Start the local Postgres+pgvector container (port 5433)
+make db-migrate    # Apply all migrations to the local DB
+make db-shell      # Open a psql shell on the local DB
+make db-reset      # Destroy + recreate + remigrate (when schemas drift)
+make db-down       # Stop the container (data preserved)
+```
+
+Set `DATABASE_URL=postgresql://pae:pae@localhost:5433/pae` in your `.env`
+when working locally; switch back to the Supabase URL only when you need
+to validate against production data.
+
+### Concurrent migrations from parallel PRs
+
+If two PRs each generate a new migration on top of the same parent, alembic
+ends up with multiple heads and the next `alembic upgrade head` against
+prod will fail. CI guards against this with `make migrate-check-heads`,
+which runs before tests and fails the build until the second author
+rebases their migration onto the merged one.
+
+### Common commands
 
 ```bash
 # Apply all pending migrations:
@@ -417,6 +452,9 @@ alembic current
 
 # Generate a new migration:
 alembic revision --autogenerate -m "description"
+
+# Verify a single head exists (CI gate):
+make migrate-check-heads
 
 # Rollback one step:
 alembic downgrade -1

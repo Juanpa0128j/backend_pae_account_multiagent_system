@@ -67,6 +67,7 @@ def create_ingest_job(
     pathway: Optional[str] = None,
     classification_confirmed: Optional[bool] = None,
     commit: bool = True,
+    created_by: str | None = None,
 ) -> IngestJob:
     """Create a new ingest job for a document upload."""
     job = IngestJob(
@@ -82,7 +83,13 @@ def create_ingest_job(
     db.add(job)
     # Stage audit log before the single commit/flush so job + log are atomic
     create_audit_log(
-        db, "ingest_created", job.id, "ingest", {"file_name": file_name}, commit=False
+        db,
+        "ingest_created",
+        job.id,
+        "ingest",
+        {"file_name": file_name},
+        commit=False,
+        created_by=created_by,
     )
     _commit_or_flush(db, commit)
     db.refresh(job)
@@ -148,6 +155,7 @@ def create_transaction_pending(
     raw_data: Optional[Dict] = None,
     company_nit: Optional[str] = None,
     commit: bool = True,
+    created_by: str | None = None,
 ) -> TransactionPending:
     """Create a pending transaction from extracted data."""
     txn = TransactionPending(
@@ -176,6 +184,7 @@ def create_transaction_pending(
         },
         commit=False,
         company_nit=company_nit,
+        created_by=created_by,
     )
     _commit_or_flush(db, commit)
     db.refresh(txn)
@@ -257,6 +266,7 @@ def create_transaction_posted(
     agent_reasoning: Optional[Dict] = None,
     company_nit: Optional[str] = None,
     commit: bool = True,
+    created_by: str | None = None,
 ) -> TransactionPosted:
     """Create a fully processed posted transaction."""
     posted = TransactionPosted(
@@ -299,6 +309,7 @@ def create_transaction_posted(
         },
         commit=False,
         company_nit=company_nit,
+        created_by=created_by,
     )
     _commit_or_flush(db, commit)
     db.refresh(posted)
@@ -649,7 +660,9 @@ def get_all_puc_including_inactive(db: Session) -> List[CuentaPUC]:
 # ─── ProcessJob ──────────────────────────────────────────────────
 
 
-def create_process_job(db: Session, ingest_id: str, commit: bool = True) -> ProcessJob:
+def create_process_job(
+    db: Session, ingest_id: str, commit: bool = True, created_by: str | None = None
+) -> ProcessJob:
     """Create a new processing job."""
     job = ProcessJob(
         id=_generate_id("proc_"),
@@ -666,6 +679,7 @@ def create_process_job(db: Session, ingest_id: str, commit: bool = True) -> Proc
         "process",
         {"ingest_id": ingest_id},
         commit=False,
+        created_by=created_by,
     )
     _commit_or_flush(db, commit)
     db.refresh(job)
@@ -795,6 +809,7 @@ def create_audit_log(
     details: Dict = None,
     commit: bool = True,
     company_nit: str | None = None,
+    created_by: str | None = None,
 ) -> AuditLog:
     """Create an immutable audit log entry."""
     log = AuditLog(
@@ -803,6 +818,7 @@ def create_audit_log(
         entity_type=entity_type,
         company_nit=company_nit,
         details=details,
+        created_by=created_by,
     )
     db.add(log)
     _commit_or_flush(db, commit)

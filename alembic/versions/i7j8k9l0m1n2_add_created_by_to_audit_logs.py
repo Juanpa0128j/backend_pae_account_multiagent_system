@@ -1,16 +1,15 @@
-"""stub: recover missing revision i7j8k9l0m1n2
-
-Another revision id found in the production alembic_version table whose
-migration file isn't merged into this branch. Stubbed so `alembic upgrade
-head` can advance from the DB state to our locked_pathway migration.
+"""add_created_by_to_audit_logs
 
 Revision ID: i7j8k9l0m1n2
 Revises: fb08f11836cb
-Create Date: 2026-05-09
+Create Date: 2026-05-09 14:00:00.000000
 
 """
 
 from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
 
 revision: str = "i7j8k9l0m1n2"
 down_revision: Union[str, Sequence[str], None] = "fb08f11836cb"
@@ -19,8 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    pass
+    op.add_column("audit_logs", sa.Column("created_by", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
-    pass
+    op.drop_column("audit_logs", "created_by")

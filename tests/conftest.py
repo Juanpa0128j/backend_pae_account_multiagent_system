@@ -5,7 +5,23 @@ Centralises base state builders so every test file uses the same canonical
 state shape, preventing divergence that caused PR #16 review findings.
 """
 
+from uuid import UUID
+
 import pytest
+
+from app.core.auth import CurrentUser, get_current_user
+from main import app
+
+
+@pytest.fixture(autouse=True)
+def override_auth():
+    """Override get_current_user for all tests so endpoints don't reject unauthenticated requests."""
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        id=UUID("00000000-0000-0000-0000-000000000000"),
+        email="test@test.com",
+    )
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 def base_state(**overrides) -> dict:

@@ -1,7 +1,9 @@
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.core.auth import CurrentUser, get_current_user
 from fastapi.responses import StreamingResponse
 
 from app.agents.graph import invoke_reporting_pipeline
@@ -117,8 +119,6 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
 
     stored = _try_stored_statement(report_type, params, normalized_company_nit)
     if stored is not None:
-        # Provide the fields BalanceSheetOutput / PnLOutput / CashFlowOutput require
-        # but that the stored shape doesn't include.
         from datetime import datetime as _dt
 
         stored.setdefault("report_type", report_type)
@@ -533,6 +533,7 @@ async def get_balance_report(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Balance General (Balance Sheet).
@@ -552,6 +553,7 @@ async def get_pnl_report(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Estado de Resultados (Profit & Loss).
@@ -569,6 +571,7 @@ async def get_cashflow_report(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Flujo de Caja (Cash Flow — direct method).
@@ -596,6 +599,7 @@ async def get_financial_statements(
         100, ge=1, le=500, description="Max records to return (1-500, default 100)"
     ),
     offset: int = Query(0, ge=0, description="Records to skip (for pagination)"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """List stored FinancialStatement records for a company.
 
@@ -635,6 +639,7 @@ async def get_financial_statements(
 async def get_financial_statement_by_id(
     statement_id: str,
     company_nit: Optional[str] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Get a specific FinancialStatement by ID."""
     db = SessionLocal()
@@ -685,6 +690,7 @@ async def download_balance_pdf(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Balance Sheet as PDF."""
     report, resolved_end_date = _resolve_report(
@@ -716,6 +722,7 @@ async def download_balance_excel(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Balance Sheet as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -747,6 +754,7 @@ async def download_pnl_pdf(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Profit & Loss as PDF."""
     report, resolved_end_date = _resolve_report(
@@ -778,6 +786,7 @@ async def download_pnl_excel(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Profit & Loss as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -809,6 +818,7 @@ async def download_cashflow_pdf(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Cash Flow as PDF."""
     report, resolved_end_date = _resolve_report(
@@ -840,6 +850,7 @@ async def download_cashflow_excel(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Cash Flow as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -871,6 +882,7 @@ async def download_libro_diario_pdf(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Libro Diario as PDF."""
     report, resolved_end_date = _resolve_report(
@@ -902,6 +914,7 @@ async def download_libro_diario_excel(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Libro Diario as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -933,6 +946,7 @@ async def download_libro_auxiliar_pdf(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Libro Auxiliar as PDF."""
     report, resolved_end_date = _resolve_report(
@@ -964,6 +978,7 @@ async def download_libro_auxiliar_excel(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Libro Auxiliar as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -995,6 +1010,7 @@ async def download_cambios_patrimonio_pdf(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Cambios en el Patrimonio as PDF."""
     report, resolved_end_date = _resolve_report(
@@ -1026,6 +1042,7 @@ async def download_cambios_patrimonio_excel(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Cambios en el Patrimonio as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -1057,6 +1074,7 @@ async def download_notas_pdf(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for PDF header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Notas a los Estados Financieros as PDF."""
     report, resolved_end_date = _resolve_report(
@@ -1088,6 +1106,7 @@ async def download_notas_excel(
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     company_name: str = Query("Empresa", description="Company name for Excel header"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Download Notas a los Estados Financieros as Excel."""
     report, resolved_end_date = _resolve_report(
@@ -1116,13 +1135,9 @@ _REQUIRED_SOURCE_TYPES = ("balance_general", "estado_resultados", "libro_auxilia
 @router.get("/derivation/status")
 async def get_derivation_status(
     company_nit: str = Query(..., description="Company NIT"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Report which Vía B source statements are uploaded for a company.
-
-    Returns one entry per source type with its periods (if any), plus a
-    `ready_periods` list showing which `(period_start, period_end)` windows
-    have all 3 source statements present and would therefore allow derivation.
-    """
+    """Report which Vía B source statements are uploaded for a company."""
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
@@ -1145,18 +1160,16 @@ async def get_derivation_status(
                 }
             )
 
-    # A period is "ready" if all 3 source types have a statement covering it.
-    # Use period_end as the matching key (a balance is a snapshot at period_end).
     period_end_sets: dict[str, set] = {
         t: {item["period_end"] for item in sources[t] if item["period_end"]}
         for t in _REQUIRED_SOURCE_TYPES
     }
-    common_period_ends = set.intersection(*period_end_sets.values()) if period_end_sets.values() else set()
+    common_period_ends = (
+        set.intersection(*period_end_sets.values()) if period_end_sets.values() else set()
+    )
 
     ready_periods = []
     for pe in sorted(common_period_ends, reverse=True):
-        # For each common period_end, find the matching period_start of estado_resultados (rango)
-        # Balance is snapshot, so it uses period_end as both. Use ER's range as the canonical period.
         er_match = next(
             (item for item in sources["estado_resultados"] if item["period_end"] == pe),
             None,
@@ -1182,6 +1195,7 @@ async def run_derivation(
     company_nit: str = Query(..., description="Company NIT"),
     start_date: date = Query(..., description="Period start YYYY-MM-DD"),
     end_date: date = Query(..., description="Period end YYYY-MM-DD"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Manually trigger Vía B derivation for the given company and period."""
     try:

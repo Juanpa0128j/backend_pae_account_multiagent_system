@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.core.auth import CurrentUser, get_current_user
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool
 
@@ -43,7 +45,9 @@ def _normalize_request_nit(request: ChatRequest) -> ChatRequest:
 
 
 @router.post("", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest, current_user: CurrentUser = Depends(get_current_user)
+):
     """
     Non-streaming chat endpoint.
 
@@ -61,7 +65,9 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(
+    request: ChatRequest, current_user: CurrentUser = Depends(get_current_user)
+):
     """
     SSE streaming chat endpoint.
 
@@ -98,6 +104,7 @@ async def chat_stream(request: ChatRequest):
 @router.get("/sessions", response_model=list[SessionSummary])
 async def get_sessions(
     company_nit: str | None = Query(None, description="Filter by company NIT"),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """List chat sessions, optionally filtered by company NIT."""
     nit = None
@@ -110,7 +117,9 @@ async def get_sessions(
 
 
 @router.get("/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str):
+async def get_session_messages(
+    session_id: str, current_user: CurrentUser = Depends(get_current_user)
+):
     """Get all messages for a chat session."""
     messages = chat_service.get_session_messages(session_id)
     if not messages:
@@ -121,7 +130,9 @@ async def get_session_messages(session_id: str):
 
 
 @router.delete("/sessions/{session_id}")
-async def remove_session(session_id: str):
+async def remove_session(
+    session_id: str, current_user: CurrentUser = Depends(get_current_user)
+):
     """Delete a chat session and all its messages."""
     deleted = chat_service.delete_session(session_id)
     if not deleted:
