@@ -433,25 +433,27 @@ def tributario_node(state: AgentState) -> AgentState:
         # ------------------------------------------------------------------
         mode = state.get("mode", "ingest")
         company_config = state.get("company_config")
-        # Use the tenant's NIT (owner of the ingest), not nit_receptor (which is the
-        # customer in sales invoices). Matches the fix applied in process.py:124.
-        nit_receptor = state.get("company_nit") or None
+        # Resolve the tenant's NIT (owner of the ingest). This is NOT the
+        # transaction-level `nit_receptor` field (the counterparty/customer in
+        # sales invoices) — it's the company that owns the upload, sourced from
+        # `state["company_nit"]` (set by invoke_accounting_pipeline).
+        company_nit = state.get("company_nit") or None
         if not company_config:
-            if not nit_receptor:
+            if not company_nit:
                 # Fallback if company_nit wasn't propagated to state.
                 for tx in state.get("raw_transactions") or []:
-                    nit_receptor = tx.get("company_nit") or tx.get("nit_receptor")
-                    if nit_receptor:
+                    company_nit = tx.get("company_nit") or tx.get("nit_receptor")
+                    if company_nit:
                         break
 
-            if nit_receptor:
+            if company_nit:
                 try:
                     from app.core.database import SessionLocal
                     from app.services import db_service as _db_svc
 
                     _db = SessionLocal()
                     try:
-                        row = _db_svc.get_company_settings(_db, nit_receptor)
+                        row = _db_svc.get_company_settings(_db, company_nit)
                         if row:
                             company_config = {
                                 "tasa_retefuente_servicios": float(
@@ -470,12 +472,12 @@ def tributario_node(state: AgentState) -> AgentState:
                                 "tasa_renta": float(row.tasa_renta),
                             }
                             logger.info(
-                                f"Tributario: loaded company settings for NIT {nit_receptor}"
+                                f"Tributario: loaded company settings for NIT {company_nit}"
                             )
                         else:
                             logger.warning(
                                 "Tributario: missing company settings for NIT %s",
-                                nit_receptor,
+                                company_nit,
                             )
                     finally:
                         _db.close()
@@ -488,25 +490,25 @@ def tributario_node(state: AgentState) -> AgentState:
         has_staged_transactions = bool(state.get("raw_transactions"))
         if mode == "process" and has_staged_transactions and not company_config:
             setup_endpoint = "/api/v1/settings/company/{nit}/setup"
-            if nit_receptor:
+            if company_nit:
                 state["error"] = (
                     "Tributario precondition failed: missing company tax settings for "
-                    f"NIT {nit_receptor}. Configure it first at "
-                    f"{setup_endpoint.format(nit=nit_receptor)}"
+                    f"NIT {company_nit}. Configure it first at "
+                    f"{setup_endpoint.format(nit=company_nit)}"
                 )
                 details = {
                     "error": state["error"],
-                    "nit_receptor": nit_receptor,
+                    "company_nit": company_nit,
                     "required_endpoint": setup_endpoint,
                 }
             else:
                 state["error"] = (
-                    "Tributario precondition failed: missing nit_receptor in raw_transactions. "
+                    "Tributario precondition failed: missing company NIT. "
                     "Cannot resolve company tax settings."
                 )
                 details = {
                     "error": state["error"],
-                    "nit_receptor": None,
+                    "company_nit": None,
                     "required_endpoint": setup_endpoint,
                 }
             logger.error(state["error"])

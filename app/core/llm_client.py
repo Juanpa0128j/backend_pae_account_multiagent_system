@@ -358,8 +358,9 @@ Documento:
             ),
             "nota_debito": (
                 "REGLA NOTA DEBITO: Asiento de ajuste adicional. Debita cuentas por cobrar (130505) "
-                "y acredita la cuenta de ingreso específica (4135/4170/4175) o intereses por cobrar (130505) "
-                "segun el concepto. NUNCA uses '4xxx' o '130xxx' literal. "
+                "y acredita la cuenta de ingreso específica (4135/4170/4175) según el concepto. "
+                "Si la nota corresponde a intereses moratorios, acredita la cuenta de ingresos "
+                "financieros del PUC seed (clase 42, p. ej. 4210). NUNCA uses '4xxx' o '13xxxx' literal. "
                 "Referencia el numero de factura asociada en descripcion_general. "
                 "NO dupliques impuestos — el agente tributario los maneja."
             ),
