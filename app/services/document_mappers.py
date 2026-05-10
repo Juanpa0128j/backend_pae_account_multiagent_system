@@ -1,0 +1,306 @@
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from typing import Any, Optional
+
+
+def as_str(value: Any, default: str = "") -> str:
+    """Normalize possibly-ORM values to plain strings."""
+    if value is None:
+        return default
+    return str(value)
+
+
+def sanitize_for_json(value: Any) -> Any:
+    """Recursively convert non-JSON-serializable types to safe types."""
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [sanitize_for_json(v) for v in value]
+    return value
+
+
+def safe_decimal(value: Any) -> Optional[Decimal]:
+    """Safely parse a value into a Decimal."""
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def safe_datetime(value: Any) -> Optional[datetime]:
+    """Safely parse a value into a timezone-aware UTC datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(str(value), fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def infer_total_from_items(items: Any) -> Optional[Decimal]:
+    """Best-effort total inference from extracted line items."""
+    if not isinstance(items, list) or not items:
+        return None
+
+    inferred = Decimal("0")
+    used_any = False
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        # Prefer explicit per-line totals when present.
+        for key in ("valor_total_sin_impuesto", "valor_total", "total", "subtotal"):
+            line_total = safe_decimal(item.get(key))
+            if line_total is not None:
+                inferred += line_total
+                used_any = True
+                break
+        else:
+            # Fallback to unit value if line total is absent.
+            unit_value = safe_decimal(item.get("valor_unitario"))
+            if unit_value is not None:
+                qty = safe_decimal(item.get("cantidad"))
+                if qty is not None and qty > 0 and qty <= Decimal("10000"):
+                    inferred += unit_value * qty
+                else:
+                    inferred += unit_value
+                used_any = True
+
+    if not used_any:
+        return None
+    return inferred
+
+
+def build_structured_transactions(
+    interpreted: dict[str, Any], doc_type: str
+) -> list[dict[str, Any]]:
+    """Map rich document schemas into one or more tx rows for persistence."""
+
+    emisor = interpreted.get("emisor") or {}
+    receptor = interpreted.get("receptor") or {}
+    totales = interpreted.get("totales") or {}
+    items_payload = interpreted.get("items") or interpreted.get("detalle_items") or []
+
+    # --- Doc-type specific mapping ---
+    if doc_type == "extracto_bancario":
+        titular = interpreted.get("titular") or {}
+        movements = interpreted.get("movements") or []
+        txs: list[dict[str, Any]] = []
+
+        if isinstance(movements, list):
+            for movement in movements:
+                if not isinstance(movement, dict):
+                    continue
+
+                debito = safe_decimal(movement.get("debito")) or Decimal("0")
+                credito = safe_decimal(movement.get("credito")) or Decimal("0")
+                valor = debito if debito > Decimal("0") else credito
+                if valor <= Decimal("0"):
+                    continue
+
+                descripcion = as_str(movement.get("descripcion"), "Movimiento bancario")
+                referencia = as_str(movement.get("referencia"), "").strip()
+                if referencia:
+                    descripcion = f"{descripcion} (ref: {referencia})"
+
+                txs.append(
+                    {
+                        "fecha": movement.get("fecha")
+                        or interpreted.get("periodo_fin")
+                        or interpreted.get("periodo_inicio"),
+                        "nit_emisor": as_str(
+                            titular.get("nit") or interpreted.get("nit_emisor"), ""
+                        ),
+                        "nit_receptor": as_str(
+                            interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                        ),
+                        "total": str(valor),
+                        "concepto": descripcion,
+                        "descripcion": descripcion,
+                        "items": [sanitize_for_json(movement)],
+                    }
+                )
+
+        if txs:
+            return txs
+
+        resumen = interpreted.get("resumen") or {}
+        fallback_total = (
+            safe_decimal((resumen or {}).get("total_debitos"))
+            or safe_decimal((resumen or {}).get("total_creditos"))
+            or safe_decimal(interpreted.get("saldo_final"))
+            or Decimal("0")
+        )
+        return [
+            {
+                "fecha": interpreted.get("periodo_fin")
+                or interpreted.get("periodo_inicio"),
+                "nit_emisor": as_str(titular.get("nit"), ""),
+                "nit_receptor": as_str(
+                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                ),
+                "total": str(fallback_total),
+                "concepto": "Extracto bancario",
+                "descripcion": "Extracto bancario",
+                "items": sanitize_for_json(
+                    movements if isinstance(movements, list) else []
+                ),
+            }
+        ]
+
+    if doc_type == "nomina":
+        empresa = interpreted.get("empresa") or {}
+        periodo_inicio = as_str(interpreted.get("periodo_inicio"), "")
+        periodo_fin = as_str(interpreted.get("periodo_fin"), "")
+        periodo_txt = ""
+        if periodo_inicio and periodo_fin:
+            periodo_txt = f"Periodo {periodo_inicio} a {periodo_fin}"
+        elif periodo_inicio:
+            periodo_txt = f"Periodo desde {periodo_inicio}"
+        elif periodo_fin:
+            periodo_txt = f"Periodo hasta {periodo_fin}"
+
+        raw_total = (
+            interpreted.get("total_neto_pagar")
+            or interpreted.get("total_devengado")
+            or interpreted.get("total")
+        )
+        parsed_total = safe_decimal(raw_total)
+        if parsed_total is None:
+            empleados = interpreted.get("empleados") or []
+            if isinstance(empleados, list):
+                parsed_total = sum(
+                    [
+                        safe_decimal((e or {}).get("neto_pagar")) or Decimal("0")
+                        for e in empleados
+                        if isinstance(e, dict)
+                    ],
+                    Decimal("0"),
+                )
+            else:
+                parsed_total = Decimal("0")
+
+        concepto = "Nomina"
+        if periodo_txt:
+            concepto = f"Nomina - {periodo_txt}"
+
+        return [
+            {
+                "fecha": interpreted.get("periodo_fin")
+                or interpreted.get("periodo_inicio")
+                or interpreted.get("fecha"),
+                "nit_emisor": as_str(
+                    empresa.get("nit") or interpreted.get("nit_emisor"), ""
+                ),
+                "nit_receptor": as_str(
+                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                ),
+                "total": str(parsed_total),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "items": sanitize_for_json(interpreted.get("empleados") or []),
+            }
+        ]
+
+    if doc_type == "recibo_pago_impuesto":
+        raw_total = (
+            interpreted.get("total_pagado")
+            or interpreted.get("valor_principal")
+            or interpreted.get("total")
+        )
+        parsed_total = safe_decimal(raw_total) or Decimal("0")
+        tipo_impuesto = as_str(interpreted.get("tipo_impuesto"), "")
+        periodo_gravable = as_str(interpreted.get("periodo_gravable"), "")
+        concepto = "Pago de impuesto"
+        if tipo_impuesto:
+            concepto = f"Pago de impuesto {tipo_impuesto}"
+        if periodo_gravable:
+            concepto = f"{concepto} ({periodo_gravable})"
+
+        return [
+            {
+                "fecha": interpreted.get("fecha_pago") or interpreted.get("fecha"),
+                "nit_emisor": as_str(
+                    interpreted.get("nit_declarante") or interpreted.get("nit_emisor"),
+                    "",
+                ),
+                "nit_receptor": as_str(
+                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                ),
+                "total": str(parsed_total),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "items": sanitize_for_json(
+                    [
+                        {
+                            "numero_recibo": interpreted.get("numero_recibo"),
+                            "entidad_fiscal": interpreted.get("entidad_fiscal"),
+                            "banco": interpreted.get("banco"),
+                            "referencia_pago": interpreted.get("referencia_pago"),
+                            "valor_principal": interpreted.get("valor_principal"),
+                            "sanciones": interpreted.get("sanciones"),
+                            "intereses": interpreted.get("intereses"),
+                            "total_pagado": interpreted.get("total_pagado"),
+                        }
+                    ]
+                ),
+            }
+        ]
+
+    # --- Generic fallback mapping ---
+    raw_total = (
+        # Invoice-like schemas
+        totales.get("total_a_pagar")
+        or totales.get("total")
+        # Voucher-like schemas
+        or interpreted.get("valor_neto")
+        or interpreted.get("valor_bruto")
+        # Generic fallbacks
+        or interpreted.get("total")
+        or interpreted.get("valor_total")
+        or interpreted.get("valor")
+        or interpreted.get("monto")
+    )
+    parsed_total = safe_decimal(raw_total)
+    if parsed_total is None or parsed_total == Decimal("0"):
+        inferred_total = infer_total_from_items(items_payload)
+        if inferred_total is not None and inferred_total > Decimal("0"):
+            parsed_total = inferred_total
+
+    tx_data = {
+        "fecha": (
+            interpreted.get("fecha_emision")
+            or interpreted.get("fecha_registro")
+            or interpreted.get("fecha")
+        ),
+        "nit_emisor": as_str(emisor.get("nit") or interpreted.get("nit_emisor"), ""),
+        "nit_receptor": as_str(
+            receptor.get("nit") or interpreted.get("nit_receptor"), ""
+        ),
+        "total": str(parsed_total if parsed_total is not None else Decimal("0")),
+        "concepto": as_str(
+            interpreted.get("descripcion_general")
+            or interpreted.get("concepto")
+            or interpreted.get("tipo_documento", ""),
+            "",
+        ),
+        "descripcion": as_str(
+            interpreted.get("descripcion_general")
+            or interpreted.get("concepto")
+            or interpreted.get("tipo_documento", ""),
+            "",
+        ),
+        "items": sanitize_for_json(items_payload),
+    }
+    return [tx_data]
