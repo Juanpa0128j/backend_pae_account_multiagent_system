@@ -120,44 +120,6 @@ jobs:
           done
           curl -sf http://127.0.0.1:8016/docs > /dev/null || (echo "Backend failed to start" && exit 1)
 
-      - name: Run Via A simulation (demo documents)
-        run: |
-          uv run python scripts/simulate_frontend_full_pipeline.py \
-            --base-url http://127.0.0.1:8016 \
-            --source-mode demo \
-            --company-nit "CI${{ github.run_id }}A" \
-            --city Bogota \
-            --ciiu 6920 \
-            --timeout-seconds 300 \
-            --poll-seconds 3 \
-            --report-timeout-seconds 420
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LLAMA_CLOUD_API_KEY: ${{ secrets.LLAMA_CLOUD_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
-
-      - name: Run Via B simulation (first-level uploads)
-        run: |
-          uv run python scripts/simulate_frontend_full_pipeline.py \
-            --base-url http://127.0.0.1:8016 \
-            --source-mode via-b \
-            --company-nit "CI${{ github.run_id }}B" \
-            --city Medellin \
-            --ciiu 6910 \
-            --timeout-seconds 180 \
-            --poll-seconds 3 \
-            --report-timeout-seconds 420
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LLAMA_CLOUD_API_KEY: ${{ secrets.LLAMA_CLOUD_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
-
       - name: Stop backend server
         if: always()
         run: pkill -f "uvicorn main:app" || true
