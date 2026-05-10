@@ -41,6 +41,12 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      # Fail fast when two PRs each added a migration on top of the same
+      # parent — alembic would have multiple heads and prod would break on
+      # merge. Forces the second author to rebase + merge.
+      - name: Verify single Alembic migration head
+        run: make migrate-check-heads
+
       - name: Run migrations on CI database
         run: uv run alembic upgrade head
         env:
