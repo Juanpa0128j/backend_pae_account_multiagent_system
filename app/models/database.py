@@ -67,6 +67,7 @@ class IngestStatus(str, enum.Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class TerceroTipo(str, enum.Enum):
@@ -284,6 +285,12 @@ class IngestJob(Base):
         nullable=True,
         index=True,
         comment="Tenant NIT supplied by the caller at upload time",
+    )
+    parser_mode = Column(
+        String(20),
+        nullable=False,
+        default="fast",
+        comment="LlamaParse extraction mode: fast|standard|premium|gpt4o",
     )
 
     raw_preview = Column(

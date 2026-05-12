@@ -10,6 +10,15 @@ to one of two pathways:
 from enum import Enum
 
 
+class ParserMode(str, Enum):
+    """LlamaParse extraction quality modes."""
+
+    FAST = "fast"
+    STANDARD = "standard"
+    PREMIUM = "premium"
+    GPT4O = "gpt4o"
+
+
 class DocumentType(str, Enum):
     """Types of documents the system can ingest."""
 

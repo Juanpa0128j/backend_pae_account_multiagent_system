@@ -58,6 +58,7 @@ class IngestDetailResponse(BaseModel):
 class ClassificationReviewUpdateRequest(BaseModel):
     doc_type: str
     confirmed: bool = True
+    parser_mode: Optional[str] = None
 
 
 class ProcessResponse(BaseModel):
