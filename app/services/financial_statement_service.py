@@ -399,6 +399,16 @@ def _sum_account_balances(
     return total
 
 
+def _is_valid_puc_code(code: str) -> bool:
+    """A PUC code is at most 8 digits (class → group → account → sub-account,
+    2 chars each). Anything longer is almost certainly an LLM hallucination
+    (typically the saldo itself echoed as the code).
+    """
+    if not code:
+        return False
+    return code.isdigit() and 1 <= len(code) <= 8
+
+
 def _leaf_accounts(accounts: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Return only leaf accounts — those whose cuenta_puc is not a strict prefix
     of any other code in the same list.
@@ -408,16 +418,21 @@ def _leaf_accounts(accounts: list[dict[str, Any]] | None) -> list[dict[str, Any]
     codes are aggregates of the longer ones. Summing all rows double-counts.
     This helper keeps only the deepest level per branch so subsequent prefix
     sums are accurate regardless of how the LLM ordered the output.
+
+    Also drops rows whose ``cuenta_puc`` is not a valid PUC code (e.g. when
+    the LLM hallucinates a code from a "TOTAL" line and writes the saldo as
+    the cuenta_puc — see the 169098236 case observed in production).
     """
     if not isinstance(accounts, list):
         return []
-    codes = sorted(
-        {
-            str(a.get("cuenta_puc") or "")
-            for a in accounts
-            if isinstance(a, dict) and a.get("cuenta_puc")
-        }
-    )
+    # First filter: keep only entries whose cuenta_puc looks like a real PUC code.
+    valid = [
+        a
+        for a in accounts
+        if isinstance(a, dict)
+        and _is_valid_puc_code(str(a.get("cuenta_puc") or ""))
+    ]
+    codes = sorted({str(a.get("cuenta_puc") or "") for a in valid})
     aggregates: set[str] = set()
     for code in codes:
         if not code:
@@ -426,11 +441,7 @@ def _leaf_accounts(accounts: list[dict[str, Any]] | None) -> list[dict[str, Any]
             if other != code and other.startswith(code) and len(other) > len(code):
                 aggregates.add(code)
                 break
-    return [
-        a
-        for a in accounts
-        if isinstance(a, dict) and str(a.get("cuenta_puc") or "") not in aggregates
-    ]
+    return [a for a in valid if str(a.get("cuenta_puc") or "") not in aggregates]
 
 
 def _sum_leaves(

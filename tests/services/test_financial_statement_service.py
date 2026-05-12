@@ -206,6 +206,22 @@ def test_derive_raises_when_prior_balance_missing():
 # ─── v4 leaf-based extraction ─────────────────────────────────────────────────
 
 
+def test_leaf_accounts_drops_hallucinated_codes():
+    """LLM sometimes hallucinates the saldo as cuenta_puc on TOTAL lines
+    (e.g. '169098236'). Codes > 8 digits or non-numeric must be discarded."""
+    from app.services.financial_statement_service import _leaf_accounts
+
+    accs = [
+        {"cuenta_puc": "1105",      "saldo": "1000"},
+        {"cuenta_puc": "169098236", "saldo": "169098236", "nombre": "TOTAL PASIVO"},
+        {"cuenta_puc": "TOTAL",     "saldo": "9999"},
+        {"cuenta_puc": "",          "saldo": "8888"},
+    ]
+    leaves = _leaf_accounts(accs)
+    codes = {a["cuenta_puc"] for a in leaves}
+    assert codes == {"1105"}, codes
+
+
 def test_leaf_accounts_drops_aggregates():
     """Hierarchical PUC rows must collapse to leaves only — class/group/account
     aggregates are dropped so prefix-sums don't double-count."""
