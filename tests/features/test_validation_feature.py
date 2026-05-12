@@ -177,17 +177,17 @@ class TestContadorOutput:
         """Debits must equal credits."""
         valid_contador_data["asientos"][1]["valor"] = 100000.00
         valid_contador_data["total_creditos"] = 100000.00
-        with pytest.raises(ValidationError, match="Double-entry violation"):
+        with pytest.raises(ValidationError, match="Violación de partida doble"):
             ContadorOutput.model_validate(valid_contador_data)
 
     def test_invalid_puc_code(self, valid_contador_data):
         valid_contador_data["asientos"][0]["cuenta_puc"] = "ABCD"
-        with pytest.raises(ValidationError, match="Invalid PUC code"):
+        with pytest.raises(ValidationError, match="Código PUC inválido"):
             ContadorOutput.model_validate(valid_contador_data)
 
     def test_puc_code_too_long(self, valid_contador_data):
         valid_contador_data["asientos"][0]["cuenta_puc"] = "1234567"
-        with pytest.raises(ValidationError, match="Invalid PUC code"):
+        with pytest.raises(ValidationError, match="Código PUC inválido"):
             ContadorOutput.model_validate(valid_contador_data)
 
     def test_empty_asientos(self, valid_contador_data):
@@ -197,7 +197,7 @@ class TestContadorOutput:
 
     def test_total_mismatch(self, valid_contador_data):
         valid_contador_data["total_debitos"] = 999999
-        with pytest.raises(ValidationError, match="total_debitos"):
+        with pytest.raises(ValidationError, match="El total de débitos"):
             ContadorOutput.model_validate(valid_contador_data)
 
 
@@ -215,17 +215,17 @@ class TestTributarioOutput:
     def test_aplica_true_but_no_impuestos(self, valid_tributario_data):
         valid_tributario_data["impuestos"] = []
         valid_tributario_data["total_impuestos"] = 0
-        with pytest.raises(ValidationError, match="aplica_impuestos is True"):
+        with pytest.raises(ValidationError, match="aplica_impuestos es True"):
             TributarioOutput.model_validate(valid_tributario_data)
 
     def test_aplica_false_but_has_impuestos(self, valid_tributario_data):
         valid_tributario_data["aplica_impuestos"] = False
-        with pytest.raises(ValidationError, match="aplica_impuestos is False"):
+        with pytest.raises(ValidationError, match="aplica_impuestos es False"):
             TributarioOutput.model_validate(valid_tributario_data)
 
     def test_total_mismatch(self, valid_tributario_data):
         valid_tributario_data["total_impuestos"] = 10000
-        with pytest.raises(ValidationError, match="total_impuestos"):
+        with pytest.raises(ValidationError, match="El total de impuestos"):
             TributarioOutput.model_validate(valid_tributario_data)
 
     def test_tarifa_over_100(self, valid_tributario_data):
@@ -260,7 +260,7 @@ class TestAuditorOutput:
 
     def test_approved_with_high_risk(self, valid_auditor_data):
         valid_auditor_data["nivel_riesgo"] = "alto"
-        with pytest.raises(ValidationError, match="Cannot approve"):
+        with pytest.raises(ValidationError, match="No se puede aprobar"):
             AuditorOutput.model_validate(valid_auditor_data)
 
     def test_approved_with_critical_finding(self, valid_auditor_data):
@@ -273,7 +273,7 @@ class TestAuditorOutput:
                 "recomendacion": "Revisar y corregir el monto contra el documento fuente original",
             }
         ]
-        with pytest.raises(ValidationError, match="critical findings"):
+        with pytest.raises(ValidationError, match="hallazgos críticos"):
             AuditorOutput.model_validate(valid_auditor_data)
 
     def test_invalid_finding_code(self, valid_auditor_data):

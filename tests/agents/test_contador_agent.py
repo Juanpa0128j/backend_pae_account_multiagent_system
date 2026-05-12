@@ -260,3 +260,57 @@ def test_contador_prompt_uses_fallback_when_rag_context_is_empty() -> None:
     prompt_text = captured[0]
 
     assert "Sin contexto normativo adicional." in prompt_text
+
+
+def test_exhausted_validation_user_message_has_clean_bullets_not_raw_dicts() -> None:
+    """When schema validation is exhausted, user_message_es should show only
+    the error msg per bullet point, never raw Pydantic dict traces."""
+    unbalanced = {
+        "fecha_registro": "2026-03-01",
+        "tipo_documento": "factura",
+        "descripcion_general": "Asiento invalido",
+        "asientos": [
+            {
+                "cuenta_puc": "5135",
+                "nombre_cuenta": "Servicios",
+                "tipo_movimiento": "debito",
+                "valor": 1000000,
+            },
+            {
+                "cuenta_puc": "2205",
+                "nombre_cuenta": "Proveedores",
+                "tipo_movimiento": "credito",
+                "valor": 900000,
+            },
+        ],
+        "total_debitos": 1000000,
+        "total_creditos": 900000,
+    }
+
+    state = _base_state(
+        contador_output=unbalanced, interpreted_data=unbalanced, retry_count=3
+    )
+    result = validate_contador_output_node(state)
+
+    assert result.get("giveup_record") is not None
+    findings = result["giveup_record"]["last_findings"]
+    assert len(findings) > 0
+    user_msg = findings[0]["user_message_es"]
+
+    # Must NOT contain raw dict artifacts
+    assert "'loc':" not in user_msg
+    assert "'type':" not in user_msg
+    assert "'input':" not in user_msg
+
+    # MUST contain the Spanish human-readable msg, never the English original
+    assert "Violación de partida doble" in user_msg
+    assert "débitos" in user_msg
+    assert "créditos" in user_msg
+
+    # Must NOT contain the original English wording
+    assert "Double-entry" not in user_msg
+    assert "debits" not in user_msg
+    assert "credits" not in user_msg
+
+    # Should be formatted as bullet points (lines starting with "-")
+    assert any(line.strip().startswith("-") for line in user_msg.splitlines())

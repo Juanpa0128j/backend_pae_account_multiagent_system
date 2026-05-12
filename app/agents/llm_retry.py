@@ -70,12 +70,12 @@ def is_permanent_provider_error(exc: BaseException) -> bool:
 
 def is_double_entry_violation(exc: BaseException) -> bool:
     """Return True if the parse error message describes a double-entry violation."""
-    return is_parse_error(exc) and "Double-entry violation" in str(exc)
+    return is_parse_error(exc) and "Violación de partida doble" in str(exc)
 
 
 def is_invalid_puc(exc: BaseException) -> bool:
     """Return True if the parse error message describes an invalid PUC code."""
-    return is_parse_error(exc) and "Invalid PUC code" in str(exc)
+    return is_parse_error(exc) and "Código PUC inválido" in str(exc)
 
 
 def llm_with_parse_retry(
