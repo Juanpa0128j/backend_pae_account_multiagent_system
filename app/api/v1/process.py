@@ -87,6 +87,16 @@ def _classify_process_error(
             "Los códigos PUC indicados no existen en la base de datos. Corrija el documento y vuelva a cargarlo.",
         )
 
+    if "no contador asientos" in msg or "no asientos" in msg:
+        return (
+            "extraction_error",
+            "NO_CONTADOR_ASIENTOS",
+            "El sistema no pudo generar asientos contables a partir del documento. "
+            "Esto suele ocurrir cuando el archivo es una imagen escaneada de baja calidad "
+            "o no contiene datos legibles. Intente usar el modo de extracción Premium o GPT-4o "
+            "y vuelva a cargar el archivo.",
+        )
+
     return (
         "system_error",
         "PROCESS_EXECUTION_ERROR",
