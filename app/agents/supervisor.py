@@ -16,6 +16,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.agents.agent_utils import append_log
+from app.agents.ingest_agent import _build_llama_parse_kwargs
 from app.agents.state import AgentState
 from app.agents.audit_utils import build_pinpointed_prompt, record_giveup
 from app.agents.validation_rules import (
@@ -226,9 +227,12 @@ def supervisor_node(state: AgentState) -> AgentState:
                 from app.core.config import get_settings
 
                 settings = get_settings()
+                parser_mode = state.get("parser_mode", "fast")
                 parser = LlamaParse(
-                    api_key=settings.llama_cloud_api_key,
-                    result_type="markdown",
+                    **_build_llama_parse_kwargs(
+                        parser_mode,
+                        settings.llama_cloud_api_key,
+                    )
                 )
                 documents = parser.load_data(file_path)
                 image_text = "\n\n".join([doc.text for doc in documents])
@@ -237,10 +241,12 @@ def supervisor_node(state: AgentState) -> AgentState:
                     logger.warning(
                         "Supervisor: empty image preview in markdown mode; retrying with text mode"
                     )
-                    parser = LlamaParse(
-                        api_key=settings.llama_cloud_api_key,
-                        result_type="text",
+                    fallback_kwargs = _build_llama_parse_kwargs(
+                        parser_mode,
+                        settings.llama_cloud_api_key,
                     )
+                    fallback_kwargs["result_type"] = "text"
+                    parser = LlamaParse(**fallback_kwargs)
                     documents = parser.load_data(file_path)
                     image_text = "\n\n".join([doc.text for doc in documents])
 
