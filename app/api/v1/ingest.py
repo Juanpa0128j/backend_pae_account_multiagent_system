@@ -548,6 +548,48 @@ async def update_ingest_classification(
     return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))
 
 
+@router.patch(
+    "/{ingest_id}/cancel",
+    response_model=IngestDetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cancel_ingest(
+    ingest_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    job = db_service.get_ingest_job(db, ingest_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Trabajo de ingesta no encontrado")
+
+    current_status = job.status
+    if isinstance(current_status, str):
+        current_status = IngestStatus(current_status)
+
+    if current_status == IngestStatus.CANCELLED:
+        raise HTTPException(
+            status_code=409, detail="El trabajo de ingesta ya fue cancelado"
+        )
+
+    if current_status in (IngestStatus.COMPLETED, IngestStatus.FAILED):
+        raise HTTPException(
+            status_code=409, detail="No se puede cancelar un trabajo que ya terminó"
+        )
+
+    db_service.update_ingest_job(db, ingest_id, IngestStatus.CANCELLED)
+
+    # Clean up temp file if present
+    if job.file_path:
+        try:
+            Path(job.file_path).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to delete temp file %s", job.file_path)
+
+    refreshed = db_service.get_ingest_job(db, ingest_id)
+    return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))
+
+
 @router.get("/{ingest_id}/trace", response_model=PipelineTrace)
 async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
     """Accountant-facing trace for an ingest job.
