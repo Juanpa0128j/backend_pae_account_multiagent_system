@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 
 from app.services import db_service
 
-
 # ---------------------------------------------------------------------------
 # db_service unit tests
 # ---------------------------------------------------------------------------

@@ -12,7 +12,6 @@ from app.agents.contador_puc_corrector import (
     correct_contador_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # correct_5195_fallback — keyword-driven specialization
 # ---------------------------------------------------------------------------
