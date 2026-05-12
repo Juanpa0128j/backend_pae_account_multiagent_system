@@ -1,4 +1,4 @@
-.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new migrate-check-heads pipeline-test pipeline-setup-nit db-up db-down db-logs db-reset db-shell db-migrate
+.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new migrate-check-heads pipeline-test pipeline-setup-nit db-up db-down db-logs db-reset db-shell db-migrate seed dev-bootstrap
 
 # Default target
 help:
@@ -36,6 +36,8 @@ help:
 	@echo "  db-migrate     Run alembic upgrade head against the local DB"
 	@echo "  db-logs        Tail the local DB logs"
 	@echo "  db-shell       Open a psql shell on the local DB"
+	@echo "  seed           Seed PUC accounts + RAG normativa (takes 3-5 min)"
+	@echo "  dev-bootstrap  One-shot: db-up + migrate + seed (run from devcontainer)"
 	@echo ""
 	@echo "Cleanup"
 	@echo "  clean          Remove __pycache__, .pytest_cache, .ruff_cache, *.pyc"
@@ -188,6 +190,13 @@ db-reset:
 
 db-migrate:
 	DATABASE_URL=$(LOCAL_DATABASE_URL) uv run alembic upgrade head
+
+seed:
+	uv run python scripts/seed_puc.py
+	uv run python scripts/populate_rag.py
+
+dev-bootstrap: db-up db-migrate seed
+	@echo ">>> Dev environment ready (DB up + migrations applied + PUC/RAG seeded)."
 
 db-logs:
 	docker compose -f docker-compose.dev.yml logs -f db
