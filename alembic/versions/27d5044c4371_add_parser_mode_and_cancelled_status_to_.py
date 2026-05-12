@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.execute("ALTER TYPE ingeststatus ADD VALUE IF NOT EXISTS 'cancelled'")
+    op.execute("ALTER TYPE ingeststatus ADD VALUE IF NOT EXISTS 'CANCELLED'")
     op.add_column(
         "ingest_jobs",
         sa.Column(

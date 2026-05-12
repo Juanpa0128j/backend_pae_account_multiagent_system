@@ -67,7 +67,7 @@ class IngestStatus(str, enum.Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+    CANCELLED = "CANCELLED"
 
 
 class TerceroTipo(str, enum.Enum):

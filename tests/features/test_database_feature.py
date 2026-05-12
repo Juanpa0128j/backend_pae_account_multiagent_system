@@ -742,4 +742,4 @@ class TestParserModeAndCancelledStatus:
         assert found.parser_mode == "fast"
 
     def test_ingest_status_has_cancelled(self):
-        assert IngestStatus.CANCELLED == "cancelled"
+        assert IngestStatus.CANCELLED == "CANCELLED"

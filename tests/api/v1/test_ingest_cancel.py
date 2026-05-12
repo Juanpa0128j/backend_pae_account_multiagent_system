@@ -54,7 +54,7 @@ class TestIngestCancel:
         response = client.patch("/api/v1/ingest/ingest-test-123/cancel")
         assert response.status_code == 202
         data = response.json()
-        assert data["status"] == "cancelled"
+        assert data["status"] == "CANCELLED"
 
     def test_cancel_already_cancelled_returns_409(self, monkeypatch):
         """Cancelling an already cancelled job should return 409."""
