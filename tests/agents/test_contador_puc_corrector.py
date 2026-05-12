@@ -10,6 +10,7 @@ from app.agents.contador_puc_corrector import (
     correct_ce_220505_credit,
     correct_class_only_codes,
     correct_contador_output,
+    correct_cross_class_codes,
 )
 
 # ---------------------------------------------------------------------------
@@ -290,3 +291,51 @@ def test_doc_subtype_default_factura_compra_keeps_220505():
     }
     out = correct_contador_output(output)
     assert out["asientos"][0]["cuenta_puc"] == "220505"
+
+
+# ---------------------------------------------------------------------------
+# correct_cross_class_codes — fix LLM mistakes that put a known account
+# in the wrong class (e.g. 5110 + "Bancos" -> 111005)
+# ---------------------------------------------------------------------------
+
+
+def test_cross_class_swap_5110_banco_to_111005():
+    line = {"cuenta_puc": "5110", "descripcion": "Movimiento en bancos"}
+    out = correct_cross_class_codes(line)
+    assert out["cuenta_puc"] == "111005"
+
+
+def test_cross_class_swap_5305_interes_to_530520():
+    line = {"cuenta_puc": "5305", "descripcion": "Intereses moratorios"}
+    out = correct_cross_class_codes(line)
+    assert out["cuenta_puc"] == "530520"
+
+
+def test_cross_class_swap_5135_agua_to_513540():
+    line = {"cuenta_puc": "5135", "descripcion": "Pago agua acueducto"}
+    out = correct_cross_class_codes(line)
+    assert out["cuenta_puc"] == "513540"
+
+
+def test_cross_class_no_swap_unknown_combo():
+    line = {"cuenta_puc": "5110", "descripcion": "Algo sin keyword"}
+    out = correct_cross_class_codes(line)
+    assert out["cuenta_puc"] == "5110"
+
+
+def test_cross_class_no_swap_unknown_cuenta():
+    line = {"cuenta_puc": "9999", "descripcion": "Bancos"}
+    out = correct_cross_class_codes(line)
+    assert out["cuenta_puc"] == "9999"
+
+
+def test_correct_asiento_lines_runs_cross_class_before_class_only():
+    """Cross-class corrector should run before same-class corrector so the
+    5110 -> 111005 swap actually applies (the same-class corrector's
+    startswith() guard would block it otherwise).
+    """
+    lines = [
+        {"cuenta_puc": "5110", "descripcion": "Bancos", "tipo_movimiento": "debito"}
+    ]
+    out = correct_asiento_lines(lines)
+    assert out[0]["cuenta_puc"] == "111005"

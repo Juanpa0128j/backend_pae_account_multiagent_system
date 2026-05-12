@@ -582,6 +582,24 @@ def _run_persist(state: AgentState) -> AgentState:
             else:
                 cuenta_puc = as_str(tx_data.get("cuenta_puc"), "")
                 if not cuenta_puc:
+                    # No cuenta_puc in extracted data — skip persisting a posted
+                    # record in ingest mode. Pipeline 2 (mode=process, after HITL
+                    # confirm) will classify via contador and persist the correct
+                    # posted. Without this skip we'd create a placeholder posted
+                    # with 519595 fallback that duplicates the one Pipeline 2
+                    # creates with the proper cuenta — bug P0-1.
+                    pathway_value = state.get("pathway") or ""
+                    if pathway_value != "work_with_existing":
+                        logger.info(
+                            "db_persist[ingest]: skipping posted creation — no cuenta_puc "
+                            "in extracted data; Pipeline 2 will classify and persist "
+                            "(pending_id=%s)",
+                            as_str(getattr(txn_pending, "id", "")),
+                        )
+                        continue
+                    # Vía B (work_with_existing) still needs a posted record
+                    # even without cuenta_puc — those docs don't go through
+                    # the contador pipeline.
                     logger.warning(
                         "db_persist: No PUC code in ingest data — "
                         "defaulting to 519595 (Otros Gastos). "

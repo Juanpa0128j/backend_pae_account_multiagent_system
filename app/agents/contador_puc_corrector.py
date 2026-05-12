@@ -201,6 +201,46 @@ def correct_ce_220505_credit(line: dict, doc_subtype: str) -> dict:
 _CLASS_REQUIRES_SPECIALIZATION = ("4", "5", "6")
 
 
+# Cross-class corrections: when the LLM picks a 4-digit code in the wrong
+# class entirely (e.g. "5110" with description "Bancos" — should be 111005
+# in class 1, not class 5). The same-class corrector (`correct_class_only_codes`)
+# explicitly refuses cross-class swaps via the `startswith(cuenta[0])` guard,
+# so we need a separate corrector that runs FIRST with explicit (wrong, keywords,
+# target) tuples for the known LLM mistakes we observe in production.
+_CROSS_CLASS_CORRECTIONS: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    # (wrong_cuenta, keyword_substrings_in_description, target_cuenta)
+    ("5110", ("banco", "bancos"), "111005"),
+    ("5305", ("interes", "mora"), "530520"),
+    ("5135", ("agua", "internet", "servicio publico", "servicios publicos"), "513540"),
+    ("4135", ("venta", "comercio"), "413535"),
+)
+
+
+def correct_cross_class_codes(line: dict) -> dict:
+    """Fix LLM mistakes where it placed a known account in the wrong class.
+
+    Runs BEFORE `correct_class_only_codes` — if a swap applies, the line
+    becomes a valid 6-digit subaccount and the same-class corrector no-ops.
+    Without this pass the same-class corrector would block the swap because
+    it requires the suggestion to start with the same class digit.
+    """
+    cuenta = str(line.get("cuenta_puc") or "").strip()
+    description = str(
+        line.get("descripcion") or line.get("concepto") or line.get("description") or ""
+    ).lower()
+    for wrong, keywords, target in _CROSS_CLASS_CORRECTIONS:
+        if cuenta == wrong and any(kw in description for kw in keywords):
+            logger.info(
+                "contador_puc_corrector: cross-class swap %s -> %s based on description=%r",
+                cuenta,
+                target,
+                description[:120],
+            )
+            line["cuenta_puc"] = target
+            return line
+    return line
+
+
 def correct_class_only_codes(line: dict) -> dict:
     """When the LLM returns a 4-digit class-level code for an income or
     expense line, attempt to specialize via keyword matching. If no
@@ -242,6 +282,7 @@ def correct_asiento_lines(lines: Iterable[dict], doc_subtype: str = "") -> list[
     out: list[dict] = []
     for raw in lines:
         line = dict(raw)
+        line = correct_cross_class_codes(line)
         line = correct_5195_fallback(line)
         line = correct_ce_220505_credit(line, doc_subtype)
         line = correct_class_only_codes(line)
