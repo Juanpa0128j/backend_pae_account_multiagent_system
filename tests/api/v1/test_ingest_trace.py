@@ -210,6 +210,7 @@ class TestIngestStatusEndpoint:
         mock_job.file_name = "test.pdf"
         mock_job.document_type = "factura_venta"
         mock_job.pathway = "via_a"
+        mock_job.parser_mode = "fast"
         mock_job.created_at = datetime.now(timezone.utc)
         mock_job.completed_at = None
         mock_job.extraction_errors = []
