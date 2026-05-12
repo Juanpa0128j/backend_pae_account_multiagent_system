@@ -201,3 +201,82 @@ def test_derive_raises_when_prior_balance_missing():
             assert "período anterior" in str(exc)
         else:  # pragma: no cover
             raise AssertionError("Expected BusinessRuleError when prior BG is missing")
+
+
+# ─── v4 leaf-based extraction ─────────────────────────────────────────────────
+
+
+def test_leaf_accounts_drops_aggregates():
+    """Hierarchical PUC rows must collapse to leaves only — class/group/account
+    aggregates are dropped so prefix-sums don't double-count."""
+    from app.services.financial_statement_service import _leaf_accounts, _sum_leaves
+
+    accounts = [
+        {"cuenta_puc": "11", "nombre": "DISPONIBLE", "saldo": "92966415.31"},     # class
+        {"cuenta_puc": "1120", "nombre": "CTA AHORRO", "saldo": "20552619.31"},   # group
+        {"cuenta_puc": "112005", "nombre": "BANCOS", "saldo": "20552619.31"},     # account
+        {"cuenta_puc": "11200501", "nombre": "Bancolombia", "saldo": "20552619.31"},  # leaf
+        {"cuenta_puc": "1125", "nombre": "FONDOS", "saldo": "72413796"},          # group
+        {"cuenta_puc": "112501", "nombre": "Fiducuenta", "saldo": "72413796"},    # leaf
+    ]
+    leaves = _leaf_accounts(accounts)
+    leaf_codes = {a["cuenta_puc"] for a in leaves}
+    assert leaf_codes == {"11200501", "112501"}, leaf_codes
+    # Class 11 prefix sum over leaves must NOT double-count.
+    total = _sum_leaves(leaves, "11")
+    assert total == 20552619.31 + 72413796
+
+
+def test_cash_flow_v4_handles_hierarchical_extraction():
+    """When the LLM emits hierarchical rows for the same account at multiple
+    levels, v4 must dedupe via _leaf_accounts so deltas are correct.
+    Regression for the Pruebilla scenario observed in production."""
+    from app.services.financial_statement_service import _compute_cash_flow_indirect
+
+    # Jan-26 BG: hierarchical extraction (class + group + account + sub-account).
+    bg = {
+        "total_patrimonio": 0,
+        "activos_corrientes": {},
+        "activos_no_corrientes": {},
+        "pasivos_corrientes": {},
+        "pasivos_no_corrientes": {},
+        "patrimonio": {},
+        "accounts": [
+            {"cuenta_puc": "11", "saldo": "1500"},
+            {"cuenta_puc": "1105", "saldo": "1500"},
+            {"cuenta_puc": "110505", "saldo": "1500"},  # leaf
+            {"cuenta_puc": "159205", "saldo": "-300"},  # leaf — dep acumulada
+        ],
+    }
+    # Dec-25 BG: leaves only.
+    prior_bg = {
+        "total_patrimonio": 0,
+        "activos_corrientes": {},
+        "activos_no_corrientes": {},
+        "pasivos_corrientes": {},
+        "pasivos_no_corrientes": {},
+        "patrimonio": {},
+        "accounts": [
+            {"cuenta_puc": "110505", "saldo": "1000"},
+            {"cuenta_puc": "159205", "saldo": "-200"},
+        ],
+    }
+    er = {"utilidad_neta": 400, "impuesto_renta": 0}
+
+    out = _compute_cash_flow_indirect(
+        company_nit="800999888",
+        period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        period_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+        bg_data=bg,
+        prior_bg_data=prior_bg,
+        er_data=er,
+        la_data={"lines": []},
+    )
+
+    # Efectivo fin must be 1500 (the leaf), not 4500 (sum of all 11* levels).
+    assert out["efectivo_fin_periodo"] == 1500.0
+    assert out["efectivo_inicio_periodo"] == 1000.0
+    # Depreciation = abs(-300 - (-200)) = 100.
+    assert out["informacion_adicional"]["adjustments"]["depreciacion_periodo"] == 100.0
+    # rule_version must be v4.
+    assert out["informacion_adicional"]["rule_version"] == "v4"

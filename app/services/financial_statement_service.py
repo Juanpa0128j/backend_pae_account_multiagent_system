@@ -381,7 +381,12 @@ def _load_prior_balance(
 def _sum_account_balances(
     accounts: list[dict[str, Any]] | None, *prefixes: str
 ) -> Decimal:
-    """Sum the absolute `saldo` of accounts whose cuenta_puc starts with any prefix."""
+    """Sum the `saldo` of accounts whose cuenta_puc starts with any prefix.
+
+    DEPRECATED for new code — prefer `_sum_leaves` when the accounts list may
+    contain hierarchical aggregates (group + sub-account + leaf). This helper
+    does NOT dedupe and will double-count multi-level extractions.
+    """
     if not isinstance(accounts, list):
         return Decimal("0")
     total = Decimal("0")
@@ -391,6 +396,57 @@ def _sum_account_balances(
         code = str(acc.get("cuenta_puc") or acc.get("codigo") or "")
         if any(code.startswith(p) for p in prefixes):
             total += _dec(acc.get("saldo") or acc.get("valor"))
+    return total
+
+
+def _leaf_accounts(accounts: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Return only leaf accounts — those whose cuenta_puc is not a strict prefix
+    of any other code in the same list.
+
+    The LLM sometimes emits hierarchical PUC rows (e.g. class ``11``, group
+    ``1120``, account ``112005``, sub-account ``11200501``) where the shorter
+    codes are aggregates of the longer ones. Summing all rows double-counts.
+    This helper keeps only the deepest level per branch so subsequent prefix
+    sums are accurate regardless of how the LLM ordered the output.
+    """
+    if not isinstance(accounts, list):
+        return []
+    codes = sorted(
+        {
+            str(a.get("cuenta_puc") or "")
+            for a in accounts
+            if isinstance(a, dict) and a.get("cuenta_puc")
+        }
+    )
+    aggregates: set[str] = set()
+    for code in codes:
+        if not code:
+            continue
+        for other in codes:
+            if other != code and other.startswith(code) and len(other) > len(code):
+                aggregates.add(code)
+                break
+    return [
+        a
+        for a in accounts
+        if isinstance(a, dict) and str(a.get("cuenta_puc") or "") not in aggregates
+    ]
+
+
+def _sum_leaves(
+    leaves: list[dict[str, Any]],
+    *prefixes: str,
+    exclude: tuple[str, ...] = (),
+) -> Decimal:
+    """Sum saldos of leaf accounts whose code matches any prefix and no exclude."""
+    total = Decimal("0")
+    for acc in leaves:
+        code = str(acc.get("cuenta_puc") or acc.get("codigo") or "")
+        if not any(code.startswith(p) for p in prefixes):
+            continue
+        if exclude and any(code.startswith(e) for e in exclude):
+            continue
+        total += _dec(acc.get("saldo") or acc.get("valor"))
     return total
 
 
@@ -416,46 +472,65 @@ def _compute_cash_flow_indirect(
     er_data: dict[str, Any],
     la_data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Full NIC 7 indirect method using BG (current + prior) + ER + LA."""
+    """Full NIC 7 indirect method using BG (current + prior) + ER + LA.
+
+    v4: reads from leaf-level `accounts[]` (deduped via _leaf_accounts) using
+    PUC class prefixes. This is robust to the LLM emitting hierarchical rows or
+    inconsistent NIIF categorization between the two BGs (corriente vs no
+    corriente, bruto vs neto). Falls back to nested keys only when the
+    accounts list is empty.
+    """
+
+    # ── Deduped leaf accounts (so hierarchical aggregates don't double-count) ──
+    leaves_now = _leaf_accounts(bg_data.get("accounts"))
+    leaves_prior = _leaf_accounts(prior_bg_data.get("accounts"))
+    er_leaves = _leaf_accounts(er_data.get("accounts"))
+
+    def _bg_metric(prefix_args, exclude=(), nested_path=None):
+        """Sum leaves by prefix; fallback to nested-key if accounts are empty."""
+        prefixes = (prefix_args,) if isinstance(prefix_args, str) else tuple(prefix_args)
+        now = _sum_leaves(leaves_now, *prefixes, exclude=exclude)
+        prior = _sum_leaves(leaves_prior, *prefixes, exclude=exclude)
+        if now == 0 and prior == 0 and nested_path:
+            now = _nested(bg_data, *nested_path)
+            prior = _nested(prior_bg_data, *nested_path)
+        return now, prior
 
     # ── Starting point: utilidad neta ──────────────────────────────────
     utilidad_neta = _dec(er_data.get("utilidad_neta"))
 
-    # ── Add-back: depreciation (hybrid — BG diff preferred, ER accounts fallback) ──
-    dep_acum_now = _sum_account_balances(bg_data.get("accounts"), "159")
-    dep_acum_prior = _sum_account_balances(prior_bg_data.get("accounts"), "159")
-    depreciacion_periodo: Decimal
-    if dep_acum_now and dep_acum_prior is not None:
+    # ── Add-back: depreciation (BG diff preferred, ER accounts fallback) ──
+    dep_acum_now = _sum_leaves(leaves_now, "159")
+    dep_acum_prior = _sum_leaves(leaves_prior, "159")
+    if dep_acum_now or dep_acum_prior:
+        # 159* saldos are negative (contra-asset). The expense for the period is
+        # the absolute change between two snapshots.
         depreciacion_periodo = abs(dep_acum_now - dep_acum_prior)
     else:
-        depreciacion_periodo = _sum_account_balances(
-            er_data.get("accounts"), "5160", "5260", "7560"
-        )
+        depreciacion_periodo = _sum_leaves(er_leaves, "5160", "5260", "7560")
 
     # ── Provisions (gasto-side, class 519x) ────────────────────────────
-    provisiones = _sum_account_balances(er_data.get("accounts"), "519")
+    provisiones = _sum_leaves(er_leaves, "519")
 
-    # ── Working capital variations ─────────────────────────────────────
-    cxc_now = _nested(bg_data, "activos_corrientes", "cuentas_por_cobrar_comerciales")
-    cxc_prior = _nested(
-        prior_bg_data, "activos_corrientes", "cuentas_por_cobrar_comerciales"
+    # ── Working capital variations (PUC class prefixes) ────────────────
+    cxc_now, cxc_prior = _bg_metric(
+        "13", nested_path=("activos_corrientes", "cuentas_por_cobrar_comerciales")
     )
+    inv_now, inv_prior = _bg_metric(
+        "14", nested_path=("activos_corrientes", "inventarios")
+    )
+    cxp_now, cxp_prior = _bg_metric(
+        ("22", "23"),
+        nested_path=("pasivos_corrientes", "cuentas_por_pagar_comerciales"),
+    )
+    obl_lab_now, obl_lab_prior = _bg_metric(
+        ("25", "26"),
+        nested_path=("pasivos_corrientes", "obligaciones_laborales"),
+    )
+
     delta_cxc = cxc_now - cxc_prior
-
-    inv_now = _nested(bg_data, "activos_corrientes", "inventarios")
-    inv_prior = _nested(prior_bg_data, "activos_corrientes", "inventarios")
     delta_inv = inv_now - inv_prior
-
-    cxp_now = _nested(bg_data, "pasivos_corrientes", "cuentas_por_pagar_comerciales")
-    cxp_prior = _nested(
-        prior_bg_data, "pasivos_corrientes", "cuentas_por_pagar_comerciales"
-    )
     delta_cxp = cxp_now - cxp_prior
-
-    obl_lab_now = _nested(bg_data, "pasivos_corrientes", "obligaciones_laborales")
-    obl_lab_prior = _nested(
-        prior_bg_data, "pasivos_corrientes", "obligaciones_laborales"
-    )
     delta_obl_lab = obl_lab_now - obl_lab_prior
 
     impuesto_renta = _dec(er_data.get("impuesto_renta"))
@@ -471,16 +546,21 @@ def _compute_cash_flow_indirect(
         - impuesto_renta
     )
 
-    # ── Investment: Δ PPE (class 15 net of depreciation) + Δ intangibles + Δ inv LP ──
-    ppe_now = _nested(bg_data, "activos_no_corrientes", "propiedades_planta_equipo")
-    ppe_prior = _nested(
-        prior_bg_data, "activos_no_corrientes", "propiedades_planta_equipo"
+    # ── Investment: Δ PPE bruto + Δ intangibles + Δ inversiones (class 12) ──
+    # PPE bruto = class 15 minus 159 (depreciation already accounted for in
+    # the operating add-back).
+    ppe_now, ppe_prior = _bg_metric(
+        "15",
+        exclude=("159",),
+        nested_path=("activos_no_corrientes", "propiedades_planta_equipo"),
     )
-    intan_now = _nested(bg_data, "activos_no_corrientes", "intangibles")
-    intan_prior = _nested(prior_bg_data, "activos_no_corrientes", "intangibles")
-    inv_lp_now = _nested(bg_data, "activos_no_corrientes", "inversiones_largo_plazo")
-    inv_lp_prior = _nested(
-        prior_bg_data, "activos_no_corrientes", "inversiones_largo_plazo"
+    intan_now, intan_prior = _bg_metric(
+        "16", nested_path=("activos_no_corrientes", "intangibles")
+    )
+    # Class 12 = Inversiones (covers both corto and largo plazo; the LLM-imposed
+    # corriente/no corriente split is too brittle here).
+    inv_lp_now, inv_lp_prior = _bg_metric(
+        "12", nested_path=("activos_no_corrientes", "inversiones_largo_plazo")
     )
     flujo_inversion = (
         -(ppe_now - ppe_prior)
@@ -488,21 +568,23 @@ def _compute_cash_flow_indirect(
         - (inv_lp_now - inv_lp_prior)
     )
 
-    # ── Financing: Δ obligaciones financieras + Δ capital + dividendos ──
-    ob_fin_cp_now = _nested(bg_data, "pasivos_corrientes", "obligaciones_financieras_cp")
-    ob_fin_cp_prior = _nested(
-        prior_bg_data, "pasivos_corrientes", "obligaciones_financieras_cp"
+    # ── Financing: Δ obligaciones financieras (class 21, cp+lp together) + Δ capital - dividendos ──
+    ob_fin_now = _sum_leaves(leaves_now, "21")
+    ob_fin_prior = _sum_leaves(leaves_prior, "21")
+    if ob_fin_now == 0 and ob_fin_prior == 0:
+        ob_fin_now = _nested(
+            bg_data, "pasivos_corrientes", "obligaciones_financieras_cp"
+        ) + _nested(bg_data, "pasivos_no_corrientes", "obligaciones_financieras_lp")
+        ob_fin_prior = _nested(
+            prior_bg_data, "pasivos_corrientes", "obligaciones_financieras_cp"
+        ) + _nested(
+            prior_bg_data, "pasivos_no_corrientes", "obligaciones_financieras_lp"
+        )
+    capital_now, capital_prior = _bg_metric(
+        "31", nested_path=("patrimonio", "capital_social")
     )
-    ob_fin_lp_now = _nested(
-        bg_data, "pasivos_no_corrientes", "obligaciones_financieras_lp"
-    )
-    ob_fin_lp_prior = _nested(
-        prior_bg_data, "pasivos_no_corrientes", "obligaciones_financieras_lp"
-    )
-    capital_now = _nested(bg_data, "patrimonio", "capital_social")
-    capital_prior = _nested(prior_bg_data, "patrimonio", "capital_social")
 
-    # Dividendos pagados: LA lines with cuenta_puc startswith "3705" and debito>0
+    # Dividendos pagados: LA lines with cuenta_puc startswith "3705" and debito>0.
     dividendos = Decimal("0")
     la_lines = la_data.get("lines") or []
     if isinstance(la_lines, list):
@@ -514,21 +596,18 @@ def _compute_cash_flow_indirect(
                 dividendos += _dec(line.get("debito"))
 
     flujo_financiacion = (
-        (ob_fin_cp_now - ob_fin_cp_prior)
-        + (ob_fin_lp_now - ob_fin_lp_prior)
-        + (capital_now - capital_prior)
-        - dividendos
+        (ob_fin_now - ob_fin_prior) + (capital_now - capital_prior) - dividendos
     )
 
     # ── Cash positions ────────────────────────────────────────────────
-    efectivo_fin = _nested(bg_data, "activos_corrientes", "efectivo_equivalentes")
+    efectivo_fin = _sum_leaves(leaves_now, "11")
     if efectivo_fin == 0:
-        efectivo_fin = _sum_account_balances(bg_data.get("accounts"), "11")
-    efectivo_inicio = _nested(
-        prior_bg_data, "activos_corrientes", "efectivo_equivalentes"
-    )
+        efectivo_fin = _nested(bg_data, "activos_corrientes", "efectivo_equivalentes")
+    efectivo_inicio = _sum_leaves(leaves_prior, "11")
     if efectivo_inicio == 0:
-        efectivo_inicio = _sum_account_balances(prior_bg_data.get("accounts"), "11")
+        efectivo_inicio = _nested(
+            prior_bg_data, "activos_corrientes", "efectivo_equivalentes"
+        )
 
     aumento_neto = flujo_operacion + flujo_inversion + flujo_financiacion
     expected_fin = efectivo_inicio + aumento_neto
@@ -553,7 +632,8 @@ def _compute_cash_flow_indirect(
         "verificacion": verificacion,
         "informacion_adicional": {
             "derivation_basis": list(_REQUIRED_DERIVATION_INPUTS),
-            "rule_version": "v3",
+            "rule_version": "v4",
+            "source": "leaf_accounts_by_puc_class",
             "adjustments": {
                 "utilidad_neta": float(utilidad_neta),
                 "depreciacion_periodo": float(depreciacion_periodo),
@@ -565,13 +645,8 @@ def _compute_cash_flow_indirect(
                 "impuesto_renta": float(impuesto_renta),
                 "delta_ppe": float(ppe_now - ppe_prior),
                 "delta_intangibles": float(intan_now - intan_prior),
-                "delta_inversiones_largo_plazo": float(inv_lp_now - inv_lp_prior),
-                "delta_obligaciones_financieras_cp": float(
-                    ob_fin_cp_now - ob_fin_cp_prior
-                ),
-                "delta_obligaciones_financieras_lp": float(
-                    ob_fin_lp_now - ob_fin_lp_prior
-                ),
+                "delta_inversiones": float(inv_lp_now - inv_lp_prior),
+                "delta_obligaciones_financieras": float(ob_fin_now - ob_fin_prior),
                 "delta_capital_social": float(capital_now - capital_prior),
                 "dividendos_pagados": float(dividendos),
             },
@@ -605,17 +680,29 @@ def _compute_equity_changes(
     er_data: dict[str, Any],
     la_data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build per-component equity changes (NIC 1 / Sección 6 NIIF Pymes)."""
+    """Build per-component equity changes (NIC 1 / Sección 6 NIIF Pymes).
+
+    v4: reads saldos from leaf-level `accounts[]` filtered by PUC class prefix
+    first, falling back to the nested `patrimonio.<key>` only when the
+    accounts list is empty. This avoids the LLM's inconsistent categorization
+    between BGs and double-counting of hierarchical levels.
+    """
 
     la_lines = la_data.get("lines") or []
     la_lines = la_lines if isinstance(la_lines, list) else []
+
+    leaves_now = _leaf_accounts(bg_data.get("accounts"))
+    leaves_prior = _leaf_accounts(prior_bg_data.get("accounts"))
 
     componentes: list[dict[str, Any]] = []
     utilidad_neta = _dec(er_data.get("utilidad_neta"))
 
     for label, prefix, nested_key in _EQUITY_COMPONENTS:
-        saldo_final = _nested(bg_data, "patrimonio", nested_key)
-        saldo_inicial = _nested(prior_bg_data, "patrimonio", nested_key)
+        saldo_final = _sum_leaves(leaves_now, prefix)
+        saldo_inicial = _sum_leaves(leaves_prior, prefix)
+        if saldo_final == 0 and saldo_inicial == 0:
+            saldo_final = _nested(bg_data, "patrimonio", nested_key)
+            saldo_inicial = _nested(prior_bg_data, "patrimonio", nested_key)
 
         movimientos: list[dict[str, Any]] = []
         # Utilidad del ejercicio goes directly into resultados_del_ejercicio.
@@ -685,7 +772,8 @@ def _compute_equity_changes(
         "total_patrimonio_inicio": float(total_patrimonio_inicio),
         "total_patrimonio_fin": float(total_patrimonio_fin),
         "informacion_adicional": {
-            "rule_version": "v3",
+            "rule_version": "v4",
+            "source": "leaf_accounts_by_puc_class",
             "bg_total_patrimonio": float(bg_total_patrimonio),
             "cuadre_patrimonio": cuadre_patrimonio,
         },
@@ -768,17 +856,15 @@ def _compute_notes(
         }
     )
 
-    # Notas 4-12: per-class breakdowns from accounts[]
-    bg_accounts = bg_data.get("accounts") or []
-    er_accounts = er_data.get("accounts") or []
+    # Notas 4-12: per-class breakdowns from leaf-level accounts to avoid
+    # duplicate rows when the LLM emits hierarchical levels (group + account +
+    # sub-account).
+    bg_leaves = _leaf_accounts(bg_data.get("accounts"))
+    er_leaves = _leaf_accounts(er_data.get("accounts"))
 
-    def _collect(accounts: list, prefixes: tuple[str, ...]) -> list[dict[str, Any]]:
-        if not isinstance(accounts, list):
-            return []
+    def _collect(leaves: list[dict[str, Any]], prefixes: tuple[str, ...]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        for acc in accounts:
-            if not isinstance(acc, dict):
-                continue
+        for acc in leaves:
             code = str(acc.get("cuenta_puc") or acc.get("codigo") or "")
             if any(code.startswith(p) for p in prefixes):
                 out.append(
@@ -795,7 +881,7 @@ def _compute_notes(
 
     for numero, titulo, categoria, prefixes in _NOTE_SPECS:
         # Notes 4-10 come from BG, 11-12 from ER
-        source = er_accounts if numero in ("11", "12") else bg_accounts
+        source = er_leaves if numero in ("11", "12") else bg_leaves
         cifras = _collect(source, prefixes)
         if not cifras:
             continue
@@ -823,7 +909,8 @@ def _compute_notes(
         "notas": notas,
         "informacion_adicional": {
             "derivation_basis": list(_REQUIRED_DERIVATION_INPUTS),
-            "rule_version": "v3",
+            "rule_version": "v4",
+            "source": "leaf_accounts_by_puc_class",
             "notas_count": len(notas),
         },
     }
