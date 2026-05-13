@@ -10,6 +10,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     status,
@@ -31,7 +32,9 @@ from app.models.schemas import (
     ClassificationReviewUpdateRequest,
     IngestDetailResponse,
     IngestResponse,
+    MergeIngestRequest,
 )
+from app.services.ingest_matcher import find_merge_candidates
 from app.models.trace import PipelineTrace
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
@@ -189,9 +192,12 @@ def _build_ingest_detail_response(
     # advance to the accounting phase.
     from datetime import datetime, timedelta, timezone
 
-    is_stale = job.created_at and (
-        datetime.now(timezone.utc) - job.created_at
-    ) > timedelta(seconds=60)
+    created_at = job.created_at
+    if created_at and created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    is_stale = created_at and (datetime.now(timezone.utc) - created_at) > timedelta(
+        seconds=60
+    )
     if (
         raw_txs
         and is_stale
@@ -488,6 +494,20 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"Error queueing file: {str(e)}")
 
 
+@router.get("/merge-suggestions")
+async def get_merge_suggestions(
+    company_nit: str = Query(..., description="Company NIT"),
+    time_window_minutes: int = Query(5, ge=1, le=60),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Returns groups of ingest jobs that look like pages of the same document."""
+    suggestions = find_merge_candidates(
+        db, company_nit, time_window_minutes=time_window_minutes
+    )
+    return {"suggestions": suggestions}
+
+
 @router.get("/{ingest_id}", response_model=IngestDetailResponse)
 async def get_ingest_status(
     ingest_id: str,
@@ -606,6 +626,92 @@ async def cancel_ingest(
 
     refreshed = db_service.get_ingest_job(db, ingest_id)
     return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))
+
+
+@router.patch("/{ingest_id}/merge", response_model=IngestDetailResponse)
+async def merge_ingest_jobs(
+    ingest_id: str,
+    request: MergeIngestRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Merge source ingest job into target ingest job.
+
+    - Concatenates raw_data from both TransactionPending rows
+    - Marks source job as CANCELLED
+    - Updates target job raw_preview if needed
+    """
+    if ingest_id == request.source_ingest_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Source and target ingest jobs must be different",
+        )
+
+    target = db_service.get_ingest_job(db, ingest_id)
+    if not target:
+        raise HTTPException(
+            status_code=404, detail=f"Target ingest job {ingest_id} not found"
+        )
+
+    source = db_service.get_ingest_job(db, request.source_ingest_id)
+    if not source:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Source ingest job {request.source_ingest_id} not found",
+        )
+
+    if target.company_nit != source.company_nit:
+        raise HTTPException(
+            status_code=400, detail="Ingest jobs belong to different companies"
+        )
+
+    if target.status in (IngestStatus.CANCELLED, IngestStatus.FAILED):
+        raise HTTPException(
+            status_code=400,
+            detail="Target ingest job is already cancelled or failed",
+        )
+
+    if source.status in (IngestStatus.CANCELLED, IngestStatus.FAILED):
+        raise HTTPException(
+            status_code=400,
+            detail="Source ingest job is already cancelled or failed",
+        )
+
+    # Merge raw_data from TransactionPending rows
+    target_txns = db_service.get_transactions_by_ingest(db, ingest_id)
+    source_txns = db_service.get_transactions_by_ingest(db, request.source_ingest_id)
+
+    if target_txns and source_txns:
+        source_raw_list = []
+        for txn in source_txns:
+            if txn.raw_data is not None:
+                source_raw_list.append(txn.raw_data)
+
+        if source_raw_list:
+            target_txn = target_txns[0]
+            if target_txn.raw_data is None:
+                if len(source_raw_list) == 1:
+                    target_txn.raw_data = source_raw_list[0]
+                else:
+                    target_txn.raw_data = source_raw_list
+            elif isinstance(target_txn.raw_data, list):
+                target_txn.raw_data = target_txn.raw_data + source_raw_list
+            else:
+                target_txn.raw_data = [target_txn.raw_data] + source_raw_list
+            db.commit()
+            db.refresh(target_txn)
+
+    # Mark source as cancelled
+    existing_errors = source.extraction_errors or []
+    db_service.update_ingest_job(
+        db,
+        request.source_ingest_id,
+        IngestStatus.CANCELLED,
+        extraction_errors=existing_errors + [f"Merged into {ingest_id}"],
+    )
+
+    refreshed = db_service.get_ingest_job(db, ingest_id)
+    return _build_ingest_detail_response(db, refreshed)
 
 
 @router.get("/{ingest_id}/trace", response_model=PipelineTrace)

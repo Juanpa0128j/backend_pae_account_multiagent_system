@@ -62,6 +62,10 @@ class ClassificationReviewUpdateRequest(BaseModel):
     parser_mode: Optional[str] = None
 
 
+class MergeIngestRequest(BaseModel):
+    source_ingest_id: str
+
+
 class ProcessResponse(BaseModel):
     message: str
     process_id: str
