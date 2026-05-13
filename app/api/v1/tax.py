@@ -115,7 +115,7 @@ async def get_ica_declaration(
     """
     period_end = end_date or date.today()
 
-    where_nit = "AND tp.nit_receptor = :nit" if company_nit else ""
+    where_nit = "AND tp.company_nit = :nit" if company_nit else ""
     where_start = "AND j.fecha >= :period_start" if start_date else ""
     query_params: dict = {"period_end": period_end}
     if company_nit:
