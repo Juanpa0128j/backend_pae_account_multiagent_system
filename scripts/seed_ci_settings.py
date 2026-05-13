@@ -27,8 +27,7 @@ def seed():
             print("company_settings for 800999888 already exists — skipping.")
             return
 
-        db.execute(
-            text("""
+        db.execute(text("""
                 INSERT INTO company_settings (
                     nit, nombre, ciudad, codigo_ciiu, iva_responsable,
                     tasa_retefuente_servicios, tasa_retefuente_bienes,
@@ -39,8 +38,7 @@ def seed():
                     0.110000, 0.030000, 0.035000, 0.006900,
                     0.190000, 0.006900, 0.350000
                 )
-            """)
-        )
+            """))
         db.commit()
         print("Seeded company_settings for NIT 800999888.")
 
