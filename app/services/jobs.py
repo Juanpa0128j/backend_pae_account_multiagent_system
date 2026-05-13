@@ -160,9 +160,28 @@ def _mark_job_failed_safe(
         )
 
 
+def _mark_pending_failed_safe(pending_id: str) -> None:
+    """Best-effort attempt to mark a pending transaction ERROR. Never raises."""
+    if not pending_id:
+        return
+    try:
+        db = SessionLocal()
+        try:
+            db_service.update_transaction_status(
+                db, pending_id, TransactionStatus.ERROR
+            )
+        finally:
+            db.close()
+    except Exception:
+        logger.exception(
+            "_mark_pending_failed_safe: failed to mark %s as ERROR", pending_id
+        )
+
+
 async def _run_process_job_impl(process_id: str, force_persist: bool = False) -> None:
     """Implementation of process job execution, protected by semaphore."""
     db = SessionLocal()
+    pending_id = ""
     try:
         process_job = db_service.get_process_job(db, process_id)
         if not process_job:
@@ -369,6 +388,7 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
                     "technical": raw_error,
                 },
             )
+            _mark_pending_failed_safe(pending_id)
             return
 
         db_service.update_process_job(
@@ -432,6 +452,7 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
                 "message": f"Timeout de procesamiento ({MAX_PROCESS_SECONDS}s)",
             },
         )
+        _mark_pending_failed_safe(pending_id)
     except Exception as exc:  # pragma: no cover - defensive logging branch
         logger.exception("Unhandled error running process job %s", process_id)
         db_service.update_process_job(
@@ -449,5 +470,6 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
                 "message": str(exc),
             },
         )
+        _mark_pending_failed_safe(pending_id)
     finally:
         db.close()

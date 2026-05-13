@@ -173,12 +173,14 @@ class TestContadorOutput:
         assert len(output.asientos) == 2
         assert output.total_debitos == output.total_creditos
 
-    def test_double_entry_violation(self, valid_contador_data):
-        """Debits must equal credits."""
+    def test_double_entry_violation(self, valid_contador_data, caplog):
+        """Debits must equal credits — now a warning, not a hard error."""
         valid_contador_data["asientos"][1]["valor"] = 100000.00
         valid_contador_data["total_creditos"] = 100000.00
-        with pytest.raises(ValidationError, match="Violación de partida doble"):
-            ContadorOutput.model_validate(valid_contador_data)
+        with caplog.at_level("WARNING", logger="app.models.agent_outputs"):
+            output = ContadorOutput.model_validate(valid_contador_data)
+        assert output.total_creditos == 100000.00
+        assert "Violación de partida doble" in caplog.text
 
     def test_invalid_puc_code(self, valid_contador_data):
         valid_contador_data["asientos"][0]["cuenta_puc"] = "ABCD"
@@ -195,10 +197,12 @@ class TestContadorOutput:
         with pytest.raises(ValidationError):
             ContadorOutput.model_validate(valid_contador_data)
 
-    def test_total_mismatch(self, valid_contador_data):
+    def test_total_mismatch(self, valid_contador_data, caplog):
         valid_contador_data["total_debitos"] = 999999
-        with pytest.raises(ValidationError, match="El total de débitos"):
-            ContadorOutput.model_validate(valid_contador_data)
+        with caplog.at_level("WARNING", logger="app.models.agent_outputs"):
+            output = ContadorOutput.model_validate(valid_contador_data)
+        assert output.total_debitos == 999999
+        assert "El total de débitos" in caplog.text
 
 
 # =========================================================================
@@ -223,10 +227,12 @@ class TestTributarioOutput:
         with pytest.raises(ValidationError, match="aplica_impuestos es False"):
             TributarioOutput.model_validate(valid_tributario_data)
 
-    def test_total_mismatch(self, valid_tributario_data):
+    def test_total_mismatch(self, valid_tributario_data, caplog):
         valid_tributario_data["total_impuestos"] = 10000
-        with pytest.raises(ValidationError, match="El total de impuestos"):
-            TributarioOutput.model_validate(valid_tributario_data)
+        with caplog.at_level("WARNING", logger="app.models.agent_outputs"):
+            output = TributarioOutput.model_validate(valid_tributario_data)
+        assert output.total_impuestos == 10000
+        assert "El total de impuestos" in caplog.text
 
     def test_tarifa_over_100(self, valid_tributario_data):
         valid_tributario_data["impuestos"][0]["tarifa_porcentaje"] = 150

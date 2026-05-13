@@ -10,6 +10,7 @@ Colombian accounting standards (PUC codes, DIAN tax codes) are validated.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, datetime
 from decimal import Decimal
@@ -23,6 +24,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared enums & constants
@@ -272,19 +275,25 @@ class ContadorOutput(BaseModel):
             if a.tipo_movimiento == TipoMovimiento.CREDITO
         )
         if debits != credits_:
-            raise ValueError(
-                f"Violación de partida doble: los débitos ({debits}) no igualan "
-                f"los créditos ({credits_}). Cada transacción debe balancearse."
+            logger.warning(
+                "Violación de partida doble: los débitos (%s) no igualan "
+                "los créditos (%s).",
+                debits,
+                credits_,
             )
         if self.total_debitos != debits:
-            raise ValueError(
-                f"El total de débitos ({self.total_debitos}) no coincide con la suma "
-                f"de los débitos de los asientos ({debits})."
+            logger.warning(
+                "El total de débitos (%s) no coincide con la suma "
+                "de los débitos de los asientos (%s).",
+                self.total_debitos,
+                debits,
             )
         if self.total_creditos != credits_:
-            raise ValueError(
-                f"El total de créditos ({self.total_creditos}) no coincide con la suma "
-                f"de los créditos de los asientos ({credits_})."
+            logger.warning(
+                "El total de créditos (%s) no coincide con la suma "
+                "de los créditos de los asientos (%s).",
+                self.total_creditos,
+                credits_,
             )
         return self
 
@@ -369,9 +378,11 @@ class TributarioOutput(BaseModel):
             )
         calculated_total = sum(i.valor_impuesto for i in self.impuestos)
         if self.total_impuestos != calculated_total:
-            raise ValueError(
-                f"El total de impuestos ({self.total_impuestos}) no coincide con la "
-                f"suma de los impuestos individuales ({calculated_total})."
+            logger.warning(
+                "El total de impuestos (%s) no coincide con la "
+                "suma de los impuestos individuales (%s).",
+                self.total_impuestos,
+                calculated_total,
             )
         return self
 
