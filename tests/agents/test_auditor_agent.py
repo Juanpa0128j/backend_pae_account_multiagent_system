@@ -571,7 +571,13 @@ class TestValidateContadorOutputNode:
         state = _base_state(
             contador_output=dict(INVALID_CONTADOR_OUTPUT), retry_count=0
         )
-        result = validate_contador_output_node(state)
+        with (
+            patch("app.agents.validation_rules._missing_puc_codes", return_value=[]),
+            patch("app.agents.validation_rules.SessionLocal") as mock_session,
+        ):
+            mock_db = MagicMock()
+            mock_session.return_value = mock_db
+            result = validate_contador_output_node(state)
         assert result["error"] is None
         assert result["correction_feedback"] is None
         assert result["retry_count"] == 0
@@ -822,9 +828,9 @@ class TestProcessGraphE2E:
         assert final.get("error") is None, final.get("error")
         assert final["audit_approved"] is True
         assert final["db_result"] is not None
-        assert audit_calls["n"] == 2, (
-            "Auditor should have been called twice (reject + approve)"
-        )
+        assert (
+            audit_calls["n"] == 2
+        ), "Auditor should have been called twice (reject + approve)"
 
     @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.tributario_agent.get_llm_client")
@@ -1157,9 +1163,9 @@ class TestProcessGraphDBIntegration:
 
             total_debito = sum(ln.debito for ln in lines)
             total_credito = sum(ln.credito for ln in lines)
-            assert total_debito == total_credito, (
-                f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
-            )
+            assert (
+                total_debito == total_credito
+            ), f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
 
             # Auditor output stored in agent_reasoning
             assert posted.agent_reasoning is not None
@@ -1224,9 +1230,9 @@ class TestProcessGraphDBIntegration:
 
         # Phase 4: budget exhaustion routes to error_terminal — no DB persist.
         assert result.get("audit_approved") is False
-        assert result.get("giveup_record") is not None, (
-            "giveup_record must be set after retry budget exhaustion"
-        )
+        assert (
+            result.get("giveup_record") is not None
+        ), "giveup_record must be set after retry budget exhaustion"
         # persist was refused — db_result should not contain a posted transaction
         db_res = result.get("db_result") or {}
         assert db_res.get("transaction_posted_id") is None
