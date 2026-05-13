@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from app.agents.graph import invoke_accounting_pipeline
 from app.core.database import SessionLocal, PROCESS_PIPELINE_SEMAPHORE
-from app.models.database import ProcessStatus
+from app.models.database import ProcessStatus, TransactionStatus
 from app.services import db_service
 
 logger = logging.getLogger(__name__)
@@ -188,34 +188,38 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
             )
             return
 
-        staged = db_service.get_transactions_by_ingest(db, process_job.ingest_id)
-        if not staged:
+        staged_all = db_service.get_transactions_by_ingest(db, process_job.ingest_id)
+        staged_pending = [
+            tx for tx in staged_all if tx.status == TransactionStatus.PENDING
+        ]
+
+        if not staged_pending:
             db_service.update_process_job(
                 db,
                 process_id=process_id,
-                status=ProcessStatus.FAILED,
-                current_stage="init",
-                progress=0,
-                error_message="No staged transactions found for ingest job",
+                status=ProcessStatus.COMPLETED,
+                current_stage="completed",
+                current_agent="supervisor",
+                progress=100,
                 agent_log_entry={
                     "timestamp": _utc_iso(),
                     "agent": "supervisor",
-                    "stage": "init",
-                    "event": "failed",
-                    "message": "No staged transactions found for ingest job",
+                    "stage": "completed",
+                    "event": "completed",
+                    "message": "Todas las transacciones de este ingest ya fueron procesadas",
                 },
             )
             return
 
-        pending_id = str(staged[0].id)
+        pending_id = str(staged_pending[0].id)
         # Fallback: documents like CEs/nóminas/extractos have no nit_receptor
         # in their content. Use the company_nit captured at upload time so
         # downstream agents (tributario) can resolve company tax settings.
         fallback_nit = getattr(ingest_job, "company_nit", None) or getattr(
-            staged[0], "company_nit", None
+            staged_pending[0], "company_nit", None
         )
         raw_transactions: list[dict] = []
-        for tx in staged:
+        for tx in staged_pending:
             raw_transactions.append(
                 {
                     "id": str(tx.id),
@@ -382,6 +386,35 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
                 "message": "Proceso completado correctamente",
             },
         )
+
+        # ── Auto-chain: if more pending transactions exist for this ingest,
+        # spawn a follow-up ProcessJob so multi-transaction docs (extractos,
+        # nóminas, conciliaciones) don't leave orphans.
+        db2 = SessionLocal()
+        try:
+            remaining = db_service.get_transactions_by_ingest(
+                db2, process_job.ingest_id
+            )
+            remaining_pending = [
+                tx for tx in remaining if tx.status == TransactionStatus.PENDING
+            ]
+            if remaining_pending:
+                next_job = db_service.create_process_job(db2, process_job.ingest_id)
+                await start_process_job(next_job.id)
+                logger.info(
+                    "Chained ProcessJob %s -> %s (%d remaining pending txs)",
+                    process_id,
+                    next_job.id,
+                    len(remaining_pending),
+                )
+        except Exception as chain_err:
+            logger.warning(
+                "Failed to chain ProcessJob for ingest %s: %s",
+                process_job.ingest_id,
+                chain_err,
+            )
+        finally:
+            db2.close()
 
     except asyncio.TimeoutError:
         db_service.update_process_job(
