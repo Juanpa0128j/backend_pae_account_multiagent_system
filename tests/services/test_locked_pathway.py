@@ -179,3 +179,49 @@ class TestUploadPathwayEnforcement:
                 response = self._make_upload_request(client, doc_type="balance_general")
 
         assert response.status_code == 202
+
+    def test_via_a_upload_sets_locked_pathway_when_no_doc_type(self):
+        import os
+        import tempfile
+
+        from app.agents.supervisor import supervisor_node
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 fake content")
+            temp_path = f.name
+
+        try:
+            mock_job = MagicMock()
+            mock_job.classification_confirmed = True
+            mock_job.document_type = "factura"
+            mock_job.pathway = "build_from_scratch"
+
+            mock_db = MagicMock()
+
+            with (
+                patch("app.agents.supervisor.SessionLocal", return_value=mock_db),
+                patch(
+                    "app.agents.supervisor.db_service.get_ingest_job",
+                    return_value=mock_job,
+                ),
+                patch(
+                    "app.agents.supervisor.db_service.set_company_locked_pathway"
+                ) as mock_set_lock,
+                patch(
+                    "app.services.pdf_processor.extract_text_from_pdf", return_value=""
+                ),
+            ):
+                state = {
+                    "ingest_id": "ing_test",
+                    "company_nit": "800999888",
+                    "file_path": temp_path,
+                    "mode": "ingest",
+                }
+                result = supervisor_node(state)
+
+            mock_set_lock.assert_called_once_with(
+                mock_db, "800999888", "build_from_scratch"
+            )
+            assert result.get("pathway") == "build_from_scratch"
+        finally:
+            os.unlink(temp_path)
