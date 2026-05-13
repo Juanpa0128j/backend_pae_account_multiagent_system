@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Core execution fields are intentionally excluded to prevent accidental
 # runtime corruption.
 _ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset(
-    {"ingest_id", "mode", "company_nit", "force_persist", "parser_mode"}
+    {"ingest_id", "mode", "company_nit", "force_persist", "parser_mode", "file_paths"}
 )
 
 
