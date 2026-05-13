@@ -524,27 +524,32 @@ def _compute_cash_flow_indirect(
     provisiones = _sum_leaves(er_leaves, "519")
 
     # ── Working capital variations (PUC class prefixes) ────────────────
+    # Assets side: clase 13 (all deudores: clientes, socios, anticipos de
+    # impuestos / retenciones recibidas) + clase 14 (inventarios).
     cxc_now, cxc_prior = _bg_metric(
         "13", nested_path=("activos_corrientes", "cuentas_por_cobrar_comerciales")
     )
     inv_now, inv_prior = _bg_metric(
         "14", nested_path=("activos_corrientes", "inventarios")
     )
-    cxp_now, cxp_prior = _bg_metric(
-        ("22", "23"),
+    # Liabilities side: clase 22 (proveedores) + 23 (cuentas por pagar) +
+    # 24 (impuestos por pagar: IVA, retenciones, renta corriente) +
+    # 25 (obligaciones laborales) + 26 (provisiones laborales).
+    # We sum them together as "operating liabilities" — splitting hairs about
+    # commercial vs tax payables is meaningless for the NIC 7 cuadre, what
+    # matters is that all operating-classified liability movement is captured.
+    op_liab_now, op_liab_prior = _bg_metric(
+        ("22", "23", "24", "25", "26"),
         nested_path=("pasivos_corrientes", "cuentas_por_pagar_comerciales"),
-    )
-    obl_lab_now, obl_lab_prior = _bg_metric(
-        ("25", "26"),
-        nested_path=("pasivos_corrientes", "obligaciones_laborales"),
     )
 
     delta_cxc = cxc_now - cxc_prior
     delta_inv = inv_now - inv_prior
-    delta_cxp = cxp_now - cxp_prior
-    delta_obl_lab = obl_lab_now - obl_lab_prior
+    delta_op_liab = op_liab_now - op_liab_prior
 
-    impuesto_renta = _dec(er_data.get("impuesto_renta"))
+    # `utilidad_neta` is already after-tax; do not subtract impuesto_renta
+    # again. The tax movement (cash actually paid vs accrued) shows up via the
+    # `Δ clase 24` term inside `delta_op_liab`.
 
     flujo_operacion = (
         utilidad_neta
@@ -552,9 +557,7 @@ def _compute_cash_flow_indirect(
         + provisiones
         - delta_cxc
         - delta_inv
-        + delta_cxp
-        + delta_obl_lab
-        - impuesto_renta
+        + delta_op_liab
     )
 
     # ── Investment: Δ PPE bruto + Δ intangibles + Δ inversiones (class 12) ──
@@ -651,9 +654,7 @@ def _compute_cash_flow_indirect(
                 "provisiones": float(provisiones),
                 "delta_cuentas_por_cobrar": float(delta_cxc),
                 "delta_inventarios": float(delta_inv),
-                "delta_cuentas_por_pagar": float(delta_cxp),
-                "delta_obligaciones_laborales": float(delta_obl_lab),
-                "impuesto_renta": float(impuesto_renta),
+                "delta_pasivos_operacionales": float(delta_op_liab),
                 "delta_ppe": float(ppe_now - ppe_prior),
                 "delta_intangibles": float(intan_now - intan_prior),
                 "delta_inversiones": float(inv_lp_now - inv_lp_prior),

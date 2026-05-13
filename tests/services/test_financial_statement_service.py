@@ -108,10 +108,11 @@ def test_cash_flow_includes_working_capital_and_depreciation():
         la_data={"lines": []},
     )
 
-    # flujo_op = 400 (utilidad) + 100 (dep) - 200 (Δcxc) - 100 (Δinv) + 50 (Δcxp) + 20 (Δoblab) - 0 (renta) = 270
+    # flujo_op = 400 (utilidad) + 100 (dep) - 200 (Δcxc) - 100 (Δinv) + Δ op_liab (50 cxp + 20 oblab) = 270
     assert out["flujo_neto_operacion"] == 270.0
     assert out["informacion_adicional"]["adjustments"]["depreciacion_periodo"] == 100.0
     assert out["informacion_adicional"]["adjustments"]["delta_cuentas_por_cobrar"] == 200.0
+    assert out["informacion_adicional"]["adjustments"]["delta_pasivos_operacionales"] == 70.0
 
 
 def test_equity_changes_splits_components():
