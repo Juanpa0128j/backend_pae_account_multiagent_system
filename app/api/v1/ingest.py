@@ -22,6 +22,7 @@ from app.core.database import INGEST_PIPELINE_SEMAPHORE, SessionLocal, get_db
 from app.models.database import IngestJob, IngestStatus
 from app.models.document_types import (
     DocumentType,
+    ParserMode,
     get_document_type_label,
     get_pathway,
     list_via_a_document_type_options,
@@ -52,7 +53,10 @@ def save_temp_file(file_content: bytes, filename: str) -> str:
 
 
 def process_ingest_background(
-    temp_file_path: str, ingest_id: str, company_nit: Optional[str] = None
+    temp_file_path: str,
+    ingest_id: str,
+    company_nit: Optional[str] = None,
+    parser_mode: Optional[str] = None,
 ):
     logger.info(
         f"Queueing background agent for: {ingest_id} (company_nit={company_nit})"
@@ -61,15 +65,20 @@ def process_ingest_background(
     # connection pool. Uploads queue here instead of racing for connections.
     with INGEST_PIPELINE_SEMAPHORE:
         logger.info(f"Acquired ingest pipeline slot for: {ingest_id}")
-        _run_ingest_pipeline(temp_file_path, ingest_id, company_nit)
+        _run_ingest_pipeline(temp_file_path, ingest_id, company_nit, parser_mode)
 
 
 def _run_ingest_pipeline(
-    temp_file_path: str, ingest_id: str, company_nit: Optional[str] = None
+    temp_file_path: str,
+    ingest_id: str,
+    company_nit: Optional[str] = None,
+    parser_mode: Optional[str] = None,
 ):
     initial: dict = {"ingest_id": ingest_id}
     if company_nit:
         initial["company_nit"] = company_nit
+    if parser_mode:
+        initial["parser_mode"] = parser_mode
     try:
         result = invoke_ingest_pipeline(
             temp_file_path,
@@ -229,6 +238,7 @@ def _build_ingest_detail_response(
         "status": job.status.value if job.status else "unknown",
         "document_type": job.document_type,
         "pathway": job.pathway,
+        "parser_mode": job.parser_mode,
         "created_at": job.created_at,
         "completed_at": job.completed_at,
         "extraction_errors": job.extraction_errors or [],
@@ -262,6 +272,10 @@ async def upload_file(
         None,
         description="Pre-confirmed document type (e.g. 'balance_general'). When provided, classification review is skipped. Use for Vía B uploads where the user explicitly selects the document type.",
     ),
+    parser_mode: Optional[str] = Form(
+        "fast",
+        description="LlamaParse extraction quality mode: fast, standard, premium, gpt4o.",
+    ),
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -292,6 +306,16 @@ async def upload_file(
                 raise HTTPException(
                     status_code=422, detail=f"Invalid company_nit: {nit_err}"
                 )
+
+        try:
+            validated_mode = (
+                ParserMode(parser_mode).value if parser_mode else ParserMode.FAST.value
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Modo de extracción '{parser_mode}' no válido. Opciones: fast, standard, premium, gpt4o",
+            )
 
         file_content = await file.read()
 
@@ -410,6 +434,7 @@ async def upload_file(
             document_type=confirmed_doc_type,
             pathway=confirmed_pathway,
             classification_confirmed=True if confirmed_doc_type else None,
+            parser_mode=validated_mode,
             created_by=str(current_user.id),
         )
         logger.info(f"Created IngestJob: {ingest_job.id}")
@@ -425,6 +450,7 @@ async def upload_file(
             temp_file_path,
             str(ingest_job.id),
             normalized_company_nit,
+            validated_mode,
         )
 
         return IngestResponse(
@@ -511,6 +537,7 @@ async def update_ingest_classification(
             job.file_path,
             str(job.id),
             job.company_nit,
+            job.parser_mode,
         )
 
     refreshed = db_service.get_ingest_job(db, ingest_id)
@@ -518,6 +545,48 @@ async def update_ingest_classification(
         raise HTTPException(
             status_code=500, detail="Error al refrescar el trabajo de ingesta"
         )
+    return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))
+
+
+@router.patch(
+    "/{ingest_id}/cancel",
+    response_model=IngestDetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cancel_ingest(
+    ingest_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    job = db_service.get_ingest_job(db, ingest_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Trabajo de ingesta no encontrado")
+
+    current_status = job.status
+    if isinstance(current_status, str):
+        current_status = IngestStatus(current_status)
+
+    if current_status == IngestStatus.CANCELLED:
+        raise HTTPException(
+            status_code=409, detail="El trabajo de ingesta ya fue cancelado"
+        )
+
+    if current_status in (IngestStatus.COMPLETED, IngestStatus.FAILED):
+        raise HTTPException(
+            status_code=409, detail="No se puede cancelar un trabajo que ya terminó"
+        )
+
+    db_service.update_ingest_job(db, ingest_id, IngestStatus.CANCELLED)
+
+    # Clean up temp file if present
+    if job.file_path:
+        try:
+            Path(job.file_path).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to delete temp file %s", job.file_path)
+
+    refreshed = db_service.get_ingest_job(db, ingest_id)
     return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))
 
 

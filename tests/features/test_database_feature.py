@@ -37,6 +37,7 @@ from app.models.database import (
     ProcessStatus,
     AuditLog,
 )
+from app.models.document_types import ParserMode
 from app.services import db_service
 
 # ─── Fixtures ────────────────────────────────────────────────────
@@ -422,9 +423,9 @@ class TestAccountingBooks:
         total_debito = sum(line.debito for line in lines)
         total_credito = sum(line.credito for line in lines)
 
-        assert total_debito == total_credito, (
-            f"Partida doble violation: D={total_debito} != C={total_credito}"
-        )
+        assert (
+            total_debito == total_credito
+        ), f"Partida doble violation: D={total_debito} != C={total_credito}"
         assert total_debito == Decimal("1190000")
 
     def test_libro_diario(self, db, posted_with_entries):
@@ -705,3 +706,40 @@ class TestAtomicPersistence:
             .count()
             >= 1
         )
+
+
+# ─── Test ParserMode & IngestStatus ──────────────────────────────
+
+
+class TestParserModeAndCancelledStatus:
+    """Test ParserMode enum and CANCELLED status on IngestJob."""
+
+    def test_ingest_job_has_parser_mode(self, db):
+        job = IngestJob(
+            id="test_parser_001",
+            file_name="parser_test.pdf",
+            status=IngestStatus.PENDING_PROCESSING,
+            parser_mode=ParserMode.PREMIUM,
+        )
+        db.add(job)
+        db.flush()
+
+        found = db.query(IngestJob).filter(IngestJob.id == "test_parser_001").first()
+        assert found is not None
+        assert found.parser_mode == "premium"
+
+    def test_ingest_job_defaults_to_fast(self, db):
+        job = IngestJob(
+            id="test_parser_002",
+            file_name="parser_default.pdf",
+            status=IngestStatus.PENDING_PROCESSING,
+        )
+        db.add(job)
+        db.flush()
+
+        found = db.query(IngestJob).filter(IngestJob.id == "test_parser_002").first()
+        assert found is not None
+        assert found.parser_mode == "fast"
+
+    def test_ingest_status_has_cancelled(self):
+        assert IngestStatus.CANCELLED == "CANCELLED"

@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 
 from app.services import db_service
 
-
 # ---------------------------------------------------------------------------
 # db_service unit tests
 # ---------------------------------------------------------------------------
@@ -29,7 +28,9 @@ class TestGetCompanyLockedPathway:
 
     def test_returns_locked_pathway_when_set(self):
         db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = ("build_from_scratch",)
+        db.query.return_value.filter.return_value.first.return_value = (
+            "build_from_scratch",
+        )
         result = db_service.get_company_locked_pathway(db, "800999888")
         assert result == "build_from_scratch"
 
@@ -78,8 +79,11 @@ class TestSetCompanyLockedPathway:
 class TestUploadPathwayEnforcement:
     """Test 409 enforcement in the upload endpoint when company is locked."""
 
-    def _make_upload_request(self, client, doc_type: str = None, company_nit: str = "800999888"):
+    def _make_upload_request(
+        self, client, doc_type: str = None, company_nit: str = "800999888"
+    ):
         import io
+
         fake_pdf = b"%PDF-1.4 fake content"
         data = {"company_nit": company_nit}
         if doc_type:
@@ -93,9 +97,12 @@ class TestUploadPathwayEnforcement:
     def test_via_b_upload_blocked_when_locked_to_via_a(self):
         # Via B upload (doc_type=balance_general) → company locked to Via A → 409
         from main import app
+
         with TestClient(app) as client:
             with (
-                patch("app.api.v1.ingest.db_service.get_company_locked_pathway") as mock_lock,
+                patch(
+                    "app.api.v1.ingest.db_service.get_company_locked_pathway"
+                ) as mock_lock,
                 patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
                 patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
             ):
@@ -109,9 +116,12 @@ class TestUploadPathwayEnforcement:
     def test_via_a_upload_blocked_when_locked_to_via_b(self):
         # Via A upload (no doc_type = unclassified) → company locked to Via B → 409
         from main import app
+
         with TestClient(app) as client:
             with (
-                patch("app.api.v1.ingest.db_service.get_company_locked_pathway") as mock_lock,
+                patch(
+                    "app.api.v1.ingest.db_service.get_company_locked_pathway"
+                ) as mock_lock,
                 patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
                 patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
             ):
@@ -125,9 +135,12 @@ class TestUploadPathwayEnforcement:
     def test_upload_allowed_when_not_locked(self):
         # Via B upload, company has no lock yet → 202
         from main import app
+
         with TestClient(app) as client:
             with (
-                patch("app.api.v1.ingest.db_service.get_company_locked_pathway") as mock_lock,
+                patch(
+                    "app.api.v1.ingest.db_service.get_company_locked_pathway"
+                ) as mock_lock,
                 patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
                 patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
                 patch("app.api.v1.ingest.process_ingest_background"),
@@ -146,9 +159,12 @@ class TestUploadPathwayEnforcement:
     def test_upload_allowed_when_same_pathway(self):
         # Via B upload, company already locked to Via B → 202
         from main import app
+
         with TestClient(app) as client:
             with (
-                patch("app.api.v1.ingest.db_service.get_company_locked_pathway") as mock_lock,
+                patch(
+                    "app.api.v1.ingest.db_service.get_company_locked_pathway"
+                ) as mock_lock,
                 patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
                 patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
                 patch("app.api.v1.ingest.process_ingest_background"),

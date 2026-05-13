@@ -64,6 +64,7 @@ def base_state(**overrides) -> dict:
         "report_params": None,
         "document_classification": None,
         "pathway": None,
+        "parser_mode": None,
         "parsed_content": None,
         "company_nit": None,
     }

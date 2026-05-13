@@ -21,29 +21,71 @@ _DOC_GUIDANCE: dict[str, str] = {
         "El valor del asiento debe ser el campo 'debito' o 'credito' del movimiento, NO el saldo."
     ),
     "factura_venta": (
-        "REGLA FACTURA VENTA: debita cuentas por cobrar (130505) y acredita ingresos (4xxx). "
-        "NO dupliques el IVA ni las retenciones — el agente tributario las maneja."
+        "REGLA FACTURA VENTA (la empresa es VENDEDOR / EMISOR):\n"
+        "EL CAMPO 'total' DEL RAW TRANSACTION YA ES EL SUBTOTAL SIN IVA (la BASE). NO le restes el IVA otra vez. "
+        "El IVA viene aparte en el bloque 'IMPUESTOS DEL DOCUMENTO FUENTE' como 'total_iva'.\n"
+        "Asiento mínimo esperado:\n"
+        "- DÉBITO 130505 (Clientes Nacionales) por (raw_transaction.total + total_iva). Es lo que el cliente debe pagar (total con IVA).\n"
+        "- CRÉDITO cuenta_de_ingreso (grupo 4xxx) por raw_transaction.total exactamente. No restes IVA. "
+        "Elige el código exacto del catálogo `cuentas_puc` y guíate por la actividad económica (CIIU) del emisor: "
+        "comercio de mercancías → 4135; prestación de servicios, arrendamientos, transporte, profesionales, "
+        "hoteles y similares → 4170; rendimientos financieros / intereses → 4210. NUNCA escribas '4xxx' "
+        "ni un código que no exista en el catálogo.\n"
+        "- CRÉDITO 240805 (IVA generado) por total_iva. NUNCA al débito en 240802 (eso es de compras).\n"
+        "Si el comprador practica retenciones a la empresa, agrégalas como DÉBITOS y ajusta el débito a 130505 a "
+        "(raw_transaction.total + total_iva - retefuente - reteica). Las cuentas son: 135515 (retefuente recibida) "
+        "y 135517 (reteICA recibida). NUNCA acredites 2365/2368 en una factura de venta.\n"
+        "NO inyectes gasto ICA (511505) en una factura de venta; el ICA propio se liquida en la declaración "
+        "municipal, no en el asiento de cada venta.\n"
+        "Validación obligatoria: Σdébitos == Σcréditos == raw_transaction.total + total_iva."
     ),
     "factura_compra": (
         "REGLA FACTURA COMPRA: debita el gasto/activo y acredita cuentas por pagar (220505). "
-        "NO dupliques el IVA ni las retenciones — el agente tributario las maneja."
+        "NO dupliques el IVA ni las retenciones — el agente tributario las maneja.\n"
+        "CUENTAS DE GASTO COMUNES (úsalas SIEMPRE en lugar de 5195):\n"
+        "- 510505 Sueldos        - 510510 Cesantías          - 510515 Intereses cesantías\n"
+        "- 510518 Prima servicios- 510521 Vacaciones         - 510527 Aportes EPS\n"
+        "- 510530 Aportes ARP    - 510533 Aportes pensión    - 511505 Honorarios\n"
+        "- 511510 Comisiones     - 511525 Servicios técnicos - 511595 Otros honorarios\n"
+        "- 513025 Combustibles   - 513540 Servicios públicos - 514505 Mantenimiento\n"
+        "- 519520 Cuotas afiliación - 521505 ICA gasto ventas - 529505 Diversos\n"
+        "- 143005 Inventario     - 152405 Equipo cómputo     - 152805 Equipo oficina\n"
+        "SOLO usa 5195 si el concepto es realmente ambiguo (último recurso)."
     ),
     "nota_credito": (
-        "REGLA NOTA CREDITO: Asiento de reversión. Debita ingresos (4xxx) o cuentas por pagar (220505) "
-        "segun el concepto (devolucion/descuento/anulacion), y acredita cuentas por cobrar (130505). "
+        "REGLA NOTA CREDITO: Asiento de reversión. Debita la cuenta de ingreso específica "
+        "(4135/4170/4175 según concepto) o cuentas por pagar (220505), "
+        "y acredita cuentas por cobrar (130505). NUNCA uses '4xxx' literal. "
         "Referencia el numero de factura asociada en descripcion_general. "
         "NO dupliques impuestos — el agente tributario los maneja."
     ),
     "nota_debito": (
         "REGLA NOTA DEBITO: Asiento de ajuste adicional. Debita cuentas por cobrar (130505) "
-        "y acredita ingresos (4xxx) o intereses por cobrar (130xxx) segun el concepto. "
+        "y acredita la cuenta de ingreso específica (4135/4170/4175) según el concepto. "
+        "Si la nota corresponde a intereses moratorios, acredita la cuenta de ingresos "
+        "financieros del PUC seed (clase 42, p. ej. 4210). NUNCA uses '4xxx' o '13xxxx' literal. "
         "Referencia el numero de factura asociada en descripcion_general. "
         "NO dupliques impuestos — el agente tributario los maneja."
     ),
     "comprobante_egreso": (
-        "REGLA COMPROBANTE EGRESO: Debita la cuenta de gasto o proveedor correspondiente "
-        "y acredita banco o caja (111005/110505). Un asiento por linea de pago. "
-        "NO dupliques impuestos — el agente tributario los maneja."
+        "REGLA COMPROBANTE DE EGRESO (CE):\n"
+        "- SIEMPRE acredita 111005 (Banco) o 110505 (Caja). El CE representa salida de fondos.\n"
+        "- NUNCA acredites 220505 (Proveedores). 220505 solo aparece en DEBITO cuando el CE "
+        "salda una factura previa cuya CxP ya fue creada por la factura.\n"
+        "- Patrón estándar:\n"
+        "    DEBIT  5xxxxx (gasto concreto, no 5195) o 220505 (anula CxP)\n"
+        "    CREDIT 111005 (Banco)\n"
+        "    DEBIT/CREDIT retenciones si aplican (2365 retefuente, 2368 reteICA)\n"
+        "- Un asiento por linea de pago.\n"
+        "- NO dupliques impuestos — el agente tributario los maneja.\n"
+        "CUENTAS DE GASTO COMUNES (úsalas SIEMPRE en lugar de 5195):\n"
+        "- 510505 Sueldos        - 510510 Cesantías          - 510515 Intereses cesantías\n"
+        "- 510518 Prima servicios- 510521 Vacaciones         - 510527 Aportes EPS\n"
+        "- 510530 Aportes ARP    - 510533 Aportes pensión    - 511505 Honorarios\n"
+        "- 511510 Comisiones     - 511525 Servicios técnicos - 511595 Otros honorarios\n"
+        "- 513025 Combustibles   - 513540 Servicios públicos - 514505 Mantenimiento\n"
+        "- 519520 Cuotas afiliación - 521505 ICA gasto ventas - 529505 Diversos\n"
+        "SOLO usa 5195 si el concepto es realmente ambiguo (último recurso)."
     ),
     "declaracion_iva": (
         "REGLA DECLARACION IVA: Asiento de pago/liquidacion de IVA. "
@@ -141,18 +183,29 @@ def contador_output(
     raw_transactions: list,
     *,
     doc_type: str = "",
+    doc_subtype: str = "",
     rag_context: list[dict] | None = None,
     correction_feedback: str | None = None,
     source_taxes: dict | None = None,
+    company_context: dict | None = None,
+    puc_ingresos_catalog: list[dict] | None = None,
 ) -> str:
-    """Return the contador journal-entry prompt string."""
+    """Return the contador journal-entry prompt string.
+
+    `doc_type` is the normalized contador-enum value embedded as a hint in
+    the prompt. `doc_subtype` is the granular frontend doc type (e.g.
+    factura_venta vs factura_compra) used to look up the specific
+    `_DOC_GUIDANCE` rules. When `doc_subtype` is empty the lookup falls
+    back to `doc_type`.
+    """
     txns_text = "\n\n".join(
         f"Transaccion {i + 1}:\n{_format_tx(t)}" for i, t in enumerate(raw_transactions)
     )
 
     rag_section = _build_rag_section(rag_context)
     doc_type_hint = f"Tipo de documento: {doc_type}\n" if doc_type else ""
-    doc_guidance = _DOC_GUIDANCE.get(doc_type, "")
+    guidance_key = doc_subtype or doc_type
+    doc_guidance = _DOC_GUIDANCE.get(guidance_key, "")
     doc_guidance_section = f"\n{doc_guidance}\n" if doc_guidance else ""
 
     prompt = f"""Eres un contador experto en normativa colombiana (PUC).
@@ -166,6 +219,7 @@ Genera el asiento contable siguiendo el PUC colombiano.
 - OBLIGATORIO: total_debitos == total_creditos (partida doble perfecta)
 - tipo_movimiento debe ser 'debito' o 'credito'
 - tipo_documento debe estar en: recibo, factura, extracto, nota_credito, nota_debito, comprobante_egreso, otro
+- cuenta_puc DEBE tener 6 dígitos para clases 4 (ingresos), 5 (gastos), 6 (costos). Solo usa 4 dígitos para activos (1xxx), pasivos (2xxx) o patrimonio (3xxx) cuando el PUC no tenga subcuenta más específica disponible.
 - Si el documento tiene multiples movimientos, genera un asiento por movimiento y consolida los totales
 
 Contexto normativo/RAG:
@@ -178,6 +232,32 @@ Contexto normativo/RAG:
 Los siguientes valores fueron extraidos directamente del documento original:
 {json.dumps(source_taxes, ensure_ascii=False, indent=2)}
 IMPORTANTE: Estos valores son informativos. NO los incluyas como asientos contables — el agente tributario los registrara por separado. Usaelos para entender la naturaleza fiscal del documento y clasificar correctamente las cuentas PUC."""
+
+    if company_context:
+        prompt += f"""
+
+=== EMPRESA EMISORA / TENANT (contexto) ===
+{json.dumps(company_context, ensure_ascii=False, indent=2)}
+La actividad economica (CIIU) del emisor define la cuenta de ingreso operacional que debe usarse cuando este documento es una factura de venta. Por ejemplo:
+- CIIU 47xx (comercio al por menor) → 4135 (Comercio al por mayor y al por menor)
+- CIIU 55xx/56xx (alojamiento, restaurantes) → 4170 (Hoteles, restaurantes y similares)
+- CIIU 68xx (actividades inmobiliarias) → 4140 (Actividades inmobiliarias / arrendamientos)
+- CIIU 49xx/50xx/51xx/52xx (transporte) → 4140 (Transporte)
+- CIIU 69xx/70xx/71xx/72xx/73xx/74xx (servicios profesionales/tecnicos) → 4165 (Servicios)
+NO inventes una cuenta que no encaje con la actividad real del emisor."""
+
+    if puc_ingresos_catalog:
+        catalog_lines = "\n".join(
+            f"- {row.get('codigo')}: {row.get('descripcion')}"
+            for row in puc_ingresos_catalog
+        )
+        prompt += f"""
+
+=== CATALOGO DE CUENTAS DE INGRESO PUC (4xxx) DISPONIBLES ===
+Cuando el documento sea una factura de venta, elige la cuenta de ingreso (credito)
+EXCLUSIVAMENTE de la siguiente lista de cuentas reales del PUC sembradas en el sistema:
+{catalog_lines}
+Si ninguna de las cuentas anteriores aplica, usa la cuenta padre de 4 digitos correspondiente al grupo."""
 
     if correction_feedback:
         prompt += f"""

@@ -546,9 +546,9 @@ class TestIngestPipeline:
         starts = [
             e for e in _events_for(log, "ingesta") if e.get("event") == "node_start"
         ]
-        assert starts[0]["details"].get("file_path"), (
-            "node_start de ingesta no registró 'file_path' en details"
-        )
+        assert starts[0]["details"].get(
+            "file_path"
+        ), "node_start de ingesta no registró 'file_path' en details"
 
     # ── Agente Ingesta: output ───────────────────────────────────────────────
 
@@ -562,16 +562,16 @@ class TestIngestPipeline:
     ):
         """validated_data debe contener los datos extraídos del documento."""
         vd = ingest_result.get("validated_data") or {}
-        assert vd, (
-            "validated_data está vacío; validate_output_node puede no haber corrido"
-        )
+        assert (
+            vd
+        ), "validated_data está vacío; validate_output_node puede no haber corrido"
         # New rich extraction schema: IngestOutput(extra="allow") passes all fields through.
         # Check the content via FacturaVentaContent structure.
         emisor = (vd.get("emisor") or {}) if isinstance(vd, dict) else {}
         totales = (vd.get("totales") or {}) if isinstance(vd, dict) else {}
-        assert emisor or totales, (
-            f"validated_data no tiene estructura esperada: {list(vd.keys())}"
-        )
+        assert (
+            emisor or totales
+        ), f"validated_data no tiene estructura esperada: {list(vd.keys())}"
 
     def test_ingesta_data_contiene_transaccion_raw(self, ingest_result):
         """result['data'] debe contener el contenido extraído con emisor/receptor correctos."""
@@ -581,9 +581,9 @@ class TestIngestPipeline:
         emisor = data.get("emisor") or {}
         receptor = data.get("receptor") or {}
         assert emisor.get("nit") == "900111222", f"nit emisor incorrecto: {emisor}"
-        assert receptor.get("nit") == "800333444", (
-            f"nit receptor incorrecto: {receptor}"
-        )
+        assert (
+            receptor.get("nit") == "800333444"
+        ), f"nit receptor incorrecto: {receptor}"
         totales = data.get("totales") or {}
         assert Decimal(str(totales.get("total_a_pagar"))) == Decimal("2500000")
 
@@ -612,9 +612,9 @@ class TestIngestPipeline:
             "validation_history no contiene entrada para 'ingesta' — "
             "validate_output_node puede no haberse ejecutado"
         )
-        assert ingesta_records[-1]["is_valid"] is True, (
-            f"Última validación de ingesta falló: {ingesta_records[-1]}"
-        )
+        assert (
+            ingesta_records[-1]["is_valid"] is True
+        ), f"Última validación de ingesta falló: {ingesta_records[-1]}"
 
     # ── db_persist (modo ingest): persistencia en Supabase ──────────────────
 
@@ -625,9 +625,9 @@ class TestIngestPipeline:
         with SessionLocal() as db:
             job = db_service.get_ingest_job(db, ingest_id)
         assert job is not None, f"IngestJob {ingest_id} no encontrado en Supabase"
-        assert job.status == IngestStatus.COMPLETED, (
-            f"IngestJob.status esperado COMPLETED, obtenido {job.status}"
-        )
+        assert (
+            job.status == IngestStatus.COMPLETED
+        ), f"IngestJob.status esperado COMPLETED, obtenido {job.status}"
 
     def test_db_persist_ingest_crea_transaction_pending(self, ingest_result):
         """db_persist debe crear una fila TransactionPending con NITs correctos."""
@@ -674,15 +674,15 @@ class TestProcessPipeline:
     def test_supervisor_routing_inicial_a_contador(self, process_state):
         """Supervisor debe enrutar a 'contador' al iniciar el pipeline de proceso."""
         log = process_state.get("agent_log") or []
-        assert _was_routed_to(log, "contador"), (
-            f"Supervisor no enrutó a 'contador'. Routing events: {_routing_events(log)}"
-        )
+        assert _was_routed_to(
+            log, "contador"
+        ), f"Supervisor no enrutó a 'contador'. Routing events: {_routing_events(log)}"
 
     def test_supervisor_no_error_en_inicio(self, process_state):
         """El estado final no debe contener error."""
-        assert process_state.get("error") is None, (
-            f"Pipeline de proceso terminó con error: {process_state.get('error')}"
-        )
+        assert (
+            process_state.get("error") is None
+        ), f"Pipeline de proceso terminó con error: {process_state.get('error')}"
 
     # ── Agente Contador: input ───────────────────────────────────────────────
 
@@ -710,26 +710,26 @@ class TestProcessPipeline:
         co = process_state.get("contador_output") or {}
         assert co, "contador_output no encontrado en final_state"
         parsed = ContadorOutput.model_validate(co)
-        assert len(parsed.asientos) >= 2, (
-            "ContadorOutput debe tener al menos 2 asientos"
-        )
+        assert (
+            len(parsed.asientos) >= 2
+        ), "ContadorOutput debe tener al menos 2 asientos"
         assert parsed.total_debitos == parsed.total_creditos, (
             f"Partida doble violada: débitos={parsed.total_debitos} "
             f"≠ créditos={parsed.total_creditos}"
         )
         # Total debe ser >= monto base de la transacción (2500000)
-        assert parsed.total_debitos >= Decimal("2500000"), (
-            f"total_debitos={parsed.total_debitos} por debajo del monto base esperado"
-        )
+        assert parsed.total_debitos >= Decimal(
+            "2500000"
+        ), f"total_debitos={parsed.total_debitos} por debajo del monto base esperado"
 
     def test_contador_output_codigos_puc_validos(self, process_state):
         """Todos los asientos del contador deben tener códigos PUC de 1-6 dígitos."""
         co = process_state.get("contador_output") or {}
         parsed = ContadorOutput.model_validate(co)
         for asiento in parsed.asientos:
-            assert asiento.cuenta_puc.isdigit() and 1 <= len(asiento.cuenta_puc) <= 6, (
-                f"PUC inválido: '{asiento.cuenta_puc}'"
-            )
+            assert (
+                asiento.cuenta_puc.isdigit() and 1 <= len(asiento.cuenta_puc) <= 6
+            ), f"PUC inválido: '{asiento.cuenta_puc}'"
 
     def test_contador_node_complete_registrado(self, process_state):
         """Contador debe registrar node_complete en agent_log."""
@@ -754,9 +754,9 @@ class TestProcessPipeline:
         history = process_state.get("validation_history") or []
         records = [v for v in history if v.get("agent_name") == "contador"]
         assert records, "validation_history no contiene entrada para 'contador'"
-        assert records[-1]["is_valid"] is True, (
-            f"Última validación de contador falló: {records[-1]}"
-        )
+        assert (
+            records[-1]["is_valid"] is True
+        ), f"Última validación de contador falló: {records[-1]}"
 
     # ── Agente Tributario: input ─────────────────────────────────────────────
 
@@ -774,9 +774,9 @@ class TestProcessPipeline:
         starts = [
             e for e in _events_for(log, "tributario") if e.get("event") == "node_start"
         ]
-        assert starts[0]["details"].get("base_gravable"), (
-            "node_start de tributario no registró 'base_gravable'"
-        )
+        assert starts[0]["details"].get(
+            "base_gravable"
+        ), "node_start de tributario no registró 'base_gravable'"
 
     # ── Agente Tributario: output ────────────────────────────────────────────
 
@@ -792,27 +792,27 @@ class TestProcessPipeline:
         """TributarioOutput debe citar al menos una referencia legal colombiana."""
         to = process_state.get("tributario_output") or {}
         parsed = TributarioOutput.model_validate(to)
-        assert len(parsed.referencias_legales) >= 1, (
-            "TributarioOutput debe citar referencias legales (ET, Decreto, etc.)"
-        )
+        assert (
+            len(parsed.referencias_legales) >= 1
+        ), "TributarioOutput debe citar referencias legales (ET, Decreto, etc.)"
 
     def test_tributario_output_impuestos_positivos(self, process_state):
         """Cada impuesto liquidado debe tener valor_impuesto > 0."""
         to = process_state.get("tributario_output") or {}
         parsed = TributarioOutput.model_validate(to)
         for imp in parsed.impuestos:
-            assert imp.valor_impuesto > Decimal("0"), (
-                f"Impuesto {imp.tipo_impuesto} tiene valor_impuesto ≤ 0"
-            )
+            assert imp.valor_impuesto > Decimal(
+                "0"
+            ), f"Impuesto {imp.tipo_impuesto} tiene valor_impuesto ≤ 0"
 
     def test_tributario_output_total_impuestos_consistente(self, process_state):
         """total_impuestos debe ser igual a la suma de todos los valor_impuesto."""
         to = process_state.get("tributario_output") or {}
         parsed = TributarioOutput.model_validate(to)
         calculated = sum(i.valor_impuesto for i in parsed.impuestos)
-        assert parsed.total_impuestos == calculated, (
-            f"total_impuestos={parsed.total_impuestos} ≠ suma calculada={calculated}"
-        )
+        assert (
+            parsed.total_impuestos == calculated
+        ), f"total_impuestos={parsed.total_impuestos} ≠ suma calculada={calculated}"
 
     def test_tributario_asientos_enriquecidos_no_vacios(self, process_state):
         """asientos_enriquecidos deben contener líneas de IVA/retención."""
@@ -828,9 +828,9 @@ class TestProcessPipeline:
     def test_supervisor_valida_tributario_y_enruta_auditor(self, process_state):
         """Supervisor debe enrutar a 'auditor' tras validar el output tributario."""
         log = process_state.get("agent_log") or []
-        assert _was_routed_to(log, "auditor"), (
-            f"Supervisor no enrutó a 'auditor'. Routing events: {_routing_events(log)}"
-        )
+        assert _was_routed_to(
+            log, "auditor"
+        ), f"Supervisor no enrutó a 'auditor'. Routing events: {_routing_events(log)}"
 
     # ── Agente Auditor: input ────────────────────────────────────────────────
 
@@ -848,9 +848,9 @@ class TestProcessPipeline:
         starts = [
             e for e in _events_for(log, "auditor") if e.get("event") == "node_start"
         ]
-        assert starts[0]["details"].get("tx_count", 0) > 0, (
-            "auditor recibió 0 transacciones raw (tx_count=0 en node_start)"
-        )
+        assert (
+            starts[0]["details"].get("tx_count", 0) > 0
+        ), "auditor recibió 0 transacciones raw (tx_count=0 en node_start)"
 
     # ── Agente Auditor: output ───────────────────────────────────────────────
 
@@ -880,17 +880,17 @@ class TestProcessPipeline:
         parsed = AuditorOutput.model_validate(ao)
         if parsed.aprobado:
             criticos = [h for h in parsed.hallazgos if h.severidad.value == "critico"]
-            assert not criticos, (
-                f"Se encontraron hallazgos críticos en un audit aprobado: {criticos}"
-            )
+            assert (
+                not criticos
+            ), f"Se encontraron hallazgos críticos en un audit aprobado: {criticos}"
 
     def test_auditor_output_puntaje_calidad_alto(self, process_state):
         """Para este escenario E2E sin errores, puntaje_calidad debe ser ≥ 80."""
         ao = process_state.get("auditor_output") or {}
         parsed = AuditorOutput.model_validate(ao)
-        assert parsed.puntaje_calidad >= Decimal("80"), (
-            f"puntaje_calidad={parsed.puntaje_calidad} por debajo del umbral esperado (80)"
-        )
+        assert parsed.puntaje_calidad >= Decimal(
+            "80"
+        ), f"puntaje_calidad={parsed.puntaje_calidad} por debajo del umbral esperado (80)"
 
     # ── Supervisor: valida auditor, enruta a db_persist ─────────────────────
 
@@ -914,17 +914,17 @@ class TestProcessPipeline:
         history = process_state.get("validation_history") or []
         records = [v for v in history if v.get("agent_name") == "auditor"]
         assert records, "validation_history no contiene entrada para 'auditor'"
-        assert records[-1]["is_valid"] is True, (
-            f"Última validación de auditor falló: {records[-1]}"
-        )
+        assert (
+            records[-1]["is_valid"] is True
+        ), f"Última validación de auditor falló: {records[-1]}"
 
     # ── db_persist (modo proceso): Supabase ─────────────────────────────────
 
     def test_db_persist_proceso_sin_error(self, process_state):
         """El estado final del proceso no debe contener error."""
-        assert process_state.get("error") is None, (
-            f"Pipeline proceso terminó con error: {process_state.get('error')}"
-        )
+        assert (
+            process_state.get("error") is None
+        ), f"Pipeline proceso terminó con error: {process_state.get('error')}"
 
     def test_db_persist_proceso_process_job_completed(self, process_state):
         """ProcessJob debe quedar COMPLETED en Supabase."""
@@ -933,9 +933,9 @@ class TestProcessPipeline:
         with SessionLocal() as db:
             job = db_service.get_process_job(db, process_id)
         assert job is not None, f"ProcessJob {process_id} no encontrado"
-        assert job.status == ProcessStatus.COMPLETED, (
-            f"ProcessJob.status esperado COMPLETED, obtenido {job.status}"
-        )
+        assert (
+            job.status == ProcessStatus.COMPLETED
+        ), f"ProcessJob.status esperado COMPLETED, obtenido {job.status}"
 
     def test_db_persist_proceso_crea_transaction_posted(self, process_state):
         """db_persist debe crear TransactionPosted vinculada a la transacción pendiente."""
@@ -1002,9 +1002,9 @@ class TestProcessPipeline:
         """agent_log debe contener entradas de todos los agentes del pipeline."""
         log = process_state.get("agent_log") or []
         for agent in ("supervisor", "contador", "tributario", "auditor", "db_persist"):
-            assert _events_for(log, agent), (
-                f"No se encontraron entradas en agent_log para '{agent}'"
-            )
+            assert _events_for(
+                log, agent
+            ), f"No se encontraron entradas en agent_log para '{agent}'"
 
     def test_agent_log_orden_de_ejecucion(self, process_state):
         """
@@ -1024,9 +1024,9 @@ class TestProcessPipeline:
             for agent in ordered_agents
         }
         for agent in ordered_agents:
-            assert first_seen[agent] is not None, (
-                f"Agente '{agent}' no encontrado en agent_log"
-            )
+            assert (
+                first_seen[agent] is not None
+            ), f"Agente '{agent}' no encontrado en agent_log"
         indices = [first_seen[a] for a in ordered_agents]
         assert indices == sorted(indices), (
             f"Orden de ejecución incorrecto en agent_log: "

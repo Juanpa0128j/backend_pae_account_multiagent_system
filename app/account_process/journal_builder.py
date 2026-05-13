@@ -15,6 +15,22 @@ CUENTA_PROVEEDORES_NACIONALES = "220505"
 CUENTA_RETEFUENTE_POR_PAGAR = "2365"
 CUENTA_RETEICA_POR_PAGAR = "2368"
 
+# Venta-side PUC accounts (the company is the seller).
+CUENTA_IVA_GENERADO = "240805"  # IVA generado (pasivo a DIAN, crédito)
+CUENTA_CLIENTES_NACIONALES = "130505"  # Cuentas por cobrar — clientes nacionales
+CUENTA_RETEFTE_RECIBIDA = "135515"  # Autorretenciones / retefuente a favor (activo)
+CUENTA_RETEICA_RECIBIDA = "135517"  # ReteICA a favor (activo)
+
+# Doc types that flip the journal pattern to seller-side (factura venta).
+_VENTA_DOC_TYPES = frozenset(
+    {
+        "factura_venta",
+        "nota_debito_venta",
+        "nota_credito_venta",
+        "recibo_caja",
+    }
+)
+
 
 class JournalEntry(TypedDict):
     fecha: str
@@ -52,12 +68,28 @@ class JournalBuilder:
         reteica: Decimal,
         nit: str,
         descripcion: str,
+        doc_type: str = "factura_compra",
     ) -> List[JournalEntry]:
         """Build journal entries for Via A (ingest path).
 
+        The journal pattern flips based on ``doc_type``:
+
+        * COMPRA-like (default): the company is the buyer.
+          - Debit ``cuenta_puc`` for ``base = total - iva`` (gasto/activo).
+          - Debit ``240802`` for ``iva`` (IVA descontable, activo recuperable).
+          - Credit ``220505`` for ``total - retefuente - reteica`` (CxP).
+          - Credit ``2365`` / ``2368`` for retenciones practicadas (pasivos).
+
+        * VENTA-like (``doc_type`` in ``_VENTA_DOC_TYPES``): the company is the seller.
+          - Credit ``cuenta_puc`` for ``base = total - iva`` (ingreso 4xxx).
+          - Credit ``240805`` for ``iva`` (IVA generado, pasivo a DIAN).
+          - Debit ``130505`` for ``total - retefuente - reteica`` (CxC neta).
+          - Debit ``135515`` / ``135517`` for retenciones recibidas (anticipos a favor).
+
         Args:
             fecha: Transaction date.
-            cuenta_puc: PUC account code for the expense/asset.
+            cuenta_puc: PUC account code for the operational gasto (compra) or
+                ingreso (venta).
             puc_descripcion: Description for the PUC account.
             total: Total invoice amount (must be non-negative).
             iva: VAT amount (must be non-negative).
@@ -65,6 +97,10 @@ class JournalBuilder:
             reteica: ICA withholding amount (must be non-negative).
             nit: Counterparty NIT.
             descripcion: Transaction description.
+            doc_type: Document classification (e.g. ``factura_compra`` /
+                ``factura_venta``). Defaults to ``factura_compra`` so call
+                sites that do not yet pass ``doc_type`` keep the legacy
+                buyer-side behaviour unchanged.
 
         Returns:
             List of journal entries.
@@ -82,6 +118,43 @@ class JournalBuilder:
             if value < 0:
                 raise ValueError(f"{label} must be non-negative, got {value}")
 
+        if doc_type in _VENTA_DOC_TYPES:
+            return JournalBuilder._build_from_ingest_venta(
+                fecha=fecha,
+                cuenta_puc=cuenta_puc,
+                puc_descripcion=puc_descripcion,
+                total=total,
+                iva=iva,
+                retefuente=retefuente,
+                reteica=reteica,
+                nit=nit,
+                descripcion=descripcion,
+            )
+        return JournalBuilder._build_from_ingest_compra(
+            fecha=fecha,
+            cuenta_puc=cuenta_puc,
+            puc_descripcion=puc_descripcion,
+            total=total,
+            iva=iva,
+            retefuente=retefuente,
+            reteica=reteica,
+            nit=nit,
+            descripcion=descripcion,
+        )
+
+    @staticmethod
+    def _build_from_ingest_compra(
+        *,
+        fecha: datetime,
+        cuenta_puc: str,
+        puc_descripcion: str,
+        total: Decimal,
+        iva: Decimal,
+        retefuente: Decimal,
+        reteica: Decimal,
+        nit: str,
+        descripcion: str,
+    ) -> List[JournalEntry]:
         entries: List[JournalEntry] = []
         base = total - iva
         fecha_iso = _iso_fecha(fecha)
@@ -158,6 +231,104 @@ class JournalBuilder:
             )
 
         _validate_balance(entries, "ingest")
+        return entries
+
+    @staticmethod
+    def _build_from_ingest_venta(
+        *,
+        fecha: datetime,
+        cuenta_puc: str,
+        puc_descripcion: str,
+        total: Decimal,
+        iva: Decimal,
+        retefuente: Decimal,
+        reteica: Decimal,
+        nit: str,
+        descripcion: str,
+    ) -> List[JournalEntry]:
+        """Build seller-side journal entries (factura_venta and friends).
+
+        Mirror of the compra path but with sides flipped:
+        the client owes the FULL total c/IVA → debit CxC; ingreso is the base
+        (subtotal sin IVA); IVA generado credits 240805 instead of debiting
+        the descontable; retenciones recibidas are anticipos a favor (debit).
+        """
+        entries: List[JournalEntry] = []
+        base = total - iva
+        fecha_iso = _iso_fecha(fecha)
+
+        cxc_amount = total - retefuente - reteica
+        if cxc_amount < 0:
+            raise ValueError(
+                f"retenciones exceed total: total={total}, "
+                f"retefuente={retefuente}, reteica={reteica}"
+            )
+        if cxc_amount > 0:
+            entries.append(
+                {
+                    "fecha": fecha_iso,
+                    "cuenta": CUENTA_CLIENTES_NACIONALES,
+                    "descripcion": "Clientes Nacionales",
+                    "tercero_nit": nit,
+                    "detalle": f"CxC {descripcion}",
+                    "debito": str(cxc_amount),
+                    "credito": "0",
+                }
+            )
+
+        if retefuente > 0:
+            entries.append(
+                {
+                    "fecha": fecha_iso,
+                    "cuenta": CUENTA_RETEFTE_RECIBIDA,
+                    "descripcion": "Retefuente recibida (anticipo)",
+                    "tercero_nit": nit,
+                    "detalle": f"Retefuente recibida {descripcion}",
+                    "debito": str(retefuente),
+                    "credito": "0",
+                }
+            )
+
+        if reteica > 0:
+            entries.append(
+                {
+                    "fecha": fecha_iso,
+                    "cuenta": CUENTA_RETEICA_RECIBIDA,
+                    "descripcion": "ReteICA recibida (anticipo)",
+                    "tercero_nit": nit,
+                    "detalle": f"ReteICA recibida {descripcion}",
+                    "debito": str(reteica),
+                    "credito": "0",
+                }
+            )
+
+        if base > 0:
+            entries.append(
+                {
+                    "fecha": fecha_iso,
+                    "cuenta": cuenta_puc,
+                    "descripcion": puc_descripcion or descripcion,
+                    "tercero_nit": nit,
+                    "detalle": descripcion,
+                    "debito": "0",
+                    "credito": str(base),
+                }
+            )
+
+        if iva > 0:
+            entries.append(
+                {
+                    "fecha": fecha_iso,
+                    "cuenta": CUENTA_IVA_GENERADO,
+                    "descripcion": "IVA Generado",
+                    "tercero_nit": nit,
+                    "detalle": f"IVA generado por {descripcion}",
+                    "debito": "0",
+                    "credito": str(iva),
+                }
+            )
+
+        _validate_balance(entries, "ingest_venta")
         return entries
 
     @staticmethod

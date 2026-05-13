@@ -173,21 +173,23 @@ class TestContadorOutput:
         assert len(output.asientos) == 2
         assert output.total_debitos == output.total_creditos
 
-    def test_double_entry_violation(self, valid_contador_data):
-        """Debits must equal credits."""
+    def test_double_entry_violation(self, valid_contador_data, caplog):
+        """Debits must equal credits — now a warning, not a hard error."""
         valid_contador_data["asientos"][1]["valor"] = 100000.00
         valid_contador_data["total_creditos"] = 100000.00
-        with pytest.raises(ValidationError, match="Double-entry violation"):
-            ContadorOutput.model_validate(valid_contador_data)
+        with caplog.at_level("WARNING", logger="app.models.agent_outputs"):
+            output = ContadorOutput.model_validate(valid_contador_data)
+        assert output.total_creditos == 100000.00
+        assert "Violación de partida doble" in caplog.text
 
     def test_invalid_puc_code(self, valid_contador_data):
         valid_contador_data["asientos"][0]["cuenta_puc"] = "ABCD"
-        with pytest.raises(ValidationError, match="Invalid PUC code"):
+        with pytest.raises(ValidationError, match="Código PUC inválido"):
             ContadorOutput.model_validate(valid_contador_data)
 
     def test_puc_code_too_long(self, valid_contador_data):
         valid_contador_data["asientos"][0]["cuenta_puc"] = "1234567"
-        with pytest.raises(ValidationError, match="Invalid PUC code"):
+        with pytest.raises(ValidationError, match="Código PUC inválido"):
             ContadorOutput.model_validate(valid_contador_data)
 
     def test_empty_asientos(self, valid_contador_data):
@@ -195,10 +197,12 @@ class TestContadorOutput:
         with pytest.raises(ValidationError):
             ContadorOutput.model_validate(valid_contador_data)
 
-    def test_total_mismatch(self, valid_contador_data):
+    def test_total_mismatch(self, valid_contador_data, caplog):
         valid_contador_data["total_debitos"] = 999999
-        with pytest.raises(ValidationError, match="total_debitos"):
-            ContadorOutput.model_validate(valid_contador_data)
+        with caplog.at_level("WARNING", logger="app.models.agent_outputs"):
+            output = ContadorOutput.model_validate(valid_contador_data)
+        assert output.total_debitos == 999999
+        assert "El total de débitos" in caplog.text
 
 
 # =========================================================================
@@ -215,18 +219,20 @@ class TestTributarioOutput:
     def test_aplica_true_but_no_impuestos(self, valid_tributario_data):
         valid_tributario_data["impuestos"] = []
         valid_tributario_data["total_impuestos"] = 0
-        with pytest.raises(ValidationError, match="aplica_impuestos is True"):
+        with pytest.raises(ValidationError, match="aplica_impuestos es True"):
             TributarioOutput.model_validate(valid_tributario_data)
 
     def test_aplica_false_but_has_impuestos(self, valid_tributario_data):
         valid_tributario_data["aplica_impuestos"] = False
-        with pytest.raises(ValidationError, match="aplica_impuestos is False"):
+        with pytest.raises(ValidationError, match="aplica_impuestos es False"):
             TributarioOutput.model_validate(valid_tributario_data)
 
-    def test_total_mismatch(self, valid_tributario_data):
+    def test_total_mismatch(self, valid_tributario_data, caplog):
         valid_tributario_data["total_impuestos"] = 10000
-        with pytest.raises(ValidationError, match="total_impuestos"):
-            TributarioOutput.model_validate(valid_tributario_data)
+        with caplog.at_level("WARNING", logger="app.models.agent_outputs"):
+            output = TributarioOutput.model_validate(valid_tributario_data)
+        assert output.total_impuestos == 10000
+        assert "El total de impuestos" in caplog.text
 
     def test_tarifa_over_100(self, valid_tributario_data):
         valid_tributario_data["impuestos"][0]["tarifa_porcentaje"] = 150
@@ -260,7 +266,7 @@ class TestAuditorOutput:
 
     def test_approved_with_high_risk(self, valid_auditor_data):
         valid_auditor_data["nivel_riesgo"] = "alto"
-        with pytest.raises(ValidationError, match="Cannot approve"):
+        with pytest.raises(ValidationError, match="No se puede aprobar"):
             AuditorOutput.model_validate(valid_auditor_data)
 
     def test_approved_with_critical_finding(self, valid_auditor_data):
@@ -273,7 +279,7 @@ class TestAuditorOutput:
                 "recomendacion": "Revisar y corregir el monto contra el documento fuente original",
             }
         ]
-        with pytest.raises(ValidationError, match="critical findings"):
+        with pytest.raises(ValidationError, match="hallazgos críticos"):
             AuditorOutput.model_validate(valid_auditor_data)
 
     def test_invalid_finding_code(self, valid_auditor_data):
@@ -442,9 +448,9 @@ class TestSchemaRegistry:
         from pydantic import BaseModel
 
         for name, schema_cls in AGENT_OUTPUT_SCHEMAS.items():
-            assert issubclass(schema_cls, BaseModel), (
-                f"Schema for '{name}' is not a Pydantic BaseModel"
-            )
+            assert issubclass(
+                schema_cls, BaseModel
+            ), f"Schema for '{name}' is not a Pydantic BaseModel"
 
     def test_schemas_produce_json_schema(self):
         """All schemas should export a valid JSON schema."""

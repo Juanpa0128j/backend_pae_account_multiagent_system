@@ -334,14 +334,17 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
         from app.agents.audit_utils import record_giveup
         from app.models.audit import AuditFinding, AuditTarget, Severity
 
+        def _extract_msg(e) -> str:
+            if isinstance(e, dict):
+                return str(e.get("msg", e))
+            return str(e)
+
+        error_bullets = (
+            "\n".join(f"- {_extract_msg(e)}" for e in error_list) if error_list else ""
+        )
         user_msg = (
             f"El agente '{agent_name}' no pudo generar una respuesta válida "
-            f"después de {attempt} intentos. "
-            + (
-                f"Errores: {'; '.join(str(e) for e in error_list)}"
-                if error_list
-                else ""
-            )
+            f"después de {attempt} intentos.\n{error_bullets}"
         )
         schema_finding = AuditFinding(
             rule_id="SCHEMA_VALIDATION_EXHAUSTED",
@@ -349,7 +352,7 @@ def validate_contador_output_node(state: AgentState) -> AgentState:
             fixable=False,
             target=AuditTarget.CONTADOR,
             responsible_agent=agent_name,
-            technical_message=f"Schema validation failed for '{agent_name}' after {attempt} attempts. Errors: {'; '.join(str(e) for e in error_list)}",
+            technical_message=f"Schema validation failed for '{agent_name}' after {attempt} attempts.\n{error_bullets}",
             evidence={"attempt": attempt, "errors": error_list},
             user_message_es=user_msg,
             suggested_action_es=(

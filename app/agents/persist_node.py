@@ -46,7 +46,6 @@ logger = get_logger("app.agents.persist")
 MAX_NODE_RETRIES = 3
 
 
-
 def _resolve_company_nit(
     state: AgentState, tx_data: dict[str, Any] | None = None
 ) -> Optional[str]:
@@ -583,6 +582,24 @@ def _run_persist(state: AgentState) -> AgentState:
             else:
                 cuenta_puc = as_str(tx_data.get("cuenta_puc"), "")
                 if not cuenta_puc:
+                    # No cuenta_puc in extracted data — skip persisting a posted
+                    # record in ingest mode. Pipeline 2 (mode=process, after HITL
+                    # confirm) will classify via contador and persist the correct
+                    # posted. Without this skip we'd create a placeholder posted
+                    # with 519595 fallback that duplicates the one Pipeline 2
+                    # creates with the proper cuenta — bug P0-1.
+                    pathway_value = state.get("pathway") or ""
+                    if pathway_value != "work_with_existing":
+                        logger.info(
+                            "db_persist[ingest]: skipping posted creation — no cuenta_puc "
+                            "in extracted data; Pipeline 2 will classify and persist "
+                            "(pending_id=%s)",
+                            as_str(getattr(txn_pending, "id", "")),
+                        )
+                        continue
+                    # Vía B (work_with_existing) still needs a posted record
+                    # even without cuenta_puc — those docs don't go through
+                    # the contador pipeline.
                     logger.warning(
                         "db_persist: No PUC code in ingest data — "
                         "defaulting to 519595 (Otros Gastos). "
@@ -642,6 +659,10 @@ def _run_persist(state: AgentState) -> AgentState:
                     "auditor": auditor_out,
                 }
             else:
+                doc_type_full = as_str(
+                    (state.get("document_classification") or {}).get("doc_type"),
+                    "",
+                )
                 journal_json = JournalBuilder.build_from_ingest(
                     fecha=fecha,
                     cuenta_puc=cuenta_puc,
@@ -652,7 +673,73 @@ def _run_persist(state: AgentState) -> AgentState:
                     reteica=reteica,
                     nit=nit_emisor,
                     descripcion=descripcion,
+                    doc_type=doc_type_full,
                 )
+                # Ingest path uses a hardcoded factura_compra pattern (cuenta de
+                # gasto + 220505 CxP). For bank-outflow doc subtypes the credit
+                # side must hit 111005 (Banco), not CxP. Swap 220505 cred ->
+                # 111005 to mirror the contador-stage corrector.
+                if doc_type_full in {
+                    "comprobante_egreso",
+                    "extracto_bancario",
+                    "conciliacion_bancaria",
+                }:
+                    for _entry in journal_json:
+                        if (
+                            as_str(_entry.get("cuenta"), "") == "220505"
+                            and safe_decimal(_entry.get("credito"))
+                            and safe_decimal(_entry.get("credito")) > Decimal("0")
+                        ):
+                            logger.info(
+                                "db_persist[ingest]: %s 220505 cred -> 111005 — descripcion=%r",
+                                doc_type_full,
+                                as_str(_entry.get("detalle"), "")[:120],
+                            )
+                            _entry["cuenta"] = "111005"
+                            _entry["descripcion"] = "Bancos Nacionales"
+
+                # Bank statement INFLOW: the default builder produces
+                # "DEBIT cuenta + CREDIT 111005" (outflow pattern). For an
+                # inflow movement (bank received funds) the asiento must be
+                # inverted: DEBIT 111005 + CREDIT cuenta. Swap each entry's
+                # debito/credito sides while preserving the cuenta and amounts.
+                bank_direction = as_str(tx_data.get("bank_direction"), "")
+                if doc_type_full == "extracto_bancario" and bank_direction == "entrada":
+                    logger.info(
+                        "db_persist[ingest]: inverting extracto entrada asiento — descripcion=%r",
+                        (descripcion or "")[:120],
+                    )
+                    for _entry in journal_json:
+                        _d = _entry.get("debito") or "0"
+                        _c = _entry.get("credito") or "0"
+                        _entry["debito"] = str(_c)
+                        _entry["credito"] = str(_d)
+
+                # Specialize 5195/519595 fallback via the keyword corrector
+                # when the description identifies a concrete gasto.
+                if cuenta_puc in {"5195", "519595"}:
+                    from app.agents.contador_puc_corrector import _suggest_puc
+
+                    suggested = _suggest_puc(descripcion or "")
+                    if suggested:
+                        logger.info(
+                            "db_persist[ingest]: rewriting %s -> %s based on descripcion=%r",
+                            cuenta_puc,
+                            suggested,
+                            (descripcion or "")[:120],
+                        )
+                        for _entry in journal_json:
+                            if as_str(_entry.get("cuenta"), "") in {"5195", "519595"}:
+                                _entry["cuenta"] = suggested
+                        cuenta_puc = suggested
+                        suggested_record = db_service.validate_puc_exists(
+                            db, cuenta_puc
+                        )
+                        if suggested_record:
+                            puc_descripcion = as_str(
+                                getattr(suggested_record, "nombre", ""), ""
+                            )
+
                 tax_references = interpreted.get("referencias_legales", [])
                 raw_reasoning = tx_data.get("agent_reasoning")
                 agent_reasoning = (
@@ -714,6 +801,17 @@ def _run_persist(state: AgentState) -> AgentState:
                         "stage": "completed",
                         "status": "completed",
                     },
+                )
+            # Mode=process still owns the ingest_job lifecycle: once persistence
+            # finishes the source ingest is conceptually done. Without this the
+            # row stays at PROCESSING indefinitely while the UI shows COMPLETADO.
+            if ingest_id:
+                db_service.update_ingest_job(
+                    db,
+                    ingest_id,
+                    IngestStatus.COMPLETED,
+                    document_type=doc_type,
+                    pathway=pathway_value,
                 )
 
         # Auto-derive financial statements after process completes (non-fatal)

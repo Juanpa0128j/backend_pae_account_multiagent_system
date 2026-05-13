@@ -1171,7 +1171,11 @@ async def get_derivation_status(
         t: {item["period_end"] for item in sources[t] if item["period_end"]}
         for t in _REQUIRED_SOURCE_TYPES
     }
-    common_period_ends = set.intersection(*period_end_sets.values()) if period_end_sets.values() else set()
+    common_period_ends = (
+        set.intersection(*period_end_sets.values())
+        if period_end_sets.values()
+        else set()
+    )
 
     ready_periods = []
     for pe in sorted(common_period_ends, reverse=True):

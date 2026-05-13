@@ -152,8 +152,8 @@ def test_contador_example_retry_feedback_roundtrip() -> None:
     assert result["correction_feedback"] is None
 
 
-def test_contador_example_unbalanced_output_triggers_validation_retry() -> None:
-    """Example: an unbalanced output should produce correction feedback, not crash."""
+def test_contador_example_unbalanced_output_warns_without_retry() -> None:
+    """Unbalanced debits/credits is now a warning — no retry triggered."""
     unbalanced = {
         "fecha_registro": "2026-03-01",
         "tipo_documento": "factura",
@@ -180,10 +180,10 @@ def test_contador_example_unbalanced_output_triggers_validation_retry() -> None:
     result = validate_contador_output_node(state)
 
     assert result["error"] is None
-    assert result["correction_feedback"] is not None
-    assert result["retry_count"] == 1
+    assert result["correction_feedback"] is None
+    assert result["retry_count"] == 0
     assert len(result["validation_history"]) == 1
-    assert result["validation_history"][0]["is_valid"] is False
+    assert result["validation_history"][0]["is_valid"] is True
 
 
 def test_contador_prompt_includes_transaction_fields_and_rag_context() -> None:
@@ -260,3 +260,34 @@ def test_contador_prompt_uses_fallback_when_rag_context_is_empty() -> None:
     prompt_text = captured[0]
 
     assert "Sin contexto normativo adicional." in prompt_text
+
+
+def test_exhausted_validation_user_message_has_clean_bullets_not_raw_dicts() -> None:
+    """When schema validation is exhausted, user_message_es should show only
+    the error msg per bullet point, never raw Pydantic dict traces."""
+    invalid = {
+        "fecha_registro": "2026-03-01",
+        "tipo_documento": "factura",
+        "descripcion_general": "Asiento invalido",
+        "asientos": [],
+        "total_debitos": 0,
+        "total_creditos": 0,
+    }
+
+    state = _base_state(
+        contador_output=invalid, interpreted_data=invalid, retry_count=3
+    )
+    result = validate_contador_output_node(state)
+
+    assert result.get("giveup_record") is not None
+    findings = result["giveup_record"]["last_findings"]
+    assert len(findings) > 0
+    user_msg = findings[0]["user_message_es"]
+
+    # Must NOT contain raw dict artifacts
+    assert "'loc':" not in user_msg
+    assert "'type':" not in user_msg
+    assert "'input':" not in user_msg
+
+    # Should be formatted as bullet points (lines starting with "-")
+    assert any(line.strip().startswith("-") for line in user_msg.splitlines())

@@ -33,7 +33,10 @@ class TestIsDoubleEntryViolation:
     def test_matches_balance_message(self):
         if OutputParserException is None:
             pytest.skip("langchain_core not installed")
-        exc = OutputParserException("Double-entry violation: debits (1) != credits (2)")
+        exc = OutputParserException(
+            "Violación de partida doble: los débitos (1) no igualan los créditos (2). "
+            "Cada transacción debe balancearse."
+        )
         assert is_double_entry_violation(exc)
 
     def test_other_parse_error_false(self):
@@ -47,7 +50,7 @@ class TestIsInvalidPuc:
     def test_matches_puc_message(self):
         if OutputParserException is None:
             pytest.skip("langchain_core not installed")
-        exc = OutputParserException("Invalid PUC code '4xxx'")
+        exc = OutputParserException("Código PUC inválido '4xxx'.")
         assert is_invalid_puc(exc)
 
 
@@ -83,14 +86,14 @@ class TestLlmWithParseRetry:
             _ = raw_text
             captured_feedback.append(correction_feedback)
             if len(captured_feedback) < 3:
-                raise OutputParserException("Invalid PUC code 'XYZ'")
+                raise OutputParserException("Código PUC inválido 'XYZ'.")
             return {"ok": True}
 
         result = llm_with_parse_retry(method, "raw", agent_label="test")
         assert result == {"ok": True}
         assert captured_feedback[0] is None
         assert captured_feedback[1] is not None
-        assert "Invalid PUC code" in captured_feedback[1]
+        assert "Código PUC inválido" in captured_feedback[1]
         assert captured_feedback[2] is not None
 
     def test_raises_after_max_retries(self):

@@ -105,8 +105,17 @@ def build_structured_transactions(
 
                 debito = safe_decimal(movement.get("debito")) or Decimal("0")
                 credito = safe_decimal(movement.get("credito")) or Decimal("0")
-                valor = debito if debito > Decimal("0") else credito
-                if valor <= Decimal("0"):
+                # Bank statement convention: a `debito` value means the bank
+                # debited (charged) the account = OUTFLOW; `credito` means the
+                # bank credited (received) the account = INFLOW. Persist uses
+                # this hint to invert the default outflow asiento when needed.
+                if debito > Decimal("0"):
+                    valor = debito
+                    bank_direction = "salida"
+                elif credito > Decimal("0"):
+                    valor = credito
+                    bank_direction = "entrada"
+                else:
                     continue
 
                 descripcion = as_str(movement.get("descripcion"), "Movimiento bancario")
@@ -128,6 +137,7 @@ def build_structured_transactions(
                         "total": str(valor),
                         "concepto": descripcion,
                         "descripcion": descripcion,
+                        "bank_direction": bank_direction,
                         "items": [sanitize_for_json(movement)],
                     }
                 )
@@ -278,6 +288,41 @@ def build_structured_transactions(
         if inferred_total is not None and inferred_total > Decimal("0"):
             parsed_total = inferred_total
 
+    # Derive a meaningful descripcion. Order: explicit fields → notas →
+    # concat of first item descriptions → consecutivo-based fallback. Without
+    # this FVs persist with empty `descripcion` and the UI shows "—".
+    derived_concepto = as_str(
+        interpreted.get("descripcion_general")
+        or interpreted.get("concepto")
+        or interpreted.get("notas"),
+        "",
+    ).strip()
+    if not derived_concepto and isinstance(items_payload, list) and items_payload:
+        item_descs: list[str] = []
+        for item in items_payload[:3]:
+            if isinstance(item, dict):
+                desc = as_str(
+                    item.get("descripcion") or item.get("concepto"), ""
+                ).strip()
+                if desc:
+                    item_descs.append(desc)
+        if item_descs:
+            derived_concepto = " · ".join(item_descs)[:200]
+    if not derived_concepto:
+        consecutivo = as_str(
+            interpreted.get("consecutivo") or interpreted.get("numero"), ""
+        ).strip()
+        emisor_nit = as_str(emisor.get("nit") or interpreted.get("nit_emisor"), "")
+        tipo = as_str(doc_type or interpreted.get("tipo_documento", ""), "")
+        if consecutivo:
+            derived_concepto = (
+                f"{tipo} {consecutivo}".strip() if tipo else f"Doc {consecutivo}"
+            )
+        elif emisor_nit:
+            derived_concepto = f"{tipo} - NIT {emisor_nit}".strip(" -")
+        else:
+            derived_concepto = tipo
+
     tx_data = {
         "fecha": (
             interpreted.get("fecha_emision")
@@ -289,18 +334,8 @@ def build_structured_transactions(
             receptor.get("nit") or interpreted.get("nit_receptor"), ""
         ),
         "total": str(parsed_total if parsed_total is not None else Decimal("0")),
-        "concepto": as_str(
-            interpreted.get("descripcion_general")
-            or interpreted.get("concepto")
-            or interpreted.get("tipo_documento", ""),
-            "",
-        ),
-        "descripcion": as_str(
-            interpreted.get("descripcion_general")
-            or interpreted.get("concepto")
-            or interpreted.get("tipo_documento", ""),
-            "",
-        ),
+        "concepto": derived_concepto,
+        "descripcion": derived_concepto,
         "items": sanitize_for_json(items_payload),
     }
     return [tx_data]
