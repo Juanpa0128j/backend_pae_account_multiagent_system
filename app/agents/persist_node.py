@@ -66,6 +66,15 @@ def _resolve_company_nit(
     return None
 
 
+def _resolve_cuenta_reteica(state: AgentState) -> str:
+    """Extract custom ReteICA account from tributario_output, fallback to 2368."""
+    tributario = state.get("tributario_output") or {}
+    for imp in tributario.get("impuestos") or []:
+        if imp.get("tipo_impuesto") == "reteica" and imp.get("cuenta_puc"):
+            return str(imp["cuenta_puc"])
+    return "2368"
+
+
 def db_persist_node(state: AgentState) -> AgentState:
     """Persist current state output to DB for ingest/process mode.
 
@@ -674,6 +683,7 @@ def _run_persist(state: AgentState) -> AgentState:
                     nit=nit_emisor,
                     descripcion=descripcion,
                     doc_type=doc_type_full,
+                    cuenta_reteica=_resolve_cuenta_reteica(state),
                 )
                 # Ingest path uses a hardcoded factura_compra pattern (cuenta de
                 # gasto + 220505 CxP). For bank-outflow doc subtypes the credit

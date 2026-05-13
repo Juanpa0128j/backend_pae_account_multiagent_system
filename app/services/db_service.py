@@ -949,6 +949,19 @@ def get_company_locked_pathway(db: Session, nit: str) -> Optional[str]:
     return row[0] if row else None
 
 
+def get_cuenta_ica_propio(db: Session, nit: str) -> str:
+    """Return the configured ICA liability account for the given NIT.
+
+    Falls back to the national default ``2368`` if no custom account is set.
+    """
+    row = (
+        db.query(CompanySettings.cuenta_ica_propio)
+        .filter(CompanySettings.nit == nit)
+        .first()
+    )
+    return row[0] if row and row[0] else "2368"
+
+
 def set_company_locked_pathway(db: Session, nit: str, pathway: str) -> None:
     """Set locked_pathway on first upload — atomic so concurrent first uploads
     can't race and pick different pathways. The conditional UPDATE only

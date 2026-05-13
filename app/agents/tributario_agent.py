@@ -96,7 +96,7 @@ _VENTA_DOC_TYPES = frozenset(
 )
 
 
-def _tax_accounts_for(doc_type: str) -> dict:
+def _tax_accounts_for(doc_type: str, cuenta_ica_propio: str | None = None) -> dict:
     """Return PUC accounts + movement direction for the given doc_type.
 
     For VENTA (the company is the seller):
@@ -110,6 +110,7 @@ def _tax_accounts_for(doc_type: str) -> dict:
       - Retenciones practicadas a proveedores son CRÉDITOS a 2365/2368 (pasivo a DIAN).
       - ICA gasto/por_pagar applied when the line has ingreso credits (legacy).
     """
+    ica_pasivo = cuenta_ica_propio or CUENTA_RETEICA
     if doc_type in _VENTA_DOC_TYPES:
         return {
             "iva": (CUENTA_IVA_GENERADO, "credito"),
@@ -131,13 +132,13 @@ def _tax_accounts_for(doc_type: str) -> dict:
         "retefuente": (CUENTA_RETEFUENTE, "credito"),
         "retefuente_nombre": "Retención en la Fuente por Pagar",
         "retefuente_detalle": "Retención en la fuente por pagar — Artículo 365 ET",
-        "reteica": (CUENTA_RETEICA, "credito"),
+        "reteica": (ica_pasivo, "credito"),
         "reteica_nombre": "Retención ICA por Pagar",
         "reteica_detalle": "Retención ICA por pagar — Decreto 2048/1992",
         "ica_gasto": ("511505", "debito"),
         "ica_gasto_nombre": "Gasto ICA",
         "ica_gasto_detalle": "Gasto ICA — Ley 14/1983, Art. 342 Ley 1955/2019",
-        "ica_por_pagar": ("2368", "credito"),
+        "ica_por_pagar": (ica_pasivo, "credito"),
         "ica_por_pagar_nombre": "ICA por Pagar",
         "ica_por_pagar_detalle": "ICA por Pagar — Decreto 1333/1986",
     }
@@ -457,7 +458,6 @@ def tributario_node(state: AgentState) -> AgentState:
 
     # Route tax accounts (IVA, retenciones, ICA) by document direction (venta vs compra-like).
     is_venta = doc_type in _VENTA_DOC_TYPES
-    accounts = _tax_accounts_for(doc_type)
     logger.info(
         "Tributario: doc_type=%s → routing %s",
         doc_type or "<empty>",
@@ -545,6 +545,14 @@ def tributario_node(state: AgentState) -> AgentState:
                                 "iva_responsable": row.iva_responsable,
                                 "tasa_ica": float(row.tasa_ica),
                                 "tasa_renta": float(row.tasa_renta),
+                                "cuenta_ica_propio": (
+                                    row.cuenta_ica_propio
+                                    if isinstance(
+                                        getattr(row, "cuenta_ica_propio", None),
+                                        str,
+                                    )
+                                    else None
+                                ),
                             }
                             logger.info(
                                 f"Tributario: loaded company settings for NIT {company_nit}"
@@ -636,6 +644,10 @@ def tributario_node(state: AgentState) -> AgentState:
             if company_config
             else TASA_ICA_DEFAULT
         )
+        cuenta_ica_propio = (
+            company_config.get("cuenta_ica_propio") if company_config else None
+        )
+        accounts = _tax_accounts_for(doc_type, cuenta_ica_propio=cuenta_ica_propio)
 
         # ------------------------------------------------------------------
         # Step 2 — Determine transaction type from PUC codes
