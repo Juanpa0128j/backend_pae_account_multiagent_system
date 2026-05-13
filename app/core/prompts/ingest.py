@@ -49,7 +49,9 @@ def factura_venta(text: str, *, correction_feedback: str | None = None) -> str:
         "datos del receptor (NIT, razón social), forma de pago, medio de pago, plazo en días, "
         "ítems con descripción/cantidad/valor unitario/impuestos, totales desglosados "
         "(subtotal, IVA, retenciones, total a pagar), y retenciones aplicadas "
-        "(retefuente, reteIVA, reteICA)."
+        "(retefuente, reteIVA, reteICA).\n\n"
+        "IMPORTANTE: Si el documento tiene varias páginas, busca las retenciones "
+        "en TODAS las páginas. No te limites a la primera página."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
@@ -63,7 +65,9 @@ def factura_compra(text: str, *, correction_feedback: str | None = None) -> str:
         "(NIT con DV, razón social, régimen), datos de la empresa receptora, condiciones de pago "
         '(texto libre: "30 días netos", "2/10 neto 30", etc.), plazo en días, ítems con detalle '
         "de IVA y retenciones, totales desglosados, y si aplica, indica si es documento soporte "
-        "(adquisición a no obligado a facturar)."
+        "(adquisición a no obligado a facturar).\n\n"
+        "IMPORTANTE: Si el documento tiene varias páginas, busca las retenciones "
+        "en TODAS las páginas. No te limites a la primera página."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
