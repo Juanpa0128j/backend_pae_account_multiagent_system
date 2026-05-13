@@ -55,8 +55,6 @@ PATRONES VÁLIDOS — NO marcar como hallazgo, NO rechazar:
   — patrón estándar gasto + cuenta por pagar.
 - IVA descontable (2408xx) y IVA generado (2408xx) pueden coexistir en notas crédito
   o documentos mixtos sin ser duplicado.
-- 240802 / 240805 acreditados ambos en factura_venta cuando el documento tiene IVA
-  generado y otros impuestos descontables aplican.
 
 RECHAZO (aprobado=false) SOLO cuando se cumple alguno de:
 - Asiento desbalanceado (Σ debitos ≠ Σ creditos).
@@ -65,6 +63,12 @@ RECHAZO (aprobado=false) SOLO cuando se cumple alguno de:
 - Valores negativos sin justificación clara en la descripción.
 - Falta una contraparte obligatoria (FV sin línea de ingreso, CE sin línea de banco/caja).
 - Coherencia semantica gravemente rota (ej. ingreso clasificado como gasto).
+- En factura_venta: 240802 (IVA descontable) aparece en DÉBITO, o 2365/2368 aparecen
+  en CRÉDITO. En venta el IVA debe ir al crédito en 240805, y las retenciones que el
+  comprador practica son anticipos a favor (135515 / 135517) al débito.
+- En factura_venta: aparece gasto ICA (511505) o crédito a 2368 etiquetado como
+  "ICA por pagar". Esos asientos corresponden a la liquidación municipal, no a la
+  factura individual.
 
 Devuelve una salida estructurada que incluya obligatoriamente:
 - fecha_auditoria (YYYY-MM-DD)

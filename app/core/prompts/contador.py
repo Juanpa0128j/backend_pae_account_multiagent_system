@@ -21,11 +21,23 @@ _DOC_GUIDANCE: dict[str, str] = {
         "El valor del asiento debe ser el campo 'debito' o 'credito' del movimiento, NO el saldo."
     ),
     "factura_venta": (
-        "REGLA FACTURA VENTA: debita cuentas por cobrar (130505) y acredita la cuenta de ingreso "
-        "específica que corresponda al concepto. Códigos PUC válidos: 4135 (Comercio al por mayor "
-        "y al por menor), 4170 (Actividades inmobiliarias y de alquiler), 4175 (Servicios), "
-        "4145 (Transporte). NUNCA escribas '4xxx' literal — elige el código completo. "
-        "NO dupliques el IVA ni las retenciones — el agente tributario las maneja."
+        "REGLA FACTURA VENTA (la empresa es VENDEDOR / EMISOR):\n"
+        "EL CAMPO 'total' DEL RAW TRANSACTION YA ES EL SUBTOTAL SIN IVA (la BASE). NO le restes el IVA otra vez. "
+        "El IVA viene aparte en el bloque 'IMPUESTOS DEL DOCUMENTO FUENTE' como 'total_iva'.\n"
+        "Asiento mínimo esperado:\n"
+        "- DÉBITO 130505 (Clientes Nacionales) por (raw_transaction.total + total_iva). Es lo que el cliente debe pagar (total con IVA).\n"
+        "- CRÉDITO cuenta_de_ingreso (grupo 4xxx) por raw_transaction.total exactamente. No restes IVA. "
+        "Elige el código exacto del catálogo `cuentas_puc` y guíate por la actividad económica (CIIU) del emisor: "
+        "comercio de mercancías → 4135; prestación de servicios, arrendamientos, transporte, profesionales, "
+        "hoteles y similares → 4170; rendimientos financieros / intereses → 4210. NUNCA escribas '4xxx' "
+        "ni un código que no exista en el catálogo.\n"
+        "- CRÉDITO 240805 (IVA generado) por total_iva. NUNCA al débito en 240802 (eso es de compras).\n"
+        "Si el comprador practica retenciones a la empresa, agrégalas como DÉBITOS y ajusta el débito a 130505 a "
+        "(raw_transaction.total + total_iva - retefuente - reteica). Las cuentas son: 135515 (retefuente recibida) "
+        "y 135517 (reteICA recibida). NUNCA acredites 2365/2368 en una factura de venta.\n"
+        "NO inyectes gasto ICA (511505) en una factura de venta; el ICA propio se liquida en la declaración "
+        "municipal, no en el asiento de cada venta.\n"
+        "Validación obligatoria: Σdébitos == Σcréditos == raw_transaction.total + total_iva."
     ),
     "factura_compra": (
         "REGLA FACTURA COMPRA: debita el gasto/activo y acredita cuentas por pagar (220505). "
@@ -175,6 +187,8 @@ def contador_output(
     rag_context: list[dict] | None = None,
     correction_feedback: str | None = None,
     source_taxes: dict | None = None,
+    company_context: dict | None = None,
+    puc_ingresos_catalog: list[dict] | None = None,
 ) -> str:
     """Return the contador journal-entry prompt string.
 
@@ -218,6 +232,32 @@ Contexto normativo/RAG:
 Los siguientes valores fueron extraidos directamente del documento original:
 {json.dumps(source_taxes, ensure_ascii=False, indent=2)}
 IMPORTANTE: Estos valores son informativos. NO los incluyas como asientos contables — el agente tributario los registrara por separado. Usaelos para entender la naturaleza fiscal del documento y clasificar correctamente las cuentas PUC."""
+
+    if company_context:
+        prompt += f"""
+
+=== EMPRESA EMISORA / TENANT (contexto) ===
+{json.dumps(company_context, ensure_ascii=False, indent=2)}
+La actividad economica (CIIU) del emisor define la cuenta de ingreso operacional que debe usarse cuando este documento es una factura de venta. Por ejemplo:
+- CIIU 47xx (comercio al por menor) → 4135 (Comercio al por mayor y al por menor)
+- CIIU 55xx/56xx (alojamiento, restaurantes) → 4170 (Hoteles, restaurantes y similares)
+- CIIU 68xx (actividades inmobiliarias) → 4140 (Actividades inmobiliarias / arrendamientos)
+- CIIU 49xx/50xx/51xx/52xx (transporte) → 4140 (Transporte)
+- CIIU 69xx/70xx/71xx/72xx/73xx/74xx (servicios profesionales/tecnicos) → 4165 (Servicios)
+NO inventes una cuenta que no encaje con la actividad real del emisor."""
+
+    if puc_ingresos_catalog:
+        catalog_lines = "\n".join(
+            f"- {row.get('codigo')}: {row.get('descripcion')}"
+            for row in puc_ingresos_catalog
+        )
+        prompt += f"""
+
+=== CATALOGO DE CUENTAS DE INGRESO PUC (4xxx) DISPONIBLES ===
+Cuando el documento sea una factura de venta, elige la cuenta de ingreso (credito)
+EXCLUSIVAMENTE de la siguiente lista de cuentas reales del PUC sembradas en el sistema:
+{catalog_lines}
+Si ninguna de las cuentas anteriores aplica, usa la cuenta padre de 4 digitos correspondiente al grupo."""
 
     if correction_feedback:
         prompt += f"""

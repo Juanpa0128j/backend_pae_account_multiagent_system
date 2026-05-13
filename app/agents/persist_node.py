@@ -659,6 +659,10 @@ def _run_persist(state: AgentState) -> AgentState:
                     "auditor": auditor_out,
                 }
             else:
+                doc_type_full = as_str(
+                    (state.get("document_classification") or {}).get("doc_type"),
+                    "",
+                )
                 journal_json = JournalBuilder.build_from_ingest(
                     fecha=fecha,
                     cuenta_puc=cuenta_puc,
@@ -669,15 +673,12 @@ def _run_persist(state: AgentState) -> AgentState:
                     reteica=reteica,
                     nit=nit_emisor,
                     descripcion=descripcion,
+                    doc_type=doc_type_full,
                 )
                 # Ingest path uses a hardcoded factura_compra pattern (cuenta de
                 # gasto + 220505 CxP). For bank-outflow doc subtypes the credit
                 # side must hit 111005 (Banco), not CxP. Swap 220505 cred ->
                 # 111005 to mirror the contador-stage corrector.
-                doc_type_full = as_str(
-                    (state.get("document_classification") or {}).get("doc_type"),
-                    "",
-                )
                 if doc_type_full in {
                     "comprobante_egreso",
                     "extracto_bancario",

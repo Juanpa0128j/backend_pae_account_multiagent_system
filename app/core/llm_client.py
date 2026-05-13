@@ -248,11 +248,22 @@ class LLMClient:
         rag_context: list[dict] | None = None,
         correction_feedback: str | None = None,
         source_taxes: dict | None = None,
+        company_context: dict | None = None,
+        puc_ingresos_catalog: list[dict] | None = None,
     ) -> dict:
         """Build the contador prompt via the shared `prompts.contador` module
         and invoke the LLM. `doc_subtype` carries the granular frontend doc
         type (e.g. factura_venta) for prompt routing while `doc_type` is the
         normalized contador-enum hint embedded in the prompt.
+
+        ``company_context`` is a dict describing the tenant emisor
+        (``nombre``, ``nit``, ``codigo_ciiu``, ``ciudad``, ``iva_responsable``)
+        when known. It helps the LLM pick a 4xxx ingreso account that matches
+        the actividad económica.
+
+        ``puc_ingresos_catalog`` is a list of ``{codigo, descripcion}`` rows
+        loaded from ``cuentas_puc`` for the 4xxx range so the LLM is
+        constrained to real PUC codes that already exist in the system.
         """
         prompt = contador.contador_output(
             raw_transactions,
@@ -261,6 +272,8 @@ class LLMClient:
             rag_context=rag_context,
             correction_feedback=correction_feedback,
             source_taxes=source_taxes,
+            company_context=company_context,
+            puc_ingresos_catalog=puc_ingresos_catalog,
         )
         try:
             response = self._invoke(ContadorOutput, prompt)

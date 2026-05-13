@@ -128,6 +128,167 @@ def _extract_source_taxes_summary(source_doc: dict) -> dict | None:
     return result if result else None
 
 
+_VENTA_DOC_TYPES = frozenset(
+    {
+        "factura_venta",
+        "nota_debito_venta",
+        "nota_credito_venta",
+        "recibo_caja",
+    }
+)
+
+
+def _load_company_context(company_nit: str | None) -> dict | None:
+    """Return the emisor (tenant) ``company_settings`` row as a dict.
+
+    Used to enrich the contador prompt with the empresa's actividad económica
+    (CIIU), nombre, ciudad and IVA-responsable flag so the LLM can pick a
+    4xxx ingreso account that actually matches the business.
+
+    Returns ``None`` if NIT is empty, the row is missing, or the DB layer
+    raises — the prompt is still buildable without this context.
+    """
+    if not company_nit:
+        return None
+    try:
+        from app.core.database import SessionLocal
+        from app.services import db_service as _db_svc
+    except Exception as imp_err:
+        logger.warning("contador: company context import failed: %s", imp_err)
+        return None
+
+    db = None
+    try:
+        db = SessionLocal()
+        row = _db_svc.get_company_settings(db, company_nit)
+        if row is None:
+            return None
+        return {
+            "nit": getattr(row, "nit", company_nit),
+            "nombre": getattr(row, "nombre", None),
+            "ciudad": getattr(row, "ciudad", None),
+            "codigo_ciiu": getattr(row, "codigo_ciiu", None),
+            "iva_responsable": bool(getattr(row, "iva_responsable", False)),
+        }
+    except Exception as db_err:
+        logger.warning("contador: company context lookup failed: %s", db_err)
+        return None
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+def _load_puc_ingresos_catalog() -> list[dict]:
+    """Return PUC accounts in the ingresos range (4xxx) as ``{codigo, descripcion}``.
+
+    Empty list when the catalog table is unreachable so the prompt still builds.
+    The LLM treats the list as a soft constraint via the prompt directive.
+    """
+    try:
+        from app.core.database import SessionLocal
+        from app.models.database import CuentaPUC
+    except Exception as imp_err:
+        logger.warning("contador: puc catalog import failed: %s", imp_err)
+        return []
+
+    db = None
+    try:
+        db = SessionLocal()
+        rows = (
+            db.query(CuentaPUC)
+            .filter(CuentaPUC.codigo >= "4")
+            .filter(CuentaPUC.codigo < "5")
+            .order_by(CuentaPUC.codigo)
+            .all()
+        )
+        return [
+            {"codigo": str(r.codigo), "descripcion": str(r.descripcion or "")}
+            for r in rows
+        ]
+    except Exception as db_err:
+        logger.warning("contador: puc catalog lookup failed: %s", db_err)
+        return []
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+def _validate_ingreso_against_catalog(
+    contador_output: dict, catalog: list[dict], state: AgentState
+) -> dict:
+    """When ``asientos`` includes a credit to a 4xxx account that is not in the
+    sown ``cuentas_puc`` catalog, fall back to the closest 4-digit parent code
+    and emit a WARNING. Pure data transformation — no DB writes.
+
+    The contador agent already runs ``contador_puc_corrector`` to fix obvious
+    invalid codes; this guard catches the remaining case where the LLM returns
+    a syntactically valid 6-digit code (e.g. ``413599``) that simply does not
+    exist in the empresa's PUC catalog.
+    """
+    if not isinstance(contador_output, dict) or not catalog:
+        return contador_output
+    valid_codes = {row.get("codigo") for row in catalog if row.get("codigo")}
+    parent_codes_4 = {c[:4] for c in valid_codes if c and len(c) >= 4}
+    asientos = contador_output.get("asientos") or []
+    if not isinstance(asientos, list):
+        return contador_output
+
+    changed = False
+    for entry in asientos:
+        if not isinstance(entry, dict):
+            continue
+        if (entry.get("tipo_movimiento") or "").lower() != "credito":
+            continue
+        codigo = str(entry.get("cuenta_puc") or "").strip()
+        if not codigo or not codigo.startswith("4"):
+            continue
+        if codigo in valid_codes:
+            continue
+        parent = codigo[:4]
+        if parent in parent_codes_4 or parent in valid_codes:
+            logger.warning(
+                "contador: ingreso PUC %s not in catalog, falling back to parent %s",
+                codigo,
+                parent,
+            )
+            entry["cuenta_puc"] = parent
+            changed = True
+    if changed:
+        try:
+            from app.agents.audit_utils import append_finding
+            from app.models.audit import AuditFinding, AuditTarget, Severity
+
+            append_finding(
+                state,
+                AuditFinding(
+                    target=AuditTarget.CONTADOR,
+                    rule_id="CONT-INGRESO-PUC-FALLBACK",
+                    severity=Severity.WARNING,
+                    fixable=True,
+                    responsible_agent="contador",
+                    technical_message=(
+                        "Cuenta de ingreso (4xxx) elegida por el LLM no existe en "
+                        "cuentas_puc. Se reemplazo por la cuenta padre de 4 digitos."
+                    ),
+                    user_message_es=(
+                        "La cuenta de ingreso elegida no existe en el catalogo PUC. "
+                        "Se uso la cuenta padre como aproximacion; revise el asiento."
+                    ),
+                ),
+            )
+        except Exception as finding_err:
+            logger.warning(
+                "contador: could not record fallback finding: %s", finding_err
+            )
+    return contador_output
+
+
 def contador_node(state: AgentState) -> AgentState:
     """
     Contador node: classifies raw transactions into PUC-coded journal entries.
@@ -206,12 +367,30 @@ def contador_node(state: AgentState) -> AgentState:
 
         doc_type_full = (state.get("document_classification") or {}).get("doc_type", "")
         doc_type_normalized = _normalize_doc_type_for_schema(doc_type_full)
+        is_venta = doc_type_full in _VENTA_DOC_TYPES
 
         # Extract tax summary from the rich source document (populated by ingest pipeline)
         source_doc = state.get("source_document") or {}
         source_taxes: dict | None = None
         if source_doc:
             source_taxes = _extract_source_taxes_summary(source_doc)
+
+        # Enrich the prompt with empresa context + PUC ingresos catalog so the
+        # LLM picks a 4xxx code that matches the actividad económica. Only
+        # bother loading the catalog for venta-like docs (it's the only path
+        # that credits 4xxx). For compra-like docs the prompt stays slim.
+        company_context: dict | None = None
+        puc_ingresos_catalog: list[dict] = []
+        if is_venta:
+            company_nit = state.get("company_nit")
+            if not company_nit:
+                for tx in raw_transactions:
+                    if isinstance(tx, dict):
+                        company_nit = tx.get("company_nit") or tx.get("nit_receptor")
+                        if company_nit:
+                            break
+            company_context = _load_company_context(company_nit)
+            puc_ingresos_catalog = _load_puc_ingresos_catalog()
 
         contador_output = llm_with_parse_retry(
             llm.extract_contador_output,
@@ -221,6 +400,8 @@ def contador_node(state: AgentState) -> AgentState:
             rag_context=rag_context,
             correction_feedback=state.get("correction_feedback") if is_retry else None,
             source_taxes=source_taxes,
+            company_context=company_context,
+            puc_ingresos_catalog=puc_ingresos_catalog or None,
             agent_label="contador",
         )
 
@@ -230,6 +411,13 @@ def contador_node(state: AgentState) -> AgentState:
         contador_output = correct_contador_output(
             contador_output, doc_subtype=doc_type_full
         )
+
+        # For venta docs, soft-validate that the credit ingreso account is in
+        # the sown cuentas_puc catalog. If not, fall back to the parent.
+        if is_venta and puc_ingresos_catalog:
+            contador_output = _validate_ingreso_against_catalog(
+                contador_output, puc_ingresos_catalog, state
+            )
 
         # Clear correction feedback after consuming it
         state["correction_feedback"] = None
@@ -270,11 +458,17 @@ def contador_node(state: AgentState) -> AgentState:
                     rag_context=rag_context,
                     correction_feedback=suspense_feedback,
                     source_taxes=source_taxes,
+                    company_context=company_context,
+                    puc_ingresos_catalog=puc_ingresos_catalog or None,
                     agent_label="contador-recovery",
                 )
                 contador_output = correct_contador_output(
                     contador_output, doc_subtype=doc_type_full
                 )
+                if is_venta and puc_ingresos_catalog:
+                    contador_output = _validate_ingreso_against_catalog(
+                        contador_output, puc_ingresos_catalog, state
+                    )
                 # Recovery succeeded — emit WARNING so the accountant is notified
                 from app.agents.audit_utils import append_finding
                 from app.models.audit import AuditFinding, AuditTarget, Severity

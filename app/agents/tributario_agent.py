@@ -72,13 +72,75 @@ PUC_SERVICIOS_END = 5999
 PUC_INGRESOS_START = 4000
 PUC_INGRESOS_END = 4999
 
-# Tax liability PUC accounts — corrected per Carolina García, Contadora Pública
+# Tax liability PUC accounts — corrected per Carolina García, Contadora Pública.
+# Compra defaults (the company is the buyer, withholds and owes to DIAN).
 CUENTA_RETEFUENTE = "2365"  # Retención en la Fuente por pagar (pasivo)
 CUENTA_RETEICA = "2368"  # Retención ICA por pagar (pasivo)
-CUENTA_IVA = "240802"  # IVA descontable (activo)
-# Retenciones recibidas (que nos practicaron) — activo corriente
-CUENTA_RETEFTE_RECIBIDA = "135518"  # Anticipo impuesto renta (retenciones a favor)
-CUENTA_RETEFTE_RECIBIDA_ALT = "135515"  # Autorretenciones a favor
+CUENTA_IVA_DESCONTABLE = "240802"  # IVA descontable (activo, débito)
+CUENTA_IVA = CUENTA_IVA_DESCONTABLE  # Backwards-compat alias
+# Venta accounts (the company is the seller, retenciones are received as anticipo).
+CUENTA_IVA_GENERADO = "240805"  # IVA generado (pasivo, crédito)
+CUENTA_RETEFTE_RECIBIDA = "135515"  # Autorretenciones / retefuente a favor (activo)
+CUENTA_RETEFTE_RECIBIDA_ALT = "135518"  # Anticipo impuesto renta (alternativa)
+CUENTA_RETEICA_RECIBIDA = "135517"  # ReteICA a favor (activo)
+
+
+# Doc types where the company is the SELLER. Buyer-side doc types fall through to compra defaults.
+_VENTA_DOC_TYPES = frozenset(
+    {
+        "factura_venta",
+        "nota_debito_venta",
+        "nota_credito_venta",
+        "recibo_caja",
+    }
+)
+
+
+def _tax_accounts_for(doc_type: str) -> dict:
+    """Return PUC accounts + movement direction for the given doc_type.
+
+    For VENTA (the company is the seller):
+      - IVA generado is a CREDIT to 240805 (pasivo).
+      - Retenciones practicadas by the buyer are DEBITED to 135515/135517 (activo,
+        anticipos a favor de la empresa frente a DIAN / municipio).
+      - ICA gasto/por_pagar NOT injected automatically — handled at declaration time.
+
+    For COMPRA-like (default, the company is the buyer):
+      - IVA descontable is a DEBIT to 240802 (activo recuperable).
+      - Retenciones practicadas a proveedores son CRÉDITOS a 2365/2368 (pasivo a DIAN).
+      - ICA gasto/por_pagar applied when the line has ingreso credits (legacy).
+    """
+    if doc_type in _VENTA_DOC_TYPES:
+        return {
+            "iva": (CUENTA_IVA_GENERADO, "credito"),
+            "iva_nombre": "IVA Generado",
+            "iva_detalle": "IVA generado en venta",
+            "retefuente": (CUENTA_RETEFTE_RECIBIDA, "debito"),
+            "retefuente_nombre": "Retefuente recibida (anticipo)",
+            "retefuente_detalle": "Retención en la fuente practicada por el comprador — anticipo a favor",
+            "reteica": (CUENTA_RETEICA_RECIBIDA, "debito"),
+            "reteica_nombre": "ReteICA recibida (anticipo)",
+            "reteica_detalle": "Retención ICA practicada por el comprador — anticipo a favor",
+            "ica_gasto": None,
+            "ica_por_pagar": None,
+        }
+    return {
+        "iva": (CUENTA_IVA_DESCONTABLE, "debito"),
+        "iva_nombre": "IVA Descontable",
+        "iva_detalle": "IVA descontable",
+        "retefuente": (CUENTA_RETEFUENTE, "credito"),
+        "retefuente_nombre": "Retención en la Fuente por Pagar",
+        "retefuente_detalle": "Retención en la fuente por pagar — Artículo 365 ET",
+        "reteica": (CUENTA_RETEICA, "credito"),
+        "reteica_nombre": "Retención ICA por Pagar",
+        "reteica_detalle": "Retención ICA por pagar — Decreto 2048/1992",
+        "ica_gasto": ("511505", "debito"),
+        "ica_gasto_nombre": "Gasto ICA",
+        "ica_gasto_detalle": "Gasto ICA — Ley 14/1983, Art. 342 Ley 1955/2019",
+        "ica_por_pagar": ("2368", "credito"),
+        "ica_por_pagar_nombre": "ICA por Pagar",
+        "ica_por_pagar_detalle": "ICA por Pagar — Decreto 1333/1986",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -111,12 +173,16 @@ def _has_iva_in_asientos(asientos: list[dict]) -> tuple[bool, Decimal]:
     Check if IVA already exists in contador asientos.
 
     Matches PUC code '2408' (header account) or codes starting with '240802'
-    (IVA descontable sub-accounts).  Deliberately excludes '240815' (Retefuente)
-    which shares the '2408' prefix but is NOT an IVA account.
+    (IVA descontable) or '240805' (IVA generado). Deliberately excludes '240815'
+    (Retefuente) which shares the '2408' prefix but is NOT an IVA account.
     """
     for asiento in asientos:
         puc_raw = str(asiento.get("cuenta_puc", "")).strip()
-        if puc_raw == "2408" or puc_raw.startswith("240802"):
+        if (
+            puc_raw == "2408"
+            or puc_raw.startswith("240802")
+            or puc_raw.startswith("240805")
+        ):
             valor = asiento.get("valor", 0)
             return True, Decimal(str(valor)).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
@@ -389,6 +455,15 @@ def tributario_node(state: AgentState) -> AgentState:
         )
         return state
 
+    # Route tax accounts (IVA, retenciones, ICA) by document direction (venta vs compra-like).
+    is_venta = doc_type in _VENTA_DOC_TYPES
+    accounts = _tax_accounts_for(doc_type)
+    logger.info(
+        "Tributario: doc_type=%s → routing %s",
+        doc_type or "<empty>",
+        "VENTA" if is_venta else "COMPRA",
+    )
+
     # Extract explicit tax values from the source document (ingest pipeline output)
     source_doc = state.get("source_document") or {}
     source_taxes = _extract_source_taxes(source_doc) if source_doc else {}
@@ -586,11 +661,20 @@ def tributario_node(state: AgentState) -> AgentState:
             ):
                 source_ret = ret["valor"]
                 break
-        if source_ret is not None and source_ret > 0:
+        if source_ret is not None:
             retefuente_val = source_ret.quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
             logger.info("Tributario: retefuente from source doc = %s", retefuente_val)
+        elif is_venta:
+            # In factura_venta the seller does NOT self-apply retenciones — they
+            # are practiced by the BUYER and reported on the invoice. If the
+            # extraction did not pick up a retención line, the legally safe
+            # default is 0; do not invent one from the UVT table.
+            retefuente_val = Decimal("0.00")
+            logger.info(
+                "Tributario: retefuente=0 (factura_venta sin retenciones extraídas)"
+            )
         else:
             retefuente_val = (base_gravable * tasa_retefuente).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
@@ -605,11 +689,16 @@ def tributario_node(state: AgentState) -> AgentState:
             ):
                 source_reteica = ret["valor"]
                 break
-        if source_reteica is not None and source_reteica > 0:
+        if source_reteica is not None:
             reteica_val = source_reteica.quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
             logger.info("Tributario: reteICA from source doc = %s", reteica_val)
+        elif is_venta:
+            reteica_val = Decimal("0.00")
+            logger.info(
+                "Tributario: reteICA=0 (factura_venta sin retenciones extraídas)"
+            )
         else:
             reteica_val = (base_gravable * tasa_reteica_efectiva).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
@@ -729,7 +818,7 @@ def tributario_node(state: AgentState) -> AgentState:
                     "base_gravable": str(base_gravable),
                     "tarifa_porcentaje": str(tasa_retefuente * 100),
                     "valor_impuesto": str(retefuente_val),
-                    "cuenta_puc": CUENTA_RETEFUENTE,
+                    "cuenta_puc": accounts["retefuente"][0],
                 }
             )
 
@@ -740,7 +829,7 @@ def tributario_node(state: AgentState) -> AgentState:
                     "base_gravable": str(base_gravable),
                     "tarifa_porcentaje": str(tasa_reteica_efectiva * 100),
                     "valor_impuesto": str(reteica_val),
-                    "cuenta_puc": CUENTA_RETEICA,
+                    "cuenta_puc": accounts["reteica"][0],
                 }
             )
 
@@ -751,18 +840,21 @@ def tributario_node(state: AgentState) -> AgentState:
                     "base_gravable": str(base_gravable),
                     "tarifa_porcentaje": str(tasa_iva_efectiva * 100),
                     "valor_impuesto": str(iva_val),
-                    "cuenta_puc": CUENTA_IVA,
+                    "cuenta_puc": accounts["iva"][0],
                 }
             )
 
-        if ica_val > Decimal("0"):
+        # ICA is only emitted as a separate tax line on COMPRA-like documents.
+        # For VENTA the ICA gasto/por pagar belongs to the municipal declaration,
+        # not to each individual invoice. _tax_accounts_for() returns None there.
+        if ica_val > Decimal("0") and accounts.get("ica_por_pagar") is not None:
             impuestos.append(
                 {
                     "tipo_impuesto": "ica",
                     "base_gravable": str(ingresos_brutos),
                     "tarifa_porcentaje": str(tasa_ica_efectiva * 100),
                     "valor_impuesto": str(ica_val),
-                    "cuenta_puc": CUENTA_ICA_PASIVO,
+                    "cuenta_puc": accounts["ica_por_pagar"][0],
                 }
             )
 
@@ -776,37 +868,47 @@ def tributario_node(state: AgentState) -> AgentState:
         # ------------------------------------------------------------------
         # Step 6 — Build enriched journal entries (keep double-entry balanced)
         # ------------------------------------------------------------------
-        # Colombian accounting model for a purchase transaction:
-        #   - IVA descontable (240802) is a DEBIT asset (recoverable from DIAN)
-        #   - Retenciones (retefuente + reteica) become new CREDIT liabilities
+        # COMPRA (default): we are the buyer.
+        #   - IVA descontable (240802) is a DEBIT asset (recoverable from DIAN).
+        #   - Retenciones (retefuente + reteica) become new CREDIT liabilities.
         #   - Net effect on the largest existing CREDIT (e.g. bank / proveedor):
-        #       +iva_to_add  (buyer pays IVA to vendor on top of base; 0 if already present)
-        #       -total_retenciones  (amounts withheld from vendor payment)
+        #       +iva_to_add (buyer pays IVA to vendor on top of base; 0 if present)
+        #       -total_retenciones (amounts withheld from vendor payment)
+        #
+        # VENTA: we are the seller.
+        #   - IVA generado (240805) is a CREDIT liability (we owe DIAN).
+        #   - Retenciones que el cliente nos practica son DÉBITOS (anticipo a favor:
+        #     135515 retefuente, 135517 reteICA).
+        #   - Net effect on the largest existing DEBIT (typically 13xxxx CxC):
+        #       +iva_to_add (cliente debe pagarnos IVA encima de la base)
+        #       -total_retenciones (cliente nos retiene; bajamos lo que efectivamente cobramos)
         asientos_enriquecidos = [dict(a) for a in asientos]  # copy from contador
 
         total_retenciones = retefuente_val + reteica_val
         iva_to_add = iva_val if not iva_presente else Decimal("0")
-        net_credit_adjustment = iva_to_add - total_retenciones
+        net_adjustment = iva_to_add - total_retenciones
+        target_movement = "debito" if is_venta else "credito"
 
         if total_retenciones > 0 or iva_to_add > 0:
-            credit_entries = [
+            candidate_entries = [
                 (i, e)
                 for i, e in enumerate(asientos_enriquecidos)
-                if e.get("tipo_movimiento", "").lower() == "credito"
+                if e.get("tipo_movimiento", "").lower() == target_movement
             ]
-            if credit_entries:
+            if candidate_entries:
                 largest_idx, largest_entry = max(
-                    credit_entries, key=lambda x: Decimal(str(x[1].get("valor", 0)))
+                    candidate_entries,
+                    key=lambda x: Decimal(str(x[1].get("valor", 0))),
                 )
                 original_valor = Decimal(str(largest_entry.get("valor", 0)))
-                adjusted_valor = (original_valor + net_credit_adjustment).quantize(
+                adjusted_valor = (original_valor + net_adjustment).quantize(
                     Decimal("0.01"), rounding=ROUND_HALF_UP
                 )
-                # Guard: retenciones must not exceed the amount payable to vendor
                 if adjusted_valor < Decimal("0"):
+                    side = "debit" if is_venta else "credit"
                     state["error"] = (
                         f"Tributario error: retenciones ({total_retenciones}) exceed the largest "
-                        f"credit account {largest_entry.get('cuenta_puc')} "
+                        f"{side} account {largest_entry.get('cuenta_puc')} "
                         f"valor ({original_valor}). Cannot produce a balanced journal entry."
                     )
                     append_log(
@@ -815,63 +917,81 @@ def tributario_node(state: AgentState) -> AgentState:
                     return state
                 asientos_enriquecidos[largest_idx]["valor"] = str(adjusted_valor)
                 logger.info(
-                    f"Tributario: adjusted credit {largest_entry.get('cuenta_puc')} "
-                    f"from {original_valor} to {adjusted_valor} "
-                    f"(iva_new={iva_to_add}, retenciones={total_retenciones})"
+                    "Tributario: adjusted %s %s from %s to %s "
+                    "(iva_new=%s, retenciones=%s)",
+                    target_movement,
+                    largest_entry.get("cuenta_puc"),
+                    original_valor,
+                    adjusted_valor,
+                    iva_to_add,
+                    total_retenciones,
                 )
 
-        # IVA descontable — posted as DEBIT (asset, recoverable from DIAN)
+        # IVA — for compra: DEBIT 240802 (descontable, activo).
+        # For venta: CREDIT 240805 (generado, pasivo a DIAN).
         if iva_to_add > 0:
+            iva_acct, iva_mov = accounts["iva"]
             asientos_enriquecidos.append(
                 {
-                    "cuenta_puc": CUENTA_IVA,
-                    "nombre_cuenta": "IVA Descontable",
-                    "descripcion": "IVA descontable — Art. 477 ET",
-                    "tipo_movimiento": "debito",
+                    "cuenta_puc": iva_acct,
+                    "nombre_cuenta": accounts["iva_nombre"],
+                    "descripcion": accounts["iva_detalle"],
+                    "tipo_movimiento": iva_mov,
                     "valor": str(iva_to_add),
                 }
             )
 
-        # Retenciones — posted as CREDITS (liabilities to DIAN / municipality)
+        # Retefuente — compra: CREDIT 2365 (pasivo). Venta: DEBIT 135515 (anticipo a favor).
         if retefuente_val > 0:
+            ret_acct, ret_mov = accounts["retefuente"]
+            ref_label = referencias[0] if referencias else "Art. 365 ET"
             asientos_enriquecidos.append(
                 {
-                    "cuenta_puc": CUENTA_RETEFUENTE,
-                    "nombre_cuenta": "Retención en la Fuente por Pagar",
-                    "descripcion": f"Retención en la Fuente por pagar — {referencias[0] if referencias else 'Art. 383 ET'}",
-                    "tipo_movimiento": "credito",
+                    "cuenta_puc": ret_acct,
+                    "nombre_cuenta": accounts["retefuente_nombre"],
+                    "descripcion": f"{accounts['retefuente_detalle']} — {ref_label}",
+                    "tipo_movimiento": ret_mov,
                     "valor": str(retefuente_val),
                 }
             )
 
+        # ReteICA — compra: CREDIT 2368 (pasivo). Venta: DEBIT 135517 (anticipo a favor).
         if reteica_val > 0:
+            ric_acct, ric_mov = accounts["reteica"]
             asientos_enriquecidos.append(
                 {
-                    "cuenta_puc": CUENTA_RETEICA,
-                    "nombre_cuenta": "Retención ICA por Pagar",
-                    "descripcion": "Retención ICA por pagar — Decreto 2048/1992",
-                    "tipo_movimiento": "credito",
+                    "cuenta_puc": ric_acct,
+                    "nombre_cuenta": accounts["reteica_nombre"],
+                    "descripcion": accounts["reteica_detalle"],
+                    "tipo_movimiento": ric_mov,
                     "valor": str(reteica_val),
                 }
             )
 
-        # ICA — Impuesto de Industria y Comercio (Ley 14/1983)
-        if ica_val > Decimal("0"):
+        # ICA — Impuesto de Industria y Comercio. Only emitted on compra-like docs.
+        # In venta, ICA is settled at municipal-declaration time, not per invoice.
+        if (
+            ica_val > Decimal("0")
+            and accounts.get("ica_gasto") is not None
+            and accounts.get("ica_por_pagar") is not None
+        ):
+            ica_gasto_acct, ica_gasto_mov = accounts["ica_gasto"]
+            ica_pagar_acct, ica_pagar_mov = accounts["ica_por_pagar"]
             asientos_enriquecidos.append(
                 {
-                    "cuenta_puc": CUENTA_ICA_GASTO,
-                    "nombre_cuenta": "Gasto ICA",
-                    "descripcion": "Gasto ICA — Ley 14/1983, Art. 342 Ley 1955/2019",
-                    "tipo_movimiento": "debito",
+                    "cuenta_puc": ica_gasto_acct,
+                    "nombre_cuenta": accounts["ica_gasto_nombre"],
+                    "descripcion": accounts["ica_gasto_detalle"],
+                    "tipo_movimiento": ica_gasto_mov,
                     "valor": str(ica_val),
                 }
             )
             asientos_enriquecidos.append(
                 {
-                    "cuenta_puc": CUENTA_ICA_PASIVO,
-                    "nombre_cuenta": "ICA por Pagar",
-                    "descripcion": "ICA por Pagar — Decreto 1333/1986",
-                    "tipo_movimiento": "credito",
+                    "cuenta_puc": ica_pagar_acct,
+                    "nombre_cuenta": accounts["ica_por_pagar_nombre"],
+                    "descripcion": accounts["ica_por_pagar_detalle"],
+                    "tipo_movimiento": ica_pagar_mov,
                     "valor": str(ica_val),
                 }
             )
