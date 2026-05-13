@@ -53,7 +53,7 @@ def save_temp_file(file_content: bytes, filename: str) -> str:
 
 
 def process_ingest_background(
-    temp_file_path: str,
+    temp_file_paths: list[str],
     ingest_id: str,
     company_nit: Optional[str] = None,
     parser_mode: Optional[str] = None,
@@ -65,11 +65,11 @@ def process_ingest_background(
     # connection pool. Uploads queue here instead of racing for connections.
     with INGEST_PIPELINE_SEMAPHORE:
         logger.info(f"Acquired ingest pipeline slot for: {ingest_id}")
-        _run_ingest_pipeline(temp_file_path, ingest_id, company_nit, parser_mode)
+        _run_ingest_pipeline(temp_file_paths, ingest_id, company_nit, parser_mode)
 
 
 def _run_ingest_pipeline(
-    temp_file_path: str,
+    temp_file_paths: list[str],
     ingest_id: str,
     company_nit: Optional[str] = None,
     parser_mode: Optional[str] = None,
@@ -81,8 +81,9 @@ def _run_ingest_pipeline(
         initial["parser_mode"] = parser_mode
     try:
         result = invoke_ingest_pipeline(
-            temp_file_path,
+            temp_file_paths[0],
             initial_state=initial,
+            file_paths=temp_file_paths,
         )
         pipeline_error = None
         if isinstance(result, dict):
@@ -163,7 +164,8 @@ def _run_ingest_pipeline(
             db.close()
 
         if not keep_file:
-            Path(temp_file_path).unlink(missing_ok=True)
+            for path in temp_file_paths:
+                Path(path).unlink(missing_ok=True)
 
 
 def _build_ingest_detail_response(
@@ -263,7 +265,7 @@ def _build_ingest_detail_response(
 )
 async def upload_file(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     company_nit: Optional[str] = Form(
         None,
         description="Company NIT to associate with this document. If omitted, the NIT is auto-detected from the document content.",
@@ -280,22 +282,30 @@ async def upload_file(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """
-    Upload and process a PDF/Excel/XML/image file (receipt/invoice/scan).
+    Upload and process one or more PDF/Excel/XML/image files (pages of a single document).
     Returns 202 Accepted immediately.
 
     Optionally pass `company_nit` as a form field to explicitly associate the document
     with a company, overriding the NIT auto-detected from the document content.
     Pass `doc_type` to pre-confirm the document type and skip the classification review step.
     """
-    # Validate file type
-    if not file.filename.lower().endswith(
-        (".pdf", ".xlsx", ".xml", ".jpg", ".jpeg", ".png")
-    ):
+    if not files:
         raise HTTPException(
             status_code=422,
-            detail="Tipo de archivo no soportado. Formatos aceptados: PDF, Excel, XML, JPG, PNG",
-            headers={"error_code": "INVALID_FILE_TYPE"},
+            detail="No files provided.",
+            headers={"error_code": "NO_FILES"},
         )
+
+    # Validate file types
+    for f in files:
+        if not f.filename.lower().endswith(
+            (".pdf", ".xlsx", ".xml", ".jpg", ".jpeg", ".png")
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Tipo de archivo no soportado. Formatos aceptados: PDF, Excel, XML, JPG, PNG",
+                headers={"error_code": "INVALID_FILE_TYPE"},
+            )
 
     try:
         normalized_company_nit = None
@@ -317,12 +327,6 @@ async def upload_file(
                 detail=f"Modo de extracción '{parser_mode}' no válido. Opciones: fast, standard, premium, gpt4o",
             )
 
-        file_content = await file.read()
-
-        # Validate file is not empty
-        if not file_content:
-            raise HTTPException(status_code=422, detail="El archivo cargado está vacío")
-
         # Magic-byte check: reject obviously wrong/corrupt files early
         _MAGIC: dict[str, bytes] = {
             ".pdf": b"%PDF",
@@ -332,32 +336,44 @@ async def upload_file(
             ".jpeg": b"\xff\xd8\xff",
             ".png": b"\x89PNG",
         }
-        _ext = Path(file.filename).suffix.lower()
-        _expected_magic = _MAGIC.get(_ext)
-        if _expected_magic and not file_content[: len(_expected_magic)].startswith(
-            _expected_magic
-        ):
-            # XML may start with a BOM or whitespace — allow those through
-            stripped = file_content.lstrip()
-            if _ext == ".xml" and any(
-                stripped.startswith(prefix)
-                for prefix in (
-                    b"<?xml",
-                    b"<Invoice",
-                    b"<Credit",
-                    b"<Debit",
-                    b"\xef\xbb\xbf<?xml",
-                )
-            ):
-                pass
-            else:
+
+        temp_file_paths: list[str] = []
+        for f in files:
+            file_content = await f.read()
+
+            # Validate file is not empty
+            if not file_content:
                 raise HTTPException(
-                    status_code=422,
-                    detail=f"File content does not match its extension ({_ext}). The file may be corrupt or password-protected.",
+                    status_code=422, detail=f"El archivo {f.filename} está vacío"
                 )
 
-        temp_file_path = save_temp_file(file_content, file.filename)
-        logger.info(f"Saved uploaded file to: {temp_file_path}")
+            _ext = Path(f.filename).suffix.lower()
+            _expected_magic = _MAGIC.get(_ext)
+            if _expected_magic and not file_content[: len(_expected_magic)].startswith(
+                _expected_magic
+            ):
+                # XML may start with a BOM or whitespace — allow those through
+                stripped = file_content.lstrip()
+                if _ext == ".xml" and any(
+                    stripped.startswith(prefix)
+                    for prefix in (
+                        b"<?xml",
+                        b"<Invoice",
+                        b"<Credit",
+                        b"<Debit",
+                        b"\xef\xbb\xbf<?xml",
+                    )
+                ):
+                    pass
+                else:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"File content does not match its extension ({_ext}). The file may be corrupt or password-protected.",
+                    )
+
+            temp_path = save_temp_file(file_content, f.filename)
+            logger.info(f"Saved uploaded file to: {temp_path}")
+            temp_file_paths.append(temp_path)
 
         confirmed_doc_type = None
         confirmed_pathway = None
@@ -426,10 +442,11 @@ async def upload_file(
                         ),
                     )
 
+        first_file = files[0]
         ingest_job = db_service.create_ingest_job(
             db,
-            file.filename,
-            temp_file_path,
+            first_file.filename,
+            temp_file_paths[0],
             company_nit=normalized_company_nit,
             document_type=confirmed_doc_type,
             pathway=confirmed_pathway,
@@ -447,7 +464,7 @@ async def upload_file(
 
         background_tasks.add_task(
             process_ingest_background,
-            temp_file_path,
+            temp_file_paths,
             str(ingest_job.id),
             normalized_company_nit,
             validated_mode,
@@ -457,7 +474,7 @@ async def upload_file(
             message="File uploaded successfully and queued for processing",
             ingest_id=str(ingest_job.id),
             status=ingest_job.status.value,
-            file_name=file.filename,
+            file_name=first_file.filename,
             created_at=ingest_job.created_at,
             extracted_transactions=0,
             raw_preview=None,
@@ -466,7 +483,8 @@ async def upload_file(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error queueing file {file.filename}: {str(e)}", exc_info=True)
+        first_name = files[0].filename if files else "unknown"
+        logger.error(f"Error queueing file {first_name}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error queueing file: {str(e)}")
 
 
@@ -534,7 +552,7 @@ async def update_ingest_classification(
             )
         background_tasks.add_task(
             process_ingest_background,
-            job.file_path,
+            [job.file_path],
             str(job.id),
             job.company_nit,
             job.parser_mode,

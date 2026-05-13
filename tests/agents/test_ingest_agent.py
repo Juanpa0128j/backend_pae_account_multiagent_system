@@ -466,3 +466,54 @@ class TestIngestNodeRoutes:
         assert "fast_mode" not in kwargs
         assert "premium_mode" not in kwargs
         assert "gpt4o_mode" not in kwargs
+
+
+class TestIngestNodeMultiPage:
+    def test_ingest_node_parses_multiple_files_and_concatenates(self, monkeypatch):
+        """When file_paths has multiple items, parse each and concatenate with page separators."""
+
+        def _fake_parse_xml(path: str) -> str:
+            return f"xml text from {Path(path).name}"
+
+        monkeypatch.setattr("app.services.xml_parser.parse_xml", _fake_parse_xml)
+        client = _build_client("extract_factura_venta", {"ok": True})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(
+            file_path="/tmp/page1.xml",
+            file_paths=["/tmp/page1.xml", "/tmp/page2.xml", "/tmp/page3.xml"],
+            document_classification={"doc_type": "factura_venta"},
+        )
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        expected = (
+            "xml text from page1.xml\n\n--- PAGE 1 ---\n\n"
+            "xml text from page2.xml\n\n--- PAGE 2 ---\n\n"
+            "xml text from page3.xml"
+        )
+        assert out["raw_text"] == expected
+        client.extract_factura_venta.assert_called_once_with(
+            expected, correction_feedback=None
+        )
+
+    def test_ingest_node_fallback_to_single_file_path(self, monkeypatch):
+        """When file_paths is empty, fall back to parsing file_path (backward compat)."""
+        monkeypatch.setattr(
+            "app.services.xml_parser.parse_xml", lambda _: "single xml text"
+        )
+        client = _build_client("extract_factura_venta", {"ok": True})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(
+            file_path="/tmp/single.xml",
+            file_paths=[],
+            document_classification={"doc_type": "factura_venta"},
+        )
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        assert out["raw_text"] == "single xml text"
+        client.extract_factura_venta.assert_called_once_with(
+            "single xml text", correction_feedback=None
+        )

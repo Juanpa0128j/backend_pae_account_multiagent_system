@@ -63,6 +63,7 @@ class AgentState(TypedDict):
     """
 
     file_path: str
+    file_paths: List[str]
     raw_text: str
     interpreted_data: dict
     result: dict

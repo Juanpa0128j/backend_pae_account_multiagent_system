@@ -38,6 +38,91 @@ def _build_llama_parse_kwargs(mode: str, api_key: str) -> dict:
     return kwargs
 
 
+def _parse_single_file(file_path: str, state: AgentState) -> str:
+    """Parse a single file and return raw text. Mutates state for Excel parsed_content."""
+    ext = Path(file_path).suffix.lower()
+    if ext == ".xlsx":
+        from app.services.excel_parser import parse_excel
+
+        logger.info("Ingest: Extracting text from %s using excel_parser", file_path)
+        raw_text, tabular_data = parse_excel(file_path)
+        existing = state.get("parsed_content") or []
+        state["parsed_content"] = existing + list(tabular_data)
+        return raw_text
+    elif ext == ".xml":
+        logger.info("Ingest: Extracting text from %s using XML parser", file_path)
+        from app.services.xml_parser import parse_xml
+
+        return parse_xml(file_path)
+    elif ext in (".pdf", ".jpg", ".jpeg", ".png"):
+        format_label = "image" if ext in (".jpg", ".jpeg", ".png") else "PDF"
+        logger.info(
+            "Ingest: Extracting text from %s (%s) using LlamaParse",
+            file_path,
+            format_label,
+        )
+        if LlamaParse is None:
+            raise RuntimeError(
+                "LlamaParse client is not available. "
+                "Install llama-parse and configure LLAMA_CLOUD_API_KEY."
+            )
+
+        import hashlib
+
+        settings = get_settings()
+        _cache_dir = Path(file_path).parent / ".parse_cache"
+        try:
+            _file_bytes = Path(file_path).read_bytes()
+            _content_hash = hashlib.sha256(_file_bytes).hexdigest()
+        except OSError:
+            _content_hash = None
+        _cache_path = _cache_dir / f"{_content_hash}.md" if _content_hash else None
+        if _cache_path and _cache_path.exists():
+            logger.info(
+                "Ingest: Using cached parse for %s (hash=%s...)",
+                Path(file_path).name,
+                _content_hash[:12],
+            )
+            return _cache_path.read_text(encoding="utf-8")
+
+        try:
+            parser = LlamaParse(
+                **_build_llama_parse_kwargs(
+                    state.get("parser_mode", "fast"),
+                    settings.llama_cloud_api_key,
+                )
+            )
+            documents = parser.load_data(file_path)
+            raw_text = "\n\n".join([doc.text for doc in documents])
+        except (KeyError, Exception) as _parse_err:
+            logger.warning(
+                "LlamaParse markdown mode failed (%s) — retrying with result_type='text'",
+                _parse_err,
+            )
+            raw_text = ""
+
+        if not raw_text.strip():
+            logger.warning(
+                "LlamaParse markdown returned empty text — retrying with result_type='text'"
+            )
+            fallback_kwargs = _build_llama_parse_kwargs(
+                state.get("parser_mode", "fast"),
+                settings.llama_cloud_api_key,
+            )
+            fallback_kwargs["result_type"] = "text"
+            parser = LlamaParse(**fallback_kwargs)
+            documents = parser.load_data(file_path)
+            raw_text = "\n\n".join([doc.text for doc in documents])
+
+        if raw_text and raw_text.strip() and _cache_path is not None:
+            _cache_dir.mkdir(parents=True, exist_ok=True)
+            _cache_path.write_text(raw_text, encoding="utf-8")
+
+        return raw_text
+    else:
+        raise ValueError(f"Unsupported file format: {ext}")
+
+
 # Dispatch table: doc_type → LLMClient method name
 _EXTRACT_METHOD_MAP: dict[str, str] = {
     # Invoice-like documents
@@ -119,106 +204,133 @@ def ingest_node(state: AgentState) -> AgentState:
     try:
         # Step 1: Extract raw text (format-aware)
         if not is_retry or not state.get("raw_text"):
-            if ext == ".xlsx":
-                # Excel: may already be extracted by supervisor classify step
-                if not state.get("raw_text"):
-                    from app.services.excel_parser import parse_excel
-
-                    logger.info(
-                        f"Ingest: Extracting text from {file_path} using excel_parser"
-                    )
-                    raw_text, tabular_data = parse_excel(file_path)
-                    state["raw_text"] = raw_text
-                    state["parsed_content"] = tabular_data
-                else:
-                    logger.info("Ingest: Re-using Excel text extracted by supervisor")
-                raw_text = state["raw_text"]
-            elif ext == ".xml":
-                logger.info(
-                    f"Ingest: Extracting text from {file_path} using XML parser"
-                )
-                from app.services.xml_parser import parse_xml
-
-                raw_text = parse_xml(file_path)
-                state["raw_text"] = raw_text
-            elif ext in (".pdf", ".jpg", ".jpeg", ".png"):
-                format_label = "image" if ext in (".jpg", ".jpeg", ".png") else "PDF"
-                logger.info(
-                    f"Ingest: Extracting text from {file_path} ({format_label}) using LlamaParse"
-                )
-                if LlamaParse is None:
-                    raise RuntimeError(
-                        "LlamaParse client is not available. "
-                        "Install llama-parse and configure LLAMA_CLOUD_API_KEY."
-                    )
-
-                # Cache parsed text by content hash — keying by filename caused
-                # collisions when different uploads shared a name (e.g. every user
-                # uploading "balance_general_2024.pdf" got the first user's data).
-                import hashlib
-
-                _cache_dir = Path(file_path).parent / ".parse_cache"
-                try:
-                    _file_bytes = Path(file_path).read_bytes()
-                    _content_hash = hashlib.sha256(_file_bytes).hexdigest()
-                except OSError:
-                    _content_hash = None
-                _cache_path = (
-                    _cache_dir / f"{_content_hash}.md" if _content_hash else None
-                )
-                if _cache_path and _cache_path.exists():
-                    logger.info(
-                        "Ingest: Using cached parse for %s (hash=%s...)",
-                        Path(file_path).name,
-                        _content_hash[:12],
-                    )
-                    raw_text = _cache_path.read_text(encoding="utf-8")
-                else:
+            file_paths = state.get("file_paths") or []
+            if len(file_paths) > 1:
+                raw_texts = []
+                for i, fp in enumerate(file_paths, start=1):
                     try:
-                        parser = LlamaParse(
-                            **_build_llama_parse_kwargs(
+                        page_text = _parse_single_file(fp, state)
+                    except ValueError as _fmt_err:
+                        state["error"] = str(_fmt_err)
+                        logger.error(state["error"])
+                        append_log(
+                            state, "ingesta", "node_error", {"error": state["error"]}
+                        )
+                        return state
+                    raw_texts.append(page_text)
+                    if i < len(file_paths):
+                        raw_texts.append(f"--- PAGE {i} ---")
+                raw_text = "\n\n".join(raw_texts)
+                state["raw_text"] = raw_text
+            else:
+                file_path = state["file_path"]
+                ext = Path(file_path).suffix.lower()
+                if ext == ".xlsx":
+                    # Excel: may already be extracted by supervisor classify step
+                    if not state.get("raw_text"):
+                        from app.services.excel_parser import parse_excel
+
+                        logger.info(
+                            f"Ingest: Extracting text from {file_path} using excel_parser"
+                        )
+                        raw_text, tabular_data = parse_excel(file_path)
+                        state["raw_text"] = raw_text
+                        state["parsed_content"] = tabular_data
+                    else:
+                        logger.info(
+                            "Ingest: Re-using Excel text extracted by supervisor"
+                        )
+                    raw_text = state["raw_text"]
+                elif ext == ".xml":
+                    logger.info(
+                        f"Ingest: Extracting text from {file_path} using XML parser"
+                    )
+                    from app.services.xml_parser import parse_xml
+
+                    raw_text = parse_xml(file_path)
+                    state["raw_text"] = raw_text
+                elif ext in (".pdf", ".jpg", ".jpeg", ".png"):
+                    format_label = (
+                        "image" if ext in (".jpg", ".jpeg", ".png") else "PDF"
+                    )
+                    logger.info(
+                        f"Ingest: Extracting text from {file_path} ({format_label}) using LlamaParse"
+                    )
+                    if LlamaParse is None:
+                        raise RuntimeError(
+                            "LlamaParse client is not available. "
+                            "Install llama-parse and configure LLAMA_CLOUD_API_KEY."
+                        )
+
+                    # Cache parsed text by content hash — keying by filename caused
+                    # collisions when different uploads shared a name (e.g. every user
+                    # uploading "balance_general_2024.pdf" got the first user's data).
+                    import hashlib
+
+                    _cache_dir = Path(file_path).parent / ".parse_cache"
+                    try:
+                        _file_bytes = Path(file_path).read_bytes()
+                        _content_hash = hashlib.sha256(_file_bytes).hexdigest()
+                    except OSError:
+                        _content_hash = None
+                    _cache_path = (
+                        _cache_dir / f"{_content_hash}.md" if _content_hash else None
+                    )
+                    if _cache_path and _cache_path.exists():
+                        logger.info(
+                            "Ingest: Using cached parse for %s (hash=%s...)",
+                            Path(file_path).name,
+                            _content_hash[:12],
+                        )
+                        raw_text = _cache_path.read_text(encoding="utf-8")
+                    else:
+                        try:
+                            parser = LlamaParse(
+                                **_build_llama_parse_kwargs(
+                                    state.get("parser_mode", "fast"),
+                                    settings.llama_cloud_api_key,
+                                )
+                            )
+                            documents = parser.load_data(file_path)
+                            raw_text = "\n\n".join([doc.text for doc in documents])
+                        except (KeyError, Exception) as _parse_err:
+                            logger.warning(
+                                "LlamaParse markdown mode failed (%s) — retrying with result_type='text'",
+                                _parse_err,
+                            )
+                            raw_text = ""
+
+                        # LlamaParse can silently return empty text on some scanned PDFs
+                        # without raising an exception — fall back to plain text mode.
+                        if not raw_text.strip():
+                            logger.warning(
+                                "LlamaParse markdown returned empty text — retrying with result_type='text'"
+                            )
+                            fallback_kwargs = _build_llama_parse_kwargs(
                                 state.get("parser_mode", "fast"),
                                 settings.llama_cloud_api_key,
                             )
-                        )
-                        documents = parser.load_data(file_path)
-                        raw_text = "\n\n".join([doc.text for doc in documents])
-                    except (KeyError, Exception) as _parse_err:
-                        logger.warning(
-                            "LlamaParse markdown mode failed (%s) — retrying with result_type='text'",
-                            _parse_err,
-                        )
-                        raw_text = ""
+                            fallback_kwargs["result_type"] = "text"
+                            parser = LlamaParse(**fallback_kwargs)
+                            documents = parser.load_data(file_path)
+                            raw_text = "\n\n".join([doc.text for doc in documents])
 
-                    # LlamaParse can silently return empty text on some scanned PDFs
-                    # without raising an exception — fall back to plain text mode.
-                    if not raw_text.strip():
-                        logger.warning(
-                            "LlamaParse markdown returned empty text — retrying with result_type='text'"
-                        )
-                        fallback_kwargs = _build_llama_parse_kwargs(
-                            state.get("parser_mode", "fast"),
-                            settings.llama_cloud_api_key,
-                        )
-                        fallback_kwargs["result_type"] = "text"
-                        parser = LlamaParse(**fallback_kwargs)
-                        documents = parser.load_data(file_path)
-                        raw_text = "\n\n".join([doc.text for doc in documents])
+                        # Save to cache only if non-empty AND we have a content
+                        # hash — caching transient failures permanently breaks the
+                        # file, and caching without a content key collides across
+                        # uploads that share a filename.
+                        if raw_text and raw_text.strip() and _cache_path is not None:
+                            _cache_dir.mkdir(parents=True, exist_ok=True)
+                            _cache_path.write_text(raw_text, encoding="utf-8")
 
-                    # Save to cache only if non-empty AND we have a content
-                    # hash — caching transient failures permanently breaks the
-                    # file, and caching without a content key collides across
-                    # uploads that share a filename.
-                    if raw_text and raw_text.strip() and _cache_path is not None:
-                        _cache_dir.mkdir(parents=True, exist_ok=True)
-                        _cache_path.write_text(raw_text, encoding="utf-8")
-
-                state["raw_text"] = raw_text
-            else:
-                state["error"] = f"Unsupported file format: {ext}"
-                logger.error(state["error"])
-                append_log(state, "ingesta", "node_error", {"error": state["error"]})
-                return state
+                    state["raw_text"] = raw_text
+                else:
+                    state["error"] = f"Unsupported file format: {ext}"
+                    logger.error(state["error"])
+                    append_log(
+                        state, "ingesta", "node_error", {"error": state["error"]}
+                    )
+                    return state
         else:
             raw_text = state["raw_text"]
             logger.info(

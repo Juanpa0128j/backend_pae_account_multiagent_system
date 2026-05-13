@@ -90,7 +90,7 @@ class TestUploadPathwayEnforcement:
             data["doc_type"] = doc_type
         return client.post(
             "/api/v1/ingest/upload",
-            files={"file": ("test.pdf", io.BytesIO(fake_pdf), "application/pdf")},
+            files=[("files", ("test.pdf", io.BytesIO(fake_pdf), "application/pdf"))],
             data=data,
         )
 
