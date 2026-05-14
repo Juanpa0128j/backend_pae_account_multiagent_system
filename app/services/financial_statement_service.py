@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
-from app.models.database import IngestStatus
+from app.models.database import FinancialStatement, IngestStatus
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
 
@@ -924,6 +924,9 @@ def _compute_notes(
             "rule_version": "v4",
             "source": "leaf_accounts_by_puc_class",
             "notas_count": len(notas),
+            "activos": bg_data.get("total_activos"),
+            "pasivos": bg_data.get("total_pasivos"),
+            "total_patrimonio": bg_data.get("total_patrimonio"),
         },
     }
 

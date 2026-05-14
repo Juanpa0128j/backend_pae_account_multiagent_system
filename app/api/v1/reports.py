@@ -262,26 +262,36 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
         efectivo_ini = _to_float(data.get("efectivo_inicio_periodo"))
         flujo_op = _to_float(data.get("flujo_neto_operacion"))
         flujo_inv = _to_float(data.get("flujo_neto_inversion"))
-        flujo_fin = _to_float(data.get("flujo_neto_financiacion"))
-        cuentas_efectivo = [
-            {
-                "codigo": "11",
-                "nombre": "Efectivo y equivalentes",
-                "saldo": efectivo_fin,
-            },
-        ]
+        flujo_fin_val = _to_float(data.get("flujo_neto_financiacion"))
+        aumento_neto = _to_float(
+            data.get("aumento_disminucion_neto") or (flujo_op + flujo_inv + flujo_fin_val)
+        )
+        info_adicional = data.get("informacion_adicional") or {}
+        adjustments = info_adicional.get("adjustments") or {}
+        nic7 = info_adicional.get("nic7_identity") or {}
         return {
             "period_start": data.get("periodo_inicio"),
             "period_end": data.get("periodo_fin"),
-            "cuentas_efectivo": cuentas_efectivo,
-            "total_efectivo": efectivo_fin,
+            "metodo": data.get("metodo", "indirecto"),
+            "verificacion": data.get("verificacion"),
+            "efectivo_inicio": efectivo_ini,
             "flujo_operacion": flujo_op,
             "flujo_inversion": flujo_inv,
-            "flujo_financiacion": flujo_fin,
+            "flujo_financiacion": flujo_fin_val,
+            "aumento_disminucion_neto": aumento_neto,
+            "efectivo_fin": efectivo_fin,
+            "adjustments": adjustments,
+            "nic7_diferencia": _to_float(nic7.get("diferencia")),
+            "rule_version": info_adicional.get("rule_version", ""),
+            # legacy keys kept for backward compat with old exporter paths
+            "cuentas_efectivo": [
+                {"codigo": "11", "nombre": "Efectivo y equivalentes", "saldo": efectivo_fin}
+            ],
+            "total_efectivo": efectivo_fin,
             "saldo_inicial": efectivo_ini,
             "nota": (
                 f"Metodo indirecto. Flujo operacion: {flujo_op:,.0f} | "
-                f"Inversion: {flujo_inv:,.0f} | Financiacion: {flujo_fin:,.0f}"
+                f"Inversion: {flujo_inv:,.0f} | Financiacion: {flujo_fin_val:,.0f}"
             ),
         }
 
@@ -440,6 +450,8 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
                     "contenido": n.get("contenido_resumido")
                     or n.get("contenido")
                     or "",
+                    "categoria": n.get("categoria") or "",
+                    "cifras_relevantes": n.get("cifras_relevantes") or [],
                 }
             )
         cifras = {}
