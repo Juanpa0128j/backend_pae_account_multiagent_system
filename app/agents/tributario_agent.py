@@ -456,6 +456,42 @@ def tributario_node(state: AgentState) -> AgentState:
         )
         return state
 
+    # Pre-armed asiento passthrough: when the source document already carries
+    # a fully booked journal entry (CE, RC, payroll voucher, manual journal),
+    # the contador node passed those lines through verbatim. The tributario
+    # must NOT inject IVA / retenciones / ICA on top — the issuer already
+    # recorded what they intended. We only honour the contador output here.
+    if (state.get("source_document") or {}).get("asientos_documento"):
+        documento_ref = contador_output.get(
+            "descripcion_general", doc_type or "sin referencia"
+        )[:100]
+        state["tributario_output"] = {
+            "fecha_analisis": date.today().isoformat(),
+            "documento_referencia": documento_ref,
+            "aplica_impuestos": False,
+            "impuestos": [],
+            "total_impuestos": "0.00",
+            "observaciones": (
+                "El documento trae un asiento contable pre-armado por el contador "
+                "emisor; no se inyectan impuestos adicionales."
+            ),
+            "referencias_legales": [],
+            "asientos_enriquecidos": (state.get("contador_output") or {}).get(
+                "asientos", []
+            ),
+        }
+        state["interpreted_data"] = state["tributario_output"]
+        state["current_agent"] = "tributario"
+        state["current_stage"] = "tributario_complete"
+        append_log(
+            state,
+            "tributario",
+            "prearmed_passthrough",
+            {"doc_type": doc_type, "lines": len(contador_output.get("asientos", []))},
+        )
+        logger.info("Tributario: pre-armed asiento detected, skip IVA/retenciones/ICA")
+        return state
+
     # Route tax accounts (IVA, retenciones, ICA) by document direction (venta vs compra-like).
     is_venta = doc_type in _VENTA_DOC_TYPES
     logger.info(

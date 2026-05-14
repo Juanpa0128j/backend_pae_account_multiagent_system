@@ -196,12 +196,69 @@ async def get_transaction(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Returns a single transaction by ID."""
-    from app.models.database import TransactionPending
+    """Return a single transaction with its posted classification + journal entry lines.
+
+    The detail UI needs the full picture of one ingest:
+      - The pending transaction itself (raw extracted totals, file origin).
+      - The posted classification (cuenta_puc principal, taxes, agent reasoning).
+      - All journal_entry_lines for the asiento (so multi-line CE / RC / payroll
+        comprobantes show every debit and credit, not just the principal PUC).
+    """
+    from app.models.database import (
+        JournalEntryLine,
+        TransactionPending,
+        TransactionPosted,
+    )
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
         raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+
+    posted = (
+        db.query(TransactionPosted)
+        .filter(TransactionPosted.transaction_pending_id == id)
+        .order_by(TransactionPosted.created_at.desc())
+        .first()
+    )
+
+    journal_lines: list[dict] = []
+    if posted is not None:
+        lines = (
+            db.query(JournalEntryLine)
+            .filter(JournalEntryLine.transaction_posted_id == posted.id)
+            .order_by(JournalEntryLine.id)
+            .all()
+        )
+        journal_lines = [
+            {
+                "id": line.id,
+                "cuenta_puc": line.cuenta_puc,
+                "descripcion": line.descripcion or "",
+                "tercero_nit": getattr(line, "tercero_nit", "") or "",
+                "debito": float(line.debito or 0),
+                "credito": float(line.credito or 0),
+                "fecha": str(getattr(line, "fecha", "") or ""),
+            }
+            for line in lines
+        ]
+
+    posted_payload: dict | None = None
+    if posted is not None:
+        posted_payload = {
+            "id": posted.id,
+            "cuenta_puc": posted.cuenta_puc,
+            "puc_descripcion": posted.puc_descripcion or "",
+            "retefuente": float(posted.retefuente or 0),
+            "reteica": float(posted.reteica or 0),
+            "iva": float(posted.iva or 0),
+            "ica": float(posted.ica or 0),
+            "provision_renta": float(posted.provision_renta or 0),
+            "neto_a_pagar": float(posted.neto_a_pagar or 0),
+            "journal_entries_json": posted.journal_entries_json,
+            "tax_references": posted.tax_references,
+            "agent_reasoning": posted.agent_reasoning,
+            "status": posted.status.value if posted.status else "unknown",
+        }
 
     return {
         "id": txn.id,
@@ -212,4 +269,6 @@ async def get_transaction(
         "nit_emisor": txn.nit_emisor or "",
         "items": txn.items,
         "raw_data": txn.raw_data,
+        "posted": posted_payload,
+        "journal_lines": journal_lines,
     }

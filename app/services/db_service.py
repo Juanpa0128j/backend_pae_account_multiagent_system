@@ -482,6 +482,13 @@ def get_balance_sheet(
     Assets (class 1) = Liabilities (class 2) + Equity (class 3)
 
     Revenue (4) and Expenses (5,6) flow into retained earnings.
+
+    The PUC has natural-balance exceptions: some accounts live in class 2
+    (Pasivos) but carry a DEBIT natural balance (e.g. 240802 IVA descontable
+    is an activo recuperable even though grouped under "Impuestos por pagar").
+    We honour each account's ``naturaleza`` from ``cuentas_puc`` so those
+    auxiliaries land on the correct side of the balance sheet instead of
+    deflating their parent class total.
     """
     query = (
         db.query(JournalEntryLine)
@@ -496,8 +503,53 @@ def get_balance_sheet(
     if company_nit:
         query = query.filter(JournalEntryLine.company_nit == company_nit)
 
-    # Group by first digit of cuenta_puc (clase)
     lines = query.all()
+
+    # Look up each cuenta_puc's natural balance from the catalog so we can
+    # reclassify the few PUC accounts that contradict their first-digit class.
+    distinct_codes = {ln.cuenta_puc for ln in lines if ln.cuenta_puc}
+    naturaleza_by_code: Dict[str, str] = {}
+    if distinct_codes:
+        # Pull the exact codes plus their 6-digit and 4-digit parents so the
+        # fallback below can resolve naturaleza for auxiliary sub-accounts that
+        # are not seeded individually (e.g. 240802 ↔ parent 2408).
+        candidate_codes: set[str] = set()
+        for code in distinct_codes:
+            candidate_codes.add(code)
+            if len(code) >= 6:
+                candidate_codes.add(code[:6])
+            if len(code) >= 4:
+                candidate_codes.add(code[:4])
+        catalog_rows = (
+            db.query(CuentaPUC.codigo, CuentaPUC.naturaleza)
+            .filter(CuentaPUC.codigo.in_(candidate_codes))
+            .all()
+        )
+        for codigo, naturaleza in catalog_rows:
+            naturaleza_by_code[str(codigo)] = (
+                naturaleza.value if hasattr(naturaleza, "value") else str(naturaleza)
+            )
+
+    def _presentation_class(code: str, raw_clase: int) -> int:
+        """Return the class digit the account should ROLL UP to on the BS.
+
+        Honours debit-nature auxiliaries housed inside class 2 / 3 (move to 1)
+        and credit-nature auxiliaries inside class 1 (move to 2). Defaults to
+        the original class when no catalog entry exists.
+        """
+        nat = (
+            naturaleza_by_code.get(code)
+            or (len(code) >= 6 and naturaleza_by_code.get(code[:6]))
+            or (len(code) >= 4 and naturaleza_by_code.get(code[:4]))
+        )
+        if not nat:
+            return raw_clase
+        nat_upper = str(nat).upper()
+        if nat_upper.startswith("D") and raw_clase in (2, 3):
+            return 1
+        if nat_upper.startswith("C") and raw_clase == 1:
+            return 2
+        return raw_clase
 
     totals = {
         1: Decimal("0"),
@@ -509,19 +561,20 @@ def get_balance_sheet(
     }
 
     for line in lines:
-        if not line.cuenta_puc:
+        if not line.cuenta_puc or not line.cuenta_puc[0].isdigit():
             continue
-        clase = int(line.cuenta_puc[0])
-        if clase in totals:
-            # Natural balance: Assets/Expenses are debit-nature, Liabilities/Equity/Revenue are credit-nature
-            if clase in (1, 5, 6):  # Debit nature
-                totals[clase] += (line.debito or Decimal("0")) - (
-                    line.credito or Decimal("0")
-                )
-            else:  # Credit nature (2, 3, 4)
-                totals[clase] += (line.credito or Decimal("0")) - (
-                    line.debito or Decimal("0")
-                )
+        raw_clase = int(line.cuenta_puc[0])
+        if raw_clase not in totals:
+            continue
+        clase = _presentation_class(line.cuenta_puc, raw_clase)
+        if clase in (1, 5, 6):
+            totals[clase] += (line.debito or Decimal("0")) - (
+                line.credito or Decimal("0")
+            )
+        else:
+            totals[clase] += (line.credito or Decimal("0")) - (
+                line.debito or Decimal("0")
+            )
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
     net_profit = totals[4] - totals[5] - totals[6]

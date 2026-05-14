@@ -80,6 +80,76 @@ def auditor_node(state: AgentState) -> AgentState:
         _contador_report = contador_auditor.run(state)
         append_audit_report(state, _contador_report)
 
+        # WARNING — saldo inicial faltante. When the current asiento credits a
+        # cash/bank account (PUC class 1, grupo 11) and the company has no
+        # previously posted transactions, the resulting saldo will be negative.
+        # That is mathematically valid but accountantly suspicious; surface a
+        # WARNING so the user knows to import the opening balance.
+        try:
+            from app.agents.audit_utils import append_finding
+            from app.core.database import SessionLocal
+            from app.models.audit import AuditFinding, AuditTarget, Severity
+            from app.models.database import TransactionPosted, TransactionStatus
+
+            asientos = contador_output.get("asientos") or []
+            cash_credit_accounts: list[str] = []
+            for line in asientos:
+                if not isinstance(line, dict):
+                    continue
+                if (line.get("tipo_movimiento") or "").lower() != "credito":
+                    continue
+                code = str(line.get("cuenta_puc") or "").strip()
+                if code.startswith("11"):
+                    cash_credit_accounts.append(code)
+            if cash_credit_accounts:
+                company_nit = state.get("company_nit")
+                prior_count = 0
+                if company_nit:
+                    _db = SessionLocal()
+                    try:
+                        prior_count = (
+                            _db.query(TransactionPosted)
+                            .filter(
+                                TransactionPosted.company_nit == company_nit,
+                                TransactionPosted.status == TransactionStatus.POSTED,
+                            )
+                            .count()
+                        )
+                    finally:
+                        _db.close()
+                if prior_count == 0:
+                    append_finding(
+                        state,
+                        AuditFinding(
+                            target=AuditTarget.AUDITOR,
+                            rule_id="AUD-SALDO-INICIAL-MISSING",
+                            severity=Severity.WARNING,
+                            fixable=False,
+                            responsible_agent="auditor",
+                            technical_message=(
+                                f"No prior posted transactions for company {company_nit}; "
+                                f"credit to cash accounts {sorted(set(cash_credit_accounts))} "
+                                "will result in a negative cash balance."
+                            ),
+                            user_message_es=(
+                                "No hay saldo inicial registrado para las cuentas de efectivo "
+                                f"{', '.join(sorted(set(cash_credit_accounts)))}. El saldo "
+                                "resultante quedará negativo. Considere importar saldos "
+                                "iniciales (Vía B) o registrar un asiento de apertura antes "
+                                "de continuar."
+                            ),
+                            suggested_action_es=(
+                                "Suba un balance de apertura por Vía B o cree un asiento "
+                                "manual debitando 11xx con saldo a inicio de período."
+                            ),
+                        ),
+                    )
+        except Exception as warning_err:
+            logger.warning(
+                "auditor: saldo-inicial warning check failed (non-fatal): %s",
+                warning_err,
+            )
+
         llm = get_llm_client()
 
         if is_retry:
