@@ -137,6 +137,8 @@ def test_derive_financial_statements_persists_outputs_and_lineage(monkeypatch):
         "create_financial_statement_lineage",
         _create_financial_statement_lineage,
     )
+    # _load_prior_balance calls db.query() — patch it to return the BG fixture
+    monkeypatch.setattr(svc, "_load_prior_balance", lambda _db, _nit, _start: bg)
 
     result = derive_financial_statements(
         company_nit="900123456-7",

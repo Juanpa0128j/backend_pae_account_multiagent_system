@@ -540,8 +540,13 @@ def _compute_cash_flow_indirect(
     # matters is that all operating-classified liability movement is captured.
     op_liab_now, op_liab_prior = _bg_metric(
         ("22", "23", "24", "25", "26"),
-        nested_path=("pasivos_corrientes", "cuentas_por_pagar_comerciales"),
+        nested_path=None,  # fallback handled below — sum multiple keys
     )
+    if op_liab_now == 0 and op_liab_prior == 0:
+        for key in ("cuentas_por_pagar_comerciales", "obligaciones_laborales",
+                    "impuestos_por_pagar", "obligaciones_financieras_cp"):
+            op_liab_now += _nested(bg_data, "pasivos_corrientes", key)
+            op_liab_prior += _nested(prior_bg_data, "pasivos_corrientes", key)
 
     delta_cxc = cxc_now - cxc_prior
     delta_inv = inv_now - inv_prior

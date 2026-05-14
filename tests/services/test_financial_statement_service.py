@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
 
@@ -241,7 +242,7 @@ def test_leaf_accounts_drops_aggregates():
     assert leaf_codes == {"11200501", "112501"}, leaf_codes
     # Class 11 prefix sum over leaves must NOT double-count.
     total = _sum_leaves(leaves, "11")
-    assert total == 20552619.31 + 72413796
+    assert float(total) == pytest.approx(20552619.31 + 72413796)
 
 
 def test_cash_flow_v4_handles_hierarchical_extraction():
