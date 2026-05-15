@@ -371,3 +371,98 @@ class TestIngestNodeRoutes:
         assert out["error"] is not None
         assert out["result"]["status"] == "error"
         assert "gemini exploded" in out["error"]
+
+    def test_llamaparse_fast_mode_uses_fast_flag(self, pdf_file, monkeypatch):
+        parser_instance = MagicMock()
+        doc = MagicMock()
+        doc.text = "fake parsed text"
+        parser_instance.load_data.return_value = [doc]
+
+        llama_cls = MagicMock(return_value=parser_instance)
+        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        monkeypatch.setattr(
+            ingest_agent,
+            "get_settings",
+            lambda: SimpleNamespace(llama_cloud_api_key="k"),
+        )
+        client = _build_client("extract_transactions", {"ok": True})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(file_path=pdf_file, parser_mode="fast")
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        assert llama_cls.call_count == 1
+        assert llama_cls.call_args.kwargs.get("fast_mode") is True
+
+    def test_llamaparse_premium_mode_uses_premium_flag(self, pdf_file, monkeypatch):
+        parser_instance = MagicMock()
+        doc = MagicMock()
+        doc.text = "fake parsed text"
+        parser_instance.load_data.return_value = [doc]
+
+        llama_cls = MagicMock(return_value=parser_instance)
+        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        monkeypatch.setattr(
+            ingest_agent,
+            "get_settings",
+            lambda: SimpleNamespace(llama_cloud_api_key="k"),
+        )
+        client = _build_client("extract_transactions", {"ok": True})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(file_path=pdf_file, parser_mode="premium")
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        assert llama_cls.call_count == 1
+        assert llama_cls.call_args.kwargs.get("premium_mode") is True
+
+    def test_llamaparse_gpt4o_mode_uses_gpt4o_flag(self, pdf_file, monkeypatch):
+        parser_instance = MagicMock()
+        doc = MagicMock()
+        doc.text = "fake parsed text"
+        parser_instance.load_data.return_value = [doc]
+
+        llama_cls = MagicMock(return_value=parser_instance)
+        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        monkeypatch.setattr(
+            ingest_agent,
+            "get_settings",
+            lambda: SimpleNamespace(llama_cloud_api_key="k"),
+        )
+        client = _build_client("extract_transactions", {"ok": True})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(file_path=pdf_file, parser_mode="gpt4o")
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        assert llama_cls.call_count == 1
+        assert llama_cls.call_args.kwargs.get("gpt4o_mode") is True
+
+    def test_llamaparse_standard_mode_uses_no_extra_flags(self, pdf_file, monkeypatch):
+        parser_instance = MagicMock()
+        doc = MagicMock()
+        doc.text = "fake parsed text"
+        parser_instance.load_data.return_value = [doc]
+
+        llama_cls = MagicMock(return_value=parser_instance)
+        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        monkeypatch.setattr(
+            ingest_agent,
+            "get_settings",
+            lambda: SimpleNamespace(llama_cloud_api_key="k"),
+        )
+        client = _build_client("extract_transactions", {"ok": True})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(file_path=pdf_file, parser_mode="standard")
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        assert llama_cls.call_count == 1
+        kwargs = llama_cls.call_args.kwargs
+        assert "fast_mode" not in kwargs
+        assert "premium_mode" not in kwargs
+        assert "gpt4o_mode" not in kwargs

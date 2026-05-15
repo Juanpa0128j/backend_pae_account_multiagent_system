@@ -27,6 +27,17 @@ except ImportError:
 logger = get_logger("app.agents.ingest")
 
 
+def _build_llama_parse_kwargs(mode: str, api_key: str) -> dict:
+    kwargs = {"api_key": api_key, "result_type": "markdown"}
+    if mode == "fast":
+        kwargs["fast_mode"] = True
+    elif mode == "premium":
+        kwargs["premium_mode"] = True
+    elif mode == "gpt4o":
+        kwargs["gpt4o_mode"] = True
+    return kwargs
+
+
 # Dispatch table: doc_type → LLMClient method name
 _EXTRACT_METHOD_MAP: dict[str, str] = {
     # Invoice-like documents
@@ -165,8 +176,10 @@ def ingest_node(state: AgentState) -> AgentState:
                 else:
                     try:
                         parser = LlamaParse(
-                            api_key=settings.llama_cloud_api_key,
-                            result_type="markdown",
+                            **_build_llama_parse_kwargs(
+                                state.get("parser_mode", "fast"),
+                                settings.llama_cloud_api_key,
+                            )
                         )
                         documents = parser.load_data(file_path)
                         raw_text = "\n\n".join([doc.text for doc in documents])
@@ -183,10 +196,12 @@ def ingest_node(state: AgentState) -> AgentState:
                         logger.warning(
                             "LlamaParse markdown returned empty text — retrying with result_type='text'"
                         )
-                        parser = LlamaParse(
-                            api_key=settings.llama_cloud_api_key,
-                            result_type="text",
+                        fallback_kwargs = _build_llama_parse_kwargs(
+                            state.get("parser_mode", "fast"),
+                            settings.llama_cloud_api_key,
                         )
+                        fallback_kwargs["result_type"] = "text"
+                        parser = LlamaParse(**fallback_kwargs)
                         documents = parser.load_data(file_path)
                         raw_text = "\n\n".join([doc.text for doc in documents])
 

@@ -97,7 +97,9 @@ async def list_transactions(
     """
     # Normalize the company NIT consistently with /reports/* and /dashboard/* —
     # otherwise a NIT with dots/spaces would silently miss the lock check.
-    normalized_company_nit = normalize_optional_nit(company_nit) if company_nit else None
+    normalized_company_nit = (
+        normalize_optional_nit(company_nit) if company_nit else None
+    )
 
     # Vía B branch: when the company is locked to 'work_with_existing', surface
     # libro_auxiliar lines instead of posted transactions.

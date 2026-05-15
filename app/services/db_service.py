@@ -66,6 +66,7 @@ def create_ingest_job(
     document_type: Optional[str] = None,
     pathway: Optional[str] = None,
     classification_confirmed: Optional[bool] = None,
+    parser_mode: str = "fast",
     commit: bool = True,
     created_by: str | None = None,
 ) -> IngestJob:
@@ -79,6 +80,7 @@ def create_ingest_job(
         document_type=document_type or None,
         pathway=pathway or None,
         classification_confirmed=classification_confirmed,
+        parser_mode=parser_mode,
     )
     db.add(job)
     # Stage audit log before the single commit/flush so job + log are atomic

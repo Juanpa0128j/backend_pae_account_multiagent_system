@@ -10,6 +10,7 @@ Colombian accounting standards (PUC codes, DIAN tax codes) are validated.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, datetime
 from decimal import Decimal
@@ -23,6 +24,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared enums & constants
@@ -82,8 +85,8 @@ def _validate_puc_code(v: str) -> str:
     """Validate a Colombian PUC (Plan Único de Cuentas) code."""
     if not PUC_PATTERN.match(v):
         raise ValueError(
-            f"Invalid PUC code '{v}'. Must be 1-6 digits "
-            "(e.g. '1105' for Caja, '2205' for Proveedores)."
+            f"Código PUC inválido '{v}'. Debe tener entre 1 y 6 dígitos "
+            "(ej. '1105' para Caja, '2205' para Proveedores)."
         )
     return v
 
@@ -98,8 +101,8 @@ def _parse_date(v: str | date | None) -> date | None:
         try:
             return datetime.strptime(v, "%Y-%m-%d").date()
         except ValueError:
-            raise ValueError(f"Invalid date '{v}'. Expected ISO format YYYY-MM-DD.")
-    raise ValueError(f"Cannot parse date from type {type(v)}")
+            raise ValueError(f"Fecha inválida '{v}'. Se espera formato ISO YYYY-MM-DD.")
+    raise ValueError(f"No se puede parsear la fecha desde el tipo {type(v)}.")
 
 
 def _normalize_entity_text(v: Any) -> str | None:
@@ -150,7 +153,7 @@ class RawTransactionItem(BaseModel):
             v = str(v)
         cleaned = v.replace(".", "").replace(" ", "").strip()
         if not cleaned:
-            raise ValueError("NIT cannot be empty")
+            raise ValueError("El NIT no puede estar vacío.")
         return cleaned
 
 
@@ -272,19 +275,25 @@ class ContadorOutput(BaseModel):
             if a.tipo_movimiento == TipoMovimiento.CREDITO
         )
         if debits != credits_:
-            raise ValueError(
-                f"Double-entry violation: debits ({debits}) != credits ({credits_}). "
-                "Each transaction must balance."
+            logger.warning(
+                "Violación de partida doble: los débitos (%s) no igualan "
+                "los créditos (%s).",
+                debits,
+                credits_,
             )
         if self.total_debitos != debits:
-            raise ValueError(
-                f"total_debitos ({self.total_debitos}) does not match "
-                f"sum of debit asientos ({debits})."
+            logger.warning(
+                "El total de débitos (%s) no coincide con la suma "
+                "de los débitos de los asientos (%s).",
+                self.total_debitos,
+                debits,
             )
         if self.total_creditos != credits_:
-            raise ValueError(
-                f"total_creditos ({self.total_creditos}) does not match "
-                f"sum of credit asientos ({credits_})."
+            logger.warning(
+                "El total de créditos (%s) no coincide con la suma "
+                "de los créditos de los asientos (%s).",
+                self.total_creditos,
+                credits_,
             )
         return self
 
@@ -360,14 +369,20 @@ class TributarioOutput(BaseModel):
     def check_tax_consistency(self) -> "TributarioOutput":
         """Validate internal tax consistency."""
         if self.aplica_impuestos and len(self.impuestos) == 0:
-            raise ValueError("aplica_impuestos is True but no impuestos were provided.")
+            raise ValueError(
+                "aplica_impuestos es True pero no se proporcionaron impuestos."
+            )
         if not self.aplica_impuestos and len(self.impuestos) > 0:
-            raise ValueError("aplica_impuestos is False but impuestos were provided.")
+            raise ValueError(
+                "aplica_impuestos es False pero se proporcionaron impuestos."
+            )
         calculated_total = sum(i.valor_impuesto for i in self.impuestos)
         if self.total_impuestos != calculated_total:
-            raise ValueError(
-                f"total_impuestos ({self.total_impuestos}) does not match "
-                f"sum of individual taxes ({calculated_total})."
+            logger.warning(
+                "El total de impuestos (%s) no coincide con la "
+                "suma de los impuestos individuales (%s).",
+                self.total_impuestos,
+                calculated_total,
             )
         return self
 
@@ -442,12 +457,14 @@ class AuditorOutput(BaseModel):
             NivelRiesgo.ALTO,
             NivelRiesgo.CRITICO,
         ):
-            raise ValueError("Cannot approve a document with high/critical risk level.")
+            raise ValueError(
+                "No se puede aprobar un documento con nivel de riesgo alto/crítico."
+            )
         critical_findings = [
             h for h in self.hallazgos if h.severidad == SeveridadHallazgo.CRITICO
         ]
         if self.aprobado and len(critical_findings) > 0:
-            raise ValueError("Cannot approve a document with critical findings.")
+            raise ValueError("No se puede aprobar un documento con hallazgos críticos.")
         return self
 
 

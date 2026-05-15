@@ -83,7 +83,7 @@ VALID_CONTADOR_OUTPUT: dict = {
     "total_creditos": 1_500_000,
 }
 
-# Invalid contador output: debits ≠ credits
+# Invalid contador output: debits ≠ credits (now a warning, not a hard error)
 INVALID_CONTADOR_OUTPUT: dict = {
     **VALID_CONTADOR_OUTPUT,
     "total_creditos": 999_999,
@@ -91,6 +91,12 @@ INVALID_CONTADOR_OUTPUT: dict = {
         VALID_CONTADOR_OUTPUT["asientos"][0],
         {**VALID_CONTADOR_OUTPUT["asientos"][1], "valor": 999_999},
     ],
+}
+
+# Hard invalid contador output: empty asientos (still a hard validation error)
+INVALID_CONTADOR_OUTPUT_HARD: dict = {
+    **VALID_CONTADOR_OUTPUT,
+    "asientos": [],
 }
 
 VALID_AUDITOR_OUTPUT: dict = {
@@ -560,12 +566,24 @@ class TestValidateContadorOutputNode:
         assert result["correction_feedback"] is None
         assert result["current_stage"] == "validated"
 
-    def test_unbalanced_asientos_triggers_retry(self):
+    def test_unbalanced_asientos_warns_without_retry(self):
+        """Unbalanced debits/credits is now a warning, not a hard error."""
         state = _base_state(
             contador_output=dict(INVALID_CONTADOR_OUTPUT), retry_count=0
         )
-        result = validate_contador_output_node(state)
-        assert result["correction_feedback"] is not None or result["error"] is not None
+        with (
+            patch("app.agents.validation_rules._missing_puc_codes", return_value=[]),
+            patch("app.agents.validation_rules.SessionLocal") as mock_session,
+        ):
+            mock_db = MagicMock()
+            mock_session.return_value = mock_db
+            result = validate_contador_output_node(state)
+        assert result["error"] is None
+        assert result["correction_feedback"] is None
+        assert result["retry_count"] == 0
+        history = result["validation_history"]
+        assert len(history) >= 1
+        assert history[-1]["is_valid"] is True
 
     def test_missing_puc_triggers_correction_feedback(self):
         state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT), retry_count=0)
@@ -810,9 +828,9 @@ class TestProcessGraphE2E:
         assert final.get("error") is None, final.get("error")
         assert final["audit_approved"] is True
         assert final["db_result"] is not None
-        assert audit_calls["n"] == 2, (
-            "Auditor should have been called twice (reject + approve)"
-        )
+        assert (
+            audit_calls["n"] == 2
+        ), "Auditor should have been called twice (reject + approve)"
 
     @patch("app.services.db_service.get_company_settings")
     @patch("app.agents.tributario_agent.get_llm_client")
@@ -838,7 +856,7 @@ class TestProcessGraphE2E:
         def side_effect_contador(*args, **kwargs):
             call_count["n"] += 1
             if call_count["n"] == 1:
-                return dict(INVALID_CONTADOR_OUTPUT)
+                return dict(INVALID_CONTADOR_OUTPUT_HARD)
             return dict(VALID_CONTADOR_OUTPUT)
 
         mock_cnt = MagicMock()
@@ -929,7 +947,9 @@ class TestProcessGraphE2E:
     ):
         """When all retries are exhausted, graph routes to HITL audit_review_terminal."""
         mock_cnt = MagicMock()
-        mock_cnt.extract_contador_output.return_value = dict(INVALID_CONTADOR_OUTPUT)
+        mock_cnt.extract_contador_output.return_value = dict(
+            INVALID_CONTADOR_OUTPUT_HARD
+        )
         mock_cnt_factory.return_value = mock_cnt
 
         with patch(
@@ -1143,9 +1163,9 @@ class TestProcessGraphDBIntegration:
 
             total_debito = sum(ln.debito for ln in lines)
             total_credito = sum(ln.credito for ln in lines)
-            assert total_debito == total_credito, (
-                f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
-            )
+            assert (
+                total_debito == total_credito
+            ), f"Partida doble violated: debitos={total_debito} creditos={total_credito}"
 
             # Auditor output stored in agent_reasoning
             assert posted.agent_reasoning is not None
@@ -1210,9 +1230,71 @@ class TestProcessGraphDBIntegration:
 
         # Phase 4: budget exhaustion routes to error_terminal — no DB persist.
         assert result.get("audit_approved") is False
-        assert result.get("giveup_record") is not None, (
-            "giveup_record must be set after retry budget exhaustion"
-        )
+        assert (
+            result.get("giveup_record") is not None
+        ), "giveup_record must be set after retry budget exhaustion"
         # persist was refused — db_result should not contain a posted transaction
         db_res = result.get("db_result") or {}
         assert db_res.get("transaction_posted_id") is None
+
+
+# ===========================================================================
+# 13. Auditor prompt — whitelist for legitimate duplicate cuenta_puc
+# ===========================================================================
+
+
+class TestAuditorPromptWhitelist:
+    """The auditor prompt must explicitly whitelist patterns that are legitimate
+    in Colombian accounting (e.g. 2368 used twice in the same asiento for
+    Reteica + ICA por pagar) so the LLM does not reject them as duplicates.
+    """
+
+    def _build_prompt(self) -> str:
+        from app.core.llm_client import LLMClient
+
+        # Capture the prompt string passed to _invoke without contacting any
+        # provider. We bypass __init__ so we don't require API keys in tests.
+        client = LLMClient.__new__(LLMClient)
+        captured: dict[str, str] = {}
+
+        def _fake_invoke(_schema, prompt):  # type: ignore[no-untyped-def]
+            captured["prompt"] = prompt
+            return MagicMock(
+                fecha_auditoria="2026-01-16",
+                documento_referencia="X",
+                aprobado=True,
+                nivel_riesgo="bajo",
+                hallazgos=[],
+                puntaje_calidad=100.0,
+                resumen="ok",
+            )
+
+        client._invoke = _fake_invoke  # type: ignore[assignment]
+        client._as_dict = lambda x: {  # type: ignore[assignment]
+            "fecha_auditoria": x.fecha_auditoria,
+            "documento_referencia": x.documento_referencia,
+            "aprobado": x.aprobado,
+            "nivel_riesgo": x.nivel_riesgo,
+            "hallazgos": x.hallazgos,
+            "puntaje_calidad": x.puntaje_calidad,
+            "resumen": x.resumen,
+        }
+        client.extract_auditor_output(
+            contador_output=dict(VALID_CONTADOR_OUTPUT),
+            raw_transactions=list(VALID_RAW_TRANSACTIONS),
+        )
+        return captured["prompt"]
+
+    def test_prompt_includes_valid_patterns_section(self):
+        prompt = self._build_prompt()
+        assert "PATRONES VÁLIDOS" in prompt
+
+    def test_prompt_explicitly_allows_repeated_2368(self):
+        prompt = self._build_prompt()
+        assert "2368" in prompt
+        assert "Reteica" in prompt or "ICA" in prompt
+
+    def test_prompt_lists_explicit_rejection_criteria(self):
+        prompt = self._build_prompt()
+        assert "RECHAZO" in prompt
+        assert "desbalanceado" in prompt

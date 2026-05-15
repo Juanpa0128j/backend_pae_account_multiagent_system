@@ -42,6 +42,7 @@ class IngestDetailResponse(BaseModel):
     status: str
     document_type: Optional[str] = None
     pathway: Optional[str] = None
+    parser_mode: Optional[str] = None
     created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     extraction_errors: Optional[List[str]] = None
@@ -58,6 +59,7 @@ class IngestDetailResponse(BaseModel):
 class ClassificationReviewUpdateRequest(BaseModel):
     doc_type: str
     confirmed: bool = True
+    parser_mode: Optional[str] = None
 
 
 class ProcessResponse(BaseModel):

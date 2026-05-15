@@ -57,4 +57,5 @@ dev = [
     "ruff>=0.1",
     "numpy>=1.24",
     "pre-commit>=4.5.1",
+    "httpx>=0.28.1",
 ]

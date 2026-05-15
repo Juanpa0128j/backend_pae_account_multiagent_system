@@ -8,7 +8,9 @@ def test_financial_statements_exist_returns_true_when_present():
     db = MagicMock()
     # financial_statements_exist uses func.count(distinct(...)) + .scalar():
     # New query has 6 filters: entity_nit, period_start >=, period_start <, period_end >=, period_end <=, statement_type
-    db.query.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.scalar.return_value = 3
+    db.query.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.scalar.return_value = (
+        3
+    )
     result = db_service.financial_statements_exist(
         db,
         company_nit="800999888",
@@ -25,7 +27,9 @@ def test_financial_statements_exist_returns_false_when_missing():
     db = MagicMock()
     # financial_statements_exist uses func.count(distinct(...)) + .scalar():
     # New query has 6 filters: entity_nit, period_start >=, period_start <, period_end >=, period_end <=, statement_type
-    db.query.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.scalar.return_value = 1
+    db.query.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.filter.return_value.scalar.return_value = (
+        1
+    )
     result = db_service.financial_statements_exist(
         db,
         company_nit="800999888",

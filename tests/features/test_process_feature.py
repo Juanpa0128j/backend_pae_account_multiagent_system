@@ -50,7 +50,9 @@ def test_start_process_job_returns_process_id(monkeypatch):
     monkeypatch.setattr(
         db_service,
         "get_ingest_job",
-        lambda db, ingest_id: SimpleNamespace(id=ingest_id, file_path="/tmp/test.pdf"),
+        lambda db, ingest_id: SimpleNamespace(
+            id=ingest_id, file_path="/tmp/test.pdf", company_nit="800999888"
+        ),
     )
     _mock_process_preconditions(monkeypatch)
 
@@ -188,7 +190,9 @@ def test_post_accounting_returns_existing_process_job_idempotent(monkeypatch):
     monkeypatch.setattr(
         db_service,
         "get_ingest_job",
-        lambda db, ingest_id: SimpleNamespace(id=ingest_id, file_path="/tmp/test.pdf"),
+        lambda db, ingest_id: SimpleNamespace(
+            id=ingest_id, file_path="/tmp/test.pdf", company_nit="800999888"
+        ),
     )
     _mock_process_preconditions(monkeypatch)
 
@@ -259,7 +263,9 @@ def test_post_accounting_creates_new_job_if_previous_failed(monkeypatch):
     monkeypatch.setattr(
         db_service,
         "get_ingest_job",
-        lambda db, ingest_id: SimpleNamespace(id=ingest_id, file_path="/tmp/test.pdf"),
+        lambda db, ingest_id: SimpleNamespace(
+            id=ingest_id, file_path="/tmp/test.pdf", company_nit="800999888"
+        ),
     )
     _mock_process_preconditions(monkeypatch)
 
@@ -321,7 +327,9 @@ def test_post_accounting_fails_precondition_when_company_settings_missing(monkey
     monkeypatch.setattr(
         db_service,
         "get_ingest_job",
-        lambda db, ingest_id: SimpleNamespace(id=ingest_id, file_path="/tmp/test.pdf"),
+        lambda db, ingest_id: SimpleNamespace(
+            id=ingest_id, file_path="/tmp/test.pdf", company_nit="800999888"
+        ),
     )
     _mock_process_preconditions(monkeypatch, has_company_settings=False)
 

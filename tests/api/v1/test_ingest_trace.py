@@ -62,7 +62,9 @@ class TestBuildIngestTrace:
         with patch("app.services.pipeline_trace_service.db_service") as mock_svc:
             mock_svc.get_ingest_job.return_value = job
             # No audit logs returned
-            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
+            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+                []
+            )
             trace = build_ingest_trace("ingest-test-001", db)
 
         assert trace is not None
@@ -81,7 +83,9 @@ class TestBuildIngestTrace:
 
         with patch("app.services.pipeline_trace_service.db_service") as mock_svc:
             mock_svc.get_ingest_job.return_value = job
-            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
+            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+                []
+            )
             trace = build_ingest_trace("ingest-test-001", db)
 
         assert trace.overall_status == "failed"
@@ -99,7 +103,9 @@ class TestBuildIngestTrace:
 
         with patch("app.services.pipeline_trace_service.db_service") as mock_svc:
             mock_svc.get_ingest_job.return_value = job
-            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
+            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+                []
+            )
             trace = build_ingest_trace("ingest-test-001", db)
 
         blocker = trace.blockers[0]
@@ -210,6 +216,7 @@ class TestIngestStatusEndpoint:
         mock_job.file_name = "test.pdf"
         mock_job.document_type = "factura_venta"
         mock_job.pathway = "via_a"
+        mock_job.parser_mode = "fast"
         mock_job.created_at = datetime.now(timezone.utc)
         mock_job.completed_at = None
         mock_job.extraction_errors = []

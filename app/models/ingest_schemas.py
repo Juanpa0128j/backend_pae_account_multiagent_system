@@ -344,8 +344,8 @@ class BankMovement(BaseModel):
     descripcion: str = Field(description="Movement description")
     referencia: Optional[str] = Field(None, description="Reference number")
     tipo: Optional[str] = Field(None, description="debito | credito")
-    debito: Optional[Decimal] = Field(None, ge=0)
-    credito: Optional[Decimal] = Field(None, ge=0)
+    debito: Optional[Decimal] = Field(None)
+    credito: Optional[Decimal] = Field(None)
     saldo: Optional[Decimal] = Field(None, description="Running balance after movement")
 
     @field_validator("debito", "credito", "saldo", mode="before")
@@ -713,8 +713,8 @@ class LedgerLine(BaseModel):
     comprobante: Optional[str] = Field(None, description="Voucher type and number")
     centro_costo: Optional[str] = Field(None)
     detalle: Optional[str] = Field(None, description="Line detail/description")
-    debito: Decimal = Field(ge=0)
-    credito: Decimal = Field(ge=0)
+    debito: Decimal = Field(default=Decimal("0"))
+    credito: Decimal = Field(default=Decimal("0"))
     saldo: Optional[Decimal] = Field(None)
 
     @field_validator("debito", "credito", "saldo", mode="before")

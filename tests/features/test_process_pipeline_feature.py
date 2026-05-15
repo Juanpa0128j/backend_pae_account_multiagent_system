@@ -105,6 +105,15 @@ INVALID_CONTADOR_OUTPUT_UNBALANCED = {
     "total_creditos": 900000,  # ❌ No balancea!
 }
 
+INVALID_CONTADOR_OUTPUT_EMPTY_ASIENTOS = {
+    "fecha_registro": "2026-03-07",
+    "tipo_documento": "factura",
+    "descripcion_general": "Transacción sin asientos test",
+    "asientos": [],
+    "total_debitos": 0,
+    "total_creditos": 0,
+}
+
 INVALID_CONTADOR_OUTPUT_BAD_PUC = {
     "fecha_registro": "2026-03-07",
     "tipo_documento": "factura",
@@ -277,10 +286,10 @@ class TestValidateContadorOutput:
         # Validation successful means no error set
 
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
-    def test_validation_fails_with_unbalanced_output(
+    def test_validation_warns_with_unbalanced_output(
         self, mock_puc_check, process_state
     ):
-        """Validation should fail if debito != credito."""
+        """Unbalanced debito/credito is now a warning, not a hard error."""
         mock_puc_record = Mock()
         mock_puc_check.return_value = mock_puc_record
 
@@ -290,11 +299,9 @@ class TestValidateContadorOutput:
         result_state = validate_contador_output_node(process_state)
 
         assert len(result_state["validation_history"]) > 0
-        # Should have correction feedback set on failure
-        assert (
-            result_state.get("correction_feedback") is not None
-            or result_state.get("error") is not None
-        )
+        assert result_state["validation_history"][-1]["is_valid"] is True
+        assert result_state.get("correction_feedback") is None
+        assert result_state.get("error") is None
 
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
     def test_validation_fails_with_invalid_puc(self, mock_puc_check, process_state):
@@ -470,7 +477,7 @@ class TestFullProcessPipeline:
         def side_effect_contador(*args, **kwargs):
             call_count["count"] += 1
             if call_count["count"] == 1:
-                return INVALID_CONTADOR_OUTPUT_UNBALANCED
+                return INVALID_CONTADOR_OUTPUT_EMPTY_ASIENTOS
             return VALID_CONTADOR_OUTPUT
 
         mock_client.extract_contador_output.side_effect = side_effect_contador

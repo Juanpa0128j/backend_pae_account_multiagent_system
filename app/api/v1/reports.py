@@ -156,6 +156,32 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
 
     # balance_general / balance ────────────────────────────────────────────────
     if report_type in ("balance", "balance_general"):
+        # Split per-account rows by PUC class so PDF/Excel exporters can render
+        # detail tables instead of just the 3 aggregate totals.
+        activos_detalle: list[dict] = []
+        pasivos_detalle: list[dict] = []
+        patrimonio_detalle: list[dict] = []
+
+        raw_accounts = data.get("accounts") or data.get("cuentas") or []
+        if isinstance(raw_accounts, list):
+            for acc in raw_accounts:
+                if not isinstance(acc, dict):
+                    continue
+                code = str(acc.get("cuenta_puc") or acc.get("codigo") or "")
+                if not code:
+                    continue
+                row = {
+                    "codigo": code,
+                    "nombre": acc.get("nombre") or "",
+                    "saldo": _to_float(acc.get("saldo") or acc.get("valor")),
+                }
+                if code.startswith("1"):
+                    activos_detalle.append(row)
+                elif code.startswith("2"):
+                    pasivos_detalle.append(row)
+                elif code.startswith("3"):
+                    patrimonio_detalle.append(row)
+
         return {
             "period_start": data.get("periodo_inicio"),
             "period_end": data.get("periodo_fin"),
@@ -168,9 +194,9 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
             "patrimonio_total": _to_float(data.get("total_patrimonio")),
             "cuadre": bool(data.get("cuadre", False)),
             "mensaje_cuadre": "Balance derivado desde asientos contables.",
-            "activos_detalle": [],
-            "pasivos_detalle": [],
-            "patrimonio_detalle": [],
+            "activos_detalle": activos_detalle,
+            "pasivos_detalle": pasivos_detalle,
+            "patrimonio_detalle": patrimonio_detalle,
         }
 
     # estado_resultados / pnl ──────────────────────────────────────────────────
@@ -189,15 +215,43 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
                     )
             return out
 
+        ingresos = _normalize_cuenta_list(data.get("ingresos"))
+        gastos = _normalize_cuenta_list(data.get("gastos"))
+        costo_ventas = _normalize_cuenta_list(data.get("costo_ventas"))
+
+        # Fallback: if the LLM only produced a flat `accounts` list, split by
+        # PUC class (4 = ingresos, 5 = gastos, 6 = costo de ventas).
+        if not (ingresos or gastos or costo_ventas):
+            raw_accounts = data.get("accounts") or data.get("cuentas") or []
+            if isinstance(raw_accounts, list):
+                for acc in raw_accounts:
+                    if not isinstance(acc, dict):
+                        continue
+                    code = str(acc.get("cuenta_puc") or acc.get("codigo") or "")
+                    row = {
+                        "codigo": code,
+                        "nombre": acc.get("nombre") or "",
+                        "saldo": _to_float(acc.get("saldo") or acc.get("valor")),
+                    }
+                    if code.startswith("4"):
+                        ingresos.append(row)
+                    elif code.startswith("5"):
+                        gastos.append(row)
+                    elif code.startswith("6"):
+                        costo_ventas.append(row)
+
+        def _sum(items):
+            return sum(_to_float(i.get("saldo")) for i in items)
+
         return {
             "period_start": data.get("periodo_inicio"),
             "period_end": data.get("periodo_fin"),
-            "ingresos": _normalize_cuenta_list(data.get("ingresos")),
-            "gastos": _normalize_cuenta_list(data.get("gastos")),
-            "costo_ventas": _normalize_cuenta_list(data.get("costo_ventas")),
-            "total_ingresos": _to_float(data.get("total_ingresos")),
-            "total_gastos": _to_float(data.get("total_gastos")),
-            "total_costo_ventas": _to_float(data.get("total_costo_ventas")),
+            "ingresos": ingresos,
+            "gastos": gastos,
+            "costo_ventas": costo_ventas,
+            "total_ingresos": _to_float(data.get("total_ingresos")) or _sum(ingresos),
+            "total_gastos": _to_float(data.get("total_gastos")) or _sum(gastos),
+            "total_costo_ventas": _to_float(data.get("total_costo_ventas")) or _sum(costo_ventas),
             "utilidad_bruta": _to_float(data.get("utilidad_bruta")),
             "utilidad_neta": _to_float(data.get("utilidad_neta")),
         }
@@ -208,26 +262,36 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
         efectivo_ini = _to_float(data.get("efectivo_inicio_periodo"))
         flujo_op = _to_float(data.get("flujo_neto_operacion"))
         flujo_inv = _to_float(data.get("flujo_neto_inversion"))
-        flujo_fin = _to_float(data.get("flujo_neto_financiacion"))
-        cuentas_efectivo = [
-            {
-                "codigo": "11",
-                "nombre": "Efectivo y equivalentes",
-                "saldo": efectivo_fin,
-            },
-        ]
+        flujo_fin_val = _to_float(data.get("flujo_neto_financiacion"))
+        aumento_neto = _to_float(
+            data.get("aumento_disminucion_neto") or (flujo_op + flujo_inv + flujo_fin_val)
+        )
+        info_adicional = data.get("informacion_adicional") or {}
+        adjustments = info_adicional.get("adjustments") or {}
+        nic7 = info_adicional.get("nic7_identity") or {}
         return {
             "period_start": data.get("periodo_inicio"),
             "period_end": data.get("periodo_fin"),
-            "cuentas_efectivo": cuentas_efectivo,
-            "total_efectivo": efectivo_fin,
+            "metodo": data.get("metodo", "indirecto"),
+            "verificacion": data.get("verificacion"),
+            "efectivo_inicio": efectivo_ini,
             "flujo_operacion": flujo_op,
             "flujo_inversion": flujo_inv,
-            "flujo_financiacion": flujo_fin,
+            "flujo_financiacion": flujo_fin_val,
+            "aumento_disminucion_neto": aumento_neto,
+            "efectivo_fin": efectivo_fin,
+            "adjustments": adjustments,
+            "nic7_diferencia": _to_float(nic7.get("diferencia")),
+            "rule_version": info_adicional.get("rule_version", ""),
+            # legacy keys kept for backward compat with old exporter paths
+            "cuentas_efectivo": [
+                {"codigo": "11", "nombre": "Efectivo y equivalentes", "saldo": efectivo_fin}
+            ],
+            "total_efectivo": efectivo_fin,
             "saldo_inicial": efectivo_ini,
             "nota": (
                 f"Metodo indirecto. Flujo operacion: {flujo_op:,.0f} | "
-                f"Inversion: {flujo_inv:,.0f} | Financiacion: {flujo_fin:,.0f}"
+                f"Inversion: {flujo_inv:,.0f} | Financiacion: {flujo_fin_val:,.0f}"
             ),
         }
 
@@ -386,6 +450,8 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
                     "contenido": n.get("contenido_resumido")
                     or n.get("contenido")
                     or "",
+                    "categoria": n.get("categoria") or "",
+                    "cifras_relevantes": n.get("cifras_relevantes") or [],
                 }
             )
         cifras = {}
@@ -1171,7 +1237,11 @@ async def get_derivation_status(
         t: {item["period_end"] for item in sources[t] if item["period_end"]}
         for t in _REQUIRED_SOURCE_TYPES
     }
-    common_period_ends = set.intersection(*period_end_sets.values()) if period_end_sets.values() else set()
+    common_period_ends = (
+        set.intersection(*period_end_sets.values())
+        if period_end_sets.values()
+        else set()
+    )
 
     ready_periods = []
     for pe in sorted(common_period_ends, reverse=True):

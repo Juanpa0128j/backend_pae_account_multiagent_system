@@ -307,11 +307,26 @@ Reranker response: `{"scores": [float, ...]}`
 
 ### Option 1: Dev Container (Recommended)
 
-1. Open this folder in VS Code.
-2. Click **"Reopen in Container"** when prompted.
-3. The container installs all dependencies automatically.
+```bash
+# 1. (Host shell, OUT of devcontainer) — start local Postgres+pgvector
+make db-up
 
-### Option 2: Local Setup
+# 2. Open in VS Code, click "Reopen in Container".
+
+# 3. (Inside devcontainer) — bootstrap everything in one shot
+make dev-bootstrap
+# This runs: db-up + alembic upgrade head + seed_puc + populate_rag (3-5 min)
+
+# 4. (Inside devcontainer) — start backend with logs
+mkdir -p logs && uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000 2>&1 | tee -a "logs/backend-$(date +%Y%m%d).log"
+```
+
+**`.env`** in devcontainer must use `host.docker.internal`:
+```
+DATABASE_URL=postgresql://pae:pae@host.docker.internal:5433/pae
+```
+
+### Option 2: Local Setup (host uvicorn, no devcontainer)
 
 ```bash
 # 1. Install uv (https://docs.astral.sh/uv/)
@@ -322,14 +337,17 @@ UV_LINK_MODE=copy uv sync
 
 # 3. Copy and fill in environment variables
 cp .env.example .env
-# Edit .env: set DATABASE_URL, HUGGINGFACE_API_KEY, GEMINI_API_KEY, LLAMA_CLOUD_API_KEY
+# Edit .env: set DATABASE_URL=postgresql://pae:pae@localhost:5433/pae (for local DB)
+#            + HUGGINGFACE_API_KEY, GEMINI_API_KEY, LLAMA_CLOUD_API_KEY
 
-# 4. Apply database migrations
+# 4. Start DB (in host shell)
+make db-up
+
+# 5. Apply migrations + seed (PUC + RAG)
 source .venv/bin/activate
 alembic upgrade head
-
-# 5. Seed the normativa vector collection
-python scripts/populate_rag.py
+python scripts/seed_puc.py        # 84 PUC accounts
+python scripts/populate_rag.py    # 107 normativa docs (3-5 min)
 
 # 6. Start the development server
 uvicorn main:app --reload

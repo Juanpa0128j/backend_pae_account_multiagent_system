@@ -19,11 +19,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Package manager:** `uv` — never use pip directly.
 
 ```bash
-# Setup
+# First-time setup (host shell first, then devcontainer)
+# 1) Host: make db-up                  # starts pgvector container on Mac
+# 2) Reopen in devcontainer
+# 3) Inside devcontainer:
+make dev-bootstrap                    # db-up + alembic upgrade + seed_puc + populate_rag
+# Or manually:
 uv sync
-alembic upgrade head
-python scripts/populate_rag.py      # Seed RAG vector store (skip if exists)
-python scripts/populate_rag.py --force  # Force re-index
+uv run alembic upgrade head
+uv run python scripts/seed_puc.py        # 84 PUC accounts into Postgres
+uv run python scripts/populate_rag.py    # 107 normativa docs into pgvector (3-5 min)
+uv run python scripts/populate_rag.py --force  # Force re-index
 
 # Development server
 uvicorn main:app --reload
@@ -54,8 +60,13 @@ make db-shell                                        # psql shell
 
 The same Alembic schema runs against three databases:
 
-- **Local (dev):** docker-compose pgvector container — start with `make db-up`,
-  point `DATABASE_URL=postgresql://pae:pae@localhost:5433/pae` in `.env`.
+- **Local (dev):** docker-compose pgvector container — start with `make db-up`.
+  - **Host uvicorn**: `DATABASE_URL=postgresql://pae:pae@localhost:5433/pae` in `.env`.
+  - **Inside devcontainer**: `DATABASE_URL=postgresql://pae:pae@host.docker.internal:5433/pae` (Docker Desktop Mac/Win) or `@172.17.0.1:5433` (Linux native).
+  - First-time order: (1) host `make db-up`, (2) reopen in devcontainer, (3) `make dev-bootstrap` (or `uv run alembic upgrade head` + `uv run python scripts/seed_puc.py` + `uv run python scripts/populate_rag.py`).
+  - Forgetting alembic upgrade → backend crashes `relation "company_settings" does not exist`.
+  - Forgetting seed → contador falls back to 5195 (no PUC table to query).
+  - Forgetting populate_rag → RAG retrieval empty, lower classification quality.
 - **CI (pull requests):** ephemeral `pgvector/pgvector:pg16` service in
   GitHub Actions; migrations run fresh per workflow.
 - **Production:** Supabase Postgres; only merged-to-main migrations touch it.
