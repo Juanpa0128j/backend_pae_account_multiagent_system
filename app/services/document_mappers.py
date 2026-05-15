@@ -182,8 +182,8 @@ def build_structured_transactions(
             periodo_txt = f"Periodo hasta {periodo_fin}"
 
         raw_total = (
-            interpreted.get("total_neto_pagar")
-            or interpreted.get("total_devengado")
+            interpreted.get("total_devengado")
+            or interpreted.get("total_neto_pagar")
             or interpreted.get("total")
         )
         parsed_total = safe_decimal(raw_total)
