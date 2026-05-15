@@ -31,6 +31,7 @@ from app.models.database import (
     TransactionPending,
     TransactionPosted,
     TransactionStatus,
+    UserCompany,
 )
 
 logger = get_logger(__name__)
@@ -1045,6 +1046,9 @@ def delete_company(db: Session, nit: str) -> bool:
     row = db.query(CompanySettings).filter(CompanySettings.nit == nit).first()
     if not row:
         return False
+    db.query(UserCompany).filter(UserCompany.company_nit == nit).delete(
+        synchronize_session=False
+    )
     db.delete(row)
     db.commit()
     return True
