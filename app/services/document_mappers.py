@@ -205,6 +205,9 @@ def build_structured_transactions(
         if periodo_txt:
             concepto = f"Nomina - {periodo_txt}"
 
+        raw_neto = safe_decimal(interpreted.get("total_neto_pagar"))
+        raw_deducciones = safe_decimal(interpreted.get("total_deducciones"))
+
         return [
             {
                 "fecha": interpreted.get("periodo_fin")
@@ -216,7 +219,14 @@ def build_structured_transactions(
                 "nit_receptor": as_str(
                     interpreted.get("nit_receptor") or receptor.get("nit"), ""
                 ),
+                # total = total_devengado (gross salary expense — use for DR 5105xx)
                 "total": str(parsed_total),
+                # explicit fields so the LLM does not re-derive from employee items
+                "total_devengado": str(parsed_total),
+                "total_neto_pagar": str(raw_neto) if raw_neto is not None else None,
+                "total_deducciones": (
+                    str(raw_deducciones) if raw_deducciones is not None else None
+                ),
                 "concepto": concepto,
                 "descripcion": concepto,
                 "items": sanitize_for_json(interpreted.get("empleados") or []),

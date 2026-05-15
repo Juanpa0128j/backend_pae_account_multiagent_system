@@ -117,9 +117,13 @@ _DOC_GUIDANCE: dict[str, str] = {
         "en 240802 vs 135510."
     ),
     "nomina": (
-        "REGLA NOMINA: Debita gastos de personal (5105xx/5110xx) por salarios, prestaciones y parafiscales. "
-        "Acredita banco (111005) por valor neto pagado, provisiones nomina (2510xx/2525xx) "
-        "y aportes por pagar (237xxx). "
+        "REGLA NOMINA: "
+        "DÉBITO: Gastos de personal (5105xx/5110xx) por el valor TOTAL DEVENGADO (salario bruto). "
+        "Usa el campo 'total_devengado' de la transacción — NUNCA 'total_neto_pagar' ni la suma de neto_pagar de empleados para el débito. "
+        "CRÉDITO: Banco (111005) por 'total_neto_pagar' (valor neto girado al empleado). "
+        "Retenciones y deducciones del empleado (salud 4%, pensión 4%, retefuente) por 'total_deducciones' en cuentas 236xxx/2370xx. "
+        "Provisiones nomina empleador (2510xx/2525xx) y aportes parafiscales (237xxx) si aplica. "
+        "El débito SIEMPRE debe igualar la suma de todos los créditos: total_devengado = total_neto_pagar + total_deducciones. "
         "NO dupliques impuestos de renta — el agente tributario los maneja."
     ),
     "recibo_caja": (
