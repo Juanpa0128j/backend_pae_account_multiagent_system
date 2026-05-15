@@ -71,6 +71,7 @@ def create_ingest_job(
     commit: bool = True,
     created_by: str | None = None,
     file_names: list[str] | None = None,
+    multi_file_mode: str = "pages",
 ) -> IngestJob:
     """Create a new ingest job for a document upload."""
     job = IngestJob(
@@ -78,6 +79,7 @@ def create_ingest_job(
         file_name=file_name,
         file_path=file_path,
         file_names=file_names,
+        multi_file_mode=multi_file_mode,
         status=IngestStatus.PENDING_PROCESSING,
         company_nit=company_nit or None,
         document_type=document_type or None,
@@ -100,6 +102,14 @@ def create_ingest_job(
     db.refresh(job)
     logger.info(f"Created IngestJob: {job.id}")
     return job
+
+
+def update_ingest_file_index(db: Session, ingest_id: str, index: int) -> None:
+    """Update current_file_index on IngestJob for frontend progress reporting."""
+    db.query(IngestJob).filter(IngestJob.id == ingest_id).update(
+        {"current_file_index": index}
+    )
+    db.commit()
 
 
 def update_ingest_job(

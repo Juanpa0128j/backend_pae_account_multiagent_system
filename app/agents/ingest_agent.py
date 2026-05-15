@@ -172,6 +172,113 @@ _VIA_B_STATEMENT_TYPES: set[str] = {
 }
 
 
+def _merge_document_results(results: list[dict]) -> dict:
+    """Merge interpreted_data from multiple independently-processed documents.
+
+    List-valued fields (e.g. 'items', 'transacciones') are concatenated.
+    Scalar fields take the last non-None value across results.
+    """
+    if not results:
+        return {}
+    if len(results) == 1:
+        return results[0]
+
+    list_keys: set[str] = set()
+    for r in results:
+        for k, v in r.items():
+            if isinstance(v, list):
+                list_keys.add(k)
+
+    all_keys: set[str] = set().union(*[r.keys() for r in results])
+    merged: dict = {}
+    for k in all_keys:
+        if k in list_keys:
+            merged[k] = []
+            for r in results:
+                if isinstance(r.get(k), list):
+                    merged[k].extend(r[k])
+        else:
+            for r in reversed(results):
+                if k in r and r[k] is not None:
+                    merged[k] = r[k]
+                    break
+    return merged
+
+
+def _ingest_documents_mode(state: AgentState, file_paths: list[str]) -> AgentState:
+    """Process each file independently and merge results (multi_file_mode='documents')."""
+    llm = get_llm_client()
+    classification = state.get("document_classification") or {}
+    doc_type = classification.get("doc_type", "otro")
+    method_name = _EXTRACT_METHOD_MAP.get(doc_type, "extract_transactions")
+
+    if not hasattr(llm, method_name):
+        state["error"] = (
+            f"Ingest dispatch error: method '{method_name}' is not available "
+            f"for doc_type '{doc_type}'"
+        )
+        logger.error(state["error"])
+        append_log(state, "ingesta", "node_error", {"error": state["error"]})
+        return state
+
+    extract_method = getattr(llm, method_name)
+    ingest_id = state.get("ingest_id")
+    all_results: list[dict] = []
+
+    for i, fp in enumerate(file_paths):
+        if ingest_id:
+            from app.core.database import SessionLocal
+            from app.services.db_service import update_ingest_file_index
+
+            _db = SessionLocal()
+            try:
+                update_ingest_file_index(_db, ingest_id, i)
+            finally:
+                _db.close()
+
+        append_log(state, "ingesta", "parsing_file", {"file_index": i, "file": fp})
+        try:
+            page_text = _parse_single_file(fp, state)
+        except ValueError as _fmt_err:
+            state["error"] = str(_fmt_err)
+            logger.error(state["error"])
+            append_log(state, "ingesta", "node_error", {"error": state["error"]})
+            return state
+
+        result = llm_with_parse_retry(extract_method, page_text, agent_label="ingesta")
+        if isinstance(result, dict):
+            all_results.append(result)
+
+    merged = _merge_document_results(all_results)
+    state["interpreted_data"] = merged
+    state["raw_text"] = ""
+    state["raw_transactions"] = []
+    state["correction_feedback"] = None
+
+    state["result"] = {
+        "process_id": str(uuid.uuid4()),
+        "status": "completed",
+        "data": merged,
+        "message": f"Processed {len(file_paths)} independent documents",
+    }
+
+    logger.info("Ingest (documents mode): processed %d files", len(file_paths))
+    append_log(
+        state,
+        "ingesta",
+        "interpretation_complete",
+        {"doc_count": len(file_paths), "doc_type": doc_type},
+    )
+
+    from app.agents.audit_utils import append_audit_report
+    from app.agents.auditors import ingest_auditor
+
+    _report = ingest_auditor.run(state)
+    append_audit_report(state, _report)
+
+    return state
+
+
 def ingest_node(state: AgentState) -> AgentState:
     """
     Ingest node: Extracts from document (PDF/XLSX/XML/image) and interprets with the LLM.
@@ -205,9 +312,24 @@ def ingest_node(state: AgentState) -> AgentState:
         # Step 1: Extract raw text (format-aware)
         if not is_retry or not state.get("raw_text"):
             file_paths = state.get("file_paths") or []
-            if len(file_paths) > 1:
+            multi_file_mode = state.get("multi_file_mode") or "pages"
+            if len(file_paths) > 1 and multi_file_mode == "documents":
+                # Each file is an independent document — call LLM per file, merge results.
+                return _ingest_documents_mode(state, file_paths)
+            elif len(file_paths) > 1:
+                # pages mode: concatenate all files as one document.
                 raw_texts = []
-                for i, fp in enumerate(file_paths, start=1):
+                ingest_id = state.get("ingest_id")
+                for i, fp in enumerate(file_paths):
+                    if ingest_id:
+                        from app.core.database import SessionLocal
+                        from app.services.db_service import update_ingest_file_index
+
+                        _db = SessionLocal()
+                        try:
+                            update_ingest_file_index(_db, ingest_id, i)
+                        finally:
+                            _db.close()
                     try:
                         page_text = _parse_single_file(fp, state)
                     except ValueError as _fmt_err:
@@ -218,8 +340,8 @@ def ingest_node(state: AgentState) -> AgentState:
                         )
                         return state
                     raw_texts.append(page_text)
-                    if i < len(file_paths):
-                        raw_texts.append(f"--- PAGE {i} ---")
+                    if i < len(file_paths) - 1:
+                        raw_texts.append(f"--- PAGE {i + 1} ---")
                 raw_text = "\n\n".join(raw_texts)
                 state["raw_text"] = raw_text
             else:

@@ -55,6 +55,8 @@ class IngestDetailResponse(BaseModel):
     trace_url: Optional[str] = None
     classification_review: Optional[ClassificationReviewResponse] = None
     file_names: Optional[List[str]] = None
+    multi_file_mode: Optional[str] = None
+    current_file_index: Optional[int] = None
 
 
 class ClassificationReviewUpdateRequest(BaseModel):

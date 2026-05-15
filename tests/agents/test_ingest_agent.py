@@ -517,3 +517,97 @@ class TestIngestNodeMultiPage:
         client.extract_factura_venta.assert_called_once_with(
             "single xml text", correction_feedback=None
         )
+
+    def test_ingest_node_pages_mode_concatenates(self, monkeypatch):
+        """multi_file_mode='pages' (default) concatenates all files into one LLM call."""
+
+        def _fake_parse_xml(path: str) -> str:
+            return f"text from {Path(path).name}"
+
+        monkeypatch.setattr("app.services.xml_parser.parse_xml", _fake_parse_xml)
+        client = _build_client("extract_factura_venta", {"factura": "ok"})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(
+            file_path="/tmp/f1.xml",
+            file_paths=["/tmp/f1.xml", "/tmp/f2.xml"],
+            document_classification={"doc_type": "factura_venta"},
+            multi_file_mode="pages",
+        )
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        # One combined LLM call
+        assert client.extract_factura_venta.call_count == 1
+        raw = out["raw_text"]
+        assert "text from f1.xml" in raw
+        assert "text from f2.xml" in raw
+
+    def test_ingest_node_documents_mode_calls_llm_per_file(self, monkeypatch):
+        """multi_file_mode='documents' calls LLM once per file and merges results."""
+        call_texts = []
+
+        def _fake_parse_xml(path: str) -> str:
+            return f"text from {Path(path).name}"
+
+        monkeypatch.setattr("app.services.xml_parser.parse_xml", _fake_parse_xml)
+
+        def _fake_extract(raw_text, correction_feedback=None):
+            call_texts.append(raw_text)
+            return {"items": [{"desc": raw_text[:20]}]}
+
+        client = MagicMock()
+        client.extract_factura_venta = _fake_extract
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+        # No DB calls in this test — no ingest_id
+        state = base_state(
+            file_path="/tmp/f1.xml",
+            file_paths=["/tmp/f1.xml", "/tmp/f2.xml", "/tmp/f3.xml"],
+            document_classification={"doc_type": "factura_venta"},
+            multi_file_mode="documents",
+        )
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        # LLM called once per file
+        assert len(call_texts) == 3
+        assert call_texts[0] == "text from f1.xml"
+        assert call_texts[1] == "text from f2.xml"
+        assert call_texts[2] == "text from f3.xml"
+        # interpreted_data has merged items list
+        merged = out["interpreted_data"]
+        assert isinstance(merged.get("items"), list)
+        assert len(merged["items"]) == 3
+
+    def test_ingest_node_documents_mode_updates_current_file_index(self, monkeypatch):
+        """In documents mode, current_file_index is updated in DB before each file."""
+        updated_indices = []
+
+        def _fake_parse_xml(path: str) -> str:
+            return f"text from {Path(path).name}"
+
+        monkeypatch.setattr("app.services.xml_parser.parse_xml", _fake_parse_xml)
+        client = _build_client("extract_factura_venta", {"items": []})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        def _fake_update_index(db, ingest_id, index):
+            updated_indices.append(index)
+
+        monkeypatch.setattr(
+            "app.services.db_service.update_ingest_file_index", _fake_update_index
+        )
+        # Patch SessionLocal to return a dummy db
+        dummy_db = MagicMock()
+        monkeypatch.setattr("app.core.database.SessionLocal", lambda: dummy_db)
+
+        state = base_state(
+            file_path="/tmp/f1.xml",
+            file_paths=["/tmp/f1.xml", "/tmp/f2.xml"],
+            document_classification={"doc_type": "factura_venta"},
+            multi_file_mode="documents",
+            ingest_id="ing_test_123",
+        )
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        assert updated_indices == [0, 1]

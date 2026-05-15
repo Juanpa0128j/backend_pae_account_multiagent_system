@@ -272,6 +272,17 @@ class IngestJob(Base):
     file_name = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=True)
     file_names = Column(JSONB, nullable=True, comment="List of all uploaded file names")
+    multi_file_mode = Column(
+        String(20),
+        nullable=True,
+        default="pages",
+        comment="'pages' = concatenate as one doc | 'documents' = process each independently",
+    )
+    current_file_index = Column(
+        Integer,
+        nullable=True,
+        comment="Index of file currently being parsed (0-based), for frontend progress",
+    )
     status = Column(
         Enum(IngestStatus),
         default=IngestStatus.PENDING_PROCESSING,

@@ -60,6 +60,7 @@ def process_ingest_background(
     ingest_id: str,
     company_nit: Optional[str] = None,
     parser_mode: Optional[str] = None,
+    multi_file_mode: str = "pages",
 ):
     logger.info(
         f"Queueing background agent for: {ingest_id} (company_nit={company_nit})"
@@ -68,7 +69,9 @@ def process_ingest_background(
     # connection pool. Uploads queue here instead of racing for connections.
     with INGEST_PIPELINE_SEMAPHORE:
         logger.info(f"Acquired ingest pipeline slot for: {ingest_id}")
-        _run_ingest_pipeline(temp_file_paths, ingest_id, company_nit, parser_mode)
+        _run_ingest_pipeline(
+            temp_file_paths, ingest_id, company_nit, parser_mode, multi_file_mode
+        )
 
 
 def _run_ingest_pipeline(
@@ -76,12 +79,14 @@ def _run_ingest_pipeline(
     ingest_id: str,
     company_nit: Optional[str] = None,
     parser_mode: Optional[str] = None,
+    multi_file_mode: str = "pages",
 ):
     initial: dict = {"ingest_id": ingest_id}
     if company_nit:
         initial["company_nit"] = company_nit
     if parser_mode:
         initial["parser_mode"] = parser_mode
+    initial["multi_file_mode"] = multi_file_mode
     try:
         result = invoke_ingest_pipeline(
             temp_file_paths[0],
@@ -264,6 +269,8 @@ def _build_ingest_detail_response(
         "trace_url": trace_url,
         "classification_review": classification_review,
         "file_names": job.file_names or [],
+        "multi_file_mode": job.multi_file_mode,
+        "current_file_index": job.current_file_index,
     }
 
 
@@ -284,6 +291,10 @@ async def upload_file(
     parser_mode: Optional[str] = Form(
         "fast",
         description="LlamaParse extraction quality mode: fast, standard, premium, gpt4o.",
+    ),
+    multi_file_mode: str = Form(
+        "pages",
+        description="'pages' = all files are pages of one document | 'documents' = each file is an independent document.",
     ),
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -461,6 +472,7 @@ async def upload_file(
             parser_mode=validated_mode,
             created_by=str(current_user.id),
             file_names=[f.filename for f in files],
+            multi_file_mode=multi_file_mode,
         )
         logger.info(f"Created IngestJob: {ingest_job.id}")
 
@@ -476,6 +488,7 @@ async def upload_file(
             str(ingest_job.id),
             normalized_company_nit,
             validated_mode,
+            multi_file_mode,
         )
 
         return IngestResponse(
