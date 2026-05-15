@@ -189,6 +189,7 @@ def _build_ingest_detail_response(
                 "total": float(tx.total) if tx.total is not None else 0.0,
                 "descripcion": tx.descripcion,
                 "items": tx.items if isinstance(tx.items, list) else [],
+                "source_file": tx.source_file,
             }
         )
 

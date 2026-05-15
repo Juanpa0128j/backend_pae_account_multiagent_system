@@ -352,6 +352,11 @@ class TransactionPending(Base):
     # Raw extracted data
     items = Column(JSONB, nullable=True, comment="Line items from document")
     raw_data = Column(JSONB, nullable=True, comment="Full Gemini extraction result")
+    source_file = Column(
+        String(500),
+        nullable=True,
+        comment="Filename of the source document (documents multi-file mode only)",
+    )
 
     status = Column(
         Enum(TransactionStatus),

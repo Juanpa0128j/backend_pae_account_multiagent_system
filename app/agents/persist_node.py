@@ -550,6 +550,7 @@ def _run_persist(state: AgentState) -> AgentState:
                     descripcion=descripcion,
                     items=items if isinstance(items, list) else [],
                     raw_data=tx_data,
+                    source_file=tx_data.get("source_file"),
                 )
                 logger.info(f"db_persist: Created TransactionPending {txn_pending.id}")
 

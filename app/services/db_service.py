@@ -171,6 +171,7 @@ def create_transaction_pending(
     company_nit: Optional[str] = None,
     commit: bool = True,
     created_by: str | None = None,
+    source_file: Optional[str] = None,
 ) -> TransactionPending:
     """Create a pending transaction from extracted data."""
     txn = TransactionPending(
@@ -184,6 +185,7 @@ def create_transaction_pending(
         descripcion=descripcion,
         items=items,
         raw_data=raw_data,
+        source_file=source_file,
         status=TransactionStatus.PENDING,
     )
     db.add(txn)

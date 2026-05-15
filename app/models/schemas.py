@@ -21,6 +21,7 @@ class RawTransaction(BaseModel):
     total: float
     descripcion: Optional[str] = None
     items: Optional[List[Dict[str, Any]]] = None
+    source_file: Optional[str] = None
 
 
 class ClassificationReviewOption(BaseModel):

@@ -18,6 +18,7 @@ from app.agents.state import AgentState
 from app.core.config import get_settings
 from app.core.llm_client import get_llm_client
 from app.core.logger import get_logger
+from app.services.document_mappers import build_structured_transactions
 
 try:
     from llama_parse import LlamaParse  # type: ignore[import-untyped]
@@ -247,12 +248,20 @@ def _ingest_documents_mode(state: AgentState, file_paths: list[str]) -> AgentSta
 
         result = llm_with_parse_retry(extract_method, page_text, agent_label="ingesta")
         if isinstance(result, dict):
-            all_results.append(result)
+            all_results.append((fp, result))
 
-    merged = _merge_document_results(all_results)
+    # Build per-file tagged transaction dicts for source_file attribution
+    tagged_transactions: list[dict] = []
+    for fp, result in all_results:
+        file_txs = build_structured_transactions(result, doc_type)
+        filename = Path(fp).name
+        for tx in file_txs:
+            tagged_transactions.append({**tx, "source_file": filename})
+
+    merged = _merge_document_results([r for _, r in all_results])
     state["interpreted_data"] = merged
     state["raw_text"] = ""
-    state["raw_transactions"] = []
+    state["raw_transactions"] = tagged_transactions
     state["correction_feedback"] = None
 
     state["result"] = {
