@@ -99,6 +99,48 @@ def _via_b_balance(db: Session, company_nit: str) -> list[dict]:
     return out
 
 
+def _via_a_balance_per_account(
+    db: Session,
+    end_date,
+    company_nit,
+) -> list[dict]:
+    """Return per-cuenta balance rows for tipo=balance Vía A.
+
+    Uses the general ledger aggregation (one row per cuenta_puc) and keeps
+    only classes 1/2/3 — assets, liabilities, equity — which is what a
+    Balance General actually contains. Class 4/5/6 (income statement) is
+    omitted to avoid duplicating Estado de Resultados data here.
+    """
+    rows: list[dict] = []
+    try:
+        ledger = db_service.get_general_ledger(db, None, end_date, company_nit)
+    except Exception:
+        return rows
+    for r in ledger or []:
+        code = str(r.get("account") or r.get("cuenta_puc") or "")
+        if not code or code[0] not in ("1", "2", "3"):
+            continue
+        saldo_debit = safe_float(r.get("total_debit"))
+        saldo_credit = safe_float(r.get("total_credit"))
+        # Natural-side balance: assets are debit-natured, liab/equity credit-natured.
+        if code.startswith("1"):
+            saldo = saldo_debit - saldo_credit
+        else:
+            saldo = saldo_credit - saldo_debit
+        rows.append(
+            {
+                "fecha": "",
+                "cuenta": code,
+                "descripcion": str(r.get("name") or r.get("cuenta_nombre") or ""),
+                "debito": saldo_debit,
+                "credito": saldo_credit,
+                "saldo": saldo,
+            }
+        )
+    rows.sort(key=lambda x: x["cuenta"])
+    return rows
+
+
 def _via_a_balance_as_rows(balance: dict) -> list[dict]:
     """Convert get_balance_sheet's summary dict into book rows for tipo=balance.
 
@@ -241,7 +283,11 @@ async def get_books(
         ]
 
     elif tipo == "balance":
-        # Return rows so BookTable (which expects list[BookEntry]) can render.
-        # Vía A summary dict gets flattened into class-level rows.
+        # Return per-cuenta detail rows (Activos/Pasivos/Patrimonio) plus the
+        # class-level summary at the bottom — preserves the legacy summary
+        # the UI was already rendering while giving Vía A its account-level
+        # detail back.
+        per_account = _via_a_balance_per_account(db, ff, normalized_company_nit)
         balance = db_service.get_balance_sheet(db, ff, normalized_company_nit)
-        return _via_a_balance_as_rows(balance)
+        summary = _via_a_balance_as_rows(balance)
+        return per_account + summary

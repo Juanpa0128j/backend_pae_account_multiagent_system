@@ -602,74 +602,184 @@ class CashFlowExporter:
 
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
-            "CustomTitle",
+            "CashTitle",
             parent=styles["Heading1"],
             fontSize=16,
             textColor=colors.HexColor("#1f4788"),
             alignment=1,
         )
         section_style = ParagraphStyle(
-            "Section",
+            "CashSection",
             parent=styles["Heading2"],
             fontSize=11,
             textColor=colors.HexColor("#1f4788"),
+            spaceBefore=10,
+        )
+        row_style = ParagraphStyle(
+            "CashRow",
+            parent=styles["Normal"],
+            fontSize=9,
         )
 
-        story = []
-        story.append(Paragraph("FLUJO DE CAJA", title_style))
+        # ── helpers ──────────────────────────────────────────────────────────
+        ADJ_LABELS = {
+            "utilidad_neta": "Utilidad neta del periodo",
+            "depreciacion_periodo": "(+) Depreciacion del periodo",
+            "provisiones": "(+) Provisiones",
+            "delta_cuentas_por_cobrar": "(-) Delta cuentas por cobrar",
+            "delta_inventarios": "(-) Delta inventarios",
+            "delta_pasivos_operacionales": "(+) Delta pasivos operacionales (cl. 22-26)",
+            "delta_ppe": "(-) Delta propiedad, planta y equipo",
+            "delta_intangibles": "(-) Delta intangibles",
+            "delta_inversiones": "(-) Delta inversiones",
+            "delta_obligaciones_financieras": "(+) Delta obligaciones financieras",
+            "delta_capital_social": "(+) Delta capital social",
+            "dividendos_pagados": "(-) Dividendos pagados",
+        }
+        ADJ_ORDER = list(ADJ_LABELS.keys())
+
+        def _two_col(label: str, value: float, bold: bool = False) -> Table:
+            style = "Helvetica-Bold" if bold else "Helvetica"
+            bg = colors.HexColor("#e8f0f7") if bold else colors.white
+            t = Table(
+                [[Paragraph(label, row_style), _format_currency(value)]],
+                colWidths=[4.5 * inch, 2 * inch],
+            )
+            t.setStyle(
+                TableStyle(
+                    [
+                        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                        ("FONTNAME", (0, 0), (-1, 0), style),
+                        ("BACKGROUND", (0, 0), (-1, 0), bg),
+                        ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+                        ("TOPPADDING", (0, 0), (-1, 0), 2),
+                        ("LINEBELOW", (0, 0), (-1, 0), 0.25, colors.HexColor("#cccccc")),
+                    ]
+                )
+            )
+            return t
+
+        # ── build story ───────────────────────────────────────────────────────
+        story: list = []
+        metodo = (report.get("metodo") or "indirecto").upper()
+        story.append(Paragraph("ESTADO DE FLUJO DE EFECTIVO", title_style))
         story.append(
             Paragraph(
                 f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
-                f"<b>Periodo:</b> {_escape_paragraph_text(report.get('period_start', '--'))} "
-                f"a {_escape_paragraph_text(report.get('period_end', '--'))} | "
-                f"<b>Metodo:</b> Directo",
+                f"<b>Periodo:</b> {_escape_paragraph_text(str(report.get('period_start', '--')))} "
+                f"a {_escape_paragraph_text(str(report.get('period_end', '--')))} | "
+                f"<b>Metodo:</b> {metodo}",
                 styles["Normal"],
             )
         )
-        story.append(Spacer(1, 0.2 * inch))
 
-        story.append(Paragraph("CUENTAS DE EFECTIVO Y BANCOS", section_style))
-        data = [["Cuenta PUC", "Descripcion", "Saldo Neto (COP)"]]
-
-        total_efectivo = 0.0
-        for cuenta in report.get("cuentas_efectivo", []):
-            saldo = float(cuenta.get("saldo", 0))
-            total_efectivo += saldo
-            data.append(
-                [
-                    _get_cuenta_codigo(cuenta),
-                    _get_cuenta_nombre(cuenta),
-                    _format_currency(saldo),
-                ]
+        # verificacion banner
+        verif = report.get("verificacion")
+        diferencia = float(report.get("nic7_diferencia") or 0)
+        if verif is False:
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(
+                Paragraph(
+                    f"<b>ADVERTENCIA NIC 7:</b> Identidad no verificada. "
+                    f"Diferencia: {_format_currency(diferencia)}",
+                    ParagraphStyle(
+                        "Warn",
+                        parent=styles["Normal"],
+                        textColor=colors.HexColor("#b45309"),
+                        fontSize=8,
+                        backColor=colors.HexColor("#fef3c7"),
+                    ),
+                )
+            )
+        elif verif is True:
+            story.append(Spacer(1, 0.05 * inch))
+            story.append(
+                Paragraph(
+                    "<b>Identidad NIC 7 verificada.</b>",
+                    ParagraphStyle(
+                        "Ok",
+                        parent=styles["Normal"],
+                        textColor=colors.HexColor("#065f46"),
+                        fontSize=8,
+                        backColor=colors.HexColor("#d1fae5"),
+                    ),
+                )
             )
 
-        data.append(
-            ["", "TOTAL EFECTIVO Y EQUIVALENTES", _format_currency(total_efectivo)]
-        )
+        story.append(Spacer(1, 0.15 * inch))
 
-        table = Table(data, colWidths=[1.2 * inch, 2.8 * inch, 2 * inch])
-        table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f4788")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                    ("ALIGN", (2, 0), (2, -1), "RIGHT"),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e8f0f7")),
-                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                    ("GRID", (0, 0), (-1, -1), 1, colors.grey),
-                ]
-            )
-        )
+        # ── saldo inicial ────────────────────────────────────────────────────
+        saldo_ini = float(report.get("efectivo_inicio") or report.get("saldo_inicial") or 0)
+        story.append(_two_col("Efectivo y equivalentes al inicio del periodo", saldo_ini))
+        story.append(Spacer(1, 0.1 * inch))
 
-        story.append(table)
-        story.append(Spacer(1, 0.2 * inch))
-        story.append(
-            Paragraph(
-                f"<b>Metodologia:</b> {_escape_paragraph_text(report.get('nota', ''))}",
-                styles["Normal"],
+        # ── actividades de operacion ─────────────────────────────────────────
+        story.append(Paragraph("A. ACTIVIDADES DE OPERACION", section_style))
+        adjustments: Dict[str, Any] = report.get("adjustments") or {}
+        for key in ADJ_ORDER:
+            if key in adjustments:
+                story.append(_two_col(ADJ_LABELS[key], float(adjustments[key])))
+        flujo_op = float(report.get("flujo_operacion") or 0)
+        story.append(_two_col("FLUJO NETO DE OPERACION", flujo_op, bold=True))
+        story.append(Spacer(1, 0.1 * inch))
+
+        # ── actividades de inversion ─────────────────────────────────────────
+        story.append(Paragraph("B. ACTIVIDADES DE INVERSION", section_style))
+        flujo_inv = float(report.get("flujo_inversion") or 0)
+        if adjustments.get("delta_ppe") is not None:
+            story.append(_two_col("(-) Delta PPE neto", float(adjustments.get("delta_ppe", 0))))
+        if adjustments.get("delta_intangibles") is not None:
+            story.append(
+                _two_col("(-) Delta intangibles", float(adjustments.get("delta_intangibles", 0)))
             )
-        )
+        if adjustments.get("delta_inversiones") is not None:
+            story.append(
+                _two_col("(-) Delta inversiones", float(adjustments.get("delta_inversiones", 0)))
+            )
+        story.append(_two_col("FLUJO NETO DE INVERSION", flujo_inv, bold=True))
+        story.append(Spacer(1, 0.1 * inch))
+
+        # ── actividades de financiacion ──────────────────────────────────────
+        story.append(Paragraph("C. ACTIVIDADES DE FINANCIACION", section_style))
+        flujo_fin = float(report.get("flujo_financiacion") or 0)
+        if adjustments.get("delta_obligaciones_financieras") is not None:
+            story.append(
+                _two_col(
+                    "(+) Delta obligaciones financieras",
+                    float(adjustments.get("delta_obligaciones_financieras", 0)),
+                )
+            )
+        if adjustments.get("delta_capital_social") is not None:
+            story.append(
+                _two_col(
+                    "(+) Delta capital social", float(adjustments.get("delta_capital_social", 0))
+                )
+            )
+        if adjustments.get("dividendos_pagados") is not None:
+            story.append(
+                _two_col(
+                    "(-) Dividendos pagados", float(adjustments.get("dividendos_pagados", 0))
+                )
+            )
+        story.append(_two_col("FLUJO NETO DE FINANCIACION", flujo_fin, bold=True))
+        story.append(Spacer(1, 0.15 * inch))
+
+        # ── resumen final ────────────────────────────────────────────────────
+        aumento = float(report.get("aumento_disminucion_neto") or (flujo_op + flujo_inv + flujo_fin))
+        efectivo_fin = float(report.get("efectivo_fin") or report.get("total_efectivo") or 0)
+        story.append(_two_col("AUMENTO / DISMINUCION NETO DE EFECTIVO", aumento, bold=True))
+        story.append(_two_col("EFECTIVO AL FIN DEL PERIODO", efectivo_fin, bold=True))
+
+        if report.get("rule_version"):
+            story.append(Spacer(1, 0.15 * inch))
+            story.append(
+                Paragraph(
+                    f"Generado con regla {_escape_paragraph_text(str(report['rule_version']))} "
+                    "segun NIC 7 metodo indirecto.",
+                    ParagraphStyle("Footer", parent=styles["Normal"], fontSize=7,
+                                   textColor=colors.grey),
+                )
+            )
 
         doc.build(story)
         return buffer.getvalue()
@@ -687,7 +797,7 @@ class CashFlowExporter:
         )
         header_font = Font(bold=True, color="FFFFFF", size=11)
 
-        ws["A1"] = "FLUJO DE CAJA - METODO DIRECTO"
+        ws["A1"] = f"FLUJO DE CAJA - METODO {(report.get('metodo') or 'INDIRECTO').upper()} (NIC 7)"
         ws["A1"].font = Font(bold=True, size=14, color="1F4788")
         ws.merge_cells("A1:C1")
 
@@ -1394,24 +1504,49 @@ class NotasEstadosFinancierosExporter:
         story.append(table)
         story.append(Spacer(1, 0.2 * inch))
 
-        # Notas normativas
+        # Notas
         notas = report.get("notas", [])
         if notas:
-            story.append(Paragraph("<b>Notas Normativas:</b>", heading_style))
-            for nota_item in notas[:5]:
+            for nota_item in notas:
                 numero = nota_item.get("numero", 0)
                 titulo = nota_item.get("titulo", "")
                 contenido = nota_item.get("contenido", "")
+                cifras = nota_item.get("cifras_relevantes") or []
                 story.append(
                     Paragraph(
                         f"<b>Nota {numero}: {_escape_paragraph_text(titulo)}</b>",
                         styles["Heading3"],
                     )
                 )
-                story.append(
-                    Paragraph(f"{_escape_paragraph_text(contenido)}", styles["Normal"])
-                )
-                story.append(Spacer(1, 0.1 * inch))
+                if contenido:
+                    story.append(
+                        Paragraph(_escape_paragraph_text(contenido), styles["Normal"])
+                    )
+                if cifras:
+                    cifras_data = [
+                        [
+                            _escape_paragraph_text(str(c.get("concepto", "")).replace("_", " ")),
+                            _format_currency(float(c.get("valor", 0))),
+                        ]
+                        for c in cifras
+                        if isinstance(c, dict)
+                    ]
+                    if cifras_data:
+                        t = Table(cifras_data, colWidths=[4.5 * inch, 2 * inch])
+                        t.setStyle(
+                            TableStyle(
+                                [
+                                    ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                                    ("LINEBELOW", (0, 0), (-1, -1), 0.25,
+                                     colors.HexColor("#cccccc")),
+                                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                                ]
+                            )
+                        )
+                        story.append(t)
+                story.append(Spacer(1, 0.12 * inch))
         else:
             story.append(Paragraph("No hay notas disponibles.", styles["Normal"]))
 
