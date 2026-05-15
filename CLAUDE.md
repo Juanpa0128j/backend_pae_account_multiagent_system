@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Context
+## Project Context.
 
 **PAE — Proyecto de Aplicación Específica (Universidad Nacional de Colombia)**
 
