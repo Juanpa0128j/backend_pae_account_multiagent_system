@@ -263,6 +263,7 @@ def _build_ingest_detail_response(
         "has_warnings": False,
         "trace_url": trace_url,
         "classification_review": classification_review,
+        "file_names": job.file_names or [],
     }
 
 
@@ -459,6 +460,7 @@ async def upload_file(
             classification_confirmed=True if confirmed_doc_type else None,
             parser_mode=validated_mode,
             created_by=str(current_user.id),
+            file_names=[f.filename for f in files],
         )
         logger.info(f"Created IngestJob: {ingest_job.id}")
 

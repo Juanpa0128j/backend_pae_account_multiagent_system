@@ -70,12 +70,14 @@ def create_ingest_job(
     parser_mode: str = "fast",
     commit: bool = True,
     created_by: str | None = None,
+    file_names: list[str] | None = None,
 ) -> IngestJob:
     """Create a new ingest job for a document upload."""
     job = IngestJob(
         id=_generate_id("ing_"),
         file_name=file_name,
         file_path=file_path,
+        file_names=file_names,
         status=IngestStatus.PENDING_PROCESSING,
         company_nit=company_nit or None,
         document_type=document_type or None,

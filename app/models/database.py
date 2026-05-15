@@ -271,6 +271,7 @@ class IngestJob(Base):
     id = Column(String(50), primary_key=True, index=True)
     file_name = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=True)
+    file_names = Column(JSONB, nullable=True, comment="List of all uploaded file names")
     status = Column(
         Enum(IngestStatus),
         default=IngestStatus.PENDING_PROCESSING,

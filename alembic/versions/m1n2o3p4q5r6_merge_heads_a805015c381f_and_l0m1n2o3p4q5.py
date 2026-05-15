@@ -8,7 +8,6 @@ Create Date: 2026-05-13 11:30:00.000000
 
 from typing import Sequence, Union
 
-
 revision: str = "m1n2o3p4q5r6"
 down_revision: Union[str, Sequence[str], None] = ("a805015c381f", "l0m1n2o3p4q5")
 branch_labels: Union[str, Sequence[str], None] = None

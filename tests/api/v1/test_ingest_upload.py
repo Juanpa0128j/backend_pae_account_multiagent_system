@@ -164,3 +164,93 @@ class TestIngestUploadMultiPage:
         data = response.json()
         assert data["ingest_id"] == "ing_test_123"
         assert len(saved_paths) == 2
+
+
+class TestIngestUploadFileNames:
+    """Tests for file_names persistence in upload endpoint."""
+
+    def _make_job(self, ingest_id="ing_test_123", file_names=None):
+        job = MagicMock()
+        job.id = ingest_id
+        job.file_name = "page1.pdf"
+        job.file_names = file_names
+        job.status = MagicMock()
+        job.status.value = "pending_processing"
+        job.document_type = None
+        job.pathway = None
+        job.created_at = datetime.now(timezone.utc)
+        job.completed_at = None
+        job.extraction_errors = []
+        job.transactions_pending = []
+        job.parser_mode = "fast"
+        job.classification_confidence = None
+        job.classification_confirmed = None
+        return job
+
+    def test_multi_file_upload_stores_all_file_names(self, monkeypatch):
+        """POST with 2 files — create_ingest_job called with file_names=['page1.pdf','page2.pdf']."""
+        mock_job = self._make_job(file_names=["page1.pdf", "page2.pdf"])
+        captured_kwargs = {}
+
+        def _mock_create_ingest_job(db, file_name, file_path, **kwargs):
+            captured_kwargs.update(kwargs)
+            return mock_job
+
+        monkeypatch.setattr(
+            "app.api.v1.ingest.db_service.create_ingest_job", _mock_create_ingest_job
+        )
+        monkeypatch.setattr(
+            "app.api.v1.ingest.save_temp_file",
+            lambda content, name: "/tmp/fake.pdf",
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/ingest/upload",
+            files=[
+                ("files", ("page1.pdf", b"%PDF1.4 page1", "application/pdf")),
+                ("files", ("page2.pdf", b"%PDF1.4 page2", "application/pdf")),
+            ],
+        )
+        assert response.status_code == 202
+        assert captured_kwargs.get("file_names") == ["page1.pdf", "page2.pdf"]
+
+    def test_single_file_upload_stores_file_name_as_list(self, monkeypatch):
+        """POST with 1 file — create_ingest_job called with file_names=['test.pdf']."""
+        mock_job = self._make_job(file_names=["test.pdf"])
+        captured_kwargs = {}
+
+        def _mock_create_ingest_job(db, file_name, file_path, **kwargs):
+            captured_kwargs.update(kwargs)
+            return mock_job
+
+        monkeypatch.setattr(
+            "app.api.v1.ingest.db_service.create_ingest_job", _mock_create_ingest_job
+        )
+        monkeypatch.setattr(
+            "app.api.v1.ingest.save_temp_file",
+            lambda content, name: "/tmp/fake.pdf",
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/ingest/upload",
+            files=[("files", ("test.pdf", b"%PDF1.4 fake", "application/pdf"))],
+        )
+        assert response.status_code == 202
+        assert captured_kwargs.get("file_names") == ["test.pdf"]
+
+    def test_get_ingest_job_returns_file_names(self, monkeypatch):
+        """GET /api/v1/ingest/{id} returns file_names list from job."""
+        mock_job = self._make_job(file_names=["a.pdf", "b.pdf"])
+
+        monkeypatch.setattr(
+            "app.api.v1.ingest.db_service.get_ingest_job",
+            lambda db, ingest_id: mock_job,
+        )
+
+        client = TestClient(app)
+        response = client.get("/api/v1/ingest/ing_test_123")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["file_names"] == ["a.pdf", "b.pdf"]
