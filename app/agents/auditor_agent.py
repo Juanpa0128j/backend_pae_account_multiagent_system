@@ -121,11 +121,11 @@ def auditor_node(state: AgentState) -> AgentState:
                     append_finding(
                         state,
                         AuditFinding(
-                            target=AuditTarget.AUDITOR,
+                            target=AuditTarget.PRE_PERSIST,
                             rule_id="AUD-SALDO-INICIAL-MISSING",
                             severity=Severity.WARNING,
                             fixable=False,
-                            responsible_agent="auditor",
+                            responsible_agent="persist",
                             technical_message=(
                                 f"No prior posted transactions for company {company_nit}; "
                                 f"credit to cash accounts {sorted(set(cash_credit_accounts))} "
@@ -208,11 +208,11 @@ def auditor_node(state: AgentState) -> AgentState:
             append_finding(
                 state,
                 AuditFinding(
-                    target=AuditTarget.AUDITOR,
+                    target=AuditTarget.PRE_PERSIST,
                     rule_id="AUD-PARSE-EXHAUSTED",
                     severity=Severity.BLOCKER,
                     fixable=False,
-                    responsible_agent="auditor",
+                    responsible_agent="persist",
                     technical_message=str(exc)[:500],
                     user_message_es=(
                         "El auditor no logró producir un dictamen válido tras "

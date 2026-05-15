@@ -357,4 +357,13 @@ def build_structured_transactions(
         "descripcion": derived_concepto,
         "items": sanitize_for_json(items_payload),
     }
+
+    # Pre-armed journal entry table (CE, RC, Nómina, manual journal). The
+    # extractor populates ``asientos_documento`` when the source doc prints a
+    # CODIGO CUENTA + DEBITO + CREDITO table. Persist it verbatim so the
+    # downstream contador/tributario passthrough can pick it up.
+    asientos_documento = interpreted.get("asientos_documento")
+    if isinstance(asientos_documento, list) and asientos_documento:
+        tx_data["asientos_documento"] = sanitize_for_json(asientos_documento)
+
     return [tx_data]

@@ -1076,10 +1076,19 @@ def _build_preview(interpreted: dict, doc_type: str = "") -> dict:
     items = interpreted.get("items")
     items_count = len(items) if isinstance(items, list) else 0
 
-    return {
+    preview: dict = {
         "nit_emisor": interpreted.get("nit_emisor"),
         "total": str(interpreted.get("total", "")),
         "fecha": str(interpreted.get("fecha", "")),
         "concepto": concepto[:100],
         "items_count": items_count,
     }
+
+    # Pre-armed journal entry table (CE, RC, Nómina) — must be preserved so
+    # downstream contador/tributario nodes can detect and respect the
+    # already-booked asiento instead of re-classifying.
+    asientos_documento = interpreted.get("asientos_documento")
+    if isinstance(asientos_documento, list) and asientos_documento:
+        preview["asientos_documento"] = asientos_documento
+
+    return preview

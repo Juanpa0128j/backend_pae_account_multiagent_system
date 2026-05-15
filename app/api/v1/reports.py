@@ -182,14 +182,26 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
                 elif code.startswith("3"):
                     patrimonio_detalle.append(row)
 
+        # patrimonio (sin utilidad) is the clase-3 baseline that does NOT
+        # include net profit. Exporters add `utilidad_neta` on top to get the
+        # final patrimonio total. We must NOT fall back to `total_patrimonio`
+        # here (which already includes utilidad): doing so double-counts the
+        # net profit in the PDF/Excel footer. Use explicit None check because
+        # 0 is a valid baseline (no equity movements yet).
+        patrimonio_sin_utilidad_raw = data.get("patrimonio_sin_utilidad")
+        if patrimonio_sin_utilidad_raw is None:
+            total_patrimonio_raw = _to_float(data.get("total_patrimonio"))
+            utilidad_neta_raw = _to_float(data.get("utilidad_neta"))
+            patrimonio_value = total_patrimonio_raw - utilidad_neta_raw
+        else:
+            patrimonio_value = _to_float(patrimonio_sin_utilidad_raw)
+
         return {
             "period_start": data.get("periodo_inicio"),
             "period_end": data.get("periodo_fin"),
             "activos": _to_float(data.get("total_activos")),
             "pasivos": _to_float(data.get("total_pasivos")),
-            "patrimonio": _to_float(
-                data.get("patrimonio_sin_utilidad") or data.get("total_patrimonio")
-            ),
+            "patrimonio": patrimonio_value,
             "utilidad_neta": _to_float(data.get("utilidad_neta")),
             "patrimonio_total": _to_float(data.get("total_patrimonio")),
             "cuadre": bool(data.get("cuadre", False)),
@@ -251,7 +263,8 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
             "costo_ventas": costo_ventas,
             "total_ingresos": _to_float(data.get("total_ingresos")) or _sum(ingresos),
             "total_gastos": _to_float(data.get("total_gastos")) or _sum(gastos),
-            "total_costo_ventas": _to_float(data.get("total_costo_ventas")) or _sum(costo_ventas),
+            "total_costo_ventas": _to_float(data.get("total_costo_ventas"))
+            or _sum(costo_ventas),
             "utilidad_bruta": _to_float(data.get("utilidad_bruta")),
             "utilidad_neta": _to_float(data.get("utilidad_neta")),
         }
@@ -264,7 +277,8 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
         flujo_inv = _to_float(data.get("flujo_neto_inversion"))
         flujo_fin_val = _to_float(data.get("flujo_neto_financiacion"))
         aumento_neto = _to_float(
-            data.get("aumento_disminucion_neto") or (flujo_op + flujo_inv + flujo_fin_val)
+            data.get("aumento_disminucion_neto")
+            or (flujo_op + flujo_inv + flujo_fin_val)
         )
         info_adicional = data.get("informacion_adicional") or {}
         adjustments = info_adicional.get("adjustments") or {}
@@ -285,7 +299,11 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
             "rule_version": info_adicional.get("rule_version", ""),
             # legacy keys kept for backward compat with old exporter paths
             "cuentas_efectivo": [
-                {"codigo": "11", "nombre": "Efectivo y equivalentes", "saldo": efectivo_fin}
+                {
+                    "codigo": "11",
+                    "nombre": "Efectivo y equivalentes",
+                    "saldo": efectivo_fin,
+                }
             ],
             "total_efectivo": efectivo_fin,
             "saldo_inicial": efectivo_ini,

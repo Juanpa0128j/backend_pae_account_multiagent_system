@@ -558,31 +558,74 @@ Y cita fuentes legales."""
         prompt = ingest.notas_financieras(text, correction_feedback=correction_feedback)
         return self._as_dict(self._invoke(NotasEstadosFinancierosContent, prompt))
 
+    def _ingest_debug_log(
+        self, doc_label: str, text: str, prompt: str, data: dict
+    ) -> None:
+        """Centralised debug logging for ingest extractors.
+
+        Replicates the original ``[CE-DEBUG]`` traces so that every doc_type
+        (CE, RC, Nómina, Doc Soporte, etc.) gets the same diagnostic visibility
+        when an extracted field looks empty or unexpected. The label rotates so
+        log filters can target a specific doc type if needed.
+        """
+        tag = f"[INGEST-DEBUG:{doc_label}]"
+        logger.info(
+            "%s markdown length=%d preview=%r",
+            tag,
+            len(text or ""),
+            (text or "")[:1200],
+        )
+        logger.info("%s prompt length=%d", tag, len(prompt or ""))
+        asientos_doc = data.get("asientos_documento")
+        logger.info(
+            "%s asientos_documento present=%s count=%s",
+            tag,
+            asientos_doc is not None,
+            len(asientos_doc) if isinstance(asientos_doc, list) else "N/A",
+        )
+        logger.info(
+            "%s extracted keys=%s",
+            tag,
+            sorted([k for k, v in data.items() if v is not None]),
+        )
+
     def extract_comprobante_egreso(
         self, text: str, *, correction_feedback: str | None = None
     ) -> dict:
         prompt = ingest.comprobante_egreso(
             text, correction_feedback=correction_feedback
         )
-        return self._as_dict(self._invoke(ComprobanteEgresoContent, prompt))
+        result_obj = self._invoke(ComprobanteEgresoContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("comprobante_egreso", text, prompt, data)
+        return data
 
     def extract_documento_soporte(
         self, text: str, *, correction_feedback: str | None = None
     ) -> dict:
         prompt = ingest.documento_soporte(text, correction_feedback=correction_feedback)
-        return self._as_dict(self._invoke(DocumentoSoporteContent, prompt))
+        result_obj = self._invoke(DocumentoSoporteContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("documento_soporte", text, prompt, data)
+        return data
 
     def extract_recibo_caja(
         self, text: str, *, correction_feedback: str | None = None
     ) -> dict:
         prompt = ingest.recibo_caja(text, correction_feedback=correction_feedback)
-        return self._as_dict(self._invoke(ReciboCajaContent, prompt))
+        result_obj = self._invoke(ReciboCajaContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("recibo_caja", text, prompt, data)
+        return data
 
     def extract_nomina(
         self, text: str, *, correction_feedback: str | None = None
     ) -> dict:
         prompt = ingest.nomina(text, correction_feedback=correction_feedback)
-        return self._as_dict(self._invoke(NominaContent, prompt))
+        result_obj = self._invoke(NominaContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("nomina", text, prompt, data)
+        return data
 
     def extract_conciliacion_bancaria(
         self, text: str, *, correction_feedback: str | None = None
@@ -590,13 +633,19 @@ Y cita fuentes legales."""
         prompt = ingest.conciliacion_bancaria(
             text, correction_feedback=correction_feedback
         )
-        return self._as_dict(self._invoke(ConciliacionBancariaContent, prompt))
+        result_obj = self._invoke(ConciliacionBancariaContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("conciliacion_bancaria", text, prompt, data)
+        return data
 
     def extract_cuenta_cobro(
         self, text: str, *, correction_feedback: str | None = None
     ) -> dict:
         prompt = ingest.cuenta_cobro(text, correction_feedback=correction_feedback)
-        return self._as_dict(self._invoke(CuentaCobroContent, prompt))
+        result_obj = self._invoke(CuentaCobroContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("cuenta_cobro", text, prompt, data)
+        return data
 
     def extract_planilla_seg_social(
         self, text: str, *, correction_feedback: str | None = None
@@ -604,7 +653,10 @@ Y cita fuentes legales."""
         prompt = ingest.planilla_seg_social(
             text, correction_feedback=correction_feedback
         )
-        return self._as_dict(self._invoke(PlanillaSegSocialContent, prompt))
+        result_obj = self._invoke(PlanillaSegSocialContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("planilla_seg_social", text, prompt, data)
+        return data
 
     def extract_recibo_pago_impuesto(
         self, text: str, *, correction_feedback: str | None = None
@@ -612,7 +664,10 @@ Y cita fuentes legales."""
         prompt = ingest.recibo_pago_impuesto(
             text, correction_feedback=correction_feedback
         )
-        return self._as_dict(self._invoke(ReciboPagoImpuestoContent, prompt))
+        result_obj = self._invoke(ReciboPagoImpuestoContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("recibo_pago_impuesto", text, prompt, data)
+        return data
 
     # ------------------------------------------------------------------
     # Reportero: Financial analysis methods
