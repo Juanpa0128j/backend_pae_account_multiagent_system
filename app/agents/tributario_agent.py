@@ -418,10 +418,26 @@ def tributario_node(state: AgentState) -> AgentState:
     # Tax-payment declarations: the journal entries already ARE the tax settlement.
     # Applying IVA/retefuente/reteICA on top would double-count.
     _TAX_DECLARATION_TYPES = {
+        # Tax declarations / payments — contador already books the tax event
         "declaracion_iva",
         "declaracion_ica",
         "autorretencion_ica",
         "recibo_pago_impuesto",
+        "declaracion_reteica",
+        "anexo_tributario",
+        "auxiliar_impuesto",
+        "auxiliar_iva",
+        "anexo_iva",
+        # Payroll — no IVA; employee retenciones handled in salary journal entries
+        "nomina",
+        "planilla_seguridad_social",
+        # Payment / reconciliation documents — taxes already on the source invoice
+        "comprobante_egreso",
+        "conciliacion_bancaria",
+        # Bank statements — movements already occurred; no new tax events
+        "extracto_bancario",
+        # Journal book — entries pre-exist; tributario must not double-apply taxes
+        "libro_diario",
     }
     doc_type = (state.get("document_classification") or {}).get("doc_type", "")
     if doc_type in _TAX_DECLARATION_TYPES:

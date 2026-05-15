@@ -124,7 +124,7 @@ _DOC_GUIDANCE: dict[str, str] = {
         "Retenciones y deducciones del empleado (salud 4%, pensión 4%, retefuente) por 'total_deducciones' en cuentas 236xxx/2370xx. "
         "Provisiones nomina empleador (2510xx/2525xx) y aportes parafiscales (237xxx) si aplica. "
         "El débito SIEMPRE debe igualar la suma de todos los créditos: total_devengado = total_neto_pagar + total_deducciones. "
-        "NO dupliques impuestos de renta — el agente tributario los maneja."
+        "NO agregues IVA ni retefuente de servicios — nómina no causa IVA."
     ),
     "recibo_caja": (
         "REGLA RECIBO CAJA: Debita banco o caja (111005/110505) por el valor recibido. "

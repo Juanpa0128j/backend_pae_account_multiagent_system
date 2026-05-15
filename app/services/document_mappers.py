@@ -229,7 +229,16 @@ def build_structured_transactions(
                 ),
                 "concepto": concepto,
                 "descripcion": concepto,
-                "items": sanitize_for_json(interpreted.get("empleados") or []),
+                # Strip neto_pagar from employee rows so the LLM cannot sum
+                # them and use the result as the salary expense debit instead
+                # of total_devengado (gross).
+                "items": sanitize_for_json(
+                    [
+                        {k: v for k, v in (e or {}).items() if k != "neto_pagar"}
+                        for e in (interpreted.get("empleados") or [])
+                        if isinstance(e, dict)
+                    ]
+                ),
             }
         ]
 
