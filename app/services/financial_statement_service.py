@@ -19,6 +19,7 @@ _log = logging.getLogger(__name__)
 
 _REQUIRED_DERIVATION_INPUTS = ("balance_general", "estado_resultados", "libro_auxiliar")
 _DERIVED_TARGETS = ("flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros")
+DERIVED_TARGETS = _DERIVED_TARGETS  # public alias for inter-module use
 _FIRST_LEVEL_TYPES = (
     "balance_general",
     "estado_resultados",
@@ -429,8 +430,7 @@ def _leaf_accounts(accounts: list[dict[str, Any]] | None) -> list[dict[str, Any]
     valid = [
         a
         for a in accounts
-        if isinstance(a, dict)
-        and _is_valid_puc_code(str(a.get("cuenta_puc") or ""))
+        if isinstance(a, dict) and _is_valid_puc_code(str(a.get("cuenta_puc") or ""))
     ]
     codes = sorted({str(a.get("cuenta_puc") or "") for a in valid})
     aggregates: set[str] = set()
@@ -499,7 +499,9 @@ def _compute_cash_flow_indirect(
 
     def _bg_metric(prefix_args, exclude=(), nested_path=None):
         """Sum leaves by prefix; fallback to nested-key if accounts are empty."""
-        prefixes = (prefix_args,) if isinstance(prefix_args, str) else tuple(prefix_args)
+        prefixes = (
+            (prefix_args,) if isinstance(prefix_args, str) else tuple(prefix_args)
+        )
         now = _sum_leaves(leaves_now, *prefixes, exclude=exclude)
         prior = _sum_leaves(leaves_prior, *prefixes, exclude=exclude)
         if now == 0 and prior == 0 and nested_path:
@@ -543,8 +545,12 @@ def _compute_cash_flow_indirect(
         nested_path=None,  # fallback handled below — sum multiple keys
     )
     if op_liab_now == 0 and op_liab_prior == 0:
-        for key in ("cuentas_por_pagar_comerciales", "obligaciones_laborales",
-                    "impuestos_por_pagar", "obligaciones_financieras_cp"):
+        for key in (
+            "cuentas_por_pagar_comerciales",
+            "obligaciones_laborales",
+            "impuestos_por_pagar",
+            "obligaciones_financieras_cp",
+        ):
             op_liab_now += _nested(bg_data, "pasivos_corrientes", key)
             op_liab_prior += _nested(prior_bg_data, "pasivos_corrientes", key)
 
@@ -582,9 +588,7 @@ def _compute_cash_flow_indirect(
         "12", nested_path=("activos_no_corrientes", "inversiones_largo_plazo")
     )
     flujo_inversion = (
-        -(ppe_now - ppe_prior)
-        - (intan_now - intan_prior)
-        - (inv_lp_now - inv_lp_prior)
+        -(ppe_now - ppe_prior) - (intan_now - intan_prior) - (inv_lp_now - inv_lp_prior)
     )
 
     # ── Financing: Δ obligaciones financieras (class 21, cp+lp together) + Δ capital - dividendos ──
@@ -679,11 +683,11 @@ def _compute_cash_flow_indirect(
 
 _EQUITY_COMPONENTS: tuple[tuple[str, str, str], ...] = (
     # (label_key,                 puc_prefix, nested_path_in_bg_patrimonio)
-    ("capital_social",            "31",       "capital_social"),
-    ("reservas",                  "33",       "reservas"),
-    ("resultados_del_ejercicio",  "36",       "resultados_del_ejercicio"),
-    ("resultados_acumulados",     "37",       "resultados_acumulados"),
-    ("otro_resultado_integral",   "38",       "otro_resultado_integral"),
+    ("capital_social", "31", "capital_social"),
+    ("reservas", "33", "reservas"),
+    ("resultados_del_ejercicio", "36", "resultados_del_ejercicio"),
+    ("resultados_acumulados", "37", "resultados_acumulados"),
+    ("otro_resultado_integral", "38", "otro_resultado_integral"),
 )
 
 
@@ -774,9 +778,8 @@ def _compute_equity_changes(
 
     # Cross-check against BG.total_patrimonio
     bg_total_patrimonio = _dec(bg_data.get("total_patrimonio"))
-    cuadre_patrimonio = (
-        abs(total_patrimonio_fin - bg_total_patrimonio)
-        <= max(abs(bg_total_patrimonio) * Decimal("0.005"), Decimal("1"))
+    cuadre_patrimonio = abs(total_patrimonio_fin - bg_total_patrimonio) <= max(
+        abs(bg_total_patrimonio) * Decimal("0.005"), Decimal("1")
     )
 
     return {
@@ -800,8 +803,12 @@ def _compute_equity_changes(
 _NOTE_SPECS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     # (numero, titulo, categoria, prefixes)
     ("4", "Efectivo y equivalentes de efectivo", "activo_corriente", ("11",)),
-    ("5", "Deudores comerciales y otras cuentas por cobrar", "activo_corriente",
-     ("13",)),
+    (
+        "5",
+        "Deudores comerciales y otras cuentas por cobrar",
+        "activo_corriente",
+        ("13",),
+    ),
     ("6", "Propiedades, planta y equipo", "activo_no_corriente", ("15", "16", "17")),
     ("7", "Cuentas por pagar comerciales y otras", "pasivo_corriente", ("22", "23")),
     ("8", "Pasivos por impuestos corrientes", "pasivo_corriente", ("24",)),
@@ -825,7 +832,9 @@ def _compute_notes(
 
     notas: list[dict[str, Any]] = []
     entidad = bg_data.get("entidad") or {}
-    marco_normativo = bg_data.get("marco_normativo") or er_data.get("marco_normativo") or "NIIF_pymes"
+    marco_normativo = (
+        bg_data.get("marco_normativo") or er_data.get("marco_normativo") or "NIIF_pymes"
+    )
 
     # Nota 1: información general
     notas.append(
@@ -879,7 +888,9 @@ def _compute_notes(
     bg_leaves = _leaf_accounts(bg_data.get("accounts"))
     er_leaves = _leaf_accounts(er_data.get("accounts"))
 
-    def _collect(leaves: list[dict[str, Any]], prefixes: tuple[str, ...]) -> list[dict[str, Any]]:
+    def _collect(
+        leaves: list[dict[str, Any]], prefixes: tuple[str, ...]
+    ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for acc in leaves:
             code = str(acc.get("cuenta_puc") or acc.get("codigo") or "")
@@ -1026,7 +1037,6 @@ def derive_financial_statements(
             er_data=er,
             la_data=la,
         )
-
 
         ingest_job = db_service.create_ingest_job(
             db,

@@ -397,8 +397,8 @@ async def get_process_result(
 
 @router.get("/pending-review", response_model=list[ProcessStatusResponse])
 async def list_pending_review_jobs(
+    request: Request,
     company_nit: str = Query(..., description="Company NIT"),
-    request: Request = None,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -419,10 +419,14 @@ async def list_pending_review_jobs(
         .all()
     )
 
-    base_url = str(request.base_url).rstrip("/") if request else ""
+    base_url = str(request.base_url).rstrip("/")
     results = []
     for pj in jobs_q:
         raw_log = pj.agent_log or []
+        has_warnings = any(
+            e.get("event") in {"audit_finding", "warning", "non_fatal_error"}
+            for e in raw_log
+        )
         audit_review = None
         for entry in reversed(raw_log):
             if entry.get("event") == "audit_giveup":
@@ -443,7 +447,7 @@ async def list_pending_review_jobs(
                 created_at=pj.created_at.isoformat() if pj.created_at else None,
                 started_at=pj.started_at.isoformat() if pj.started_at else None,
                 completed_at=pj.completed_at.isoformat() if pj.completed_at else None,
-                has_warnings=True,
+                has_warnings=has_warnings,
                 trace_url=f"{base_url}/api/v1/process/{pj.id}/trace",
                 audit_review=audit_review,
             )

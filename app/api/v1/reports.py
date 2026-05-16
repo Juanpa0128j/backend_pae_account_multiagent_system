@@ -11,7 +11,7 @@ from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutp
 from app.models.database import FinancialStatement
 from app.services.financial_statement_service import (
     BusinessRuleError,
-    _DERIVED_TARGETS,
+    DERIVED_TARGETS as _DERIVED_TARGETS,
     build_first_level_from_journal_entries,
     derive_financial_statements,
     list_financial_statements,
@@ -253,7 +253,8 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
             "costo_ventas": costo_ventas,
             "total_ingresos": _to_float(data.get("total_ingresos")) or _sum(ingresos),
             "total_gastos": _to_float(data.get("total_gastos")) or _sum(gastos),
-            "total_costo_ventas": _to_float(data.get("total_costo_ventas")) or _sum(costo_ventas),
+            "total_costo_ventas": _to_float(data.get("total_costo_ventas"))
+            or _sum(costo_ventas),
             "utilidad_bruta": _to_float(data.get("utilidad_bruta")),
             "utilidad_neta": _to_float(data.get("utilidad_neta")),
         }
@@ -266,7 +267,8 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
         flujo_inv = _to_float(data.get("flujo_neto_inversion"))
         flujo_fin_val = _to_float(data.get("flujo_neto_financiacion"))
         aumento_neto = _to_float(
-            data.get("aumento_disminucion_neto") or (flujo_op + flujo_inv + flujo_fin_val)
+            data.get("aumento_disminucion_neto")
+            or (flujo_op + flujo_inv + flujo_fin_val)
         )
         info_adicional = data.get("informacion_adicional") or {}
         adjustments = info_adicional.get("adjustments") or {}
@@ -287,7 +289,11 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
             "rule_version": info_adicional.get("rule_version", ""),
             # legacy keys kept for backward compat with old exporter paths
             "cuentas_efectivo": [
-                {"codigo": "11", "nombre": "Efectivo y equivalentes", "saldo": efectivo_fin}
+                {
+                    "codigo": "11",
+                    "nombre": "Efectivo y equivalentes",
+                    "saldo": efectivo_fin,
+                }
             ],
             "total_efectivo": efectivo_fin,
             "saldo_inicial": efectivo_ini,
@@ -1261,8 +1267,10 @@ async def get_derivation_status(
                 }
             )
 
-    # Derived statements already produced for this company
-    all_rows = list_financial_statements(company_nit=normalized_nit, statement_type=None, source_mode=None)
+    # Derived statements already produced for this company (source_mode="derived" only)
+    all_rows = list_financial_statements(
+        company_nit=normalized_nit, statement_type=None, source_mode="derived"
+    )
     derived_by_pe: dict[str, list[str]] = {}
     for row in all_rows:
         st = row.get("statement_type")
@@ -1407,12 +1415,12 @@ async def get_derivation_status_via_a(
                     "types": [],
                 }
             first_level_by_period[key]["types"].append(st)
-            if earliest is None or (pe and pe < earliest):
+            if earliest is None or (ps and ps < earliest):
                 earliest = ps
             if latest is None or (pe and pe > latest):
                 latest = pe
 
-        if st in _DERIVED_TARGETS and pe:
+        if st in _DERIVED_TARGETS and pe and row.get("source_mode") == "derived":
             derived_by_period_end.setdefault(pe, []).append(st)
 
     derived_periods = sorted(
