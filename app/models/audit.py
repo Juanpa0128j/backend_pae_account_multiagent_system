@@ -25,9 +25,10 @@ class AuditTarget(str, Enum):
     CONTADOR = "contador"
     TRIBUTARIO = "tributario"
     PRE_PERSIST = "pre_persist"
+    PERSIST = "persist"
 
 
-ResponsibleAgent = Literal["ingest", "contador", "tributario", "persist"]
+ResponsibleAgent = Literal["ingest", "contador", "tributario", "persist", "db_persist"]
 
 
 class AuditFinding(BaseModel):
