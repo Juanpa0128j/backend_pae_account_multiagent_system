@@ -1688,3 +1688,15 @@ def get_recent_activity(
         }
         for log in logs
     ]
+
+
+def get_municipios(db: Session) -> list[str]:
+    """Return sorted distinct municipios from reteica_tarifas, excluding 'general'."""
+    rows = (
+        db.query(ReteicaTarifa.municipio)
+        .filter(ReteicaTarifa.municipio != "general")
+        .distinct()
+        .order_by(ReteicaTarifa.municipio)
+        .all()
+    )
+    return [r.municipio for r in rows]

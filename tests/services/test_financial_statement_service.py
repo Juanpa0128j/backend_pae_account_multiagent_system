@@ -61,9 +61,15 @@ def test_build_first_level_creates_when_missing():
 # ─── v3 derivation helpers ────────────────────────────────────────────────────
 
 
-def _bg_with(activos_corrientes=None, pasivos_corrientes=None, patrimonio=None,
-             activos_no_corrientes=None, pasivos_no_corrientes=None,
-             accounts=None, total_patrimonio=0):
+def _bg_with(
+    activos_corrientes=None,
+    pasivos_corrientes=None,
+    patrimonio=None,
+    activos_no_corrientes=None,
+    pasivos_no_corrientes=None,
+    accounts=None,
+    total_patrimonio=0,
+):
     return {
         "total_patrimonio": total_patrimonio,
         "activos_corrientes": activos_corrientes or {},
@@ -85,7 +91,10 @@ def test_cash_flow_includes_working_capital_and_depreciation():
             "cuentas_por_cobrar_comerciales": 800,
             "inventarios": 200,
         },
-        pasivos_corrientes={"cuentas_por_pagar_comerciales": 400, "obligaciones_laborales": 100},
+        pasivos_corrientes={
+            "cuentas_por_pagar_comerciales": 400,
+            "obligaciones_laborales": 100,
+        },
         accounts=[{"cuenta_puc": "159205", "saldo": "300"}],
     )
     prior_bg = _bg_with(
@@ -94,7 +103,10 @@ def test_cash_flow_includes_working_capital_and_depreciation():
             "cuentas_por_cobrar_comerciales": 600,
             "inventarios": 100,
         },
-        pasivos_corrientes={"cuentas_por_pagar_comerciales": 350, "obligaciones_laborales": 80},
+        pasivos_corrientes={
+            "cuentas_por_pagar_comerciales": 350,
+            "obligaciones_laborales": 80,
+        },
         accounts=[{"cuenta_puc": "159205", "saldo": "200"}],
     )
     er = {"utilidad_neta": 400, "impuesto_renta": 0}
@@ -112,8 +124,13 @@ def test_cash_flow_includes_working_capital_and_depreciation():
     # flujo_op = 400 (utilidad) + 100 (dep) - 200 (Δcxc) - 100 (Δinv) + Δ op_liab (50 cxp + 20 oblab) = 270
     assert out["flujo_neto_operacion"] == 270.0
     assert out["informacion_adicional"]["adjustments"]["depreciacion_periodo"] == 100.0
-    assert out["informacion_adicional"]["adjustments"]["delta_cuentas_por_cobrar"] == 200.0
-    assert out["informacion_adicional"]["adjustments"]["delta_pasivos_operacionales"] == 70.0
+    assert (
+        out["informacion_adicional"]["adjustments"]["delta_cuentas_por_cobrar"] == 200.0
+    )
+    assert (
+        out["informacion_adicional"]["adjustments"]["delta_pasivos_operacionales"]
+        == 70.0
+    )
 
 
 def test_equity_changes_splits_components():
@@ -123,15 +140,19 @@ def test_equity_changes_splits_components():
     bg = _bg_with(
         total_patrimonio=1500,
         patrimonio={
-            "capital_social": 1000, "reservas": 200,
-            "resultados_del_ejercicio": 100, "resultados_acumulados": 200,
+            "capital_social": 1000,
+            "reservas": 200,
+            "resultados_del_ejercicio": 100,
+            "resultados_acumulados": 200,
             "otro_resultado_integral": 0,
         },
     )
     prior_bg = _bg_with(
         patrimonio={
-            "capital_social": 1000, "reservas": 200,
-            "resultados_del_ejercicio": 0, "resultados_acumulados": 150,
+            "capital_social": 1000,
+            "reservas": 200,
+            "resultados_del_ejercicio": 0,
+            "resultados_acumulados": 150,
             "otro_resultado_integral": 0,
         },
     )
@@ -139,17 +160,25 @@ def test_equity_changes_splits_components():
         company_nit="800999888",
         period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
         period_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
-        bg_data=bg, prior_bg_data=prior_bg,
-        er_data={"utilidad_neta": 100}, la_data={"lines": []},
+        bg_data=bg,
+        prior_bg_data=prior_bg,
+        er_data={"utilidad_neta": 100},
+        la_data={"lines": []},
     )
 
     componentes = {c["concepto_patrimonio"]: c for c in out["componentes"]}
     assert "otro_resultado_integral" not in componentes  # ambos saldos en 0 → skip
-    assert {"capital_social", "reservas", "resultados_del_ejercicio",
-            "resultados_acumulados"} <= componentes.keys()
+    assert {
+        "capital_social",
+        "reservas",
+        "resultados_del_ejercicio",
+        "resultados_acumulados",
+    } <= componentes.keys()
     movs = componentes["resultados_del_ejercicio"]["movimientos"]
-    assert any(m["concepto"] == "utilidad_neta_del_periodo" and m["valor"] == 100.0
-               for m in movs)
+    assert any(
+        m["concepto"] == "utilidad_neta_del_periodo" and m["valor"] == 100.0
+        for m in movs
+    )
     assert out["total_patrimonio_fin"] == 1500.0
 
 
@@ -157,17 +186,21 @@ def test_notes_skip_empty_classes():
     """A class with no accounts in BG/ER must produce no note."""
     from app.services.financial_statement_service import _compute_notes
 
-    bg = _bg_with(accounts=[
-        {"cuenta_puc": "1105", "nombre": "Caja", "saldo": "500"},
-        {"cuenta_puc": "1110", "nombre": "Bancos", "saldo": "1000"},
-    ])
+    bg = _bg_with(
+        accounts=[
+            {"cuenta_puc": "1105", "nombre": "Caja", "saldo": "500"},
+            {"cuenta_puc": "1110", "nombre": "Bancos", "saldo": "1000"},
+        ]
+    )
     er = {"accounts": [{"cuenta_puc": "4135", "nombre": "Ventas", "saldo": "9000"}]}
 
     out = _compute_notes(
         company_nit="800999888",
         period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
         period_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
-        bg_data=bg, er_data=er, la_data={"lines": []},
+        bg_data=bg,
+        er_data=er,
+        la_data={"lines": []},
     )
 
     nums = {n["numero_nota"] for n in out["notas"]}
@@ -214,10 +247,10 @@ def test_leaf_accounts_drops_hallucinated_codes():
     from app.services.financial_statement_service import _leaf_accounts
 
     accs = [
-        {"cuenta_puc": "1105",      "saldo": "1000"},
+        {"cuenta_puc": "1105", "saldo": "1000"},
         {"cuenta_puc": "169098236", "saldo": "169098236", "nombre": "TOTAL PASIVO"},
-        {"cuenta_puc": "TOTAL",     "saldo": "9999"},
-        {"cuenta_puc": "",          "saldo": "8888"},
+        {"cuenta_puc": "TOTAL", "saldo": "9999"},
+        {"cuenta_puc": "", "saldo": "8888"},
     ]
     leaves = _leaf_accounts(accs)
     codes = {a["cuenta_puc"] for a in leaves}
@@ -230,12 +263,16 @@ def test_leaf_accounts_drops_aggregates():
     from app.services.financial_statement_service import _leaf_accounts, _sum_leaves
 
     accounts = [
-        {"cuenta_puc": "11", "nombre": "DISPONIBLE", "saldo": "92966415.31"},     # class
-        {"cuenta_puc": "1120", "nombre": "CTA AHORRO", "saldo": "20552619.31"},   # group
-        {"cuenta_puc": "112005", "nombre": "BANCOS", "saldo": "20552619.31"},     # account
-        {"cuenta_puc": "11200501", "nombre": "Bancolombia", "saldo": "20552619.31"},  # leaf
-        {"cuenta_puc": "1125", "nombre": "FONDOS", "saldo": "72413796"},          # group
-        {"cuenta_puc": "112501", "nombre": "Fiducuenta", "saldo": "72413796"},    # leaf
+        {"cuenta_puc": "11", "nombre": "DISPONIBLE", "saldo": "92966415.31"},  # class
+        {"cuenta_puc": "1120", "nombre": "CTA AHORRO", "saldo": "20552619.31"},  # group
+        {"cuenta_puc": "112005", "nombre": "BANCOS", "saldo": "20552619.31"},  # account
+        {
+            "cuenta_puc": "11200501",
+            "nombre": "Bancolombia",
+            "saldo": "20552619.31",
+        },  # leaf
+        {"cuenta_puc": "1125", "nombre": "FONDOS", "saldo": "72413796"},  # group
+        {"cuenta_puc": "112501", "nombre": "Fiducuenta", "saldo": "72413796"},  # leaf
     ]
     leaves = _leaf_accounts(accounts)
     leaf_codes = {a["cuenta_puc"] for a in leaves}
