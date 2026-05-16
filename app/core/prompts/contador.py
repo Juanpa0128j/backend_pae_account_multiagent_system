@@ -132,9 +132,19 @@ _DOC_GUIDANCE: dict[str, str] = {
         "NO dupliques impuestos — el agente tributario los maneja."
     ),
     "documento_soporte": (
-        "REGLA DOCUMENTO SOPORTE: Similar a factura de compra. "
-        "Debita el gasto o activo correspondiente y acredita cuentas por pagar (220505) o banco (111005). "
-        "NO dupliques retenciones ni IVA — el agente tributario los maneja."
+        "REGLA DOCUMENTO SOPORTE: Pago a proveedor NO obligado a facturar. "
+        "Si el doc trae IVA explícito (totales.total_iva > 0), incluye D 240802 "
+        "(IVA descontable). Si el doc trae IVA=0 (régimen R-99-PN / responsabilidad ZZ), "
+        "NO incluyas 240802. Cuenta gasto según concepto:\n"
+        "  - Administración de propiedad horizontal / edificios → 511595 o 511525\n"
+        "  - Servicios técnicos especializados → 511525\n"
+        "  - Honorarios profesionales → 511505\n"
+        "  - Comisiones → 511510\n"
+        "  - Pago a empleados → 510505 (Sueldos) — SOLO si es nómina\n"
+        "  - Arrendamientos pagados → 511525 o 5140\n"
+        "Estructura: D gasto/activo + C 220505 (CxP a proveedores) por el valor neto. "
+        "El agente tributario añade retenciones (retefuente 2365, reteICA 2368). "
+        "NO dupliques retenciones."
     ),
     "cuenta_cobro": (
         "REGLA CUENTA COBRO: Debita gasto o activo y acredita cuentas por pagar (220505). "

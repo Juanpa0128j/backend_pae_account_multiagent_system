@@ -356,6 +356,10 @@ def build_structured_transactions(
         "concepto": derived_concepto,
         "descripcion": derived_concepto,
         "items": sanitize_for_json(items_payload),
+        "totales": sanitize_for_json(totales) if totales else None,
+        "retenciones_aplicadas": sanitize_for_json(
+            interpreted.get("retenciones_aplicadas") or []
+        ),
     }
 
     # Pre-armed journal entry table (CE, RC, Nómina, manual journal). The

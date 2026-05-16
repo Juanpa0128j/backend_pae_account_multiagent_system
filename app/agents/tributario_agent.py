@@ -776,9 +776,7 @@ def tributario_node(state: AgentState) -> AgentState:
         elif not iva_responsable:
             iva_val = Decimal("0.00")
             logger.info("Tributario: IVA skipped — company is not IVA responsable")
-        elif (
-            source_taxes.get("total_iva") is not None and source_taxes["total_iva"] > 0
-        ):
+        elif source_taxes.get("total_iva") is not None:
             iva_val = source_taxes["total_iva"].quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )

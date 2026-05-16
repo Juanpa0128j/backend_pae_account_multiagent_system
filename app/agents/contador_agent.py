@@ -467,7 +467,17 @@ def contador_node(state: AgentState) -> AgentState:
                 or doc_type_full
                 or "comprobante"
             )
+            fecha_registro = (
+                source_doc.get("fecha")
+                or source_doc.get("fecha_emision")
+                or source_doc.get("fecha_documento")
+                or (raw_transactions[0] or {}).get("fecha")
+                or ""
+            )
+            if isinstance(fecha_registro, str) and "T" in fecha_registro:
+                fecha_registro = fecha_registro.split("T")[0]
             contador_output = {
+                "fecha_registro": str(fecha_registro),
                 "asientos": prearmed,
                 "descripcion_general": str(descripcion_general)[:255],
                 "tipo_documento": doc_type_normalized or "otro",

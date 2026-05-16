@@ -302,10 +302,22 @@ def comprobante_egreso(text: str, *, correction_feedback: str | None = None) -> 
 def documento_soporte(text: str, *, correction_feedback: str | None = None) -> str:
     instructions = (
         "Eres un experto contable colombiano. Extrae la información de este "
-        "DOCUMENTO SOPORTE EN ADQUISICIONES A NO OBLIGADOS A FACTURAR (art. 1.6.1.4.12 DUR 1625/2016).\n\n"
-        "Extrae obligatoriamente: número de documento, fecha, datos del proveedor no obligado a facturar "
-        "(NIT/cédula, nombre/razón social, régimen), datos de la empresa adquirente, descripción del servicio o bien adquirido, "
-        "ítems con valores e impuestos, totales, y retenciones practicadas."
+        "DOCUMENTO SOPORTE EN ADQUISICIONES A NO OBLIGADOS A FACTURAR "
+        "(art. 1.6.1.4.12 DUR 1625/2016).\n\n"
+        "Extrae obligatoriamente:\n"
+        "  - número de documento, fecha\n"
+        "  - datos del proveedor: NIT/cédula, nombre/razón social, **régimen fiscal y "
+        "responsabilidad tributaria** (campos críticos: indican si es responsable de IVA)\n"
+        "  - datos de la empresa adquirente\n"
+        "  - descripción del servicio o bien adquirido\n"
+        "  - ítems con valores; marca `es_gravado=true` SOLO si el ítem trae IVA explícito en el doc; "
+        "marca `es_gravado=false` (NO null) si el doc declara IVA 0 / base gravable 0 para ese ítem\n"
+        "  - **`totales` completo**: extrae los valores exactos impresos. "
+        "Si el doc dice 'Total IVA: 0,00', poner `totales.total_iva = 0` (NUNCA null cuando el doc lo declara). "
+        "Si el doc dice 'Subtotal base gravable: 0', poner `totales.subtotal_base_gravable = 0`. "
+        "Mismo principio para `totales.subtotal`, `totales.total_factura`, `totales.total_neto`\n"
+        "  - retenciones que el ADQUIRENTE debe practicar (retefuente y reteICA según concepto del servicio). "
+        "Si el doc trae retenciones=0 informativas, poner cada `retencion.valor = 0` explícito."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
