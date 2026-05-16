@@ -275,7 +275,7 @@ def correct_class_only_codes(line: dict) -> dict:
     return line
 
 
-def correct_aux_codes_beyond_catalog(line: dict) -> dict:
+def correct_aux_codes_beyond_catalog(line: dict, *, db=None) -> dict:
     """Normalise auxiliary PUC codes that are longer than what the company
     catalogue supports.
 
@@ -294,6 +294,10 @@ def correct_aux_codes_beyond_catalog(line: dict) -> dict:
         warning so the auditor surfaces it.
 
     The catalogue lookup is dynamic (DB query) — no hardcoded mappings.
+
+    Pass ``db`` (an open SQLAlchemy session) to reuse a single connection
+    across multiple asiento lines. When omitted, a local session is opened
+    and closed for backward compatibility.
     """
     cuenta = str(line.get("cuenta_puc") or "").strip()
     if len(cuenta) <= 6 or not cuenta.isdigit():
@@ -310,9 +314,10 @@ def correct_aux_codes_beyond_catalog(line: dict) -> dict:
         )
         return line
 
-    db = None
+    own_session = db is None
     try:
-        db = SessionLocal()
+        if own_session:
+            db = SessionLocal()
         for parent_len in (6, 4):
             candidate = cuenta[:parent_len]
             row = (
@@ -337,7 +342,7 @@ def correct_aux_codes_beyond_catalog(line: dict) -> dict:
             db_err,
         )
     finally:
-        if db is not None:
+        if own_session and db is not None:
             try:
                 db.close()
             except Exception:
@@ -348,16 +353,28 @@ def correct_aux_codes_beyond_catalog(line: dict) -> dict:
 def correct_asiento_lines(lines: Iterable[dict], doc_subtype: str = "") -> list[dict]:
     """Apply all line-level corrections in sequence. Each corrector is
     idempotent and returns the line unchanged when its rule doesn't match.
+
+    Opens a single DB session shared across all line corrections to avoid
+    N+1 SessionLocal() opens when documents have many asiento lines.
     """
+    from app.core.database import SessionLocal
+
     out: list[dict] = []
-    for raw in lines:
-        line = dict(raw)
-        line = correct_aux_codes_beyond_catalog(line)
-        line = correct_cross_class_codes(line)
-        line = correct_5195_fallback(line)
-        line = correct_ce_220505_credit(line, doc_subtype)
-        line = correct_class_only_codes(line)
-        out.append(line)
+    db = SessionLocal()
+    try:
+        for raw in lines:
+            line = dict(raw)
+            line = correct_aux_codes_beyond_catalog(line, db=db)
+            line = correct_cross_class_codes(line)
+            line = correct_5195_fallback(line)
+            line = correct_ce_220505_credit(line, doc_subtype)
+            line = correct_class_only_codes(line)
+            out.append(line)
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
     return out
 
 

@@ -569,13 +569,15 @@ Y cita fuentes legales."""
         log filters can target a specific doc type if needed.
         """
         tag = f"[INGEST-DEBUG:{doc_label}]"
-        logger.info(
+        # Document text preview and prompt length may contain PII (NITs, amounts,
+        # names) — log at DEBUG only. Enable LOG_LEVEL=DEBUG for troubleshooting.
+        logger.debug(
             "%s markdown length=%d preview=%r",
             tag,
             len(text or ""),
             (text or "")[:1200],
         )
-        logger.info("%s prompt length=%d", tag, len(prompt or ""))
+        logger.debug("%s prompt length=%d", tag, len(prompt or ""))
         asientos_doc = data.get("asientos_documento")
         logger.info(
             "%s asientos_documento present=%s count=%s",

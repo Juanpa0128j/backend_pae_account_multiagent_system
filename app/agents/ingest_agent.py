@@ -224,7 +224,7 @@ def _ingest_documents_mode(state: AgentState, file_paths: list[str]) -> AgentSta
 
     extract_method = getattr(llm, method_name)
     ingest_id = state.get("ingest_id")
-    all_results: list[dict] = []
+    all_results: list[tuple[str, dict]] = []
 
     for i, fp in enumerate(file_paths):
         if ingest_id:

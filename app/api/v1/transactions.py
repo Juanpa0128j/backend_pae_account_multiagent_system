@@ -299,12 +299,15 @@ def _delete_transaction_cascade(db: Session, txn_id: str) -> None:
     if not txn:
         raise HTTPException(status_code=404, detail=f"Transaction {txn_id} not found")
 
-    posted = (
+    # Re-processed transactions may have multiple posted rows for a single
+    # pending (see get_transaction's order_by created_at.desc()). Delete every
+    # posted row and its journal lines to avoid orphans.
+    posted_rows = (
         db.query(TransactionPosted)
         .filter(TransactionPosted.transaction_pending_id == txn_id)
-        .first()
+        .all()
     )
-    if posted:
+    for posted in posted_rows:
         db.query(JournalEntryLine).filter(
             JournalEntryLine.transaction_posted_id == posted.id
         ).delete(synchronize_session=False)

@@ -1,6 +1,6 @@
 """Tests for transaction DELETE endpoints."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 from main import app
@@ -23,66 +23,13 @@ def _make_posted(posted_id: str = "posted-001"):
 class TestDeleteTransaction:
     """Tests for DELETE /api/v1/transactions/{id}."""
 
-    def test_delete_existing_transaction_returns_204(self, monkeypatch):
-        txn = _make_txn()
-        posted = _make_posted()
-
-        def mock_query(model):
-            q = MagicMock()
-            q.filter.return_value.first.return_value = (
-                txn if "TransactionPending" in str(model) else posted
-            )
-            q.filter.return_value.delete.return_value = None
-            return q
-
-        with (
-            patch("app.api.v1.transactions.get_current_user", return_value=MagicMock()),
-            patch("app.api.v1.transactions.get_db"),
-        ):
-            db_mock = MagicMock()
-
-            def query_side_effect(model):
-                from app.models.database import (
-                    TransactionPending,
-                    TransactionPosted,
-                    JournalEntryLine,
-                )
-
-                q = MagicMock()
-                if model is TransactionPending:
-                    q.filter.return_value.first.return_value = txn
-                elif model is TransactionPosted:
-                    q.filter.return_value.first.return_value = posted
-                elif model is JournalEntryLine:
-                    q.filter.return_value.delete.return_value = 0
-                return q
-
-            db_mock.query.side_effect = query_side_effect
-
-            monkeypatch.setattr(
-                "app.api.v1.transactions.get_db",
-                lambda: iter([db_mock]),
-            )
-            monkeypatch.setattr(
-                "app.api.v1.transactions.get_current_user",
-                lambda: MagicMock(),
-            )
-
-        client = TestClient(app)
-        with patch(
-            "app.core.auth.get_current_user",
-            return_value=MagicMock(id="u1", email="test@test.com"),
-        ):
-            # Use dependency override instead
-            pass
-
-        # Use app dependency overrides for clean testing
+    def test_delete_existing_transaction_returns_204(self):
         from app.core.auth import get_current_user as auth_dep
         from app.core.database import get_db as db_dep
         from app.models.database import (
+            JournalEntryLine,
             TransactionPending,
             TransactionPosted,
-            JournalEntryLine,
         )
 
         txn_obj = _make_txn("txn-to-delete")
@@ -95,7 +42,7 @@ class TestDeleteTransaction:
             if model is TransactionPending:
                 q.filter.return_value.first.return_value = txn_obj
             elif model is TransactionPosted:
-                q.filter.return_value.first.return_value = posted_obj
+                q.filter.return_value.all.return_value = [posted_obj]
             elif model is JournalEntryLine:
                 q.filter.return_value.delete.return_value = 0
             return q
@@ -162,7 +109,7 @@ class TestDeleteTransaction:
             if model is TransactionPending:
                 q.filter.return_value.first.return_value = txn_obj
             elif model is TransactionPosted:
-                q.filter.return_value.first.return_value = posted_obj
+                q.filter.return_value.all.return_value = [posted_obj]
             elif model is JournalEntryLine:
                 return journal_q
             return q

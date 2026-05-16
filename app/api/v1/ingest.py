@@ -1,7 +1,7 @@
 import logging
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import (
     APIRouter,
@@ -293,7 +293,7 @@ async def upload_file(
         "fast",
         description="LlamaParse extraction quality mode: fast, standard, premium, gpt4o.",
     ),
-    multi_file_mode: str = Form(
+    multi_file_mode: Literal["pages", "documents"] = Form(
         "pages",
         description="'pages' = all files are pages of one document | 'documents' = each file is an independent document.",
     ),
@@ -518,8 +518,9 @@ async def get_merge_suggestions(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Returns groups of ingest jobs that look like pages of the same document."""
+    normalized_company_nit = normalize_nit(company_nit)
     suggestions = find_merge_candidates(
-        db, company_nit, time_window_minutes=time_window_minutes
+        db, normalized_company_nit, time_window_minutes=time_window_minutes
     )
     return {"suggestions": suggestions}
 
@@ -655,7 +656,6 @@ async def merge_ingest_jobs(
 
     - Concatenates raw_data from both TransactionPending rows
     - Marks source job as CANCELLED
-    - Updates target job raw_preview if needed
     """
     if ingest_id == request.source_ingest_id:
         raise HTTPException(
@@ -698,9 +698,15 @@ async def merge_ingest_jobs(
     source_txns = db_service.get_transactions_by_ingest(db, request.source_ingest_id)
 
     if target_txns and source_txns:
-        source_raw_list = []
+        source_raw_list: list = []
         for txn in source_txns:
-            if txn.raw_data is not None:
+            if txn.raw_data is None:
+                continue
+            # Flatten when the source was already merged previously (raw_data is
+            # a list) — otherwise we'd build nested lists across multiple merges.
+            if isinstance(txn.raw_data, list):
+                source_raw_list.extend(txn.raw_data)
+            else:
                 source_raw_list.append(txn.raw_data)
 
         if source_raw_list:
