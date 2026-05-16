@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from app.agents.graph import invoke_accounting_pipeline
+from app.core.config import get_settings
 from app.core.database import SessionLocal, PROCESS_PIPELINE_SEMAPHORE
 from app.models.database import ProcessStatus, TransactionStatus
 from app.services import db_service
@@ -82,12 +83,55 @@ def _on_task_done(task: asyncio.Task) -> None:
 async def start_process_job(process_id: str, force_persist: bool = False) -> None:
     """Schedule a process job in the current event loop.
 
-    The task reference is retained in a module-level set so it cannot be GC'd
-    before completion, and unhandled exceptions are logged.
+    When hatchet_enabled=True, dispatches to Hatchet via accounting:start event.
+    Otherwise schedules an asyncio task (original in-process path).
     """
-    task = asyncio.create_task(run_process_job(process_id, force_persist=force_persist))
-    _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_on_task_done)
+    settings = get_settings()
+    if settings.hatchet_enabled:
+        await _dispatch_hatchet_accounting(process_id, force_persist)
+    else:
+        task = asyncio.create_task(
+            run_process_job(process_id, force_persist=force_persist)
+        )
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_on_task_done)
+
+
+async def _dispatch_hatchet_accounting(process_id: str, force_persist: bool) -> None:
+    """Dispatch accounting:start event to Hatchet workflow engine."""
+    from app.workers.hatchet_client import get_hatchet
+
+    with SessionLocal() as db:
+        process_job = db_service.get_process_job(db, process_id)
+        if not process_job:
+            logger.error(
+                "[Process %s] Job not found — cannot dispatch to Hatchet", process_id
+            )
+            return
+        ingest_job = db_service.get_ingest_job(db, process_job.ingest_id)
+        ingest_id = str(process_job.ingest_id) if process_job.ingest_id else None
+        doc_type = (
+            (
+                getattr(ingest_job, "doc_type", "")
+                or getattr(ingest_job, "document_type", "")
+                or ""
+            )
+            if ingest_job
+            else ""
+        )
+        company_nit = getattr(ingest_job, "company_nit", None) if ingest_job else None
+
+    payload = {
+        "process_id": process_id,
+        "ingest_id": ingest_id,
+        "force_persist": force_persist,
+        "doc_type": doc_type,
+        "company_nit": company_nit,
+    }
+
+    hatchet = get_hatchet()
+    hatchet.event.push("accounting:start", payload)
+    logger.info("[Process %s] Dispatched to Hatchet accounting:start", process_id)
 
 
 async def run_process_job(process_id: str, force_persist: bool = False) -> None:

@@ -71,6 +71,10 @@ class Settings(BaseSettings):
         "https://api.smith.langchain.com", alias="LANGSMITH_ENDPOINT"
     )
 
+    # --- Hatchet (workflow orchestration) ---------------------------------
+    hatchet_client_token: str = Field(default="", alias="HATCHET_CLIENT_TOKEN")
+    hatchet_enabled: bool = Field(default=False, alias="HATCHET_ENABLED")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

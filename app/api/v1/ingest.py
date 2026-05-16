@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.graph import invoke_ingest_pipeline
 from app.core.auth import CurrentUser, get_current_user
+from app.core.config import get_settings
 from app.core.database import INGEST_PIPELINE_SEMAPHORE, SessionLocal, get_db
 from app.models.database import IngestJob, IngestStatus
 from app.models.document_types import (
@@ -483,14 +484,23 @@ async def upload_file(
                 db, normalized_company_nit, confirmed_pathway
             )
 
-        background_tasks.add_task(
-            process_ingest_background,
-            temp_file_paths,
-            str(ingest_job.id),
-            normalized_company_nit,
-            validated_mode,
-            multi_file_mode,
-        )
+        settings = get_settings()
+        if settings.hatchet_enabled:
+            from app.workers.hatchet_client import get_hatchet as _get_hatchet
+
+            db.commit()  # ensure worker can read ingest_job before event fires
+            _hatchet = _get_hatchet()
+            _hatchet.event.push("ingest:start", {"ingest_id": str(ingest_job.id)})
+            logger.info("[Ingest %s] Dispatched to Hatchet ingest:start", ingest_job.id)
+        else:
+            background_tasks.add_task(
+                process_ingest_background,
+                temp_file_paths,
+                str(ingest_job.id),
+                normalized_company_nit,
+                validated_mode,
+                multi_file_mode,
+            )
 
         return IngestResponse(
             message="File uploaded successfully and queued for processing",
@@ -587,13 +597,22 @@ async def update_ingest_classification(
                 status_code=422,
                 detail="El trabajo de ingesta no tiene ruta de archivo para reanudar",
             )
-        background_tasks.add_task(
-            process_ingest_background,
-            [job.file_path],
-            str(job.id),
-            job.company_nit,
-            job.parser_mode,
-        )
+        _cl_settings = get_settings()
+        if _cl_settings.hatchet_enabled:
+            from app.workers.hatchet_client import get_hatchet as _get_hatchet
+
+            db.commit()  # ensure worker can read job record before event fires
+            _hatchet = _get_hatchet()
+            _hatchet.event.push("ingest:start", {"ingest_id": str(job.id)})
+            logger.info("[Ingest %s] Dispatched to Hatchet ingest:start", job.id)
+        else:
+            background_tasks.add_task(
+                process_ingest_background,
+                [job.file_path],
+                str(job.id),
+                job.company_nit,
+                job.parser_mode,
+            )
 
     refreshed = db_service.get_ingest_job(db, ingest_id)
     if not refreshed:

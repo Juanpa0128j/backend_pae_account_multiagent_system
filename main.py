@@ -20,6 +20,7 @@ from app.api.v1 import (
     puc as puc_router_mod,
     auth as auth_router_mod,
 )
+from app.api.v1.events import router as events_router
 from app.core.config import settings
 from app.core.database import check_db_connection
 from app.core.exceptions import PAEException, DatabaseException
@@ -153,6 +154,7 @@ app.include_router(
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat Financiero"])
 app.include_router(puc_router_mod.router, prefix="/api/v1/puc", tags=["PUC"])
 app.include_router(auth_router_mod.router, prefix="/api/v1/auth", tags=["Auth"])
+app.include_router(events_router, prefix="/api/v1")
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,10 +1,12 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.database import IngestJob, ProcessJob, ProcessStatus
 from app.models.schemas import (
@@ -17,6 +19,7 @@ from app.services import db_service, jobs
 from app.services.nit_utils import normalize_nit
 from app.services.pipeline_trace_service import build_trace
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -359,7 +362,37 @@ async def confirm_audit_review(
             ),
         )
 
-    await jobs.start_process_job(process_id, force_persist=True)
+    settings = get_settings()
+    if settings.hatchet_enabled:
+        from app.workers.hatchet_client import get_hatchet
+
+        hatchet = get_hatchet()
+        try:
+            hatchet.event.push(
+                "audit-confirm",
+                {
+                    "process_id": process_id,
+                    "force_persist": True,
+                },
+            )
+            logger.info("[Process %s] Sent audit-confirm event to Hatchet", process_id)
+        except Exception as exc:
+            logger.error(
+                "[Process %s] Failed to push audit-confirm to Hatchet — reverting to PENDING_AUDIT_REVIEW: %s",
+                process_id,
+                exc,
+            )
+            db.query(ProcessJob).filter(ProcessJob.id == process_id).update(
+                {ProcessJob.status: ProcessStatus.PENDING_AUDIT_REVIEW},
+                synchronize_session=False,
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=503,
+                detail="Error al enviar evento de confirmación. Por favor intente de nuevo.",
+            ) from exc
+    else:
+        await jobs.start_process_job(process_id, force_persist=True)
     return {
         "message": "Revisión confirmada. Reintentando persistencia.",
         "process_id": process_id,
