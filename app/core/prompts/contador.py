@@ -69,15 +69,16 @@ _DOC_GUIDANCE: dict[str, str] = {
     ),
     "comprobante_egreso": (
         "REGLA COMPROBANTE DE EGRESO (CE):\n"
-        "- SIEMPRE acredita 111005 (Banco) o 110505 (Caja). El CE representa salida de fondos.\n"
-        "- NUNCA acredites 220505 (Proveedores). 220505 solo aparece en DEBITO cuando el CE "
-        "salda una factura previa cuya CxP ya fue creada por la factura.\n"
-        "- Patrón estándar:\n"
+        "- PRIORIDAD MAXIMA: Si el documento muestra una tabla CODIGO CUENTA + "
+        "CONCEPTO + TERCERO + DEBITO + CREDITO, esos son los asientos finales. "
+        "Respeta los CODIGO CUENTA y los montos EXACTAMENTE como aparecen. NO "
+        "los re-clasifiques, NO inyectes IVA ni retenciones (el doc YA esta cuadrado).\n"
+        "- Si NO hay tabla con asientos pre-armados, sigue el patron estandar:\n"
         "    DEBIT  5xxxxx (gasto concreto, no 5195) o 220505 (anula CxP)\n"
-        "    CREDIT 111005 (Banco)\n"
-        "    DEBIT/CREDIT retenciones si aplican (2365 retefuente, 2368 reteICA)\n"
-        "- Un asiento por linea de pago.\n"
-        "- NO dupliques impuestos — el agente tributario los maneja.\n"
+        "    CREDIT 111005 (Banco) o 110505 (Caja). Salida de fondos.\n"
+        "    NUNCA acredites 220505 (Proveedores) en un CE; 220505 solo va en DEBITO cuando el CE salda una CxP previa.\n"
+        "    DEBIT/CREDIT retenciones si aplican (2365 retefuente, 2368 reteICA).\n"
+        "- Un asiento por linea de pago. NO dupliques impuestos.\n"
         "CUENTAS DE GASTO COMUNES (úsalas SIEMPRE en lugar de 5195):\n"
         "- 510505 Sueldos        - 510510 Cesantías          - 510515 Intereses cesantías\n"
         "- 510518 Prima servicios- 510521 Vacaciones         - 510527 Aportes EPS\n"
@@ -116,10 +117,14 @@ _DOC_GUIDANCE: dict[str, str] = {
         "en 240802 vs 135510."
     ),
     "nomina": (
-        "REGLA NOMINA: Debita gastos de personal (5105xx/5110xx) por salarios, prestaciones y parafiscales. "
-        "Acredita banco (111005) por valor neto pagado, provisiones nomina (2510xx/2525xx) "
-        "y aportes por pagar (237xxx). "
-        "NO dupliques impuestos de renta — el agente tributario los maneja."
+        "REGLA NOMINA: "
+        "DÉBITO: Gastos de personal (5105xx/5110xx) por el valor TOTAL DEVENGADO (salario bruto). "
+        "Usa el campo 'total_devengado' de la transacción — NUNCA 'total_neto_pagar' ni la suma de neto_pagar de empleados para el débito. "
+        "CRÉDITO: Banco (111005) por 'total_neto_pagar' (valor neto girado al empleado). "
+        "Retenciones y deducciones del empleado (salud 4%, pensión 4%, retefuente) por 'total_deducciones' en cuentas 236xxx/2370xx. "
+        "Provisiones nomina empleador (2510xx/2525xx) y aportes parafiscales (237xxx) si aplica. "
+        "El débito SIEMPRE debe igualar la suma de todos los créditos: total_devengado = total_neto_pagar + total_deducciones. "
+        "NO agregues IVA ni retefuente de servicios — nómina no causa IVA."
     ),
     "recibo_caja": (
         "REGLA RECIBO CAJA: Debita banco o caja (111005/110505) por el valor recibido. "
@@ -127,9 +132,19 @@ _DOC_GUIDANCE: dict[str, str] = {
         "NO dupliques impuestos — el agente tributario los maneja."
     ),
     "documento_soporte": (
-        "REGLA DOCUMENTO SOPORTE: Similar a factura de compra. "
-        "Debita el gasto o activo correspondiente y acredita cuentas por pagar (220505) o banco (111005). "
-        "NO dupliques retenciones ni IVA — el agente tributario los maneja."
+        "REGLA DOCUMENTO SOPORTE: Pago a proveedor NO obligado a facturar. "
+        "Si el doc trae IVA explícito (totales.total_iva > 0), incluye D 240802 "
+        "(IVA descontable). Si el doc trae IVA=0 (régimen R-99-PN / responsabilidad ZZ), "
+        "NO incluyas 240802. Cuenta gasto según concepto:\n"
+        "  - Administración de propiedad horizontal / edificios → 511595 o 511525\n"
+        "  - Servicios técnicos especializados → 511525\n"
+        "  - Honorarios profesionales → 511505\n"
+        "  - Comisiones → 511510\n"
+        "  - Pago a empleados → 510505 (Sueldos) — SOLO si es nómina\n"
+        "  - Arrendamientos pagados → 511525 o 5140\n"
+        "Estructura: D gasto/activo + C 220505 (CxP a proveedores) por el valor neto. "
+        "El agente tributario añade retenciones (retefuente 2365, reteICA 2368). "
+        "NO dupliques retenciones."
     ),
     "cuenta_cobro": (
         "REGLA CUENTA COBRO: Debita gasto o activo y acredita cuentas por pagar (220505). "

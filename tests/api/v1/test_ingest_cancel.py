@@ -32,6 +32,9 @@ class TestIngestCancel:
         job.classification_confidence = None
         job.classification_confirmed = None
         job.file_path = file_path
+        job.file_names = None
+        job.multi_file_mode = None
+        job.current_file_index = None
         return job
 
     def test_cancel_ingest_returns_202(self, monkeypatch):

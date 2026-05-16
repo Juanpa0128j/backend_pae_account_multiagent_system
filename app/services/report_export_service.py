@@ -670,7 +670,13 @@ class CashFlowExporter:
                         ("BACKGROUND", (0, 0), (-1, 0), bg),
                         ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
                         ("TOPPADDING", (0, 0), (-1, 0), 2),
-                        ("LINEBELOW", (0, 0), (-1, 0), 0.25, colors.HexColor("#cccccc")),
+                        (
+                            "LINEBELOW",
+                            (0, 0),
+                            (-1, 0),
+                            0.25,
+                            colors.HexColor("#cccccc"),
+                        ),
                     ]
                 )
             )
@@ -726,8 +732,12 @@ class CashFlowExporter:
         story.append(Spacer(1, 0.15 * inch))
 
         # ── saldo inicial ────────────────────────────────────────────────────
-        saldo_ini = float(report.get("efectivo_inicio") or report.get("saldo_inicial") or 0)
-        story.append(_two_col("Efectivo y equivalentes al inicio del periodo", saldo_ini))
+        saldo_ini = float(
+            report.get("efectivo_inicio") or report.get("saldo_inicial") or 0
+        )
+        story.append(
+            _two_col("Efectivo y equivalentes al inicio del periodo", saldo_ini)
+        )
         story.append(Spacer(1, 0.1 * inch))
 
         # ── actividades de operacion ─────────────────────────────────────────
@@ -744,14 +754,22 @@ class CashFlowExporter:
         story.append(Paragraph("B. ACTIVIDADES DE INVERSION", section_style))
         flujo_inv = float(report.get("flujo_inversion") or 0)
         if adjustments.get("delta_ppe") is not None:
-            story.append(_two_col("(-) Delta PPE neto", float(adjustments.get("delta_ppe", 0))))
+            story.append(
+                _two_col("(-) Delta PPE neto", float(adjustments.get("delta_ppe", 0)))
+            )
         if adjustments.get("delta_intangibles") is not None:
             story.append(
-                _two_col("(-) Delta intangibles", float(adjustments.get("delta_intangibles", 0)))
+                _two_col(
+                    "(-) Delta intangibles",
+                    float(adjustments.get("delta_intangibles", 0)),
+                )
             )
         if adjustments.get("delta_inversiones") is not None:
             story.append(
-                _two_col("(-) Delta inversiones", float(adjustments.get("delta_inversiones", 0)))
+                _two_col(
+                    "(-) Delta inversiones",
+                    float(adjustments.get("delta_inversiones", 0)),
+                )
             )
         story.append(_two_col("FLUJO NETO DE INVERSION", flujo_inv, bold=True))
         story.append(Spacer(1, 0.1 * inch))
@@ -769,22 +787,30 @@ class CashFlowExporter:
         if adjustments.get("delta_capital_social") is not None:
             story.append(
                 _two_col(
-                    "(+) Delta capital social", float(adjustments.get("delta_capital_social", 0))
+                    "(+) Delta capital social",
+                    float(adjustments.get("delta_capital_social", 0)),
                 )
             )
         if adjustments.get("dividendos_pagados") is not None:
             story.append(
                 _two_col(
-                    "(-) Dividendos pagados", float(adjustments.get("dividendos_pagados", 0))
+                    "(-) Dividendos pagados",
+                    float(adjustments.get("dividendos_pagados", 0)),
                 )
             )
         story.append(_two_col("FLUJO NETO DE FINANCIACION", flujo_fin, bold=True))
         story.append(Spacer(1, 0.15 * inch))
 
         # ── resumen final ────────────────────────────────────────────────────
-        aumento = float(report.get("aumento_disminucion_neto") or (flujo_op + flujo_inv + flujo_fin))
-        efectivo_fin = float(report.get("efectivo_fin") or report.get("total_efectivo") or 0)
-        story.append(_two_col("AUMENTO / DISMINUCION NETO DE EFECTIVO", aumento, bold=True))
+        aumento = float(
+            report.get("aumento_disminucion_neto") or (flujo_op + flujo_inv + flujo_fin)
+        )
+        efectivo_fin = float(
+            report.get("efectivo_fin") or report.get("total_efectivo") or 0
+        )
+        story.append(
+            _two_col("AUMENTO / DISMINUCION NETO DE EFECTIVO", aumento, bold=True)
+        )
         story.append(_two_col("EFECTIVO AL FIN DEL PERIODO", efectivo_fin, bold=True))
 
         if report.get("rule_version"):
@@ -793,8 +819,12 @@ class CashFlowExporter:
                 Paragraph(
                     f"Generado con regla {_escape_paragraph_text(str(report['rule_version']))} "
                     "segun NIC 7 metodo indirecto.",
-                    ParagraphStyle("Footer", parent=styles["Normal"], fontSize=7,
-                                   textColor=colors.grey),
+                    ParagraphStyle(
+                        "Footer",
+                        parent=styles["Normal"],
+                        fontSize=7,
+                        textColor=colors.grey,
+                    ),
                 )
             )
 
@@ -814,7 +844,9 @@ class CashFlowExporter:
         )
         header_font = Font(bold=True, color="FFFFFF", size=11)
 
-        ws["A1"] = f"FLUJO DE CAJA - METODO {(report.get('metodo') or 'INDIRECTO').upper()} (NIC 7)"
+        ws["A1"] = (
+            f"FLUJO DE CAJA - METODO {(report.get('metodo') or 'INDIRECTO').upper()} (NIC 7)"
+        )
         ws["A1"].font = Font(bold=True, size=14, color="1F4788")
         ws.merge_cells("A1:C1")
 
@@ -1542,7 +1574,9 @@ class NotasEstadosFinancierosExporter:
                 if cifras:
                     cifras_data = [
                         [
-                            _escape_paragraph_text(str(c.get("concepto", "")).replace("_", " ")),
+                            _escape_paragraph_text(
+                                str(c.get("concepto", "")).replace("_", " ")
+                            ),
                             _format_currency(float(c.get("valor", 0))),
                         ]
                         for c in cifras
@@ -1555,8 +1589,13 @@ class NotasEstadosFinancierosExporter:
                                 [
                                     ("ALIGN", (1, 0), (1, -1), "RIGHT"),
                                     ("FONTSIZE", (0, 0), (-1, -1), 8),
-                                    ("LINEBELOW", (0, 0), (-1, -1), 0.25,
-                                     colors.HexColor("#cccccc")),
+                                    (
+                                        "LINEBELOW",
+                                        (0, 0),
+                                        (-1, -1),
+                                        0.25,
+                                        colors.HexColor("#cccccc"),
+                                    ),
                                     ("TOPPADDING", (0, 0), (-1, -1), 2),
                                     ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
                                 ]

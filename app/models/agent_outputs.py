@@ -72,8 +72,10 @@ class SeveridadHallazgo(str, Enum):
     CRITICO = "critico"
 
 
-# PUC code regex: 1-6 digits (Colombian Plan Único de Cuentas)
-PUC_PATTERN = re.compile(r"^\d{1,6}$")
+# PUC code regex: 1-12 digits. Decreto 2650 catalog uses 4-6 digits; codes of
+# 7-12 digits are auxiliary subdivisions defined by the issuer's ERP (e.g.
+# Bancolombia 11200501 = subcuenta de 1120 Banco moneda extranjera).
+PUC_PATTERN = re.compile(r"^\d{1,12}$")
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +87,9 @@ def _validate_puc_code(v: str) -> str:
     """Validate a Colombian PUC (Plan Único de Cuentas) code."""
     if not PUC_PATTERN.match(v):
         raise ValueError(
-            f"Código PUC inválido '{v}'. Debe tener entre 1 y 6 dígitos "
-            "(ej. '1105' para Caja, '2205' para Proveedores)."
+            f"Código PUC inválido '{v}'. Debe ser numérico de 1 a 12 dígitos. "
+            "El catálogo oficial (Decreto 2650) usa 4-6 dígitos; "
+            "códigos de 7-12 dígitos son auxiliares del ERP del emisor."
         )
     return v
 
@@ -220,7 +223,13 @@ class AsientoContable(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    cuenta_puc: str = Field(..., description="PUC account code (1-6 digits)")
+    cuenta_puc: str = Field(
+        ...,
+        description=(
+            "PUC account code (1-12 digits). 4-6 digits = official Decreto 2650 catalog; "
+            "7-12 digits = ERP auxiliary subdivision (e.g. bank subaccount)."
+        ),
+    )
     nombre_cuenta: str = Field(
         ..., min_length=2, max_length=200, description="Account name"
     )

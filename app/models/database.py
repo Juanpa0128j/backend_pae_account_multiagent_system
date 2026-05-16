@@ -153,6 +153,12 @@ class CompanySettings(Base):
         nullable=True,
         comment="'build_from_scratch' (Vía A) or 'work_with_existing' (Vía B) — set on first upload, immutable after",
     )
+    cuenta_ica_propio = Column(
+        String(10),
+        nullable=True,
+        default="2368",
+        comment="PUC account for ICA liability (ReteICA por pagar). Default 2368; override if company uses a different account.",
+    )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
@@ -265,6 +271,18 @@ class IngestJob(Base):
     id = Column(String(50), primary_key=True, index=True)
     file_name = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=True)
+    file_names = Column(JSONB, nullable=True, comment="List of all uploaded file names")
+    multi_file_mode = Column(
+        String(20),
+        nullable=True,
+        default="pages",
+        comment="'pages' = concatenate as one doc | 'documents' = process each independently",
+    )
+    current_file_index = Column(
+        Integer,
+        nullable=True,
+        comment="Index of file currently being parsed (0-based), for frontend progress",
+    )
     status = Column(
         Enum(IngestStatus),
         default=IngestStatus.PENDING_PROCESSING,
@@ -334,6 +352,11 @@ class TransactionPending(Base):
     # Raw extracted data
     items = Column(JSONB, nullable=True, comment="Line items from document")
     raw_data = Column(JSONB, nullable=True, comment="Full Gemini extraction result")
+    source_file = Column(
+        String(500),
+        nullable=True,
+        comment="Filename of the source document (documents multi-file mode only)",
+    )
 
     status = Column(
         Enum(TransactionStatus),

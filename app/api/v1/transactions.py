@@ -196,12 +196,81 @@ async def get_transaction(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Returns a single transaction by ID."""
-    from app.models.database import TransactionPending
+    """Return a single transaction with its posted classification + journal entry lines.
+
+    The detail UI needs the full picture of one ingest:
+      - The pending transaction itself (raw extracted totals, file origin).
+      - The posted classification (cuenta_puc principal, taxes, agent reasoning).
+      - All journal_entry_lines for the asiento (so multi-line CE / RC / payroll
+        comprobantes show every debit and credit, not just the principal PUC).
+    """
+    from app.models.database import (
+        JournalEntryLine,
+        TransactionPending,
+        TransactionPosted,
+    )
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
         raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+
+    posted = (
+        db.query(TransactionPosted)
+        .filter(TransactionPosted.transaction_pending_id == id)
+        .order_by(TransactionPosted.created_at.desc())
+        .first()
+    )
+
+    from app.models.database import ProcessJob
+
+    process_id: str | None = None
+    if txn.ingest_id:
+        pj = (
+            db.query(ProcessJob)
+            .filter(ProcessJob.ingest_id == txn.ingest_id)
+            .order_by(ProcessJob.created_at.desc())
+            .first()
+        )
+        process_id = pj.id if pj else None
+
+    journal_lines: list[dict] = []
+    if posted is not None:
+        lines = (
+            db.query(JournalEntryLine)
+            .filter(JournalEntryLine.transaction_posted_id == posted.id)
+            .order_by(JournalEntryLine.id)
+            .all()
+        )
+        journal_lines = [
+            {
+                "id": line.id,
+                "cuenta_puc": line.cuenta_puc,
+                "descripcion": line.descripcion or "",
+                "tercero_nit": getattr(line, "tercero_nit", "") or "",
+                "debito": float(line.debito or 0),
+                "credito": float(line.credito or 0),
+                "fecha": str(getattr(line, "fecha", "") or ""),
+            }
+            for line in lines
+        ]
+
+    posted_payload: dict | None = None
+    if posted is not None:
+        posted_payload = {
+            "id": posted.id,
+            "cuenta_puc": posted.cuenta_puc,
+            "puc_descripcion": posted.puc_descripcion or "",
+            "retefuente": float(posted.retefuente or 0),
+            "reteica": float(posted.reteica or 0),
+            "iva": float(posted.iva or 0),
+            "ica": float(posted.ica or 0),
+            "provision_renta": float(posted.provision_renta or 0),
+            "neto_a_pagar": float(posted.neto_a_pagar or 0),
+            "journal_entries_json": posted.journal_entries_json,
+            "tax_references": posted.tax_references,
+            "agent_reasoning": posted.agent_reasoning,
+            "status": posted.status.value if posted.status else "unknown",
+        }
 
     return {
         "id": txn.id,
@@ -212,4 +281,74 @@ async def get_transaction(
         "nit_emisor": txn.nit_emisor or "",
         "items": txn.items,
         "raw_data": txn.raw_data,
+        "posted": posted_payload,
+        "journal_lines": journal_lines,
+        "process_id": process_id,
     }
+
+
+def _delete_transaction_cascade(db: Session, txn_id: str) -> None:
+    """Delete a TransactionPending and all its child records (posted + journal lines)."""
+    from app.models.database import (
+        JournalEntryLine,
+        TransactionPending,
+        TransactionPosted,
+    )
+
+    txn = db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail=f"Transaction {txn_id} not found")
+
+    # Re-processed transactions may have multiple posted rows for a single
+    # pending (see get_transaction's order_by created_at.desc()). Delete every
+    # posted row and its journal lines to avoid orphans.
+    posted_rows = (
+        db.query(TransactionPosted)
+        .filter(TransactionPosted.transaction_pending_id == txn_id)
+        .all()
+    )
+    for posted in posted_rows:
+        db.query(JournalEntryLine).filter(
+            JournalEntryLine.transaction_posted_id == posted.id
+        ).delete(synchronize_session=False)
+        db.delete(posted)
+
+    db.delete(txn)
+
+
+@router.delete("/{id}", status_code=204)
+async def delete_transaction(
+    id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Delete a single transaction and all its associated records."""
+    _delete_transaction_cascade(db, id)
+    db.commit()
+
+
+@router.delete("/by-ingest/{ingest_id}", status_code=200)
+async def delete_transactions_by_ingest(
+    ingest_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Delete all transactions belonging to a specific ingest document."""
+    from app.models.database import TransactionPending
+
+    txn_ids = [
+        row.id
+        for row in db.query(TransactionPending.id)
+        .filter(TransactionPending.ingest_id == ingest_id)
+        .all()
+    ]
+    if not txn_ids:
+        raise HTTPException(
+            status_code=404, detail=f"No transactions found for ingest {ingest_id}"
+        )
+
+    for txn_id in txn_ids:
+        _delete_transaction_cascade(db, txn_id)
+
+    db.commit()
+    return {"deleted": len(txn_ids)}

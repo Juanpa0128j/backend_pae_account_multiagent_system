@@ -21,6 +21,7 @@ class RawTransaction(BaseModel):
     total: float
     descripcion: Optional[str] = None
     items: Optional[List[Dict[str, Any]]] = None
+    source_file: Optional[str] = None
 
 
 class ClassificationReviewOption(BaseModel):
@@ -54,12 +55,19 @@ class IngestDetailResponse(BaseModel):
     has_warnings: bool = False
     trace_url: Optional[str] = None
     classification_review: Optional[ClassificationReviewResponse] = None
+    file_names: Optional[List[str]] = None
+    multi_file_mode: Optional[str] = None
+    current_file_index: Optional[int] = None
 
 
 class ClassificationReviewUpdateRequest(BaseModel):
     doc_type: str
     confirmed: bool = True
     parser_mode: Optional[str] = None
+
+
+class MergeIngestRequest(BaseModel):
+    source_ingest_id: str
 
 
 class ProcessResponse(BaseModel):

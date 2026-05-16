@@ -45,7 +45,15 @@ logger = logging.getLogger(__name__)
 # Core execution fields are intentionally excluded to prevent accidental
 # runtime corruption.
 _ALLOWED_INITIAL_STATE_KEYS: frozenset[str] = frozenset(
-    {"ingest_id", "mode", "company_nit", "force_persist", "parser_mode"}
+    {
+        "ingest_id",
+        "mode",
+        "company_nit",
+        "force_persist",
+        "parser_mode",
+        "file_paths",
+        "multi_file_mode",
+    }
 )
 
 
@@ -137,6 +145,7 @@ def _base_state() -> AgentState:
     """Return a fully-initialised default AgentState (all fields populated)."""
     return {
         "file_path": "",
+        "file_paths": [],
         "raw_text": "",
         "interpreted_data": {},
         "result": {},
@@ -183,7 +192,11 @@ def _base_state() -> AgentState:
 # ---------------------------------------------------------------------------
 
 
-def invoke_ingest_pipeline(file_path: str, initial_state: dict | None = None) -> dict:
+def invoke_ingest_pipeline(
+    file_path: str,
+    initial_state: dict | None = None,
+    file_paths: list[str] | None = None,
+) -> dict:
     """
     Invoke the unified agent graph for a file upload (Pipeline 1).
 
@@ -191,6 +204,7 @@ def invoke_ingest_pipeline(file_path: str, initial_state: dict | None = None) ->
         file_path: Path to the PDF file to process.
         initial_state: Optional dict with supplemental state fields.
             Only keys in _ALLOWED_INITIAL_STATE_KEYS are accepted.
+        file_paths: Optional list of paths for multi-page uploads.
 
     Returns:
         Result dict with status, data, validation_history, agent_log, db_result.
@@ -199,6 +213,7 @@ def invoke_ingest_pipeline(file_path: str, initial_state: dict | None = None) ->
 
     state = _base_state()
     state["file_path"] = file_path
+    state["file_paths"] = file_paths or []
     state["mode"] = "ingest"
 
     if initial_state:

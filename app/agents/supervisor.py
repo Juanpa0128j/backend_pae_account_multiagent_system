@@ -394,6 +394,21 @@ def supervisor_node(state: AgentState) -> AgentState:
                     },
                 )
 
+            # Lock pathway immediately upon confirmed classification so subsequent
+            # uploads are blocked before the pipeline even starts.
+            if use_confirmed and state.get("company_nit") and state.get("pathway"):
+                _lock_nit = normalize_optional_nit(state["company_nit"])
+                if _lock_nit:
+                    db = SessionLocal()
+                    try:
+                        db_service.set_company_locked_pathway(
+                            db, _lock_nit, state["pathway"]
+                        )
+                    except Exception as lock_err:
+                        logger.warning("Supervisor: pathway lock failed: %s", lock_err)
+                    finally:
+                        db.close()
+
             resolved_doc_type = None
             resolved_pathway = state.get("pathway")
             if classification_dict:

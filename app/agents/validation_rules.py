@@ -102,6 +102,13 @@ def _normalize_contador_puc_codes(contador_output: dict) -> dict:
             if not raw_code:
                 continue
 
+            # Aux codes 7-12 digits are ERP auxiliary subaccounts (e.g.
+            # Bancolombia 11200501 = subcuenta de 1120). Preserve them as-is —
+            # the class_defaults fallback in _resolve_puc_code would assign a
+            # semantically wrong account (e.g. 130505 Clientes for a bank code).
+            if len(raw_code) > 6:
+                continue
+
             resolved_code, resolved_name = _resolve_puc_code(db, raw_code)
             if resolved_code and resolved_code != raw_code:
                 logger.warning(
@@ -120,10 +127,19 @@ def _normalize_contador_puc_codes(contador_output: dict) -> dict:
 
 
 def _missing_puc_codes(contador_output: dict) -> list[str]:
-    """Return missing PUC codes from DB for a contador output payload."""
+    """Return missing PUC codes from DB for a contador output payload.
+
+    Auxiliary subaccounts (7-12 digits, defined by the issuer's ERP) are not
+    expected to be in the official Decreto 2650 catalog. They pass through
+    without triggering PUC_CODES_NOT_FOUND.
+    """
     asientos = contador_output.get("asientos", [])
     codes = sorted(
-        {str(a.get("cuenta_puc", "")).strip() for a in asientos if a.get("cuenta_puc")}
+        {
+            str(a.get("cuenta_puc", "")).strip()
+            for a in asientos
+            if a.get("cuenta_puc") and len(str(a.get("cuenta_puc", "")).strip()) <= 6
+        }
     )
     if not codes:
         return []

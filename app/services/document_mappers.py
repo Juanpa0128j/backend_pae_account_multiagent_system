@@ -182,8 +182,8 @@ def build_structured_transactions(
             periodo_txt = f"Periodo hasta {periodo_fin}"
 
         raw_total = (
-            interpreted.get("total_neto_pagar")
-            or interpreted.get("total_devengado")
+            interpreted.get("total_devengado")
+            or interpreted.get("total_neto_pagar")
             or interpreted.get("total")
         )
         parsed_total = safe_decimal(raw_total)
@@ -205,6 +205,9 @@ def build_structured_transactions(
         if periodo_txt:
             concepto = f"Nomina - {periodo_txt}"
 
+        raw_neto = safe_decimal(interpreted.get("total_neto_pagar"))
+        raw_deducciones = safe_decimal(interpreted.get("total_deducciones"))
+
         return [
             {
                 "fecha": interpreted.get("periodo_fin")
@@ -216,10 +219,26 @@ def build_structured_transactions(
                 "nit_receptor": as_str(
                     interpreted.get("nit_receptor") or receptor.get("nit"), ""
                 ),
+                # total = total_devengado (gross salary expense — use for DR 5105xx)
                 "total": str(parsed_total),
+                # explicit fields so the LLM does not re-derive from employee items
+                "total_devengado": str(parsed_total),
+                "total_neto_pagar": str(raw_neto) if raw_neto is not None else None,
+                "total_deducciones": (
+                    str(raw_deducciones) if raw_deducciones is not None else None
+                ),
                 "concepto": concepto,
                 "descripcion": concepto,
-                "items": sanitize_for_json(interpreted.get("empleados") or []),
+                # Strip neto_pagar from employee rows so the LLM cannot sum
+                # them and use the result as the salary expense debit instead
+                # of total_devengado (gross).
+                "items": sanitize_for_json(
+                    [
+                        {k: v for k, v in (e or {}).items() if k != "neto_pagar"}
+                        for e in (interpreted.get("empleados") or [])
+                        if isinstance(e, dict)
+                    ]
+                ),
             }
         ]
 
@@ -337,5 +356,18 @@ def build_structured_transactions(
         "concepto": derived_concepto,
         "descripcion": derived_concepto,
         "items": sanitize_for_json(items_payload),
+        "totales": sanitize_for_json(totales) if totales else None,
+        "retenciones_aplicadas": sanitize_for_json(
+            interpreted.get("retenciones_aplicadas") or []
+        ),
     }
+
+    # Pre-armed journal entry table (CE, RC, Nómina, manual journal). The
+    # extractor populates ``asientos_documento`` when the source doc prints a
+    # CODIGO CUENTA + DEBITO + CREDITO table. Persist it verbatim so the
+    # downstream contador/tributario passthrough can pick it up.
+    asientos_documento = interpreted.get("asientos_documento")
+    if isinstance(asientos_documento, list) and asientos_documento:
+        tx_data["asientos_documento"] = sanitize_for_json(asientos_documento)
+
     return [tx_data]

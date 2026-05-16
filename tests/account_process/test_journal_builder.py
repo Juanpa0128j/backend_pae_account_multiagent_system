@@ -121,6 +121,23 @@ class TestBuildFromIngest:
         total_credits = sum(Decimal(e["credito"]) for e in entries)
         assert total_debits == total_credits
 
+    def test_build_from_ingest_uses_custom_cuenta_reteica(self) -> None:
+        fecha = datetime(2026, 3, 15, tzinfo=timezone.utc)
+        entries = JournalBuilder.build_from_ingest(
+            fecha=fecha,
+            cuenta_puc="5135",
+            puc_descripcion="Servicios",
+            total=Decimal("1190000"),
+            iva=Decimal("190000"),
+            retefuente=Decimal("47600"),
+            reteica=Decimal("3570"),
+            nit="900123456",
+            descripcion="Consultoria tributaria",
+            cuenta_reteica="2367",
+        )
+        reteica_entry = next(e for e in entries if e["cuenta"] == "2367")
+        assert reteica_entry["credito"] == "3570"
+
     def test_build_from_ingest_raises_on_unbalanced(self) -> None:
         """If iva exceeds total the journal is unbalanced → ValueError."""
         fecha = datetime(2026, 3, 15, tzinfo=timezone.utc)

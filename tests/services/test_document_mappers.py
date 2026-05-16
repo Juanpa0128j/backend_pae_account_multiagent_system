@@ -182,7 +182,22 @@ def test_extracto_bancario_fallback_to_resumen() -> None:
     assert txs[0]["concepto"] == "Extracto bancario"
 
 
-def test_nomina_uses_total_neto_pagar() -> None:
+def test_nomina_uses_total_devengado_as_gross_expense() -> None:
+    """total passed to contador must be gross (devengado) not net, to avoid CR>DR imbalance."""
+    interpreted = {
+        "empresa": {"nit": "789"},
+        "periodo_inicio": "2024-01-01",
+        "periodo_fin": "2024-01-31",
+        "total_devengado": "1166336.07",
+        "total_neto_pagar": "1041789.07",
+    }
+    txs = build_structured_transactions(interpreted, "nomina")
+    assert len(txs) == 1
+    assert txs[0]["total"] == "1166336.07"
+    assert "Periodo" in txs[0]["concepto"]
+
+
+def test_nomina_falls_back_to_neto_when_devengado_missing() -> None:
     interpreted = {
         "empresa": {"nit": "789"},
         "periodo_inicio": "2024-01-01",

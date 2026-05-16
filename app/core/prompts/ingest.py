@@ -49,7 +49,9 @@ def factura_venta(text: str, *, correction_feedback: str | None = None) -> str:
         "datos del receptor (NIT, razón social), forma de pago, medio de pago, plazo en días, "
         "ítems con descripción/cantidad/valor unitario/impuestos, totales desglosados "
         "(subtotal, IVA, retenciones, total a pagar), y retenciones aplicadas "
-        "(retefuente, reteIVA, reteICA)."
+        "(retefuente, reteIVA, reteICA).\n\n"
+        "IMPORTANTE: Si el documento tiene varias páginas, busca las retenciones "
+        "en TODAS las páginas. No te limites a la primera página."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
@@ -63,7 +65,9 @@ def factura_compra(text: str, *, correction_feedback: str | None = None) -> str:
         "(NIT con DV, razón social, régimen), datos de la empresa receptora, condiciones de pago "
         '(texto libre: "30 días netos", "2/10 neto 30", etc.), plazo en días, ítems con detalle '
         "de IVA y retenciones, totales desglosados, y si aplica, indica si es documento soporte "
-        "(adquisición a no obligado a facturar)."
+        "(adquisición a no obligado a facturar).\n\n"
+        "IMPORTANTE: Si el documento tiene varias páginas, busca las retenciones "
+        "en TODAS las páginas. No te limites a la primera página."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
@@ -281,7 +285,16 @@ def comprobante_egreso(text: str, *, correction_feedback: str | None = None) -> 
         "Extrae obligatoriamente: número de comprobante, fecha, beneficiario (NIT y razón social), concepto del pago, "
         "valor bruto, retenciones practicadas (tipo, base, tarifa, valor para retefuente/reteIVA/reteICA), valor neto a pagar, "
         "forma de pago (efectivo/cheque/transferencia), banco y número de cheque si aplica, cuenta contable a debitar, "
-        "y quién aprobó el pago."
+        "y quién aprobó el pago.\n\n"
+        "MUY IMPORTANTE — TABLA DE ASIENTOS PRE-ARMADOS:\n"
+        "Si el comprobante contiene una TABLA CONTABLE (típicamente con encabezados "
+        "`CODIGO CUENTA`, `CONCEPTO`, `TERCERO`, `DEBITO`, `CREDITO` u otros equivalentes), "
+        "extrae CADA FILA en el campo `asientos_documento` como un objeto con las llaves: "
+        "`codigo_cuenta` (el código PUC tal cual aparece, incluso si tiene 7-9 dígitos auxiliares), "
+        "`concepto` (descripción de la fila), `tercero` (nombre o NIT impreso en esa fila), "
+        "`debito` (valor en la columna débito, o 0 si está vacía) y `credito` (valor en la columna crédito, o 0 si está vacía). "
+        "Respeta los valores EXACTOS impresos en el documento — no inventes, no redondees, no agregues impuestos. "
+        "Si el documento NO trae esa tabla, deja `asientos_documento` como null."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
@@ -289,10 +302,22 @@ def comprobante_egreso(text: str, *, correction_feedback: str | None = None) -> 
 def documento_soporte(text: str, *, correction_feedback: str | None = None) -> str:
     instructions = (
         "Eres un experto contable colombiano. Extrae la información de este "
-        "DOCUMENTO SOPORTE EN ADQUISICIONES A NO OBLIGADOS A FACTURAR (art. 1.6.1.4.12 DUR 1625/2016).\n\n"
-        "Extrae obligatoriamente: número de documento, fecha, datos del proveedor no obligado a facturar "
-        "(NIT/cédula, nombre/razón social, régimen), datos de la empresa adquirente, descripción del servicio o bien adquirido, "
-        "ítems con valores e impuestos, totales, y retenciones practicadas."
+        "DOCUMENTO SOPORTE EN ADQUISICIONES A NO OBLIGADOS A FACTURAR "
+        "(art. 1.6.1.4.12 DUR 1625/2016).\n\n"
+        "Extrae obligatoriamente:\n"
+        "  - número de documento, fecha\n"
+        "  - datos del proveedor: NIT/cédula, nombre/razón social, **régimen fiscal y "
+        "responsabilidad tributaria** (campos críticos: indican si es responsable de IVA)\n"
+        "  - datos de la empresa adquirente\n"
+        "  - descripción del servicio o bien adquirido\n"
+        "  - ítems con valores; marca `es_gravado=true` SOLO si el ítem trae IVA explícito en el doc; "
+        "marca `es_gravado=false` (NO null) si el doc declara IVA 0 / base gravable 0 para ese ítem\n"
+        "  - **`totales` completo**: extrae los valores exactos impresos. "
+        "Si el doc dice 'Total IVA: 0,00', poner `totales.total_iva = 0` (NUNCA null cuando el doc lo declara). "
+        "Si el doc dice 'Subtotal base gravable: 0', poner `totales.subtotal_base_gravable = 0`. "
+        "Mismo principio para `totales.subtotal`, `totales.total_factura`, `totales.total_neto`\n"
+        "  - retenciones que el ADQUIRENTE debe practicar (retefuente y reteICA según concepto del servicio). "
+        "Si el doc trae retenciones=0 informativas, poner cada `retencion.valor = 0` explícito."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
@@ -303,7 +328,12 @@ def recibo_caja(text: str, *, correction_feedback: str | None = None) -> str:
         "RECIBO DE CAJA.\n\n"
         "Extrae obligatoriamente: número de recibo, fecha, quién paga (NIT/cédula y nombre), concepto del pago, "
         "valor recibido, forma de pago (efectivo/cheque/transferencia), banco y número de cheque si aplica, "
-        "y cuenta contable a acreditar."
+        "y cuenta contable a acreditar.\n\n"
+        "MUY IMPORTANTE — TABLA DE ASIENTOS PRE-ARMADOS:\n"
+        "Si el recibo contiene una TABLA CONTABLE (`CODIGO CUENTA`, `CONCEPTO`, `TERCERO`, `DEBITO`, `CREDITO` u "
+        "otros equivalentes), extrae CADA FILA en el campo `asientos_documento` con las llaves: "
+        "`codigo_cuenta`, `concepto`, `tercero`, `debito` (0 si vacío), `credito` (0 si vacío). "
+        "Respeta los valores EXACTOS impresos. Si no hay tabla, deja `asientos_documento` como null."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
@@ -316,7 +346,12 @@ def nomina(text: str, *, correction_feedback: str | None = None) -> str:
         "nombre, cédula, cargo, salario básico, días trabajados, total devengado, deducciones (salud empleado 4%, "
         "pensión empleado 4%, retención en la fuente), otras deducciones, total deducciones, neto a pagar. "
         "También extrae los totales consolidados y los aportes patronales (salud 8.5%, pensión 12%, ARL, SENA, ICBF, "
-        "caja de compensación)."
+        "caja de compensación).\n\n"
+        "MUY IMPORTANTE — TABLA DE ASIENTOS PRE-ARMADOS:\n"
+        "Si la nómina contiene una TABLA CONTABLE (encabezados `CODIGO CUENTA`, `CONCEPTO`, `TERCERO`, "
+        "`DEBITO`, `CREDITO` u otros equivalentes), extrae CADA FILA en el campo `asientos_documento` "
+        "con las llaves: `codigo_cuenta`, `concepto`, `tercero`, `debito` (0 si vacío), `credito` (0 si vacío). "
+        "Respeta los valores EXACTOS impresos. Si no hay tabla, deja `asientos_documento` como null."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 

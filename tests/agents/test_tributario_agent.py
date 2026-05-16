@@ -112,7 +112,7 @@ VALID_CONTADOR_OUTPUT_BIENES = {
 }
 
 
-def _make_state(contador_output=None, error=None) -> AgentState:
+def _make_state(contador_output=None, error=None, company_config=None) -> AgentState:
     return {
         "file_path": "",
         "raw_text": "",
@@ -129,7 +129,7 @@ def _make_state(contador_output=None, error=None) -> AgentState:
         "raw_transactions": [],
         "contador_output": contador_output or {},
         "tributario_output": {},
-        "company_config": None,
+        "company_config": company_config,
         "process_id": None,
         "pending_transaction_id": None,
         "current_stage": "classifying_complete",
@@ -273,6 +273,36 @@ def test_reteica_applied(mock_rag_cls, mock_llm_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
+def test_reteica_uses_custom_account_from_company_config(mock_rag_cls, mock_llm_fn):
+    """ReteICA uses cuenta_ica_propio from company_config when provided."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    cfg = {
+        "tasa_reteica": 0.0069,
+        "tasa_retefuente_servicios": 0.11,
+        "tasa_retefuente_bienes": 0.025,
+        "tasa_retefuente_arrendamiento": 0.035,
+        "tasa_iva_general": 0.19,
+        "iva_responsable": True,
+        "tasa_ica": 0.0069,
+        "tasa_renta": 0.35,
+        "cuenta_ica_propio": "2367",
+    }
+    state = _make_state(VALID_CONTADOR_OUTPUT, company_config=cfg)
+    result = tributario_node(state)
+
+    impuestos = result["tributario_output"]["impuestos"]
+    reteica = next(i for i in impuestos if i["tipo_impuesto"] == "reteica")
+    assert reteica["cuenta_puc"] == "2367"
+
+    enriched = result["tributario_output"]["asientos_enriquecidos"]
+    cuentas = [a["cuenta_puc"] for a in enriched]
+    assert "2367" in cuentas, (
+        "Custom ReteICA account 2367 missing from enriched asientos"
+    )
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
 def test_iva_calculated_when_not_in_asientos(mock_rag_cls, mock_llm_fn):
     """IVA 19% calculated when not present in contador asientos."""
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
@@ -301,9 +331,9 @@ def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_llm_fn):
     # contador already covers it. Check that the IVA sub-account (240802) is absent.
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
     new_iva_entries = [a for a in enriquecidos if a.get("cuenta_puc") == "240802"]
-    assert (
-        len(new_iva_entries) == 0
-    ), "Tributario must not add IVA when already in asientos"
+    assert len(new_iva_entries) == 0, (
+        "Tributario must not add IVA when already in asientos"
+    )
 
 
 @patch("app.agents.tributario_agent.get_llm_client")
@@ -587,12 +617,12 @@ def test_ica_applied_for_income_transaction(mock_llm_fn, mock_rag_cls):
     assert Decimal(ica_entry["valor_impuesto"]) > Decimal("0")
 
     puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
-    assert (
-        "511505" in puc_codes
-    ), "Gasto ICA admin (511505) missing from asientos_enriquecidos"
-    assert (
-        "2368" in puc_codes
-    ), "ICA por Pagar (2368) missing from asientos_enriquecidos"
+    assert "511505" in puc_codes, (
+        "Gasto ICA admin (511505) missing from asientos_enriquecidos"
+    )
+    assert "2368" in puc_codes, (
+        "ICA por Pagar (2368) missing from asientos_enriquecidos"
+    )
 
 
 @patch("app.services.db_service.get_company_settings")

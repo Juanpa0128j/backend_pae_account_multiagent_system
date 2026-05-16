@@ -51,7 +51,12 @@ class RawTransactionsList(BaseModel):
 class AsientoContable(BaseModel):
     """Simplified journal entry schema for structured output."""
 
-    cuenta_puc: str = Field(description="PUC account code (1-6 digits)")
+    cuenta_puc: str = Field(
+        description=(
+            "PUC account code (1-12 digits). 4-6 digits = official Decreto 2650 catalog; "
+            "7-12 digits = ERP auxiliary subdivision."
+        )
+    )
     descripcion: Optional[str] = Field(
         default=None, description="Description of the entry"
     )

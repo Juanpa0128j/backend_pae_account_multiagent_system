@@ -1,12 +1,12 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
-from app.models.database import ProcessJob, ProcessStatus
+from app.models.database import IngestJob, ProcessJob, ProcessStatus
 from app.models.schemas import (
     ProcessResponse,
     ProcessStatusResponse,
@@ -14,6 +14,7 @@ from app.models.schemas import (
 )
 from app.models.trace import PipelineTrace
 from app.services import db_service, jobs
+from app.services.nit_utils import normalize_nit
 from app.services.pipeline_trace_service import build_trace
 
 router = APIRouter()
@@ -255,6 +256,55 @@ _ES_STATUS = {
 
 def _enum_value(status) -> str:
     return status.value if hasattr(status, "value") else str(status)
+
+
+@router.get("/pending-review", response_model=list[ProcessStatusResponse])
+async def list_pending_review(
+    request: Request,
+    company_nit: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Return process jobs in pending_audit_review status for a company."""
+    nit = normalize_nit(company_nit)
+    jobs_pending = (
+        db.query(ProcessJob)
+        .join(IngestJob, ProcessJob.ingest_id == IngestJob.id)
+        .filter(
+            IngestJob.company_nit == nit,
+            ProcessJob.status == ProcessStatus.PENDING_AUDIT_REVIEW,
+        )
+        .order_by(ProcessJob.created_at.desc())
+        .all()
+    )
+
+    base_url = str(request.base_url).rstrip("/")
+    result = []
+    for job in jobs_pending:
+        raw_log = job.agent_log or []
+        audit_review = None
+        for entry in reversed(raw_log):
+            if entry.get("event") == "audit_giveup":
+                audit_review = entry.get("details")
+                break
+        result.append(
+            ProcessStatusResponse(
+                process_id=job.id,
+                status=job.status.value,
+                current_stage=job.current_stage,
+                current_agent=job.current_agent,
+                progress=job.progress,
+                error_message=job.error_message,
+                agent_log=raw_log,
+                created_at=job.created_at.isoformat() if job.created_at else None,
+                started_at=job.started_at.isoformat() if job.started_at else None,
+                completed_at=job.completed_at.isoformat() if job.completed_at else None,
+                has_warnings=True,
+                trace_url=f"{base_url}/api/v1/process/{job.id}/trace",
+                audit_review=audit_review,
+            )
+        )
+    return result
 
 
 @router.post("/{process_id}/audit-confirm", status_code=202)
