@@ -285,3 +285,67 @@ async def get_transaction(
         "journal_lines": journal_lines,
         "process_id": process_id,
     }
+
+
+def _delete_transaction_cascade(db: Session, txn_id: str) -> None:
+    """Delete a TransactionPending and all its child records (posted + journal lines)."""
+    from app.models.database import (
+        JournalEntryLine,
+        TransactionPending,
+        TransactionPosted,
+    )
+
+    txn = db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail=f"Transaction {txn_id} not found")
+
+    posted = (
+        db.query(TransactionPosted)
+        .filter(TransactionPosted.transaction_pending_id == txn_id)
+        .first()
+    )
+    if posted:
+        db.query(JournalEntryLine).filter(
+            JournalEntryLine.transaction_posted_id == posted.id
+        ).delete(synchronize_session=False)
+        db.delete(posted)
+
+    db.delete(txn)
+
+
+@router.delete("/{id}", status_code=204)
+async def delete_transaction(
+    id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Delete a single transaction and all its associated records."""
+    _delete_transaction_cascade(db, id)
+    db.commit()
+
+
+@router.delete("/by-ingest/{ingest_id}", status_code=200)
+async def delete_transactions_by_ingest(
+    ingest_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Delete all transactions belonging to a specific ingest document."""
+    from app.models.database import TransactionPending
+
+    txn_ids = [
+        row.id
+        for row in db.query(TransactionPending.id)
+        .filter(TransactionPending.ingest_id == ingest_id)
+        .all()
+    ]
+    if not txn_ids:
+        raise HTTPException(
+            status_code=404, detail=f"No transactions found for ingest {ingest_id}"
+        )
+
+    for txn_id in txn_ids:
+        _delete_transaction_cascade(db, txn_id)
+
+    db.commit()
+    return {"deleted": len(txn_ids)}
