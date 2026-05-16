@@ -47,26 +47,47 @@ services:
       timeout: 5s
       retries: 10
 
+  # KNOWN ISSUE (2026-05-16): hatchet-lite (engine v0.84) + hatchet-sdk 1.33.5
+  # with the postgres-backed queue does not dispatch queued tasks to connected
+  # workers. Events arrive, workflows register, tasks land in v1_queue_item,
+  # workers heartbeat — but the engine never assigns the task. Likely SDK/engine
+  # version mismatch. Keep HATCHET_ENABLED=false in .env until a matched
+  # engine v1.x is available or we move to Hatchet Cloud. The dispatch path,
+  # tests, and worker code itself are exercised by the unit test suite.
   hatchet-engine:
-    image: ghcr.io/hatchet-dev/hatchet/hatchet-engine:v0.53.15
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:latest
     container_name: pae-hatchet-engine
     depends_on:
       hatchet-postgres:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://hatchet:hatchet@hatchet-postgres:5432/hatchet
-      SERVER_GRPC_BIND_ADDRESS: "0.0.0.0"
-      SERVER_GRPC_PORT: "7070"
-      SERVER_GRPC_BROADCAST_ADDRESS: "localhost:7070"
-      SERVER_AUTH_COOKIE_SECRETS: "devdevdevdevdevdevdevdevdevdevde devdevdevdevdevdevdevdevdevdevde"
+      DATABASE_POSTGRES_PORT: "5432"
+      DATABASE_POSTGRES_HOST: "hatchet-postgres"
+      DATABASE_POSTGRES_USERNAME: "hatchet"
+      DATABASE_POSTGRES_PASSWORD: "hatchet"
+      DATABASE_POSTGRES_DB_NAME: "hatchet"
+      SERVER_TASKQUEUE_KIND: "postgres"
+      SERVER_MSGQUEUE_KIND: "postgres"
       SERVER_AUTH_COOKIE_DOMAIN: "localhost"
-      SERVER_URL: "http://localhost:8080"
+      SERVER_AUTH_COOKIE_INSECURE: "true"
+      SERVER_AUTH_SET_EMAIL_VERIFIED: "true"
+      SERVER_GRPC_BIND_ADDRESS: "0.0.0.0"
+      SERVER_GRPC_PORT: "7077"
+      SERVER_GRPC_BROADCAST_ADDRESS: "localhost:7077"
       SERVER_GRPC_INSECURE: "true"
+      SERVER_URL: "http://localhost:8081"
+      LITE_FRONTEND_PORT: "8081"
+      LITE_RUNTIME_PORT: "8888"
     ports:
-      - "7070:7070"
-      - "8080:8080"
+      - "8081:8081"   # frontend UI (static SPA)
+      - "8080:8080"   # REST API (SPA calls this directly)
+      - "7077:7077"   # gRPC for worker SDK
+    volumes:
+      - pae-hatchet-config:/config
 
 volumes:
   pae-pg-dev-data:
     name: pae-pg-dev-data
   pae-hatchet-pg-data:
+  pae-hatchet-config:

@@ -1,4 +1,4 @@
-.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new migrate-check-heads pipeline-test pipeline-setup-nit db-up db-down db-logs db-reset db-shell db-migrate seed dev-bootstrap
+.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new migrate-check-heads pipeline-test pipeline-setup-nit db-up db-down db-logs db-reset db-shell db-migrate seed dev-bootstrap hatchet-up hatchet-down worker
 
 # Default target
 help:
@@ -38,6 +38,11 @@ help:
 	@echo "  db-shell       Open a psql shell on the local DB"
 	@echo "  seed           Seed PUC accounts + RAG normativa (takes 3-5 min)"
 	@echo "  dev-bootstrap  One-shot: db-up + migrate + seed (run from devcontainer)"
+	@echo ""
+	@echo "Hatchet (durable workflows — requires HATCHET_ENABLED=true in .env)"
+	@echo "  hatchet-up     Start hatchet-postgres + hatchet-engine containers"
+	@echo "  hatchet-down   Stop Hatchet containers"
+	@echo "  worker         Run the Hatchet worker process (separate terminal)"
 	@echo ""
 	@echo "Cleanup"
 	@echo "  clean          Remove __pycache__, .pytest_cache, .ruff_cache, *.pyc"
@@ -203,6 +208,20 @@ db-logs:
 
 db-shell:
 	docker compose -f docker-compose.dev.yml exec db psql -U pae -d pae
+
+# ── Hatchet ──────────────────────────────────────────────────────────────────
+
+hatchet-up:
+	docker compose -f docker-compose.dev.yml up -d hatchet-postgres hatchet-engine
+	@echo ">>> Hatchet lite starting. UI: http://localhost:8081 (admin@example.com / Admin123!!)"
+	@echo ">>> Once UI is reachable, create a tenant + API token there, then put it in .env as HATCHET_CLIENT_TOKEN."
+	@echo ">>> Worker gRPC port: 7077 (set HATCHET_CLIENT_TLS_STRATEGY=none in .env for local dev)"
+
+hatchet-down:
+	docker compose -f docker-compose.dev.yml stop hatchet-postgres hatchet-engine 2>/dev/null || true
+
+worker:
+	uv run python -m app.workers.worker
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
