@@ -223,6 +223,7 @@ sessions reproduce the panel.
 | Source document | Target statement | Mode |
 |---|---|---|
 | `balance_general` upload (Vía B) | Balance General | `direct` |
+| `balance_general_anterior` upload (Vía B) | Balance General (período anterior) | `direct` — stored as `statement_type='balance_general'` with prior period; used by NIC 7 indirect method |
 | `estado_resultados` upload (Vía B) | Estado de Resultados | `direct` |
 | `libro_auxiliar` upload (Vía B) | Libro Auxiliar | `direct` |
 | `flujo_de_caja` upload (Vía B) | Flujo de Caja | `direct` |
