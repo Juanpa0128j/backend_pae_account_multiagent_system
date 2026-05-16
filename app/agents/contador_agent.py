@@ -7,6 +7,13 @@ ContadorOutput (partida doble) following Colombian PUC standards.
 
 On retry (when correction_feedback is present), the previous invalid
 output and the schema errors are re-sent to the LLM for self-correction.
+
+Document-specific rules:
+- `recibo_caja`: Uses tipo_recibo signal to choose credit account:
+  * 'cobro_cartera' → 130505 (cuentas por cobrar)
+  * 'venta_directa' → 4xxx (ingresos según actividad)
+  * absent/other → 130505 (default: cobro de cartera)
+  See app/core/prompts/contador.py for full rule.
 """
 
 import logging

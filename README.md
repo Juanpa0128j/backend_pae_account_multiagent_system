@@ -54,6 +54,7 @@ Key features:
 - **Tax declaration drafts**: Pre-filled F300 (IVA), F350 (Retefuente), F110 (Renta PJ),
   and ICA municipal forms generated from journal entries for accountant review before filing.
 - **DIAN 2026 calendar**: Obligation deadlines computed per NIT last digit with 30-day alerts.
+- **Smart document classification**: `recibo_caja` (cash receipts) now captures `tipo_recibo` signal to intelligently route to 130505 (accounts receivable) vs 4xxx (income) accounts; includes referencia_factura linkage for cartera collections.
 
 ---
 
