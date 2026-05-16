@@ -122,9 +122,16 @@ _DOC_GUIDANCE: dict[str, str] = {
         "NO dupliques impuestos de renta — el agente tributario los maneja."
     ),
     "recibo_caja": (
-        "REGLA RECIBO CAJA: Debita banco o caja (111005/110505) por el valor recibido. "
-        "Acredita cuentas por cobrar (130505) si es cobro de cartera, o ingresos (4xxx) si es venta directa. "
-        "NO dupliques impuestos — el agente tributario los maneja."
+        "REGLA RECIBO CAJA: El recibo registra un INGRESO de dinero a caja o banco.\n"
+        "- Debita siempre 111005 (Banco) o 110505 (Caja) por el valor recibido.\n"
+        "- Para el CRÉDITO usa la señal 'tipo_recibo' de la transacción:\n"
+        "    * 'cobro_cartera': acredita 130505 (Clientes / CxC) — cancela una factura previa.\n"
+        "    * 'venta_directa': acredita cuenta de ingreso (4xxx) según actividad económica "
+        "(4135 comercio, 4170 servicios, 4140 arrendamiento).\n"
+        "    * Ausente o 'otro': acredita 130505 por defecto (cobro de cartera es lo más común).\n"
+        "- Si hay 'referencia_factura', inclúyela en descripcion_general del asiento.\n"
+        "- NO dupliques impuestos — el agente tributario los maneja.\n"
+        "- Validación: Σdébitos == Σcréditos == total del recibo."
     ),
     "documento_soporte": (
         "REGLA DOCUMENTO SOPORTE: Similar a factura de compra. "

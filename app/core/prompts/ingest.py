@@ -301,9 +301,22 @@ def recibo_caja(text: str, *, correction_feedback: str | None = None) -> str:
     instructions = (
         "Eres un experto contable colombiano. Extrae la información de este "
         "RECIBO DE CAJA.\n\n"
-        "Extrae obligatoriamente: número de recibo, fecha, quién paga (NIT/cédula y nombre), concepto del pago, "
-        "valor recibido, forma de pago (efectivo/cheque/transferencia), banco y número de cheque si aplica, "
-        "y cuenta contable a acreditar."
+        "Extrae OBLIGATORIAMENTE:\n"
+        "- numero_recibo: número del recibo\n"
+        "- fecha: fecha del recibo (YYYY-MM-DD)\n"
+        "- recibido_de: quién paga — su nombre (razon_social) y NIT/cédula\n"
+        "- concepto: descripción del motivo del pago\n"
+        "- valor: monto recibido en pesos colombianos\n"
+        "- forma_pago: efectivo | cheque | transferencia | otro\n"
+        "- banco: nombre del banco (si aplica)\n"
+        "- numero_cheque: número del cheque (si aplica)\n"
+        "- tipo_recibo: indica 'cobro_cartera' si el pago cancela una factura "
+        "previa, 'venta_directa' si es pago de una venta sin factura previa, "
+        "o 'otro' si no aplica ninguno\n"
+        "- referencia_factura: número o referencia de la factura que se está "
+        "cancelando (solo si tipo_recibo == 'cobro_cartera')\n\n"
+        "NO extraigas ni propongas cuentas contables — eso lo determina el "
+        "sistema por separado."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 

@@ -268,6 +268,53 @@ def build_structured_transactions(
             }
         ]
 
+    if doc_type == "recibo_caja":
+        recibido_de = interpreted.get("recibido_de") or {}
+        numero_recibo = as_str(interpreted.get("numero_recibo"), "").strip()
+        raw_total = interpreted.get("valor") or interpreted.get("total")
+        parsed_total = safe_decimal(raw_total) or Decimal("0")
+
+        base_concepto = as_str(interpreted.get("concepto"), "").strip()
+        if not base_concepto:
+            base_concepto = "Recibo de caja"
+        if numero_recibo:
+            concepto = f"Recibo de caja {numero_recibo}"
+        else:
+            concepto = base_concepto
+
+        referencia_factura = as_str(interpreted.get("referencia_factura"), "").strip()
+        if referencia_factura:
+            concepto = f"{concepto} (Fact. {referencia_factura})"
+
+        tipo_recibo = as_str(interpreted.get("tipo_recibo"), "").strip()
+
+        return [
+            {
+                "fecha": interpreted.get("fecha"),
+                "nit_emisor": as_str(
+                    recibido_de.get("nit") or interpreted.get("nit_emisor"), ""
+                ),
+                "nit_receptor": "",
+                "total": str(parsed_total),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "tipo_recibo": tipo_recibo,
+                "referencia_factura": referencia_factura,
+                "items": sanitize_for_json(
+                    [
+                        {
+                            "numero_recibo": interpreted.get("numero_recibo"),
+                            "recibido_de": sanitize_for_json(recibido_de),
+                            "forma_pago": interpreted.get("forma_pago"),
+                            "banco": interpreted.get("banco"),
+                            "numero_cheque": interpreted.get("numero_cheque"),
+                            "elaborado_por": interpreted.get("elaborado_por"),
+                        }
+                    ]
+                ),
+            }
+        ]
+
     # --- Generic fallback mapping ---
     raw_total = (
         # Invoice-like schemas

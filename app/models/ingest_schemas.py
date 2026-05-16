@@ -1239,6 +1239,12 @@ class ReciboCajaContent(ContentBase):
     numero_recibo: Optional[str] = Field(None)
     fecha: Optional[str] = Field(None, description="YYYY-MM-DD")
     recibido_de: Optional[NitEntidad] = Field(None, description="Payer")
+    tipo_recibo: Optional[str] = Field(
+        None, description="cobro_cartera | venta_directa | otro"
+    )
+    referencia_factura: Optional[str] = Field(
+        None, description="Número de factura original si es cobro de cartera"
+    )
     concepto: Optional[str] = Field(None)
     valor: Optional[Decimal] = Field(None)
     forma_pago: Optional[str] = Field(
