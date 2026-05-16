@@ -221,6 +221,18 @@ async def get_transaction(
         .first()
     )
 
+    from app.models.database import ProcessJob
+
+    process_id: str | None = None
+    if txn.ingest_id:
+        pj = (
+            db.query(ProcessJob)
+            .filter(ProcessJob.ingest_id == txn.ingest_id)
+            .order_by(ProcessJob.created_at.desc())
+            .first()
+        )
+        process_id = pj.id if pj else None
+
     journal_lines: list[dict] = []
     if posted is not None:
         lines = (
@@ -271,4 +283,5 @@ async def get_transaction(
         "raw_data": txn.raw_data,
         "posted": posted_payload,
         "journal_lines": journal_lines,
+        "process_id": process_id,
     }
