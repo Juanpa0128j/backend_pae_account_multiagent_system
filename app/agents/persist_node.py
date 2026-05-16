@@ -995,11 +995,18 @@ def _persist_financial_statement(state: AgentState) -> None:
             )
             period_start = period_end
 
+        # balance_general_anterior is the same statement type in DB — it's just a
+        # balance_general from the prior period. The "anterior" label only exists
+        # in the upload UI to guide users; _load_prior_balance finds it by period_end.
+        persisted_type = (
+            "balance_general" if doc_type == "balance_general_anterior" else doc_type
+        )
+
         # Create FinancialStatement record
         stmt = db_service.create_financial_statement(
             db,
             ingest_id=ingest_id,
-            statement_type=doc_type,
+            statement_type=persisted_type,
             period_start=period_start,
             period_end=period_end,
             entity_nit=company_nit,
@@ -1019,7 +1026,7 @@ def _persist_financial_statement(state: AgentState) -> None:
         state["db_result"] = {
             "ingest_id": ingest_id,
             "financial_statement_id": stmt.id,
-            "statement_type": doc_type,
+            "statement_type": persisted_type,
             "pathway": "work_with_existing",
         }
 
