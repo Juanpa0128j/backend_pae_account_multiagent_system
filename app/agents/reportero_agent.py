@@ -18,6 +18,12 @@ Filter params (state["report_params"]):
   - start_date: ISO date string "YYYY-MM-DD" (optional)
   - end_date:   ISO date string "YYYY-MM-DD" (optional)
   - include_analysis: bool (optional, adds LLM narrative to standard reports)
+
+PDF export improvements:
+  - Account descriptions are word-wrapped using ReportLab Paragraph objects to prevent
+    text overflow in table cells (common with long Colombian account names).
+  - Column widths optimized for full page width with proper text wrapping.
+  See app/services/report_export_service.py for implementation details.
 """
 
 import logging

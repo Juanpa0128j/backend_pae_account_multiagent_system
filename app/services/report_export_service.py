@@ -39,7 +39,7 @@ def _get_cuenta_nombre(cuenta: Dict[str, Any]) -> str:
 
 
 def _build_table_2cols(data, total_row_color: str):
-    table = Table(data, colWidths=[3.5 * inch, 2 * inch])
+    table = Table(data, colWidths=[5.0 * inch, 2.0 * inch])
     table.setStyle(
         TableStyle(
             [
@@ -65,7 +65,8 @@ def _build_table_2cols(data, total_row_color: str):
 
 
 def _build_table_3cols(data, total_row_color: str):
-    table = Table(data, colWidths=[1.2 * inch, 2.3 * inch, 2 * inch])
+    # 7.0 in available (letter - 2×0.75 margins): PUC=1.1, Desc=3.8, Value=2.1
+    table = Table(data, colWidths=[1.1 * inch, 3.8 * inch, 2.1 * inch])
     table.setStyle(
         TableStyle(
             [
@@ -93,6 +94,22 @@ def _build_table_3cols(data, total_row_color: str):
 def _escape_paragraph_text(value: Any) -> str:
     """Escape dynamic text before interpolation into reportlab Paragraph markup."""
     return escape(str(value))
+
+
+# Reusable cell style — Paragraph wraps text; plain strings in ReportLab tables never do.
+_CELL_STYLE = ParagraphStyle(
+    "TableCell",
+    fontName="Helvetica",
+    fontSize=9,
+    leading=11,
+    spaceAfter=0,
+    spaceBefore=0,
+)
+
+
+def _cell(text: Any) -> Paragraph:
+    """Wrap cell content in a Paragraph so long text wraps within its column."""
+    return Paragraph(_escape_paragraph_text(text), _CELL_STYLE)
 
 
 class BalanceSheetExporter:
@@ -164,7 +181,7 @@ class BalanceSheetExporter:
                 assets_data.append(
                     [
                         _get_cuenta_codigo(cuenta),
-                        _get_cuenta_nombre(cuenta),
+                        _cell(_get_cuenta_nombre(cuenta)),
                         _format_currency(float(cuenta.get("saldo", 0))),
                     ]
                 )
@@ -187,7 +204,7 @@ class BalanceSheetExporter:
                 liab_data.append(
                     [
                         _get_cuenta_codigo(cuenta),
-                        _get_cuenta_nombre(cuenta),
+                        _cell(_get_cuenta_nombre(cuenta)),
                         _format_currency(float(cuenta.get("saldo", 0))),
                     ]
                 )
@@ -210,7 +227,7 @@ class BalanceSheetExporter:
                 equity_data.append(
                     [
                         _get_cuenta_codigo(cuenta),
-                        _get_cuenta_nombre(cuenta),
+                        _cell(_get_cuenta_nombre(cuenta)),
                         _format_currency(float(cuenta.get("saldo", 0))),
                     ]
                 )
@@ -218,7 +235,7 @@ class BalanceSheetExporter:
             equity_data.append(
                 ["", "TOTAL PATRIMONIO", _format_currency(patrimonio + utilidad)]
             )
-            table = Table(equity_data, colWidths=[1.2 * inch, 2.3 * inch, 2 * inch])
+            table = Table(equity_data, colWidths=[1.1 * inch, 3.8 * inch, 2.1 * inch])
             table.setStyle(
                 TableStyle(
                     [
@@ -414,7 +431,7 @@ class PnLExporter:
             pct = (saldo / ingresos_total * 100) if ingresos_total > 0 else 0
             ingresos_data.append(
                 [
-                    f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}",
+                    _cell(f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}"),
                     _format_currency(saldo),
                     f"{pct:.1f}%",
                 ]
@@ -425,7 +442,7 @@ class PnLExporter:
         )
 
         ingresos_table = Table(
-            ingresos_data, colWidths=[3 * inch, 1.8 * inch, 1.2 * inch]
+            ingresos_data, colWidths=[4.0 * inch, 1.7 * inch, 1.3 * inch]
         )
         ingresos_table.setStyle(
             TableStyle(
@@ -450,13 +467,13 @@ class PnLExporter:
         for cuenta in report.get("costo_ventas", []):
             costo_data.append(
                 [
-                    f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}",
+                    _cell(f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}"),
                     _format_currency(float(cuenta.get("saldo", 0))),
                 ]
             )
         costo_data.append(["TOTAL COSTO DE VENTAS", _format_currency(costo_total)])
 
-        costo_table = Table(costo_data, colWidths=[4 * inch, 2 * inch])
+        costo_table = Table(costo_data, colWidths=[5.0 * inch, 2.0 * inch])
         costo_table.setStyle(
             TableStyle(
                 [

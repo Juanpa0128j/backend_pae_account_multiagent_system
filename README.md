@@ -54,6 +54,7 @@ Key features:
 - **Tax declaration drafts**: Pre-filled F300 (IVA), F350 (Retefuente), F110 (Renta PJ),
   and ICA municipal forms generated from journal entries for accountant review before filing.
 - **DIAN 2026 calendar**: Obligation deadlines computed per NIT last digit with 30-day alerts.
+- **PDF rendering improvements**: Word-wrapped account descriptions in financial statements using ReportLab Paragraph; prevents text overflow in table cells for long Colombian account names.
 
 ---
 
