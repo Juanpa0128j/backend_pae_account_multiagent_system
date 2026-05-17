@@ -315,8 +315,13 @@ def recibo_caja(text: str, *, correction_feedback: str | None = None) -> str:
         "o 'otro' si no aplica ninguno\n"
         "- referencia_factura: número o referencia de la factura que se está "
         "cancelando (solo si tipo_recibo == 'cobro_cartera')\n\n"
-        "NO extraigas ni propongas cuentas contables — eso lo determina el "
-        "sistema por separado."
+        "MUY IMPORTANTE — TABLA DE ASIENTOS PRE-ARMADOS:\n"
+        "Si el recibo contiene una TABLA CONTABLE (`CODIGO CUENTA`, `CONCEPTO`, `TERCERO`, `DEBITO`, `CREDITO` u "
+        "otros equivalentes), extrae CADA FILA en el campo `asientos_documento` con las llaves: "
+        "`codigo_cuenta`, `concepto`, `tercero`, `debito` (0 si vacío), `credito` (0 si vacío). "
+        "Respeta los valores EXACTOS impresos. Si no hay tabla, deja `asientos_documento` como null.\n\n"
+        "NO extraigas ni propongas cuentas contables basado en lógica propia — eso lo determina el "
+        "sistema por separado. Solo extrae lo que está impreso."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
