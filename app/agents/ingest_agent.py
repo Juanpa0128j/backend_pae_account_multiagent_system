@@ -145,6 +145,7 @@ _EXTRACT_METHOD_MAP: dict[str, str] = {
     "auxiliar_iva": "extract_auxiliar_iva",
     # Financial statements (Vía B)
     "balance_general": "extract_balance_general",
+    "balance_general_anterior": "extract_balance_general",
     "estado_resultados": "extract_estado_resultados",
     "libro_auxiliar": "extract_auxiliary_ledger",
     "libro_diario": "extract_libro_diario",
@@ -164,6 +165,7 @@ _EXTRACT_METHOD_MAP: dict[str, str] = {
 
 _VIA_B_STATEMENT_TYPES: set[str] = {
     "balance_general",
+    "balance_general_anterior",
     "estado_resultados",
     "libro_auxiliar",
     "libro_diario",

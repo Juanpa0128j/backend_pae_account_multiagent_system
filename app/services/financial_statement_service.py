@@ -19,6 +19,7 @@ _log = logging.getLogger(__name__)
 
 _REQUIRED_DERIVATION_INPUTS = ("balance_general", "estado_resultados", "libro_auxiliar")
 _DERIVED_TARGETS = ("flujo_de_caja", "cambios_patrimonio", "notas_estados_financieros")
+DERIVED_TARGETS = _DERIVED_TARGETS  # public alias for inter-module use
 _FIRST_LEVEL_TYPES = (
     "balance_general",
     "estado_resultados",

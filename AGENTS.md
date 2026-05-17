@@ -20,7 +20,7 @@ When working on a feature, check this table first to understand what's expected,
 | Capability | Description | Status |
 |---|---|---|
 | **Ingesta — Vía A** | PDF/XLSX/XML source docs → Gemini extraction → journal entries | ✅ Implemented |
-| **Ingesta — Vía B** | Pre-existing financial statements → stored directly for reporting | ✅ Implemented |
+| **Ingesta — Vía B** | Pre-existing financial statements (up to 4 per period: BG, ER, LA + optional BG anterior for NIC 7) → stored as `FinancialStatement` | ✅ Implemented |
 | **Clasificación de documentos** | LLM classifies 13+ Colombian doc types | ✅ Implemented |
 | **Contador** | PUC account classification per transaction | ✅ Implemented |
 | **Tributario** | IVA, retención en la fuente, ICA calculations | ✅ Implemented |
@@ -127,7 +127,7 @@ FastAPI (main.py) → /api/v1/* routers
 ### Ingesta: Two Pathways
 
 - **Vía A (`build_from_scratch`):** Source documents (facturas, extractos, declaraciones) → full accounting pipeline
-- **Vía B (`work_with_existing`):** Pre-existing financial statements (balance_general, estado_resultados, libro_auxiliar, flujo_de_caja, cambios_patrimonio, notas_estados_financieros, libro_diario) → routed through ingesta for typed extraction, then stored as `FinancialStatement` in DB. `.xlsx` files classified as extracto_bancario are forced to Vía A.
+- **Vía B (`work_with_existing`):** Pre-existing financial statements (balance_general, **balance_general_anterior**, estado_resultados, libro_auxiliar, flujo_de_caja, cambios_patrimonio, notas_estados_financieros, libro_diario) → routed through ingesta for typed extraction, then stored as `FinancialStatement` in DB. `balance_general_anterior` is remapped to `statement_type='balance_general'` at persist time (distinguished by period); `_load_prior_balance` in `financial_statement_service.py` finds it via `period_end < period_start`. `.xlsx` files classified as extracto_bancario are forced to Vía A.
 
 ### Supported Document Formats
 

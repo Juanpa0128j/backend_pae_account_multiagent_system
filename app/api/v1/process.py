@@ -259,19 +259,23 @@ def _enum_value(status) -> str:
 
 
 @router.get("/pending-review", response_model=list[ProcessStatusResponse])
-async def list_pending_review(
+async def list_pending_review_jobs(
     request: Request,
-    company_nit: str = Query(...),
+    company_nit: str = Query(..., description="Company NIT"),
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Return process jobs in pending_audit_review status for a company."""
-    nit = normalize_nit(company_nit)
-    jobs_pending = (
+    """Return all process jobs awaiting HITL audit review for a company."""
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    jobs_q = (
         db.query(ProcessJob)
         .join(IngestJob, ProcessJob.ingest_id == IngestJob.id)
         .filter(
-            IngestJob.company_nit == nit,
+            IngestJob.company_nit == normalized_nit,
             ProcessJob.status == ProcessStatus.PENDING_AUDIT_REVIEW,
         )
         .order_by(ProcessJob.created_at.desc())
@@ -279,32 +283,39 @@ async def list_pending_review(
     )
 
     base_url = str(request.base_url).rstrip("/")
-    result = []
-    for job in jobs_pending:
-        raw_log = job.agent_log or []
+    results = []
+    for pj in jobs_q:
+        raw_log = pj.agent_log or []
+        has_warnings = any(
+            e.get("event") in {"audit_finding", "warning", "non_fatal_error"}
+            for e in raw_log
+        )
         audit_review = None
         for entry in reversed(raw_log):
             if entry.get("event") == "audit_giveup":
                 audit_review = entry.get("details")
                 break
-        result.append(
+        results.append(
             ProcessStatusResponse(
-                process_id=job.id,
-                status=job.status.value,
-                current_stage=job.current_stage,
-                current_agent=job.current_agent,
-                progress=job.progress,
-                error_message=job.error_message,
+                process_id=pj.id,
+                status=pj.status.value,
+                current_stage=pj.current_stage,
+                current_agent=pj.current_agent,
+                progress=pj.progress,
+                error_message=pj.error_message,
+                error_category=None,
+                error_code=None,
+                remediation=None,
                 agent_log=raw_log,
-                created_at=job.created_at.isoformat() if job.created_at else None,
-                started_at=job.started_at.isoformat() if job.started_at else None,
-                completed_at=job.completed_at.isoformat() if job.completed_at else None,
-                has_warnings=True,
-                trace_url=f"{base_url}/api/v1/process/{job.id}/trace",
+                created_at=pj.created_at.isoformat() if pj.created_at else None,
+                started_at=pj.started_at.isoformat() if pj.started_at else None,
+                completed_at=pj.completed_at.isoformat() if pj.completed_at else None,
+                has_warnings=has_warnings,
+                trace_url=f"{base_url}/api/v1/process/{pj.id}/trace",
                 audit_review=audit_review,
             )
         )
-    return result
+    return results
 
 
 @router.post("/{process_id}/audit-confirm", status_code=202)

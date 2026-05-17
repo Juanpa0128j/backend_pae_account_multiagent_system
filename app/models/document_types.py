@@ -47,6 +47,7 @@ class DocumentType(str, Enum):
 
     # Vía B — Existing financial statements (use for derived reports)
     BALANCE_GENERAL = "balance_general"
+    BALANCE_GENERAL_ANTERIOR = "balance_general_anterior"
     ESTADO_RESULTADOS = "estado_resultados"
     LIBRO_AUXILIAR = "libro_auxiliar"
     FLUJO_DE_CAJA = "flujo_de_caja"
@@ -91,6 +92,7 @@ PATHWAY_MAP: dict[DocumentType, IngestPathway] = {
     DocumentType.RECIBO_PAGO_IMPUESTO: IngestPathway.BUILD_FROM_SCRATCH,
     # Vía B — existing financial statements
     DocumentType.BALANCE_GENERAL: IngestPathway.WORK_WITH_EXISTING,
+    DocumentType.BALANCE_GENERAL_ANTERIOR: IngestPathway.WORK_WITH_EXISTING,
     DocumentType.ESTADO_RESULTADOS: IngestPathway.WORK_WITH_EXISTING,
     DocumentType.LIBRO_AUXILIAR: IngestPathway.WORK_WITH_EXISTING,
     DocumentType.FLUJO_DE_CAJA: IngestPathway.WORK_WITH_EXISTING,
@@ -130,6 +132,7 @@ DOCUMENT_TYPE_LABELS: dict[DocumentType, str] = {
     DocumentType.PLANILLA_SEGURIDAD_SOCIAL: "Planilla seguridad social",
     DocumentType.RECIBO_PAGO_IMPUESTO: "Recibo de pago de impuesto",
     DocumentType.BALANCE_GENERAL: "Balance general",
+    DocumentType.BALANCE_GENERAL_ANTERIOR: "Balance general anterior",
     DocumentType.ESTADO_RESULTADOS: "Estado de resultados",
     DocumentType.LIBRO_AUXILIAR: "Libro auxiliar",
     DocumentType.FLUJO_DE_CAJA: "Flujo de caja",
@@ -156,6 +159,7 @@ def list_document_type_options() -> list[dict[str, str]]:
 _VIA_B_TYPES: frozenset[DocumentType] = frozenset(
     {
         DocumentType.BALANCE_GENERAL,
+        DocumentType.BALANCE_GENERAL_ANTERIOR,
         DocumentType.ESTADO_RESULTADOS,
         DocumentType.LIBRO_AUXILIAR,
     }
