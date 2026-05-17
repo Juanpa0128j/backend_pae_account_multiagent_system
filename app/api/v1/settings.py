@@ -61,6 +61,14 @@ def list_companies(
     return db_service.list_companies(db)
 
 
+@router.get("/municipios", response_model=list[str])
+def list_municipios(
+    db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)
+):
+    """Return sorted municipios that have ReteICA tariff data."""
+    return db_service.get_municipios(db)
+
+
 @router.delete("/company/{nit}", status_code=204)
 def delete_company(
     nit: str,

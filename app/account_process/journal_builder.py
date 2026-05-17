@@ -69,6 +69,7 @@ class JournalBuilder:
         nit: str,
         descripcion: str,
         doc_type: str = "factura_compra",
+        cuenta_reteica: str = CUENTA_RETEICA_POR_PAGAR,
     ) -> List[JournalEntry]:
         """Build journal entries for Via A (ingest path).
 
@@ -140,6 +141,7 @@ class JournalBuilder:
             reteica=reteica,
             nit=nit,
             descripcion=descripcion,
+            cuenta_reteica=cuenta_reteica,
         )
 
     @staticmethod
@@ -154,6 +156,7 @@ class JournalBuilder:
         reteica: Decimal,
         nit: str,
         descripcion: str,
+        cuenta_reteica: str = CUENTA_RETEICA_POR_PAGAR,
     ) -> List[JournalEntry]:
         entries: List[JournalEntry] = []
         base = total - iva
@@ -221,7 +224,7 @@ class JournalBuilder:
             entries.append(
                 {
                     "fecha": fecha_iso,
-                    "cuenta": CUENTA_RETEICA_POR_PAGAR,
+                    "cuenta": cuenta_reteica,
                     "descripcion": "Retencion ICA por pagar",
                     "tercero_nit": nit,
                     "detalle": f"ReteICA {descripcion}",

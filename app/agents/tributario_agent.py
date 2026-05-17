@@ -96,7 +96,7 @@ _VENTA_DOC_TYPES = frozenset(
 )
 
 
-def _tax_accounts_for(doc_type: str) -> dict:
+def _tax_accounts_for(doc_type: str, cuenta_ica_propio: str | None = None) -> dict:
     """Return PUC accounts + movement direction for the given doc_type.
 
     For VENTA (the company is the seller):
@@ -110,6 +110,7 @@ def _tax_accounts_for(doc_type: str) -> dict:
       - Retenciones practicadas a proveedores son CRÉDITOS a 2365/2368 (pasivo a DIAN).
       - ICA gasto/por_pagar applied when the line has ingreso credits (legacy).
     """
+    ica_pasivo = cuenta_ica_propio or CUENTA_RETEICA
     if doc_type in _VENTA_DOC_TYPES:
         return {
             "iva": (CUENTA_IVA_GENERADO, "credito"),
@@ -131,13 +132,13 @@ def _tax_accounts_for(doc_type: str) -> dict:
         "retefuente": (CUENTA_RETEFUENTE, "credito"),
         "retefuente_nombre": "Retención en la Fuente por Pagar",
         "retefuente_detalle": "Retención en la fuente por pagar — Artículo 365 ET",
-        "reteica": (CUENTA_RETEICA, "credito"),
+        "reteica": (ica_pasivo, "credito"),
         "reteica_nombre": "Retención ICA por Pagar",
         "reteica_detalle": "Retención ICA por pagar — Decreto 2048/1992",
         "ica_gasto": ("511505", "debito"),
         "ica_gasto_nombre": "Gasto ICA",
         "ica_gasto_detalle": "Gasto ICA — Ley 14/1983, Art. 342 Ley 1955/2019",
-        "ica_por_pagar": ("2368", "credito"),
+        "ica_por_pagar": (ica_pasivo, "credito"),
         "ica_por_pagar_nombre": "ICA por Pagar",
         "ica_por_pagar_detalle": "ICA por Pagar — Decreto 1333/1986",
     }
@@ -417,10 +418,26 @@ def tributario_node(state: AgentState) -> AgentState:
     # Tax-payment declarations: the journal entries already ARE the tax settlement.
     # Applying IVA/retefuente/reteICA on top would double-count.
     _TAX_DECLARATION_TYPES = {
+        # Tax declarations / payments — contador already books the tax event
         "declaracion_iva",
         "declaracion_ica",
         "autorretencion_ica",
         "recibo_pago_impuesto",
+        "declaracion_reteica",
+        "anexo_tributario",
+        "auxiliar_impuesto",
+        "auxiliar_iva",
+        "anexo_iva",
+        # Payroll — no IVA; employee retenciones handled in salary journal entries
+        "nomina",
+        "planilla_seguridad_social",
+        # Payment / reconciliation documents — taxes already on the source invoice
+        "comprobante_egreso",
+        "conciliacion_bancaria",
+        # Bank statements — movements already occurred; no new tax events
+        "extracto_bancario",
+        # Journal book — entries pre-exist; tributario must not double-apply taxes
+        "libro_diario",
     }
     doc_type = (state.get("document_classification") or {}).get("doc_type", "")
     if doc_type in _TAX_DECLARATION_TYPES:
@@ -455,9 +472,44 @@ def tributario_node(state: AgentState) -> AgentState:
         )
         return state
 
+    # Pre-armed asiento passthrough: when the source document already carries
+    # a fully booked journal entry (CE, RC, payroll voucher, manual journal),
+    # the contador node passed those lines through verbatim. The tributario
+    # must NOT inject IVA / retenciones / ICA on top — the issuer already
+    # recorded what they intended. We only honour the contador output here.
+    if (state.get("source_document") or {}).get("asientos_documento"):
+        documento_ref = contador_output.get(
+            "descripcion_general", doc_type or "sin referencia"
+        )[:100]
+        state["tributario_output"] = {
+            "fecha_analisis": date.today().isoformat(),
+            "documento_referencia": documento_ref,
+            "aplica_impuestos": False,
+            "impuestos": [],
+            "total_impuestos": "0.00",
+            "observaciones": (
+                "El documento trae un asiento contable pre-armado por el contador "
+                "emisor; no se inyectan impuestos adicionales."
+            ),
+            "referencias_legales": [],
+            "asientos_enriquecidos": (state.get("contador_output") or {}).get(
+                "asientos", []
+            ),
+        }
+        state["interpreted_data"] = state["tributario_output"]
+        state["current_agent"] = "tributario"
+        state["current_stage"] = "tributario_complete"
+        append_log(
+            state,
+            "tributario",
+            "prearmed_passthrough",
+            {"doc_type": doc_type, "lines": len(contador_output.get("asientos", []))},
+        )
+        logger.info("Tributario: pre-armed asiento detected, skip IVA/retenciones/ICA")
+        return state
+
     # Route tax accounts (IVA, retenciones, ICA) by document direction (venta vs compra-like).
     is_venta = doc_type in _VENTA_DOC_TYPES
-    accounts = _tax_accounts_for(doc_type)
     logger.info(
         "Tributario: doc_type=%s → routing %s",
         doc_type or "<empty>",
@@ -545,6 +597,14 @@ def tributario_node(state: AgentState) -> AgentState:
                                 "iva_responsable": row.iva_responsable,
                                 "tasa_ica": float(row.tasa_ica),
                                 "tasa_renta": float(row.tasa_renta),
+                                "cuenta_ica_propio": (
+                                    row.cuenta_ica_propio
+                                    if isinstance(
+                                        getattr(row, "cuenta_ica_propio", None),
+                                        str,
+                                    )
+                                    else None
+                                ),
                             }
                             logger.info(
                                 f"Tributario: loaded company settings for NIT {company_nit}"
@@ -636,6 +696,10 @@ def tributario_node(state: AgentState) -> AgentState:
             if company_config
             else TASA_ICA_DEFAULT
         )
+        cuenta_ica_propio = (
+            company_config.get("cuenta_ica_propio") if company_config else None
+        )
+        accounts = _tax_accounts_for(doc_type, cuenta_ica_propio=cuenta_ica_propio)
 
         # ------------------------------------------------------------------
         # Step 2 — Determine transaction type from PUC codes
@@ -712,9 +776,7 @@ def tributario_node(state: AgentState) -> AgentState:
         elif not iva_responsable:
             iva_val = Decimal("0.00")
             logger.info("Tributario: IVA skipped — company is not IVA responsable")
-        elif (
-            source_taxes.get("total_iva") is not None and source_taxes["total_iva"] > 0
-        ):
+        elif source_taxes.get("total_iva") is not None:
             iva_val = source_taxes["total_iva"].quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )

@@ -55,3 +55,4 @@ test_*.pdf
 
 # Terminal Paste Image folder
 .cp-images/
+.worktrees/

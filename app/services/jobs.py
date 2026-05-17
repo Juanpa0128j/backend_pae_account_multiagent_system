@@ -231,6 +231,13 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
             return
 
         pending_id = str(staged_pending[0].id)
+
+        # Mark staged transactions as PROCESSING so the UI can surface them
+        for tx in staged_pending:
+            db_service.update_transaction_status(
+                db, str(tx.id), TransactionStatus.PROCESSING, commit=False
+            )
+        db.commit()
         # Fallback: documents like CEs/nóminas/extractos have no nit_receptor
         # in their content. Use the company_nit captured at upload time so
         # downstream agents (tributario) can resolve company tax settings.

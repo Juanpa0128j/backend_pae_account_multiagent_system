@@ -247,19 +247,37 @@ async def get_books(
         return db_service.get_general_ledger(db, fi, ff, normalized_company_nit)
 
     elif tipo == "auxiliar":
-        if not cuenta_puc:
-            return {"error": "cuenta_puc is required for auxiliar"}
-        lines = db_service.get_subsidiary_journal(
-            db, cuenta_puc, fi, ff, normalized_company_nit
-        )
+        # When the caller passes a specific cuenta_puc the response is the
+        # classic auxiliary listing (movements of a single account ordered by
+        # date). When they omit it we surface ALL journal lines so the
+        # /books/auxiliar page is never empty even before the user picks a
+        # code from the filter dropdown.
+        if cuenta_puc:
+            lines = db_service.get_subsidiary_journal(
+                db, cuenta_puc, fi, ff, normalized_company_nit
+            )
+            return [
+                {
+                    "fecha": str(line.fecha) if line.fecha else "",
+                    "comprobante": line.comprobante or "",
+                    "cuenta": line.cuenta_puc,
+                    "tercero_nit": line.tercero_nit or "",
+                    "descripcion": line.descripcion or "",
+                    "debito": float(line.debito),
+                    "credito": float(line.credito),
+                }
+                for line in lines
+            ]
+        lines = db_service.get_daily_journal(db, fi, ff, normalized_company_nit)
         return [
             {
                 "fecha": str(line.fecha) if line.fecha else "",
                 "comprobante": line.comprobante or "",
-                "tercero_nit": line.tercero_nit or "",
-                "descripcion": line.descripcion or "",
-                "debito": float(line.debito),
-                "credito": float(line.credito),
+                "cuenta": line.cuenta_puc,
+                "tercero_nit": getattr(line, "tercero_nit", "") or "",
+                "descripcion": line.descripcion or line.cuenta_nombre or "",
+                "debito": float(line.debito or 0),
+                "credito": float(line.credito or 0),
             }
             for line in lines
         ]

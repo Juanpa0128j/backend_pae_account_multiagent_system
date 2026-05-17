@@ -80,6 +80,39 @@ def _extract_giveup_from_log(log_entries: list[dict]) -> Optional[GiveUpRecord]:
     return None
 
 
+def _extract_puc_errors_from_log(log_entries: list[dict]) -> list[AuditFinding]:
+    """Extract PUC not-found errors from node_error entries and convert to AuditFinding blockers."""
+    from app.models.audit import AuditTarget, Severity
+
+    findings: list[AuditFinding] = []
+
+    for entry in log_entries:
+        if entry.get("event") != "node_error":
+            continue
+
+        details = entry.get("details", {})
+        error_msg = details.get("error", "")
+
+        # Detect PUC error pattern: "PUC code {X} not found"
+        if "PUC code" in error_msg and "not found" in error_msg:
+            msg, action = get_message("PERS-ACCOUNT-NOT-FOUND", {})
+            findings.append(
+                AuditFinding(
+                    target=AuditTarget.PERSIST,
+                    rule_id="PERS-ACCOUNT-NOT-FOUND",
+                    severity=Severity.BLOCKER,
+                    fixable=False,
+                    responsible_agent="db_persist",
+                    technical_message=error_msg,
+                    user_message_es=msg,
+                    suggested_action_es=action,
+                    evidence={"process_id": entry.get("process_id")},
+                )
+            )
+
+    return findings
+
+
 def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
     """Build a PipelineTrace from a ProcessJob's agent_log.
 
@@ -110,9 +143,14 @@ def build_trace(process_id: str, db: Session) -> Optional[PipelineTrace]:
             runs.append((agent, [entry]))
 
     all_findings: list[AuditFinding] = _extract_findings_from_log(raw_log)
+
+    # Detect PUC errors in node_error entries and convert to blockers
+    puc_error_findings: list[AuditFinding] = _extract_puc_errors_from_log(raw_log)
+
     blockers: list[AuditFinding] = [
         f for f in all_findings if f.severity.value == "blocker" and not f.fixable
     ]
+    blockers.extend(puc_error_findings)
 
     if blockers:
         overall_status = "failed"

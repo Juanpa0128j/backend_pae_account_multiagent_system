@@ -150,6 +150,31 @@ class Retencion(BaseModel):
         return _parse_decimal(v)
 
 
+class AsientoLine(BaseModel):
+    """A single journal-entry line as printed on the source document.
+
+    Used when the issuer has already booked the entry (e.g. CE, RC, payroll
+    voucher, manual journal) and the document shows a table with PUC code +
+    debit + credit per line. The downstream pipeline must respect these codes
+    and amounts instead of re-classifying or injecting taxes.
+    """
+
+    codigo_cuenta: Optional[str] = Field(
+        None, description="PUC account code as printed on the document"
+    )
+    concepto: Optional[str] = Field(None, description="Line description")
+    tercero: Optional[str] = Field(
+        None, description="Counterparty name or NIT printed in the line"
+    )
+    debito: Optional[Decimal] = Field(None, description="Debit amount, may be 0")
+    credito: Optional[Decimal] = Field(None, description="Credit amount, may be 0")
+
+    @field_validator("debito", "credito", mode="before")
+    @classmethod
+    def parse_amounts(cls, v):
+        return _parse_decimal(v)
+
+
 # ---------------------------------------------------------------------------
 # 1. FacturaVentaContent — factura_venta
 # ---------------------------------------------------------------------------
@@ -1193,6 +1218,14 @@ class ComprobanteEgresoContent(ContentBase):
     cuenta_debitar: Optional[str] = Field(None, description="PUC account to debit")
     aprobado_por: Optional[str] = Field(None)
     moneda: Optional[str] = Field("COP")
+    asientos_documento: Optional[List[AsientoLine]] = Field(
+        None,
+        description=(
+            "Journal entry table printed on the comprobante (CODIGO CUENTA + "
+            "CONCEPTO + TERCERO + DEBITO + CREDITO). When present, the pipeline "
+            "respects these lines as the final asiento and skips re-classification."
+        ),
+    )
     informacion_adicional: Optional[Dict[str, Any]] = Field(
         None,
         description="Any other data relevant for downstream accounting: PUC classification clues, cost centers, references, authorizations.",
@@ -1255,6 +1288,14 @@ class ReciboCajaContent(ContentBase):
     cuenta_acreditar: Optional[str] = Field(None, description="PUC account to credit")
     elaborado_por: Optional[str] = Field(None)
     moneda: Optional[str] = Field("COP")
+    asientos_documento: Optional[List[AsientoLine]] = Field(
+        None,
+        description=(
+            "Journal entry table printed on the recibo (CODIGO CUENTA + DEBITO + "
+            "CREDITO). When present, the pipeline respects these lines as the "
+            "final asiento and skips re-classification."
+        ),
+    )
     informacion_adicional: Optional[Dict[str, Any]] = Field(
         None, description="Any other data relevant for downstream accounting."
     )
@@ -1315,6 +1356,13 @@ class NominaContent(ContentBase):
         description="Employer contributions: salud, pension, ARL, SENA, ICBF, caja",
     )
     moneda: Optional[str] = Field("COP")
+    asientos_documento: Optional[List[AsientoLine]] = Field(
+        None,
+        description=(
+            "Journal entry table printed on the payroll voucher. When present, "
+            "the pipeline respects these lines as the final asiento."
+        ),
+    )
     informacion_adicional: Optional[Dict[str, Any]] = Field(
         None,
         description="Any other data relevant for downstream accounting: PUC accounts for payroll entries, labor law references, cost centers.",

@@ -35,6 +35,7 @@ def base_state(**overrides) -> dict:
     """
     state = {
         "file_path": "",
+        "file_paths": [],
         "raw_text": "",
         "interpreted_data": {},
         "result": {},

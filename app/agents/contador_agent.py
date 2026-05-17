@@ -145,6 +145,74 @@ _VENTA_DOC_TYPES = frozenset(
 )
 
 
+def _extract_prearmed_asientos(source_doc: dict) -> list[dict] | None:
+    """Return the journal-entry lines already printed on the source document.
+
+    Some Colombian comprobantes (CE, RC, payroll vouchers, manual journals)
+    carry a fully booked entry table with PUC code + debit + credit per line.
+    When the ingest pipeline extracts those into ``source_doc.asientos_documento``
+    we should respect them verbatim rather than re-running the LLM contador.
+
+    Returns ``None`` when:
+      - the field is missing or empty,
+      - no line has a non-zero debit or credit,
+      - the lines do NOT balance (sum debits != sum credits) — in that case the
+        LLM path is safer than producing an unbalanced asiento.
+    """
+    raw_lines = (source_doc or {}).get("asientos_documento")
+    if not isinstance(raw_lines, list) or not raw_lines:
+        return None
+
+    from decimal import Decimal as _Decimal
+
+    normalized: list[dict] = []
+    sum_debitos = _Decimal("0")
+    sum_creditos = _Decimal("0")
+    for line in raw_lines:
+        if not isinstance(line, dict):
+            continue
+        codigo = str(line.get("codigo_cuenta") or "").strip()
+        if not codigo:
+            continue
+        try:
+            debito = _Decimal(str(line.get("debito") or 0))
+            credito = _Decimal(str(line.get("credito") or 0))
+        except Exception:
+            return None
+        if debito < 0 or credito < 0:
+            return None
+        valor = debito if debito > 0 else credito
+        if valor == 0:
+            continue
+        tipo = "debito" if debito > 0 else "credito"
+        normalized.append(
+            {
+                "cuenta_puc": codigo,
+                "tipo_movimiento": tipo,
+                "valor": str(valor),
+                "tercero_nit": str(line.get("tercero") or ""),
+                "descripcion": str(
+                    line.get("concepto") or line.get("descripcion") or ""
+                ),
+                "nombre_cuenta": str(line.get("concepto") or ""),
+            }
+        )
+        sum_debitos += debito
+        sum_creditos += credito
+
+    if not normalized:
+        return None
+    if sum_debitos != sum_creditos:
+        logger.warning(
+            "contador: source_doc.asientos_documento unbalanced (D=%s, C=%s); "
+            "falling back to LLM",
+            sum_debitos,
+            sum_creditos,
+        )
+        return None
+    return normalized
+
+
 def _load_company_context(company_nit: str | None) -> dict | None:
     """Return the emisor (tenant) ``company_settings`` row as a dict.
 
@@ -381,6 +449,74 @@ def contador_node(state: AgentState) -> AgentState:
         source_taxes: dict | None = None
         if source_doc:
             source_taxes = _extract_source_taxes_summary(source_doc)
+
+        # Pre-armed asiento passthrough: when the document already shows a
+        # balanced journal entry (CE / RC / payroll voucher / manual journal),
+        # skip the LLM entirely and persist those lines verbatim. The PUC
+        # corrector runs afterwards to normalise out-of-catalogue subaccounts.
+        prearmed = _extract_prearmed_asientos(source_doc)
+        if prearmed:
+            from decimal import Decimal as _Decimal
+
+            total_d = sum(
+                _Decimal(a["valor"])
+                for a in prearmed
+                if a["tipo_movimiento"] == "debito"
+            )
+            total_c = sum(
+                _Decimal(a["valor"])
+                for a in prearmed
+                if a["tipo_movimiento"] == "credito"
+            )
+            descripcion_general = (
+                source_doc.get("concepto")
+                or (raw_transactions[0] or {}).get("descripcion")
+                or doc_type_full
+                or "comprobante"
+            )
+            fecha_registro = (
+                source_doc.get("fecha")
+                or source_doc.get("fecha_emision")
+                or source_doc.get("fecha_documento")
+                or (raw_transactions[0] or {}).get("fecha")
+                or ""
+            )
+            if isinstance(fecha_registro, str) and "T" in fecha_registro:
+                fecha_registro = fecha_registro.split("T")[0]
+            contador_output = {
+                "fecha_registro": str(fecha_registro),
+                "asientos": prearmed,
+                "descripcion_general": str(descripcion_general)[:255],
+                "tipo_documento": doc_type_normalized or "otro",
+                "total_debitos": str(total_d),
+                "total_creditos": str(total_c),
+            }
+            contador_output = correct_contador_output(
+                contador_output, doc_subtype=doc_type_full
+            )
+            state["correction_feedback"] = None
+            state["contador_output"] = contador_output
+            state["interpreted_data"] = contador_output
+            if not state.get("result"):
+                state["result"] = {}
+            state["result"]["contador_output"] = contador_output
+            state["result"]["status"] = "clasificado"
+            append_log(
+                state,
+                "contador",
+                "prearmed_passthrough",
+                {
+                    "lines": len(prearmed),
+                    "total_debitos": str(total_d),
+                    "total_creditos": str(total_c),
+                },
+            )
+            logger.info(
+                "contador: pre-armed passthrough applied (%d lines, D=C=%s)",
+                len(prearmed),
+                total_d,
+            )
+            return state
 
         # Enrich the prompt with empresa context + PUC ingresos catalog so the
         # LLM picks a 4xxx code that matches the actividad económica. Only
