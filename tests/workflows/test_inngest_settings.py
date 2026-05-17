@@ -4,7 +4,6 @@ import pytest
 
 from app.core.config import Settings
 
-
 VALID_SECRET = "a" * 40
 
 
