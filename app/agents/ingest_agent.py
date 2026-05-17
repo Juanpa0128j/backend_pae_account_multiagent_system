@@ -7,6 +7,10 @@ classification. Images are parsed via LlamaParse identical to PDFs.
 
 On retry (when correction_feedback is present), the agent re-sends the
 raw text to the LLM along with the schema errors so the model can self-correct.
+
+Document-specific enhancements:
+- `recibo_caja`: Now extracts tipo_recibo (cobro_cartera | venta_directa | otro)
+  and referencia_factura to enable intelligent downstream accounting classification.
 """
 
 import uuid
