@@ -154,6 +154,20 @@ app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat Financiero"])
 app.include_router(puc_router_mod.router, prefix="/api/v1/puc", tags=["PUC"])
 app.include_router(auth_router_mod.router, prefix="/api/v1/auth", tags=["Auth"])
 
+# --- Inngest durable workflow engine (flag-gated mount) ---
+if settings.workflow_engine == "inngest":
+    import inngest.fast_api
+
+    from app.workflows.functions.process_pipeline import process_pipeline
+    from app.workflows.inngest_client import get_inngest_client
+
+    inngest.fast_api.serve(
+        app,
+        get_inngest_client(),
+        [process_pipeline],
+    )
+    logger.info("Inngest serve mounted at /api/inngest")
+
 if __name__ == "__main__":
     import uvicorn
 

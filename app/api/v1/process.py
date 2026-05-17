@@ -13,9 +13,10 @@ from app.models.schemas import (
     ProcessResultResponse,
 )
 from app.models.trace import PipelineTrace
-from app.services import db_service, jobs
+from app.services import db_service
 from app.services.nit_utils import normalize_nit
 from app.services.pipeline_trace_service import build_trace
+from app.workflows.dispatch import dispatch_process_start
 
 router = APIRouter()
 
@@ -174,7 +175,7 @@ async def process_accounting(
     process_job = db_service.create_process_job(
         db, ingest_id, created_by=str(current_user.id)
     )
-    await jobs.start_process_job(process_job.id)
+    await dispatch_process_start(process_job.id)
 
     return ProcessResponse(
         message=f"Started accounting process for ingest_id: {ingest_id}",
@@ -359,7 +360,7 @@ async def confirm_audit_review(
             ),
         )
 
-    await jobs.start_process_job(process_id, force_persist=True)
+    await dispatch_process_start(process_id, force_persist=True)
     return {
         "message": "Revisión confirmada. Reintentando persistencia.",
         "process_id": process_id,

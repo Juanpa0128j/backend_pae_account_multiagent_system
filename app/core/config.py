@@ -71,6 +71,13 @@ class Settings(BaseSettings):
         "https://api.smith.langchain.com", alias="LANGSMITH_ENDPOINT"
     )
 
+    # --- Inngest (durable workflows) ---------------------------------------
+    workflow_engine: str = Field("inline", alias="WORKFLOW_ENGINE")
+    inngest_app_id: str = Field("pae-backend", alias="INNGEST_APP_ID")
+    inngest_event_key: str = Field("", alias="INNGEST_EVENT_KEY")
+    inngest_signing_key: str = Field("", alias="INNGEST_SIGNING_KEY")
+    inngest_dev: bool = Field(True, alias="INNGEST_DEV")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -103,6 +110,13 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "SECRET_KEY must be set to a strong (>=32 chars) random value "
                     "when APP_ENV=production. Refusing to start with the default."
+                )
+
+        if self.app_env == "production" and self.workflow_engine == "inngest":
+            if not self.inngest_event_key or not self.inngest_signing_key:
+                raise ValueError(
+                    "INNGEST_EVENT_KEY and INNGEST_SIGNING_KEY must be set when "
+                    "WORKFLOW_ENGINE=inngest in production."
                 )
 
     @property

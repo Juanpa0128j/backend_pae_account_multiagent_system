@@ -73,7 +73,7 @@ def test_start_process_job_returns_process_id(monkeypatch):
         ),
     )
 
-    async def _start(pid: str):
+    async def _start(pid: str, force_persist: bool = False):
         captured["started"] = pid
 
     monkeypatch.setattr(jobs, "start_process_job", _start)
@@ -231,7 +231,7 @@ def test_post_accounting_returns_existing_process_job_idempotent(monkeypatch):
         lambda db, ingest_id, **kwargs: new_job,
     )
 
-    async def _start(pid: str):
+    async def _start(pid: str, force_persist: bool = False):
         captured["started_count"] += 1
 
     monkeypatch.setattr(jobs, "start_process_job", _start)
@@ -300,7 +300,7 @@ def test_post_accounting_creates_new_job_if_previous_failed(monkeypatch):
         _create_job,
     )
 
-    async def _start(pid: str):
+    async def _start(pid: str, force_persist: bool = False):
         captured["started_count"] += 1
 
     monkeypatch.setattr(jobs, "start_process_job", _start)

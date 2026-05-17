@@ -38,6 +38,7 @@ dependencies = [
     "sse-starlette>=1.6.0",
     "langsmith>=0.7.9",
     "python-jose[cryptography]>=3.5.0",
+    "inngest>=0.5.18",
 ]
 
 [tool.setuptools]

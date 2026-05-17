@@ -56,3 +56,6 @@ test_*.pdf
 # Terminal Paste Image folder
 .cp-images/
 .worktrees/
+
+# Local Inngest CLI binary (installed via `make inngest-install`)
+/bin/
