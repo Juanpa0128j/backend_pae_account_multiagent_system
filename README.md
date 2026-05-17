@@ -54,6 +54,7 @@ Key features:
 - **Tax declaration drafts**: Pre-filled F300 (IVA), F350 (Retefuente), F110 (Renta PJ),
   and ICA municipal forms generated from journal entries for accountant review before filing.
 - **DIAN 2026 calendar**: Obligation deadlines computed per NIT last digit with 30-day alerts.
+- **PDF rendering improvements**: Word-wrapped account descriptions in financial statements using ReportLab Paragraph; prevents text overflow in table cells for long Colombian account names.
 
 ---
 
@@ -517,3 +518,27 @@ alembic downgrade -1
 6. **Review AI output carefully**: All AI-generated code must be reviewed before merging.
 7. **Short, clear documentation**: Document the *what* and *why*, not the *how*.
 8. **Simplify and divide**: Prefer small, focused modules over monolithic files.
+
+---
+
+## Known limitations
+
+### Multi-page upload — file order matters
+
+When uploading multiple pages of the same document in `pages` mode (the default
+`multi_file_mode`), the order of files in the upload payload matters. The LLM
+extractor concatenates pages in the order received and needs to see the header
++ items page first, then totals/continuation pages.
+
+Recommended naming and upload order: `<doc>.<ext>` for the main page,
+`<doc>-2.<ext>`, `<doc>-3.<ext>` for follow-ups. Upload them in that order.
+
+If the totals page (e.g. `FV 192-2.jpg`) is uploaded before the header page
+(e.g. `FV 192.jpg`), extraction degenerates: `items=[]` and the IVA
+calculation falls back to computing 19% of the total (instead of 19% of the
+subtotal), producing a CxC entry with double-IVA and the wrong income
+account. Reordering the pages fixes it without code changes.
+
+A permanent fix would be a natural sort of `file_paths` in
+`app/agents/ingest_agent.py` before the concat loop (~10 LOC); not implemented
+yet by design.

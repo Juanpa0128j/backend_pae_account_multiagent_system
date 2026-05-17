@@ -51,8 +51,12 @@ class StatementDeriver:
         total_patrimonio = patrimonio_sin_utilidad + utilidad_neta
         cuadre = total_activos == total_pasivos + total_patrimonio
 
+        # Emit both legacy ("cuenta"/"saldo") and standard ("cuenta_puc"/"valor")
+        # field aliases so older consumers and newer report renderers (which
+        # expect `cuenta_puc` + `valor`) both work without parseFloat-NaN.
         cuentas = [
-            {"cuenta": k, "saldo": v} for k, v in sorted(account_balances.items())
+            {"cuenta": k, "cuenta_puc": k, "saldo": v, "valor": v}
+            for k, v in sorted(account_balances.items())
         ]
 
         return {
@@ -105,7 +109,10 @@ class StatementDeriver:
         utilidad_neta = utilidad_bruta - totals[5]
 
         def _build_items(class_detail: dict[str, Decimal]) -> list[dict[str, Any]]:
-            return [{"cuenta": k, "saldo": v} for k, v in sorted(class_detail.items())]
+            return [
+                {"cuenta": k, "cuenta_puc": k, "saldo": v, "valor": v}
+                for k, v in sorted(class_detail.items())
+            ]
 
         return {
             "ingresos": _build_items(detail[4]),

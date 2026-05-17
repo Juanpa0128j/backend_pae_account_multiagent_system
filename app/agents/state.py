@@ -63,6 +63,7 @@ class AgentState(TypedDict):
     """
 
     file_path: str
+    file_paths: List[str]
     raw_text: str
     interpreted_data: dict
     result: dict
@@ -100,6 +101,7 @@ class AgentState(TypedDict):
     company_nit: Optional[
         str
     ]  # Explicitly set by API caller; overrides auto-detected entity_nit
+    multi_file_mode: Optional[str]  # "pages" | "documents"
     source_document: dict  # Full structured extraction dict from ingest pipeline (raw_data from TransactionPending)
     # Phase 2 — audit finding buckets (append-only during pipeline run)
     pipeline_warnings: List[dict]  # WARNING/INFO AuditFinding dicts

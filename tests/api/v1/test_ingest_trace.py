@@ -62,9 +62,7 @@ class TestBuildIngestTrace:
         with patch("app.services.pipeline_trace_service.db_service") as mock_svc:
             mock_svc.get_ingest_job.return_value = job
             # No audit logs returned
-            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
-                []
-            )
+            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
             trace = build_ingest_trace("ingest-test-001", db)
 
         assert trace is not None
@@ -83,9 +81,7 @@ class TestBuildIngestTrace:
 
         with patch("app.services.pipeline_trace_service.db_service") as mock_svc:
             mock_svc.get_ingest_job.return_value = job
-            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
-                []
-            )
+            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
             trace = build_ingest_trace("ingest-test-001", db)
 
         assert trace.overall_status == "failed"
@@ -103,9 +99,7 @@ class TestBuildIngestTrace:
 
         with patch("app.services.pipeline_trace_service.db_service") as mock_svc:
             mock_svc.get_ingest_job.return_value = job
-            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
-                []
-            )
+            db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
             trace = build_ingest_trace("ingest-test-001", db)
 
         blocker = trace.blockers[0]
@@ -221,6 +215,11 @@ class TestIngestStatusEndpoint:
         mock_job.completed_at = None
         mock_job.extraction_errors = []
         mock_job.transactions_pending = []
+        mock_job.classification_confidence = None
+        mock_job.classification_confirmed = None
+        mock_job.file_names = None
+        mock_job.multi_file_mode = None
+        mock_job.current_file_index = None
 
         def mock_get_job(*args, **kwargs):
             return mock_job

@@ -82,6 +82,18 @@ class TestIngestPrompts:
         assert "total_debitos" in prompt
         assert "sample text" in prompt
 
+    def test_factura_venta_prompt_mentions_all_pages_for_retentions(self):
+        from app.core.prompts.ingest import factura_venta
+
+        prompt = factura_venta("sample text")
+        assert "TODAS las p\u00e1ginas" in prompt
+
+    def test_factura_compra_prompt_mentions_all_pages_for_retentions(self):
+        from app.core.prompts.ingest import factura_compra
+
+        prompt = factura_compra("sample text")
+        assert "TODAS las p\u00e1ginas" in prompt
+
 
 class TestContadorPrompt:
     """Vertical slice tests for app.core.prompts.contador."""

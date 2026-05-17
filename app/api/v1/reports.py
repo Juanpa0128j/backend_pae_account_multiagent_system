@@ -184,14 +184,26 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
                 elif code.startswith("3"):
                     patrimonio_detalle.append(row)
 
+        # patrimonio (sin utilidad) is the clase-3 baseline that does NOT
+        # include net profit. Exporters add `utilidad_neta` on top to get the
+        # final patrimonio total. We must NOT fall back to `total_patrimonio`
+        # here (which already includes utilidad): doing so double-counts the
+        # net profit in the PDF/Excel footer. Use explicit None check because
+        # 0 is a valid baseline (no equity movements yet).
+        patrimonio_sin_utilidad_raw = data.get("patrimonio_sin_utilidad")
+        if patrimonio_sin_utilidad_raw is None:
+            total_patrimonio_raw = _to_float(data.get("total_patrimonio"))
+            utilidad_neta_raw = _to_float(data.get("utilidad_neta"))
+            patrimonio_value = total_patrimonio_raw - utilidad_neta_raw
+        else:
+            patrimonio_value = _to_float(patrimonio_sin_utilidad_raw)
+
         return {
             "period_start": data.get("periodo_inicio"),
             "period_end": data.get("periodo_fin"),
             "activos": _to_float(data.get("total_activos")),
             "pasivos": _to_float(data.get("total_pasivos")),
-            "patrimonio": _to_float(
-                data.get("patrimonio_sin_utilidad") or data.get("total_patrimonio")
-            ),
+            "patrimonio": patrimonio_value,
             "utilidad_neta": _to_float(data.get("utilidad_neta")),
             "patrimonio_total": _to_float(data.get("total_patrimonio")),
             "cuadre": bool(data.get("cuadre", False)),

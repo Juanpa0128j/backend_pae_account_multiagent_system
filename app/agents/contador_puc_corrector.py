@@ -275,18 +275,106 @@ def correct_class_only_codes(line: dict) -> dict:
     return line
 
 
+def correct_aux_codes_beyond_catalog(line: dict, *, db=None) -> dict:
+    """Normalise auxiliary PUC codes that are longer than what the company
+    catalogue supports.
+
+    Comprobantes printed by a company often use 7-9 digit auxiliary codes
+    (e.g. ``11200501`` — bank account 1120 with internal suffix ``0501``).
+    Those auxiliary tails are configuration of the issuer's ERP, not part of
+    the standard PUC, and they break joins against ``cuentas_puc`` (which
+    only carries 4-digit groups and 6-digit subaccounts per Decreto 2650/1993).
+
+    Behaviour:
+      - If the code length is <=6, leave it alone (regular corrector pipeline
+        handles those cases).
+      - Otherwise, try the 6-digit prefix; if that prefix exists in the seeded
+        ``cuentas_puc`` catalogue, use it. Else fall back to the 4-digit prefix
+        if that exists. Else leave the original code untouched and log a
+        warning so the auditor surfaces it.
+
+    The catalogue lookup is dynamic (DB query) — no hardcoded mappings.
+
+    Pass ``db`` (an open SQLAlchemy session) to reuse a single connection
+    across multiple asiento lines. When omitted, a local session is opened
+    and closed for backward compatibility.
+    """
+    cuenta = str(line.get("cuenta_puc") or "").strip()
+    if len(cuenta) <= 6 or not cuenta.isdigit():
+        return line
+
+    try:
+        from app.core.database import SessionLocal
+        from app.models.database import CuentaPUC
+    except Exception as imp_err:
+        logger.warning(
+            "contador_puc_corrector: PUC catalog import failed (%s); leaving %s",
+            imp_err,
+            cuenta,
+        )
+        return line
+
+    own_session = db is None
+    try:
+        if own_session:
+            db = SessionLocal()
+        for parent_len in (6, 4):
+            candidate = cuenta[:parent_len]
+            row = (
+                db.query(CuentaPUC).filter(CuentaPUC.codigo == candidate).one_or_none()
+            )
+            if row is not None:
+                logger.info(
+                    "contador_puc_corrector: aux code %s normalised to catalogue parent %s",
+                    cuenta,
+                    candidate,
+                )
+                line["cuenta_puc"] = candidate
+                return line
+        logger.warning(
+            "contador_puc_corrector: aux code %s has no 6- or 4-digit parent in catalog; leaving as-is",
+            cuenta,
+        )
+    except Exception as db_err:
+        logger.warning(
+            "contador_puc_corrector: PUC parent lookup failed for %s: %s",
+            cuenta,
+            db_err,
+        )
+    finally:
+        if own_session and db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+    return line
+
+
 def correct_asiento_lines(lines: Iterable[dict], doc_subtype: str = "") -> list[dict]:
     """Apply all line-level corrections in sequence. Each corrector is
     idempotent and returns the line unchanged when its rule doesn't match.
+
+    Opens a single DB session shared across all line corrections to avoid
+    N+1 SessionLocal() opens when documents have many asiento lines.
     """
+    from app.core.database import SessionLocal
+
     out: list[dict] = []
-    for raw in lines:
-        line = dict(raw)
-        line = correct_cross_class_codes(line)
-        line = correct_5195_fallback(line)
-        line = correct_ce_220505_credit(line, doc_subtype)
-        line = correct_class_only_codes(line)
-        out.append(line)
+    db = SessionLocal()
+    try:
+        for raw in lines:
+            line = dict(raw)
+            line = correct_aux_codes_beyond_catalog(line, db=db)
+            line = correct_cross_class_codes(line)
+            line = correct_5195_fallback(line)
+            line = correct_ce_220505_credit(line, doc_subtype)
+            line = correct_class_only_codes(line)
+            out.append(line)
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
     return out
 
 

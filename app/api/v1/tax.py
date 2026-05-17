@@ -115,7 +115,7 @@ async def get_ica_declaration(
     """
     period_end = end_date or date.today()
 
-    where_nit = "AND tp.nit_receptor = :nit" if company_nit else ""
+    where_nit = "AND tp.company_nit = :nit" if company_nit else ""
     where_start = "AND j.fecha >= :period_start" if start_date else ""
     query_params: dict = {"period_end": period_end}
     if company_nit:
@@ -138,10 +138,13 @@ async def get_ica_declaration(
     ingresos_brutos = Decimal(str(row.ingresos if row else 0))
 
     tasa_ica = TASA_ICA_DEFAULT
+    cuenta_pasivo = "2368"
     if company_nit:
         settings = db_service.get_company_settings(db, company_nit)
         if settings and settings.tasa_ica:
             tasa_ica = Decimal(str(settings.tasa_ica))
+        if settings and settings.cuenta_ica_propio:
+            cuenta_pasivo = settings.cuenta_ica_propio
 
     ica_a_pagar = _calc_ica(ingresos_brutos, tasa_ica)
 
@@ -152,6 +155,7 @@ async def get_ica_declaration(
         ingresos_brutos=float(ingresos_brutos),
         tasa_ica=float(tasa_ica),
         ica_a_pagar=float(ica_a_pagar),
+        cuenta_pasivo_puc=cuenta_pasivo,
         referencias=[
             "Ley 14 de 1983 — Impuesto de Industria y Comercio",
             "Decreto 1333 de 1986 — Código de Régimen Municipal",

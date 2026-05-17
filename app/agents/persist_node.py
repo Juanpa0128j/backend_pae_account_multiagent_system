@@ -66,6 +66,15 @@ def _resolve_company_nit(
     return None
 
 
+def _resolve_cuenta_reteica(state: AgentState) -> str:
+    """Extract custom ReteICA account from tributario_output, fallback to 2368."""
+    tributario = state.get("tributario_output") or {}
+    for imp in tributario.get("impuestos") or []:
+        if imp.get("tipo_impuesto") == "reteica" and imp.get("cuenta_puc"):
+            return str(imp["cuenta_puc"])
+    return "2368"
+
+
 def db_persist_node(state: AgentState) -> AgentState:
     """Persist current state output to DB for ingest/process mode.
 
@@ -541,6 +550,7 @@ def _run_persist(state: AgentState) -> AgentState:
                     descripcion=descripcion,
                     items=items if isinstance(items, list) else [],
                     raw_data=tx_data,
+                    source_file=tx_data.get("source_file"),
                 )
                 logger.info(f"db_persist: Created TransactionPending {txn_pending.id}")
 
@@ -674,6 +684,7 @@ def _run_persist(state: AgentState) -> AgentState:
                     nit=nit_emisor,
                     descripcion=descripcion,
                     doc_type=doc_type_full,
+                    cuenta_reteica=_resolve_cuenta_reteica(state),
                 )
                 # Ingest path uses a hardcoded factura_compra pattern (cuenta de
                 # gasto + 220505 CxP). For bank-outflow doc subtypes the credit
@@ -1072,10 +1083,19 @@ def _build_preview(interpreted: dict, doc_type: str = "") -> dict:
     items = interpreted.get("items")
     items_count = len(items) if isinstance(items, list) else 0
 
-    return {
+    preview: dict = {
         "nit_emisor": interpreted.get("nit_emisor"),
         "total": str(interpreted.get("total", "")),
         "fecha": str(interpreted.get("fecha", "")),
         "concepto": concepto[:100],
         "items_count": items_count,
     }
+
+    # Pre-armed journal entry table (CE, RC, Nómina) — must be preserved so
+    # downstream contador/tributario nodes can detect and respect the
+    # already-booked asiento instead of re-classifying.
+    asientos_documento = interpreted.get("asientos_documento")
+    if isinstance(asientos_documento, list) and asientos_documento:
+        preview["asientos_documento"] = asientos_documento
+
+    return preview

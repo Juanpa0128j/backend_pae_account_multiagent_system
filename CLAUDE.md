@@ -164,6 +164,7 @@ Always use `LLMClient` (`app/core/llm_client.py`) as the single interface for al
 - **PDF parsing:** LlamaParse (LlamaCloud) + pypdf
 - **Vector DB:** Supabase PostgreSQL + pgvector (HNSW index + GIN for FTS)
 - **ORM/Migrations:** SQLAlchemy 2.0 + Alembic
+- **PDF Report generation:** ReportLab; account descriptions are word-wrapped in Paragraph objects to prevent text overflow in table cells (common with long Colombian account names like "RETENCION DE IVA POR VENTA DE SERVICIOS").
 
 ### Document Types
 

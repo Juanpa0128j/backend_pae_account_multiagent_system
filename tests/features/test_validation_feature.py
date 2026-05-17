@@ -188,9 +188,15 @@ class TestContadorOutput:
             ContadorOutput.model_validate(valid_contador_data)
 
     def test_puc_code_too_long(self, valid_contador_data):
-        valid_contador_data["asientos"][0]["cuenta_puc"] = "1234567"
+        # 7-12 digits now allowed (ERP auxiliary codes). Reject 13+.
+        valid_contador_data["asientos"][0]["cuenta_puc"] = "1234567890123"
         with pytest.raises(ValidationError, match="Código PUC inválido"):
             ContadorOutput.model_validate(valid_contador_data)
+
+    def test_puc_code_auxiliary_8_digits_accepted(self, valid_contador_data):
+        # ERP auxiliary subaccount (e.g. Bancolombia 11200501) must pass.
+        valid_contador_data["asientos"][0]["cuenta_puc"] = "11200501"
+        ContadorOutput.model_validate(valid_contador_data)
 
     def test_empty_asientos(self, valid_contador_data):
         valid_contador_data["asientos"] = []
@@ -448,9 +454,9 @@ class TestSchemaRegistry:
         from pydantic import BaseModel
 
         for name, schema_cls in AGENT_OUTPUT_SCHEMAS.items():
-            assert issubclass(
-                schema_cls, BaseModel
-            ), f"Schema for '{name}' is not a Pydantic BaseModel"
+            assert issubclass(schema_cls, BaseModel), (
+                f"Schema for '{name}' is not a Pydantic BaseModel"
+            )
 
     def test_schemas_produce_json_schema(self):
         """All schemas should export a valid JSON schema."""

@@ -39,7 +39,7 @@ def _get_cuenta_nombre(cuenta: Dict[str, Any]) -> str:
 
 
 def _build_table_2cols(data, total_row_color: str):
-    table = Table(data, colWidths=[3.5 * inch, 2 * inch])
+    table = Table(data, colWidths=[5.0 * inch, 2.0 * inch])
     table.setStyle(
         TableStyle(
             [
@@ -65,7 +65,8 @@ def _build_table_2cols(data, total_row_color: str):
 
 
 def _build_table_3cols(data, total_row_color: str):
-    table = Table(data, colWidths=[1.2 * inch, 2.3 * inch, 2 * inch])
+    # 7.0 in available (letter - 2×0.75 margins): PUC=1.1, Desc=3.8, Value=2.1
+    table = Table(data, colWidths=[1.1 * inch, 3.8 * inch, 2.1 * inch])
     table.setStyle(
         TableStyle(
             [
@@ -93,6 +94,22 @@ def _build_table_3cols(data, total_row_color: str):
 def _escape_paragraph_text(value: Any) -> str:
     """Escape dynamic text before interpolation into reportlab Paragraph markup."""
     return escape(str(value))
+
+
+# Reusable cell style — Paragraph wraps text; plain strings in ReportLab tables never do.
+_CELL_STYLE = ParagraphStyle(
+    "TableCell",
+    fontName="Helvetica",
+    fontSize=9,
+    leading=11,
+    spaceAfter=0,
+    spaceBefore=0,
+)
+
+
+def _cell(text: Any) -> Paragraph:
+    """Wrap cell content in a Paragraph so long text wraps within its column."""
+    return Paragraph(_escape_paragraph_text(text), _CELL_STYLE)
 
 
 class BalanceSheetExporter:
@@ -164,7 +181,7 @@ class BalanceSheetExporter:
                 assets_data.append(
                     [
                         _get_cuenta_codigo(cuenta),
-                        _get_cuenta_nombre(cuenta),
+                        _cell(_get_cuenta_nombre(cuenta)),
                         _format_currency(float(cuenta.get("saldo", 0))),
                     ]
                 )
@@ -187,7 +204,7 @@ class BalanceSheetExporter:
                 liab_data.append(
                     [
                         _get_cuenta_codigo(cuenta),
-                        _get_cuenta_nombre(cuenta),
+                        _cell(_get_cuenta_nombre(cuenta)),
                         _format_currency(float(cuenta.get("saldo", 0))),
                     ]
                 )
@@ -210,7 +227,7 @@ class BalanceSheetExporter:
                 equity_data.append(
                     [
                         _get_cuenta_codigo(cuenta),
-                        _get_cuenta_nombre(cuenta),
+                        _cell(_get_cuenta_nombre(cuenta)),
                         _format_currency(float(cuenta.get("saldo", 0))),
                     ]
                 )
@@ -218,7 +235,7 @@ class BalanceSheetExporter:
             equity_data.append(
                 ["", "TOTAL PATRIMONIO", _format_currency(patrimonio + utilidad)]
             )
-            table = Table(equity_data, colWidths=[1.2 * inch, 2.3 * inch, 2 * inch])
+            table = Table(equity_data, colWidths=[1.1 * inch, 3.8 * inch, 2.1 * inch])
             table.setStyle(
                 TableStyle(
                     [
@@ -414,7 +431,7 @@ class PnLExporter:
             pct = (saldo / ingresos_total * 100) if ingresos_total > 0 else 0
             ingresos_data.append(
                 [
-                    f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}",
+                    _cell(f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}"),
                     _format_currency(saldo),
                     f"{pct:.1f}%",
                 ]
@@ -425,7 +442,7 @@ class PnLExporter:
         )
 
         ingresos_table = Table(
-            ingresos_data, colWidths=[3 * inch, 1.8 * inch, 1.2 * inch]
+            ingresos_data, colWidths=[4.0 * inch, 1.7 * inch, 1.3 * inch]
         )
         ingresos_table.setStyle(
             TableStyle(
@@ -450,13 +467,13 @@ class PnLExporter:
         for cuenta in report.get("costo_ventas", []):
             costo_data.append(
                 [
-                    f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}",
+                    _cell(f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}"),
                     _format_currency(float(cuenta.get("saldo", 0))),
                 ]
             )
         costo_data.append(["TOTAL COSTO DE VENTAS", _format_currency(costo_total)])
 
-        costo_table = Table(costo_data, colWidths=[4 * inch, 2 * inch])
+        costo_table = Table(costo_data, colWidths=[5.0 * inch, 2.0 * inch])
         costo_table.setStyle(
             TableStyle(
                 [
@@ -653,7 +670,13 @@ class CashFlowExporter:
                         ("BACKGROUND", (0, 0), (-1, 0), bg),
                         ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
                         ("TOPPADDING", (0, 0), (-1, 0), 2),
-                        ("LINEBELOW", (0, 0), (-1, 0), 0.25, colors.HexColor("#cccccc")),
+                        (
+                            "LINEBELOW",
+                            (0, 0),
+                            (-1, 0),
+                            0.25,
+                            colors.HexColor("#cccccc"),
+                        ),
                     ]
                 )
             )
@@ -709,8 +732,12 @@ class CashFlowExporter:
         story.append(Spacer(1, 0.15 * inch))
 
         # ── saldo inicial ────────────────────────────────────────────────────
-        saldo_ini = float(report.get("efectivo_inicio") or report.get("saldo_inicial") or 0)
-        story.append(_two_col("Efectivo y equivalentes al inicio del periodo", saldo_ini))
+        saldo_ini = float(
+            report.get("efectivo_inicio") or report.get("saldo_inicial") or 0
+        )
+        story.append(
+            _two_col("Efectivo y equivalentes al inicio del periodo", saldo_ini)
+        )
         story.append(Spacer(1, 0.1 * inch))
 
         # ── actividades de operacion ─────────────────────────────────────────
@@ -727,14 +754,22 @@ class CashFlowExporter:
         story.append(Paragraph("B. ACTIVIDADES DE INVERSION", section_style))
         flujo_inv = float(report.get("flujo_inversion") or 0)
         if adjustments.get("delta_ppe") is not None:
-            story.append(_two_col("(-) Delta PPE neto", float(adjustments.get("delta_ppe", 0))))
+            story.append(
+                _two_col("(-) Delta PPE neto", float(adjustments.get("delta_ppe", 0)))
+            )
         if adjustments.get("delta_intangibles") is not None:
             story.append(
-                _two_col("(-) Delta intangibles", float(adjustments.get("delta_intangibles", 0)))
+                _two_col(
+                    "(-) Delta intangibles",
+                    float(adjustments.get("delta_intangibles", 0)),
+                )
             )
         if adjustments.get("delta_inversiones") is not None:
             story.append(
-                _two_col("(-) Delta inversiones", float(adjustments.get("delta_inversiones", 0)))
+                _two_col(
+                    "(-) Delta inversiones",
+                    float(adjustments.get("delta_inversiones", 0)),
+                )
             )
         story.append(_two_col("FLUJO NETO DE INVERSION", flujo_inv, bold=True))
         story.append(Spacer(1, 0.1 * inch))
@@ -752,22 +787,30 @@ class CashFlowExporter:
         if adjustments.get("delta_capital_social") is not None:
             story.append(
                 _two_col(
-                    "(+) Delta capital social", float(adjustments.get("delta_capital_social", 0))
+                    "(+) Delta capital social",
+                    float(adjustments.get("delta_capital_social", 0)),
                 )
             )
         if adjustments.get("dividendos_pagados") is not None:
             story.append(
                 _two_col(
-                    "(-) Dividendos pagados", float(adjustments.get("dividendos_pagados", 0))
+                    "(-) Dividendos pagados",
+                    float(adjustments.get("dividendos_pagados", 0)),
                 )
             )
         story.append(_two_col("FLUJO NETO DE FINANCIACION", flujo_fin, bold=True))
         story.append(Spacer(1, 0.15 * inch))
 
         # ── resumen final ────────────────────────────────────────────────────
-        aumento = float(report.get("aumento_disminucion_neto") or (flujo_op + flujo_inv + flujo_fin))
-        efectivo_fin = float(report.get("efectivo_fin") or report.get("total_efectivo") or 0)
-        story.append(_two_col("AUMENTO / DISMINUCION NETO DE EFECTIVO", aumento, bold=True))
+        aumento = float(
+            report.get("aumento_disminucion_neto") or (flujo_op + flujo_inv + flujo_fin)
+        )
+        efectivo_fin = float(
+            report.get("efectivo_fin") or report.get("total_efectivo") or 0
+        )
+        story.append(
+            _two_col("AUMENTO / DISMINUCION NETO DE EFECTIVO", aumento, bold=True)
+        )
         story.append(_two_col("EFECTIVO AL FIN DEL PERIODO", efectivo_fin, bold=True))
 
         if report.get("rule_version"):
@@ -776,8 +819,12 @@ class CashFlowExporter:
                 Paragraph(
                     f"Generado con regla {_escape_paragraph_text(str(report['rule_version']))} "
                     "segun NIC 7 metodo indirecto.",
-                    ParagraphStyle("Footer", parent=styles["Normal"], fontSize=7,
-                                   textColor=colors.grey),
+                    ParagraphStyle(
+                        "Footer",
+                        parent=styles["Normal"],
+                        fontSize=7,
+                        textColor=colors.grey,
+                    ),
                 )
             )
 
@@ -797,7 +844,9 @@ class CashFlowExporter:
         )
         header_font = Font(bold=True, color="FFFFFF", size=11)
 
-        ws["A1"] = f"FLUJO DE CAJA - METODO {(report.get('metodo') or 'INDIRECTO').upper()} (NIC 7)"
+        ws["A1"] = (
+            f"FLUJO DE CAJA - METODO {(report.get('metodo') or 'INDIRECTO').upper()} (NIC 7)"
+        )
         ws["A1"].font = Font(bold=True, size=14, color="1F4788")
         ws.merge_cells("A1:C1")
 
@@ -1525,7 +1574,9 @@ class NotasEstadosFinancierosExporter:
                 if cifras:
                     cifras_data = [
                         [
-                            _escape_paragraph_text(str(c.get("concepto", "")).replace("_", " ")),
+                            _escape_paragraph_text(
+                                str(c.get("concepto", "")).replace("_", " ")
+                            ),
                             _format_currency(float(c.get("valor", 0))),
                         ]
                         for c in cifras
@@ -1538,8 +1589,13 @@ class NotasEstadosFinancierosExporter:
                                 [
                                     ("ALIGN", (1, 0), (1, -1), "RIGHT"),
                                     ("FONTSIZE", (0, 0), (-1, -1), 8),
-                                    ("LINEBELOW", (0, 0), (-1, -1), 0.25,
-                                     colors.HexColor("#cccccc")),
+                                    (
+                                        "LINEBELOW",
+                                        (0, 0),
+                                        (-1, -1),
+                                        0.25,
+                                        colors.HexColor("#cccccc"),
+                                    ),
                                     ("TOPPADDING", (0, 0), (-1, -1), 2),
                                     ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
                                 ]
