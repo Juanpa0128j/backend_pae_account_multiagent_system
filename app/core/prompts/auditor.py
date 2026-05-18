@@ -75,10 +75,11 @@ Devuelve una salida estructurada que incluya obligatoriamente:
 - documento_referencia
 - aprobado (bool)
 - nivel_riesgo (bajo|medio|alto|critico)
-- hallazgos (lista de objetos con codigo AUD-XXX, severidad, descripcion, campo_afectado opcional, recomendacion)
+- hallazgos (lista de objetos con codigo AUD-XXX, severidad EXACTAMENTE uno de: "info"|"advertencia"|"error"|"critico", descripcion, campo_afectado opcional, recomendacion)
 - puntaje_calidad (0-100)
 - resumen
-Si NO se cumple ningún criterio de rechazo, marca aprobado=true aunque encuentres mejoras menores (regístralas como hallazgos de severidad baja sin bloquear)."""
+IMPORTANTE: el campo severidad de cada hallazgo debe ser exactamente uno de estos cuatro valores: "info", "advertencia", "error", "critico". No uses "baja", "media", "alta" ni ningún otro valor.
+Si NO se cumple ningún criterio de rechazo, marca aprobado=true aunque encuentres mejoras menores (regístralas como hallazgos de severidad "info" sin bloquear)."""
 
     if correction_feedback:
         prompt += f"""
