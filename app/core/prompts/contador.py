@@ -165,9 +165,12 @@ _DOC_GUIDANCE: dict[str, str] = {
         "NO reproceses movimientos ya contabilizados."
     ),
     "recibo_pago_impuesto": (
-        "REGLA RECIBO PAGO IMPUESTO: Debita la cuenta de impuesto por pagar correspondiente "
-        "(240802 IVA, 240815 Retefuente, 2368 ICA, 240405 Renta) y acredita banco (111005). "
-        "Un asiento por impuesto pagado."
+        "REGLA RECIBO PAGO IMPUESTO: Por cada transacción genera UN par balanceado de asientos: "
+        "DÉBITO en la cuenta de impuesto por pagar correspondiente al concepto "
+        "(240802 IVA, 240815 Retefuente, 2368 ICA, 240405 Renta — si el concepto es desconocido usa 240805) "
+        "por el valor EXACTO de esa transacción, y CRÉDITO 111005 (Banco) por el mismo valor. "
+        "CRÍTICO: débito y crédito deben ser iguales en cada par. "
+        "Si hay varias transacciones, genera un par por cada una. No sumes ni promedies entre transacciones."
     ),
 }
 
