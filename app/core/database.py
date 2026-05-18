@@ -29,7 +29,7 @@ engine = create_engine(
     pool_recycle=1800,
     pool_timeout=180,
     connect_args={"connect_timeout": 60},
-    echo=(settings.app_env == "development"),
+    echo=False,
 )
 
 # Global semaphore that serializes DB-write phases of the agent pipeline.
