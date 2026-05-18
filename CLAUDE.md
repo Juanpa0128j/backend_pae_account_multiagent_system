@@ -121,6 +121,27 @@ FastAPI (main.py) → /api/v1/* routers
 
 - `GET /api/v1/dashboard/monthly-trend` returns monthly ingresos vs gastos via `db_service.get_monthly_totals_by_class()` (class 4 = revenue/ingresos, class 5 = expenses/gastos). Accepts `company_nit` (optional, normalized) and `months` (1–24, default 6). Responds with `MonthlyTrendResponse` containing month labels in Spanish.
 
+### Durable Workflow Layer (Inngest)
+
+Feature-flagged via `WORKFLOW_ENGINE=inngest` (default: `inline`). When enabled, both pipelines run as Inngest functions instead of FastAPI `BackgroundTasks`. LangGraph pipelines stay intact — Inngest wraps each as a single outer step.
+
+Key behaviors when `WORKFLOW_ENGINE=inngest`:
+- **Per-NIT concurrency**: `Concurrency(limit=5, key="event.data.company_nit")` — prevents one tenant from starving others
+- **OpenAI throttle**: `Throttle(limit=400/60s, key="openai")` — cluster-wide rate budget
+- **Singleton guard**: `Singleton(key="event.data.process_id", mode="skip")` — deduplicates double-dispatch
+- **HITL durability**: `ctx.step.wait_for_event("app/process.audit-confirmed", timeout=1h)` — audit-confirmation gate survives backend restarts; times out with Spanish error copy
+- **Bulk ingest fan-out**: When `multi_file_mode="documents"` + N>1 files, each file gets its own `IngestJob` row and `app/ingest.start` event. Failure of one file marks only that job FAILED; others continue.
+- **LangSmith bridge**: `app/workflows/langsmith_bridge.py` injects `inngest_run_id`, `inngest_event_id`, `inngest_fn_id` into LangSmith trace metadata for cross-system correlation.
+
+Relevant modules:
+- `app/workflows/inngest_client.py` — singleton client; `INNGEST_IS_PRODUCTION` decouples signature verification from `APP_ENV`
+- `app/workflows/dispatch.py` — `dispatch_process_start`, `dispatch_ingest_start`
+- `app/workflows/functions/process_pipeline.py` — process Inngest function
+- `app/workflows/functions/ingest_pipeline.py` — ingest Inngest function
+- `app/workflows/langsmith_bridge.py` — LangSmith context manager
+
+Local testing with Inngest Cloud: set `INNGEST_DEV=false`, `INNGEST_IS_PRODUCTION=true`, run `make inngest-tunnel` (ngrok). See `docs/operations/inngest-cloud.md`.
+
 ### Key Module Roles
 
 | Path | Role |
