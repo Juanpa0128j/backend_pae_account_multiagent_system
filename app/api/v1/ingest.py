@@ -651,12 +651,19 @@ async def update_ingest_classification(
                 status_code=422,
                 detail="El trabajo de ingesta no tiene ruta de archivo para reanudar",
             )
+        # Reconstruct all file paths from stored file_names; fall back to single file_path.
+        temp_dir = Path(tempfile.gettempdir()) / "pae_uploads"
+        if job.file_names and len(job.file_names) > 1:
+            all_file_paths = [str(temp_dir / name) for name in job.file_names]
+        else:
+            all_file_paths = [job.file_path]
         background_tasks.add_task(
             process_ingest_background,
-            [job.file_path],
+            all_file_paths,
             str(job.id),
             job.company_nit,
             job.parser_mode,
+            job.multi_file_mode or "pages",
         )
 
     refreshed = db_service.get_ingest_job(db, ingest_id)
