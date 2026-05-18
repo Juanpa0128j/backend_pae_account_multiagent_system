@@ -170,6 +170,11 @@ Always use `LLMClient` (`app/core/llm_client.py`) as the single interface for al
 
 The system handles 13+ Colombian financial document types (facturas, extractos bancarios, declaraciones de IVA, retención en la fuente, etc.). Document classification is in `app/services/doc_classifier.py` and `app/models/document_types.py`.
 
+**Recent: recibo_caja improvements (VIA A)** — `recibo_caja` (cash receipt) now captures `tipo_recibo` (cobro_cartera | venta_directa | otro) and `referencia_factura` to enable intelligent accounting classification:
+- **Extraction:** Enhanced prompt explicitly requests classification signals.
+- **Mapping:** Dedicated handler in `document_mappers.py` fixes nit_emisor extraction (was reading from emisor instead of recibido_de).
+- **Accounting:** Contador rule now uses `tipo_recibo` to intelligently choose 130505 (cuentas por cobrar) vs 4xxx (ingresos) for credit side. See `app/core/prompts/contador.py` for rule details.
+
 ### RAG System
 
 107 regulatory documents indexed at startup: 41 PUC accounts + 50 Estatuto Tributario articles + 16 Ley 43/1990 PCGA principles. Run `scripts/populate_rag.py` once to seed.
@@ -184,6 +189,7 @@ The system handles 13+ Colombian financial document types (facturas, extractos b
 - **NIT validation:** Colombian NITs must be cleaned (strip `.` and spaces) before storing. Reject empty strings.
 - **PUC fallback:** When defaulting to account `519595`, emit an explicit `logger.warning`.
 - **Corrected tax liability accounts (2026):** Retefuente por pagar = `2365` (not `240815`); ReteICA por pagar = `2368` (not `236540`); ICA gasto administración = `511505`; ICA gasto ventas = `521505`; Retenciones recibidas = `135518`/`135515`.
+- **`balance_general_anterior` remapping:** This Vía B doc type exists only in the UI/ingest layer. `persist_node.py` remaps it to `statement_type='balance_general'` before DB insert. `_load_prior_balance` in `financial_statement_service.py` finds the prior-period balance via `period_end < period_start`. Do not store it under a different statement_type. The 4 Vía B slots that accept uploads are: `balance_general`, `balance_general_anterior`, `estado_resultados`, `libro_auxiliar`. If adding a new Vía B doc type, update: `document_types.py` (enum + `PATHWAY_MAP` + `_VIA_B_TYPES`), `supervisor.py` (hardcoded `via_b_doc_types` set), `ingest_agent.py` (`_EXTRACT_METHOD_MAP` + `_VIA_B_STATEMENT_TYPES`), and `persist_node.py` if a remap is needed.
 
 ## Testing
 

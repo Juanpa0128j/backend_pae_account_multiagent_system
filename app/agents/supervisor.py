@@ -474,6 +474,7 @@ def supervisor_node(state: AgentState) -> AgentState:
                 else:
                     via_b_doc_types = {
                         DocumentType.BALANCE_GENERAL,
+                        DocumentType.BALANCE_GENERAL_ANTERIOR,
                         DocumentType.ESTADO_RESULTADOS,
                         DocumentType.LIBRO_AUXILIAR,
                         DocumentType.FLUJO_DE_CAJA,

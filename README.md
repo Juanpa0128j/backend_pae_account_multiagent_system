@@ -54,6 +54,7 @@ Key features:
 - **Tax declaration drafts**: Pre-filled F300 (IVA), F350 (Retefuente), F110 (Renta PJ),
   and ICA municipal forms generated from journal entries for accountant review before filing.
 - **DIAN 2026 calendar**: Obligation deadlines computed per NIT last digit with 30-day alerts.
+- **Smart document classification**: `recibo_caja` (cash receipts) now captures `tipo_recibo` signal to intelligently route to 130505 (accounts receivable) vs 4xxx (income) accounts; includes referencia_factura linkage for cartera collections.
 - **PDF rendering improvements**: Word-wrapped account descriptions in financial statements using ReportLab Paragraph; prevents text overflow in table cells for long Colombian account names.
 
 ---
@@ -224,6 +225,7 @@ sessions reproduce the panel.
 | Source document | Target statement | Mode |
 |---|---|---|
 | `balance_general` upload (Vía B) | Balance General | `direct` |
+| `balance_general_anterior` upload (Vía B) | Balance General (período anterior) | `direct` — stored as `statement_type='balance_general'` with prior period; used by NIC 7 indirect method |
 | `estado_resultados` upload (Vía B) | Estado de Resultados | `direct` |
 | `libro_auxiliar` upload (Vía B) | Libro Auxiliar | `direct` |
 | `flujo_de_caja` upload (Vía B) | Flujo de Caja | `direct` |

@@ -11,6 +11,8 @@ from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutp
 from app.models.database import FinancialStatement
 from app.services.financial_statement_service import (
     BusinessRuleError,
+    DERIVED_TARGETS as _DERIVED_TARGETS,
+    build_first_level_from_journal_entries,
     derive_financial_statements,
     list_financial_statements,
 )
@@ -1277,10 +1279,35 @@ async def get_derivation_status(
                 }
             )
 
+    # Derived statements already produced for this company (source_mode="derived" only)
+    all_rows = list_financial_statements(
+        company_nit=normalized_nit, statement_type=None, source_mode="derived"
+    )
+    derived_by_pe: dict[str, list[str]] = {}
+    for row in all_rows:
+        st = row.get("statement_type")
+        if st in _DERIVED_TARGETS:
+            pe = row.get("period_end")
+            if pe:
+                derived_by_pe.setdefault(pe, []).append(st)
+    derived_periods = sorted(
+        [
+            {
+                "period_end": pe,
+                "statements": types,
+                "complete": set(types) >= set(_DERIVED_TARGETS),
+            }
+            for pe, types in derived_by_pe.items()
+        ],
+        key=lambda x: x["period_end"],
+        reverse=True,
+    )
+
     return {
         "company_nit": normalized_nit,
         "sources": sources,
         "ready_periods": ready_periods,
+        "derived_periods": derived_periods,
         "is_ready": len(ready_periods) > 0,
     }
 
@@ -1315,3 +1342,119 @@ async def run_derivation(
         raise HTTPException(status_code=409, detail=str(exc))
 
     return {"status": "ok", "result": result}
+
+
+@router.post("/derivation/run-via-a")
+async def run_derivation_via_a(
+    company_nit: str = Query(..., description="Company NIT"),
+    start_date: date = Query(..., description="Period start YYYY-MM-DD"),
+    end_date: date = Query(..., description="Period end YYYY-MM-DD"),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Manually trigger Vía A derivation: build first-level statements from journal
+    entries, then derive flujo de caja / cambios patrimonio / notas.  Both steps are
+    idempotent — already-existing statements are skipped."""
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    period_start = datetime(
+        start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc
+    )
+    period_end = datetime(
+        end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc
+    )
+
+    db = SessionLocal()
+    try:
+        first_level = build_first_level_from_journal_entries(
+            db,
+            company_nit=normalized_nit,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        derived = derive_financial_statements(
+            company_nit=normalized_nit,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except BusinessRuleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    return {"status": "ok", "first_level": first_level, "derived": derived}
+
+
+@router.get("/derivation/status-via-a")
+async def get_derivation_status_via_a(
+    company_nit: str = Query(..., description="Company NIT"),
+):
+    """Return derivation status for Vía A companies: first-level statements derived
+    from journal entries and secondary derivations (flujo de caja, etc.)."""
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    all_rows = list_financial_statements(
+        company_nit=normalized_nit,
+        statement_type=None,
+        source_mode=None,
+    )
+
+    # Group first-level statements (source_mode="derived_from_journal") by period
+    first_level_by_period: dict[str, dict] = {}
+    derived_by_period_end: dict[str, list[str]] = {}
+    earliest: str | None = None
+    latest: str | None = None
+
+    for row in all_rows:
+        st = row.get("statement_type")
+        pe = row.get("period_end")
+        ps = row.get("period_start")
+
+        if pe and row.get("source_mode") == "derived_from_journal":
+            key = f"{ps}|{pe}"
+            if key not in first_level_by_period:
+                first_level_by_period[key] = {
+                    "period_start": ps,
+                    "period_end": pe,
+                    "types": [],
+                }
+            first_level_by_period[key]["types"].append(st)
+            if earliest is None or (ps and ps < earliest):
+                earliest = ps
+            if latest is None or (pe and pe > latest):
+                latest = pe
+
+        if st in _DERIVED_TARGETS and pe and row.get("source_mode") == "derived":
+            derived_by_period_end.setdefault(pe, []).append(st)
+
+    derived_periods = sorted(
+        [
+            {
+                "period_end": pe,
+                "statements": types,
+                "complete": set(types) >= set(_DERIVED_TARGETS),
+            }
+            for pe, types in derived_by_period_end.items()
+        ],
+        key=lambda x: x["period_end"],
+        reverse=True,
+    )
+
+    return {
+        "company_nit": normalized_nit,
+        "first_level_periods": sorted(
+            first_level_by_period.values(),
+            key=lambda x: x["period_end"],
+            reverse=True,
+        ),
+        "derived_periods": derived_periods,
+        "journal_date_range": {"earliest": earliest, "latest": latest},
+    }
