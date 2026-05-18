@@ -23,7 +23,11 @@ def get_inngest_client() -> inngest.Inngest:
             logger=logger,
             event_key=settings.inngest_event_key or None,
             signing_key=settings.inngest_signing_key or None,
-            is_production=settings.is_production and not settings.inngest_dev,
+            is_production=(
+                settings.inngest_is_production
+                if settings.inngest_is_production is not None
+                else (settings.is_production and not settings.inngest_dev)
+            ),
         )
         logger.info("Inngest client initialised (app_id=%s)", settings.inngest_app_id)
     return _client

@@ -27,6 +27,7 @@ def _make_settings(
     signing_key: str = "",
     inngest_dev: bool = True,
     app_env: str = "development",
+    inngest_is_production: bool | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         inngest_app_id=app_id,
@@ -35,6 +36,7 @@ def _make_settings(
         inngest_dev=inngest_dev,
         app_env=app_env,
         is_production=(app_env == "production"),
+        inngest_is_production=inngest_is_production,
     )
 
 

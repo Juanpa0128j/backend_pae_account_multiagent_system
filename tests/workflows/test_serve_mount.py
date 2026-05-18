@@ -66,6 +66,7 @@ def test_inngest_route_mounted_when_engine_inngest():
                 "inngest_signing_key": "",
                 "inngest_dev": True,
                 "is_production": False,
+                "inngest_is_production": None,
             },
         )()
         mock_get_settings.return_value = stub

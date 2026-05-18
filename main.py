@@ -42,7 +42,13 @@ logging.basicConfig(
 # - httpx: Inngest dev server polls /api/inngest every ~5s
 # - sqlalchemy.engine: per-statement DDL/DML at INFO level
 # - urllib3 / httpcore: low-level HTTP plumbing
-for _noisy in ("httpx", "httpcore", "urllib3", "sqlalchemy.engine"):
+for _noisy in (
+    "httpx",
+    "httpcore",
+    "urllib3",
+    "sqlalchemy.engine",
+    "sqlalchemy.engine.Engine",
+):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
