@@ -158,15 +158,16 @@ app.include_router(auth_router_mod.router, prefix="/api/v1/auth", tags=["Auth"])
 if settings.workflow_engine == "inngest":
     import inngest.fast_api
 
+    from app.workflows.functions.ingest_pipeline import ingest_pipeline
     from app.workflows.functions.process_pipeline import process_pipeline
     from app.workflows.inngest_client import get_inngest_client
 
     inngest.fast_api.serve(
         app,
         get_inngest_client(),
-        [process_pipeline],
+        [process_pipeline, ingest_pipeline],
     )
-    logger.info("Inngest serve mounted at /api/inngest")
+    logger.info("Inngest serve mounted at /api/inngest (functions: process, ingest)")
 
 if __name__ == "__main__":
     import uvicorn

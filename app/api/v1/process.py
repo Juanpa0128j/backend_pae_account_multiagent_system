@@ -1,10 +1,12 @@
 import json
 
+import inngest
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.database import IngestJob, ProcessJob, ProcessStatus
 from app.models.schemas import (
@@ -17,6 +19,7 @@ from app.services import db_service
 from app.services.nit_utils import normalize_nit
 from app.services.pipeline_trace_service import build_trace
 from app.workflows.dispatch import dispatch_process_start
+from app.workflows.inngest_client import get_inngest_client
 
 router = APIRouter()
 
@@ -175,7 +178,7 @@ async def process_accounting(
     process_job = db_service.create_process_job(
         db, ingest_id, created_by=str(current_user.id)
     )
-    await dispatch_process_start(process_job.id)
+    await dispatch_process_start(process_job.id, company_nit=company_nit)
 
     return ProcessResponse(
         message=f"Started accounting process for ingest_id: {ingest_id}",
@@ -360,7 +363,17 @@ async def confirm_audit_review(
             ),
         )
 
-    await dispatch_process_start(process_id, force_persist=True)
+    settings = get_settings()
+    if settings.workflow_engine == "inngest":
+        client = get_inngest_client()
+        await client.send(
+            inngest.Event(
+                name="app/process.audit-confirmed",
+                data={"process_id": process_id},
+            )
+        )
+    else:
+        await dispatch_process_start(process_id, force_persist=True)
     return {
         "message": "Revisión confirmada. Reintentando persistencia.",
         "process_id": process_id,

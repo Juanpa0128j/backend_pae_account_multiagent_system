@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     inngest_event_key: str = Field("", alias="INNGEST_EVENT_KEY")
     inngest_signing_key: str = Field("", alias="INNGEST_SIGNING_KEY")
     inngest_dev: bool = Field(True, alias="INNGEST_DEV")
+    inngest_concurrency_per_nit: int = Field(5, alias="INNGEST_CONCURRENCY_PER_NIT")
+    inngest_openai_throttle_rpm: int = Field(400, alias="INNGEST_OPENAI_THROTTLE_RPM")
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -1,4 +1,4 @@
-.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new migrate-check-heads pipeline-test pipeline-setup-nit db-up db-down db-logs db-reset db-shell db-migrate seed dev-bootstrap inngest-install inngest-dev
+.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new migrate-check-heads pipeline-test pipeline-setup-nit db-up db-down db-logs db-reset db-shell db-migrate seed dev-bootstrap inngest-install inngest-dev inngest-tunnel
 
 # Default target
 help:
@@ -232,6 +232,16 @@ inngest-dev:
 	@echo ">>> Set WORKFLOW_ENGINE=inngest and INNGEST_DEV=1 in .env first."
 	@echo ">>> UI: http://localhost:8288"
 	./bin/inngest dev -u $(INNGEST_BACKEND_URL)
+
+# Expose the local backend to Inngest Cloud via ngrok. Requires ngrok installed
+# and authenticated (`ngrok config add-authtoken ...`). Register the printed
+# https URL in the Inngest dashboard for the branch env (Apps → Sync URL).
+NGROK_PORT ?= 8000
+
+inngest-tunnel:
+	@command -v ngrok >/dev/null 2>&1 || { echo "ngrok not installed. See docs/operations/inngest-cloud.md"; exit 1; }
+	@echo ">>> Opening ngrok tunnel to localhost:$(NGROK_PORT)"
+	ngrok http $(NGROK_PORT)
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 

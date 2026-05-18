@@ -69,7 +69,11 @@ async def test_inngest_sends_event() -> None:
     event = mock_client.send.call_args.args[0]
     assert isinstance(event, inngest.Event)
     assert event.name == "app/process.start"
-    assert event.data == {"process_id": "proc-1", "force_persist": False}
+    assert event.data == {
+        "process_id": "proc-1",
+        "force_persist": False,
+        "company_nit": "unknown",
+    }
 
 
 @pytest.mark.asyncio
@@ -87,7 +91,11 @@ async def test_inngest_propagates_force_persist() -> None:
     # Assert
     event = mock_client.send.call_args.args[0]
     assert isinstance(event, inngest.Event)
-    assert event.data == {"process_id": "proc-1", "force_persist": True}
+    assert event.data == {
+        "process_id": "proc-1",
+        "force_persist": True,
+        "company_nit": "unknown",
+    }
 
 
 @pytest.mark.asyncio
