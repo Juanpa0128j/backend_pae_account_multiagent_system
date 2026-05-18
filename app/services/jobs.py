@@ -178,16 +178,44 @@ def _mark_pending_failed_safe(pending_id: str) -> None:
         )
 
 
+def _mark_processing_transactions_failed_safe(ingest_id: str) -> None:
+    """Mark all PROCESSING transactions for an ingest as ERROR. Never raises.
+
+    Used when a multi-tx batch job fails mid-loop — ensures transactions that
+    were moved to PROCESSING but never reached db_persist don't stay stuck.
+    """
+    if not ingest_id:
+        return
+    try:
+        db = SessionLocal()
+        try:
+            txs = db_service.get_transactions_by_ingest(db, ingest_id)
+            for tx in txs:
+                if tx.status == TransactionStatus.PROCESSING:
+                    db_service.update_transaction_status(
+                        db, str(tx.id), TransactionStatus.ERROR, commit=False
+                    )
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        logger.exception(
+            "_mark_processing_transactions_failed_safe: failed for ingest %s", ingest_id
+        )
+
+
 async def _run_process_job_impl(process_id: str, force_persist: bool = False) -> None:
     """Implementation of process job execution, protected by semaphore."""
     db = SessionLocal()
     pending_id = ""
+    ingest_id = ""
     try:
         process_job = db_service.get_process_job(db, process_id)
         if not process_job:
             logger.error("Process job not found: %s", process_id)
             return
 
+        ingest_id = str(process_job.ingest_id)
         ingest_job = db_service.get_ingest_job(db, process_job.ingest_id)
         if not ingest_job:
             db_service.update_process_job(
@@ -396,6 +424,7 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
                 },
             )
             _mark_pending_failed_safe(pending_id)
+            _mark_processing_transactions_failed_safe(ingest_id)
             return
 
         db_service.update_process_job(
@@ -436,7 +465,7 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
                 )
         except Exception as chain_err:
             logger.warning(
-                "Failed to chain ProcessJob for ingest %s: %s",
+                "Failed to chain/cleanup ProcessJob for ingest %s: %s",
                 process_job.ingest_id,
                 chain_err,
             )
@@ -460,6 +489,7 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
             },
         )
         _mark_pending_failed_safe(pending_id)
+        _mark_processing_transactions_failed_safe(ingest_id)
     except Exception as exc:  # pragma: no cover - defensive logging branch
         logger.exception("Unhandled error running process job %s", process_id)
         db_service.update_process_job(
@@ -478,5 +508,6 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
             },
         )
         _mark_pending_failed_safe(pending_id)
+        _mark_processing_transactions_failed_safe(ingest_id)
     finally:
         db.close()

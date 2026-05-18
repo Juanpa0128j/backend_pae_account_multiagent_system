@@ -1,4 +1,4 @@
-.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new migrate-check-heads pipeline-test pipeline-setup-nit db-up db-down db-logs db-reset db-shell db-migrate seed dev-bootstrap
+.PHONY: help install dev server test test-file test-class lint format format-check clean migrate migrate-new migrate-check-heads pipeline-test pipeline-setup-nit db-up db-down db-logs db-reset db-shell db-migrate seed dev-bootstrap inngest-install inngest-dev inngest-tunnel
 
 # Default target
 help:
@@ -38,6 +38,9 @@ help:
 	@echo "  db-shell       Open a psql shell on the local DB"
 	@echo "  seed           Seed PUC accounts + RAG normativa (takes 3-5 min)"
 	@echo "  dev-bootstrap  One-shot: db-up + migrate + seed (run from devcontainer)"
+	@echo ""
+	@echo "Workflows (Inngest spike)"
+	@echo "  inngest-dev    Run Inngest dev server pointed at the local backend"
 	@echo ""
 	@echo "Cleanup"
 	@echo "  clean          Remove __pycache__, .pytest_cache, .ruff_cache, *.pyc"
@@ -203,6 +206,42 @@ db-logs:
 
 db-shell:
 	docker compose -f docker-compose.dev.yml exec db psql -U pae -d pae
+
+# ── Workflows (Inngest spike) ─────────────────────────────────────────────────
+
+INNGEST_BACKEND_URL ?= http://localhost:8000/api/inngest
+
+INNGEST_VERSION ?= 1.19.4
+INNGEST_ARCH ?= linux_amd64
+
+inngest-install:
+	@echo ">>> Installing Inngest CLI v$(INNGEST_VERSION) ($(INNGEST_ARCH)) to ./bin/inngest"
+	@mkdir -p bin
+	@curl -sfL -o /tmp/inngest.tar.gz \
+		https://github.com/inngest/inngest/releases/download/v$(INNGEST_VERSION)/inngest_$(INNGEST_VERSION)_$(INNGEST_ARCH).tar.gz
+	@tar -xzf /tmp/inngest.tar.gz -C bin inngest
+	@rm /tmp/inngest.tar.gz
+	@chmod +x bin/inngest
+	@./bin/inngest --version
+
+inngest-dev:
+	@if [ ! -x ./bin/inngest ]; then \
+		echo "Inngest CLI missing. Run: make inngest-install" && exit 1; \
+	fi
+	@echo ">>> Inngest dev server. Backend must be running at http://localhost:8000."
+	@echo ">>> Set WORKFLOW_ENGINE=inngest and INNGEST_DEV=1 in .env first."
+	@echo ">>> UI: http://localhost:8288"
+	./bin/inngest dev -u $(INNGEST_BACKEND_URL)
+
+# Expose the local backend to Inngest Cloud via ngrok. Requires ngrok installed
+# and authenticated (`ngrok config add-authtoken ...`). Register the printed
+# https URL in the Inngest dashboard for the branch env (Apps → Sync URL).
+NGROK_PORT ?= 8000
+
+inngest-tunnel:
+	@command -v ngrok >/dev/null 2>&1 || { echo "ngrok not installed. See docs/operations/inngest-cloud.md"; exit 1; }
+	@echo ">>> Opening ngrok tunnel to localhost:$(NGROK_PORT)"
+	ngrok http $(NGROK_PORT)
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 

@@ -1515,6 +1515,29 @@ class PlanillaSegSocialContent(ContentBase):
 # ---------------------------------------------------------------------------
 
 
+class ConceptoPagoImpuesto(BaseModel):
+    """Single tax concept line from Form 490 detail table."""
+
+    codigo_concepto: Optional[str] = Field(
+        None, description="Column 50 — concepto pago code"
+    )
+    numero_declaracion: Optional[str] = Field(
+        None, description="Column 51 — N° declaración"
+    )
+    numero_documento_origen: Optional[str] = Field(None, description="Column 52")
+    valor_impuesto: Optional[Decimal] = Field(None, description="Column 53")
+    valor_intereses: Optional[Decimal] = Field(None, description="Column 54")
+    valor_sancion: Optional[Decimal] = Field(None, description="Column 55")
+    total: Optional[Decimal] = Field(None, description="Column 56")
+
+    @field_validator(
+        "valor_impuesto", "valor_intereses", "valor_sancion", "total", mode="before"
+    )
+    @classmethod
+    def parse_amounts(cls, v):
+        return _parse_decimal(v)
+
+
 class ReciboPagoImpuestoContent(ContentBase):
     """Tax payment receipt — proof of payment to fiscal authority."""
 
@@ -1534,6 +1557,13 @@ class ReciboPagoImpuestoContent(ContentBase):
     banco: Optional[str] = Field(None)
     referencia_pago: Optional[str] = Field(None)
     moneda: Optional[str] = Field("COP")
+    conceptos: Optional[List[ConceptoPagoImpuesto]] = Field(
+        None,
+        description=(
+            "Detail table from Form 490 page 2 — one entry per row (columns 50-56). "
+            "Extract ALL non-empty rows."
+        ),
+    )
     informacion_adicional: Optional[Dict[str, Any]] = Field(
         None, description="Any other data relevant for downstream accounting."
     )

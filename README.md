@@ -56,6 +56,7 @@ Key features:
 - **DIAN 2026 calendar**: Obligation deadlines computed per NIT last digit with 30-day alerts.
 - **Smart document classification**: `recibo_caja` (cash receipts) now captures `tipo_recibo` signal to intelligently route to 130505 (accounts receivable) vs 4xxx (income) accounts; includes referencia_factura linkage for cartera collections.
 - **PDF rendering improvements**: Word-wrapped account descriptions in financial statements using ReportLab Paragraph; prevents text overflow in table cells for long Colombian account names.
+- **Durable workflow layer (Inngest)**: Feature-flagged (`WORKFLOW_ENGINE=inngest`) durable execution wrapping both pipelines. Provides per-NIT concurrency fairness, cluster-wide OpenAI throttling, HITL audit-confirmation that survives backend restarts, bulk ingest fan-out for multi-document uploads, and LangSmith ↔ Inngest trace correlation. Default engine (`inline`) is unchanged.
 
 ---
 
@@ -362,12 +363,24 @@ uvicorn main:app --reload
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | ✅ | Supabase PostgreSQL connection string (synchronous; e.g. `postgresql://...` or `postgresql+psycopg2://...`) |
-| `HUGGINGFACE_API_KEY` | ✅ | HuggingFace Inference API key (for BGE-M3 embeddings + reranker) |
-| `GEMINI_API_KEY` | ✅ | Google AI API key (for the LLM agent backbone) |
-| `LLAMA_CLOUD_API_KEY` | ✅ | LlamaCloud API key for PDF parsing via LlamaParse |
-| `GEMINI_MODEL` | | Chat model name (default: `gemini-2.5-flash`) |
-| `PORT` | | Server port (default: `8000`) |
+| `DATABASE_URL` | ✅ | Supabase PostgreSQL connection string (synchronous; e.g. `postgresql://...`) |
+| `SUPABASE_URL` | ✅ | Supabase project URL (e.g. `https://<ref>.supabase.co`) — used for JWT auth verification |
+| `SUPABASE_JWT_SECRET` | ✅ | Supabase JWT secret — found at Supabase Dashboard → Settings → API |
+| `HUGGINGFACE_API_KEY` | ✅ | HuggingFace Inference API key (BGE-M3 embeddings + reranker) |
+| `GEMINI_API_KEY` | ✅ | Google AI API key (primary LLM) |
+| `LLAMA_CLOUD_API_KEY` | ✅ | LlamaCloud API key for PDF parsing |
+| `OPENAI_API_KEY` | | OpenAI key — enables GPT-4o-mini as primary LLM (Gemini becomes fallback) |
+| `GROQ_API_KEY` | | Groq key — third fallback in LLM chain |
+| `LANGSMITH_API_KEY` | | LangSmith observability (optional) |
+| `LANGSMITH_TRACING` | | Set `true` to enable LangSmith tracing |
+| `APP_ENV` | | `development` (default) or `production` |
+| `SECRET_KEY` | | JWT signing secret for session tokens |
+| `ALLOWED_ORIGINS` | | Comma-separated CORS origins for production |
+| `WORKFLOW_ENGINE` | | `inline` (default) or `inngest` — selects durable workflow engine |
+| `INNGEST_EVENT_KEY` | | Inngest Cloud event key (`evt-...`) — required when `WORKFLOW_ENGINE=inngest` |
+| `INNGEST_SIGNING_KEY` | | Inngest signing key (`signkey-test-...` or `signkey-prod-...`) |
+| `INNGEST_DEV` | | `true` for local dev server, `false` for Inngest Cloud |
+| `INNGEST_IS_PRODUCTION` | | Override signature verification mode — set `true` when using ngrok + Inngest Cloud locally |
 
 Copy `.env.example` to `.env` and fill in the values. Never commit `.env` to version control.
 

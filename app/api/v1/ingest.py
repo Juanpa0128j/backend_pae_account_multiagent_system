@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.graph import invoke_ingest_pipeline
 from app.core.auth import CurrentUser, get_current_user
+from app.core.config import get_settings
 from app.core.database import INGEST_PIPELINE_SEMAPHORE, SessionLocal, get_db
 from app.models.database import IngestJob, IngestStatus
 from app.models.document_types import (
@@ -38,6 +39,7 @@ from app.services.ingest_matcher import find_merge_candidates
 from app.models.trace import PipelineTrace
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
+from app.workflows.dispatch import dispatch_ingest_start
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -461,6 +463,68 @@ async def upload_file(
                         ),
                     )
 
+        settings = get_settings()
+        fanout_enabled = (
+            multi_file_mode == "documents"
+            and settings.workflow_engine == "inngest"
+            and len(files) > 1
+        )
+
+        if fanout_enabled:
+            jobs_created: list[IngestJob] = []
+            for f, temp_path in zip(files, temp_file_paths):
+                job = db_service.create_ingest_job(
+                    db,
+                    f.filename,
+                    temp_path,
+                    company_nit=normalized_company_nit,
+                    document_type=confirmed_doc_type,
+                    pathway=confirmed_pathway,
+                    classification_confirmed=True if confirmed_doc_type else None,
+                    parser_mode=validated_mode,
+                    created_by=str(current_user.id),
+                    file_names=[f.filename],
+                    multi_file_mode="pages",
+                )
+                jobs_created.append(job)
+                try:
+                    await dispatch_ingest_start(
+                        ingest_id=str(job.id),
+                        temp_file_paths=[temp_path],
+                        company_nit=normalized_company_nit,
+                        parser_mode=validated_mode,
+                        multi_file_mode="pages",
+                    )
+                except Exception as dispatch_err:
+                    logger.warning(
+                        "Failed to dispatch ingest %s to Inngest: %s",
+                        job.id,
+                        dispatch_err,
+                    )
+                    db_service.update_ingest_job(
+                        db,
+                        str(job.id),
+                        IngestStatus.FAILED,
+                        extraction_errors=[
+                            "No se pudo encolar el documento para procesamiento. Reintenta la subida.",
+                        ],
+                    )
+                    continue
+            if normalized_company_nit and confirmed_pathway:
+                db_service.set_company_locked_pathway(
+                    db, normalized_company_nit, confirmed_pathway
+                )
+            first = jobs_created[0]
+            return IngestResponse(
+                message=f"Uploaded {len(jobs_created)} documents for parallel processing",
+                ingest_id=str(first.id),
+                status=first.status.value,
+                file_name=first.file_name,
+                created_at=first.created_at,
+                extracted_transactions=0,
+                raw_preview=None,
+            )
+
         first_file = files[0]
         ingest_job = db_service.create_ingest_job(
             db,
@@ -587,12 +651,19 @@ async def update_ingest_classification(
                 status_code=422,
                 detail="El trabajo de ingesta no tiene ruta de archivo para reanudar",
             )
+        # Reconstruct all file paths from stored file_names; fall back to single file_path.
+        temp_dir = Path(tempfile.gettempdir()) / "pae_uploads"
+        if job.file_names and len(job.file_names) > 1:
+            all_file_paths = [str(temp_dir / name) for name in job.file_names]
+        else:
+            all_file_paths = [job.file_path]
         background_tasks.add_task(
             process_ingest_background,
-            [job.file_path],
+            all_file_paths,
             str(job.id),
             job.company_nit,
             job.parser_mode,
+            job.multi_file_mode or "pages",
         )
 
     refreshed = db_service.get_ingest_job(db, ingest_id)

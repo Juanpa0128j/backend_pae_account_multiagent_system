@@ -163,6 +163,7 @@ def _base_state() -> AgentState:
         "company_config": None,
         "process_id": None,
         "pending_transaction_id": None,
+        "pending_transaction_ids": [],
         "current_stage": None,
         "agent_log": [],
         "auditor_output": {},
@@ -276,6 +277,9 @@ def invoke_accounting_pipeline(
     state["ingest_id"] = ingest_id
     state["raw_transactions"] = raw_transactions
     state["pending_transaction_id"] = pending_transaction_id
+    state["pending_transaction_ids"] = [
+        t.get("id", "") for t in raw_transactions if t.get("id")
+    ]
     state["process_id"] = process_id
     state["current_stage"] = "queued"
     state["company_nit"] = company_nit

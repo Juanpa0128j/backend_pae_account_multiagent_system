@@ -422,9 +422,21 @@ def planilla_seg_social(text: str, *, correction_feedback: str | None = None) ->
 def recibo_pago_impuesto(text: str, *, correction_feedback: str | None = None) -> str:
     instructions = (
         "Eres un experto tributario colombiano. Extrae la información de este "
-        "RECIBO DE PAGO DE IMPUESTO.\n\n"
-        "Extrae obligatoriamente: número de recibo, fecha de pago, tipo de impuesto pagado (IVA/renta/ICA/GMF/retefuente/reteICA/otro), "
-        "entidad fiscal (DIAN o municipio), NIT y razón social del declarante, período gravable al que corresponde el pago, "
-        "valor principal, sanciones e intereses si aplica, total pagado, banco donde se realizó el pago, y referencia de pago."
+        "RECIBO DE PAGO DE IMPUESTO (Formulario 490 DIAN u otro recibo fiscal).\n\n"
+        "Extrae obligatoriamente:\n"
+        "- número de recibo (campo 4 / número de formulario)\n"
+        "- fecha de pago (campo 26 o sello de la entidad recaudadora)\n"
+        "- tipo de impuesto pagado (IVA/renta/ICA/GMF/retefuente/reteICA/otro)\n"
+        "- entidad fiscal (DIAN o municipio)\n"
+        "- NIT y razón social del declarante\n"
+        "- período gravable\n"
+        "- valor principal (campo 36 o 'Valor pago impuesto'), sanciones e intereses\n"
+        "- total pagado (campo 980)\n"
+        "- banco y referencia de pago\n\n"
+        "IMPORTANTE — tabla de conceptos (columnas 50-56): si el documento tiene una "
+        "tabla de detalle con filas numeradas (columnas: concepto pago, N° declaración, "
+        "N° documento origen, valor impuesto, intereses de mora, valor sanción, total), "
+        "extrae TODAS las filas no vacías en el campo 'conceptos'. "
+        "En el Formulario 490, esta tabla aparece en la segunda hoja."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)

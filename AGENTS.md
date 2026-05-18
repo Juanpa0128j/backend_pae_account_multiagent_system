@@ -124,6 +124,18 @@ FastAPI (main.py) → /api/v1/* routers
 | **Procesamiento** | `state["mode"] = "process"` | Pending transactions → Contador (PUC) → Tributario (IVA/retención) → Auditor (double-entry) → Persist |
 | **Reportería** | `state["mode"] = "reporting"` | Reportero agent → balance sheet / P&L / cash flow |
 
+### Durable Workflow Engine (Inngest)
+
+Both pipelines support a feature-flagged durable execution layer via `WORKFLOW_ENGINE=inngest` (default: `inline`). LangGraph pipelines are unchanged — Inngest wraps each as a single outer step.
+
+When enabled:
+- `POST /api/v1/ingest/upload` → `dispatch_ingest_start()` → `app/ingest.start` Inngest event
+- `POST /api/v1/process` → `dispatch_process_start()` → `app/process.start` Inngest event
+- Per-NIT concurrency (limit=5), OpenAI throttle (400 RPM), singleton dedup, 1h HITL gate
+- `multi_file_mode="documents"` with N files → N parallel Inngest runs (fan-out)
+
+`INNGEST_IS_PRODUCTION=true` required when pointing at Inngest Cloud (even locally via ngrok), regardless of `APP_ENV`. Never set `INNGEST_DEV=true` when connecting to Inngest Cloud — it disables signature verification and all requests will 401.
+
 ### Ingesta: Two Pathways
 
 - **Vía A (`build_from_scratch`):** Source documents (facturas, extractos, declaraciones) → full accounting pipeline

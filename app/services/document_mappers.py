@@ -243,6 +243,71 @@ def build_structured_transactions(
         ]
 
     if doc_type == "recibo_pago_impuesto":
+        fecha = interpreted.get("fecha_pago") or interpreted.get("fecha")
+        nit_emisor = as_str(
+            interpreted.get("nit_declarante") or interpreted.get("nit_emisor"), ""
+        )
+        nit_receptor = as_str(
+            interpreted.get("nit_receptor") or receptor.get("nit"), ""
+        )
+        periodo_gravable = as_str(interpreted.get("periodo_gravable"), "")
+        base_items = sanitize_for_json(
+            [
+                {
+                    "numero_recibo": interpreted.get("numero_recibo"),
+                    "entidad_fiscal": interpreted.get("entidad_fiscal"),
+                    "banco": interpreted.get("banco"),
+                    "referencia_pago": interpreted.get("referencia_pago"),
+                }
+            ]
+        )
+
+        conceptos = interpreted.get("conceptos") or []
+        if isinstance(conceptos, list) and len(conceptos) > 0:
+            # One transaction per concepto line from Form 490 detail table.
+            txs = []
+            for c in conceptos:
+                if not isinstance(c, dict):
+                    continue
+                raw_val = c.get("total") or c.get("valor_impuesto")
+                valor = safe_decimal(raw_val) or Decimal("0")
+                if valor == Decimal("0"):
+                    continue
+                codigo = as_str(c.get("codigo_concepto"), "")
+                concepto_label = (
+                    f"Pago impuesto concepto {codigo}" if codigo else "Pago de impuesto"
+                )
+                if periodo_gravable:
+                    concepto_label = f"{concepto_label} ({periodo_gravable})"
+                txs.append(
+                    {
+                        "fecha": fecha,
+                        "nit_emisor": nit_emisor,
+                        "nit_receptor": nit_receptor,
+                        "total": str(valor),
+                        "concepto": concepto_label,
+                        "descripcion": concepto_label,
+                        "items": sanitize_for_json(
+                            [
+                                {
+                                    **base_items[0],
+                                    "codigo_concepto": codigo,
+                                    "numero_declaracion": c.get("numero_declaracion"),
+                                    "numero_documento_origen": c.get(
+                                        "numero_documento_origen"
+                                    ),
+                                    "valor_impuesto": c.get("valor_impuesto"),
+                                    "valor_intereses": c.get("valor_intereses"),
+                                    "valor_sancion": c.get("valor_sancion"),
+                                }
+                            ]
+                        ),
+                    }
+                )
+            if txs:
+                return txs
+
+        # Fallback: single transaction for total when no concepto breakdown available.
         raw_total = (
             interpreted.get("total_pagado")
             or interpreted.get("valor_principal")
@@ -250,7 +315,6 @@ def build_structured_transactions(
         )
         parsed_total = safe_decimal(raw_total) or Decimal("0")
         tipo_impuesto = as_str(interpreted.get("tipo_impuesto"), "")
-        periodo_gravable = as_str(interpreted.get("periodo_gravable"), "")
         concepto = "Pago de impuesto"
         if tipo_impuesto:
             concepto = f"Pago de impuesto {tipo_impuesto}"
@@ -259,24 +323,16 @@ def build_structured_transactions(
 
         return [
             {
-                "fecha": interpreted.get("fecha_pago") or interpreted.get("fecha"),
-                "nit_emisor": as_str(
-                    interpreted.get("nit_declarante") or interpreted.get("nit_emisor"),
-                    "",
-                ),
-                "nit_receptor": as_str(
-                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
-                ),
+                "fecha": fecha,
+                "nit_emisor": nit_emisor,
+                "nit_receptor": nit_receptor,
                 "total": str(parsed_total),
                 "concepto": concepto,
                 "descripcion": concepto,
                 "items": sanitize_for_json(
                     [
                         {
-                            "numero_recibo": interpreted.get("numero_recibo"),
-                            "entidad_fiscal": interpreted.get("entidad_fiscal"),
-                            "banco": interpreted.get("banco"),
-                            "referencia_pago": interpreted.get("referencia_pago"),
+                            **base_items[0],
                             "valor_principal": interpreted.get("valor_principal"),
                             "sanciones": interpreted.get("sanciones"),
                             "intereses": interpreted.get("intereses"),

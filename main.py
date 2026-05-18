@@ -38,6 +38,18 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+# Silence noisy 3rd-party loggers that flood the console:
+# - httpx: Inngest dev server polls /api/inngest every ~5s
+# - sqlalchemy.engine: per-statement DDL/DML at INFO level
+# - urllib3 / httpcore: low-level HTTP plumbing
+for _noisy in (
+    "httpx",
+    "httpcore",
+    "urllib3",
+    "sqlalchemy.engine",
+    "sqlalchemy.engine.Engine",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -153,6 +165,21 @@ app.include_router(
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat Financiero"])
 app.include_router(puc_router_mod.router, prefix="/api/v1/puc", tags=["PUC"])
 app.include_router(auth_router_mod.router, prefix="/api/v1/auth", tags=["Auth"])
+
+# --- Inngest durable workflow engine (flag-gated mount) ---
+if settings.workflow_engine == "inngest":
+    import inngest.fast_api
+
+    from app.workflows.functions.ingest_pipeline import ingest_pipeline
+    from app.workflows.functions.process_pipeline import process_pipeline
+    from app.workflows.inngest_client import get_inngest_client
+
+    inngest.fast_api.serve(
+        app,
+        get_inngest_client(),
+        [process_pipeline, ingest_pipeline],
+    )
+    logger.info("Inngest serve mounted at /api/inngest (functions: process, ingest)")
 
 if __name__ == "__main__":
     import uvicorn
