@@ -169,6 +169,27 @@ _DOC_GUIDANCE: dict[str, str] = {
         "(240802 IVA, 240815 Retefuente, 2368 ICA, 240405 Renta) y acredita banco (111005). "
         "Un asiento por impuesto pagado."
     ),
+    "liquidacion_cesantias": (
+        "REGLA LIQUIDACION CESANTIAS:\n"
+        "- El documento puede venir en formato resumido con dias_base, salario_base_liquidacion, auxilio_transporte y valor_cesantias.\n"
+        "- Si solo hay un valor de cesantias por empleado o documento, usa ese valor como base principal del asiento.\n"
+        "DÉBITOS:\n"
+        "- 510510 (Cesantías gasto) por total_cesantias_liquidadas. CRÍTICO: NO confundas con 510515 (intereses).\n"
+        "- 510515 (Intereses cesantías) por intereses SEPARADOS. Este es un concepto diferente, no suma al anterior.\n"
+        "- 510518 (Prima servicios) por prima_servicios_liquidada SI APLICA.\n"
+        "- 521505 (Vacaciones) por vacaciones_liquidadas SI APLICA.\n"
+        "CRÉDITOS:\n"
+        "- 111005 (Banco) o 110505 (Caja) por neto_pagar (valor efectivamente girado).\n"
+        "- 2365 (Retefuente por pagar) por retenciones retefuente (si el neto NO incluye retenciones).\n"
+        "- 236570 (Retención salud) por retención salud empleado.\n"
+        "- 236545 (Retención pensión) por retención pensión empleado.\n"
+        "PASIVOS DE APORTE:\n"
+        "- 2510 (Provisión cesantías) si hay saldo acumulado no liquidado.\n"
+        "- 251010 (Fondo cesantías privado) o 251015 (Fondo público) según tipo_fondo_cesantias.\n"
+        "VALIDACIÓN OBLIGATORIA:\n"
+        "Σdébitos == Σcréditos. La mayoría de débitos debe igualar el neto_pagar al banco.\n"
+        "NOTA: Si el documento trae `asientos_documento` (tabla contable pre-armada), respeta EXACTAMENTE esos códigos y montos."
+    ),
 }
 
 

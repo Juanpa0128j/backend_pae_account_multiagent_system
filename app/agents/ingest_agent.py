@@ -161,6 +161,7 @@ _EXTRACT_METHOD_MAP: dict[str, str] = {
     "documento_soporte": "extract_documento_soporte",
     "recibo_caja": "extract_recibo_caja",
     "nomina": "extract_nomina",
+    "liquidacion_cesantias": "extract_liquidacion_cesantias",
     "conciliacion_bancaria": "extract_conciliacion_bancaria",
     "cuenta_cobro": "extract_cuenta_cobro",
     "planilla_seguridad_social": "extract_planilla_seg_social",

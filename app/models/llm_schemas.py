@@ -460,6 +460,7 @@ DOCUMENTOS FUENTE (para construir contabilidad desde cero):
 - documento_soporte: Documento soporte en adquisiciones a no obligados a facturar (art. 1.6.1.4.12 DUR 1625/2016). Lo emite el COMPRADOR para soportar compras a personas naturales o informales. Señales FUERTES: vendedor con régimen "0-49 No responsable de IVA", texto "Solución Gratuita DIAN", "Representación Gráfica" sin CUFE, prefijo "DS" o "DM" en el número de documento, vendedor es persona natural (cédula, no NIT). Si el vendedor aparece como "No responsable de IVA" o el documento fue "Generado por: Solución Gratuita DIAN", clasifica SIEMPRE como documento_soporte aunque tenga formato de factura.
 - recibo_caja: Recibo de caja. Registro de ingreso de efectivo con pagador, concepto, valor y forma de pago.
 - nomina: Nómina o liquidación de salarios. Contiene empleados, salarios, deducciones (salud, pensión, retención), prestaciones sociales y neto a pagar.
+- liquidacion_cesantias: Liquidación de cesantías. Documento que detalla cesantías acumuladas y liquidadas, intereses sobre cesantías, prima de servicios proporcional, vacaciones liquidadas, deducciones y neto pagado por cada empleado.
 - conciliacion_bancaria: Conciliación bancaria. Reconcilia saldo en libros con saldo en extracto bancario, listando partidas en tránsito.
 - cuenta_cobro: Cuenta de cobro. Documento informal de cobro de servicios por persona natural no obligada a facturar.
 - planilla_seguridad_social: Planilla de aportes a seguridad social (PILA). Contiene empleados, salarios base, aportes a salud, pensión, ARL y caja de compensación.
@@ -528,6 +529,7 @@ Estados financieros:
 - Contiene "partida" Y "comprobante" Y "cuenta" Y "tercero" Y ("débito" Y "crédito") con fechas cronológicas → libro_diario
 
 Documentos fuente y comprobantes:
+- Contiene "cesantias" O "cesantías" O "cesantias acumuladas" O "intereses cesantias" O "cesantias liquidadas" → liquidacion_cesantias
 - Contiene "devengado" Y "deducciones" Y ("neto a pagar" O "salario básico") Y empleados → nomina
 - Contiene ("PILA" O "planilla") Y "ARL" Y "caja de compensación" Y ("salud" Y "pensión") → planilla_seguridad_social
 - Contiene "saldo anterior" Y "saldo final" Y movimientos con fecha/débito/crédito bancarios → extracto_bancario
