@@ -154,9 +154,20 @@ _DOC_GUIDANCE: dict[str, str] = {
         "NO dupliques retenciones."
     ),
     "cuenta_cobro": (
-        "REGLA CUENTA COBRO: Debita gasto o activo y acredita cuentas por pagar (220505). "
-        "Similar a factura de compra sin IVA. "
-        "NO dupliques retenciones — el agente tributario las maneja."
+        "REGLA CUENTA COBRO: Documento informal de cobro emitido por persona natural "
+        "NO obligada a facturar y NO responsable de IVA. NUNCA incluyas D 240802 "
+        "(IVA descontable) — no hay IVA por definición. Cuenta gasto según concepto del servicio:\n"
+        "  - Honorarios contables, jurídicos, asesoría, consultoría → 511505 Honorarios\n"
+        "  - Outsourcing (contable, administrativo, operativo) → 511505 o 511595\n"
+        "  - Comisiones → 511510\n"
+        "  - Servicios técnicos especializados → 511525\n"
+        "  - Arrendamientos pagados → 511525 o 5140\n"
+        "  - Otros honorarios no clasificados → 511595\n"
+        "NUNCA uses 5305 (Gastos Financieros) — esa cuenta es exclusiva de intereses "
+        "y comisiones bancarias. NUNCA uses 530505 (no existe en el catálogo). "
+        "Estructura: D gasto (5110xx/5115xx) + C 220505 (CxP) por el valor neto. "
+        "El agente tributario añadirá retenciones (2365 retefuente, 2368 reteICA) SI corresponde; "
+        "NO las dupliques aquí."
     ),
     "conciliacion_bancaria": (
         "REGLA CONCILIACION BANCARIA: Solo genera asientos de ajuste para partidas conciliatorias "

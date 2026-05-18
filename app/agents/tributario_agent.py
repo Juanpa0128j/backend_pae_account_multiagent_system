@@ -48,6 +48,15 @@ TASA_RETEFUENTE: dict[str, Decimal] = {
 }
 TASA_RETEICA_DEFAULT = Decimal("0.0069")  # Tarifa Cali / default municipal
 
+# UVT 2026 (DIAN). Base mínima sujeta a retención por tipo de transacción.
+UVT_2026 = Decimal("52374")
+BASE_MINIMA_RETEFUENTE_UVT: dict[str, Decimal] = {
+    "servicios": Decimal("4"),  # 4 UVT/mes — Art. 392 ET servicios generales
+    "bienes": Decimal("27"),  # 27 UVT/mes — Art. 401 ET compras
+    "arrendamiento": Decimal("27"),  # 27 UVT/mes — Art. 401 ET arrendamientos
+}
+BASE_MINIMA_RETEICA_UVT = Decimal("4")  # 4 UVT/mes (referencia conservadora)
+
 TASA_IVA: dict[str, Decimal] = {
     "general": Decimal("0.19"),  # Art. 477 ET — tarifa general
     "reducida": Decimal("0.05"),  # Servicios especiales
@@ -361,6 +370,17 @@ def _extract_source_taxes(source_doc: dict) -> dict:
                 pass
         if parsed_rets:
             result["retenciones"] = parsed_rets
+
+    # Explicit "no aplicar retención" flag from the source doc
+    # (e.g. cuenta_cobro stating "no aplicar retención según Art X ET").
+    info_adicional = source_doc.get("informacion_adicional") or {}
+    if isinstance(info_adicional, dict):
+        flag = info_adicional.get("aplicar_retencion")
+        if flag is False:
+            result["aplicar_retencion"] = False
+            motivo = info_adicional.get("motivo_no_retencion")
+            if motivo:
+                result["motivo_no_retencion"] = str(motivo)
 
     # Item-level tax flags for base_gravable override
     items = source_doc.get("items") or []
@@ -739,10 +759,32 @@ def tributario_node(state: AgentState) -> AgentState:
             logger.info(
                 "Tributario: retefuente=0 (factura_venta sin retenciones extraídas)"
             )
-        else:
-            retefuente_val = (base_gravable * tasa_retefuente).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
+        elif source_taxes.get("aplicar_retencion") is False:
+            # Source doc explicitly states no retention applies (e.g. cuenta_cobro
+            # citing Art 383 ET / Art 392 ET base minima exemption).
+            retefuente_val = Decimal("0.00")
+            logger.info(
+                "Tributario: retefuente=0 (source doc aplicar_retencion=false, motivo=%s)",
+                source_taxes.get("motivo_no_retencion") or "sin motivo",
             )
+        else:
+            base_min_uvt = BASE_MINIMA_RETEFUENTE_UVT.get(tipo_transaccion)
+            base_minima_pesos = (
+                (base_min_uvt * UVT_2026) if base_min_uvt is not None else None
+            )
+            if base_minima_pesos is not None and base_gravable < base_minima_pesos:
+                retefuente_val = Decimal("0.00")
+                logger.info(
+                    "Tributario: retefuente=0 (base $%s < mínima %s UVT = $%s para tipo=%s)",
+                    base_gravable,
+                    base_min_uvt,
+                    base_minima_pesos,
+                    tipo_transaccion,
+                )
+            else:
+                retefuente_val = (base_gravable * tasa_retefuente).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
 
         # ReteICA: use source value when available
         source_reteica = None
@@ -763,10 +805,23 @@ def tributario_node(state: AgentState) -> AgentState:
             logger.info(
                 "Tributario: reteICA=0 (factura_venta sin retenciones extraídas)"
             )
+        elif source_taxes.get("aplicar_retencion") is False:
+            reteica_val = Decimal("0.00")
+            logger.info("Tributario: reteICA=0 (source doc aplicar_retencion=false)")
         else:
-            reteica_val = (base_gravable * tasa_reteica_efectiva).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
+            base_minima_reteica = BASE_MINIMA_RETEICA_UVT * UVT_2026
+            if base_gravable < base_minima_reteica:
+                reteica_val = Decimal("0.00")
+                logger.info(
+                    "Tributario: reteICA=0 (base $%s < mínima %s UVT = $%s)",
+                    base_gravable,
+                    BASE_MINIMA_RETEICA_UVT,
+                    base_minima_reteica,
+                )
+            else:
+                reteica_val = (base_gravable * tasa_reteica_efectiva).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
 
         # IVA: priority order — (1) already in asientos, (2) source doc total_iva, (3) computed
         iva_presente, iva_val_existente = _has_iva_in_asientos(asientos)
