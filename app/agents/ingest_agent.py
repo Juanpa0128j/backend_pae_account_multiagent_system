@@ -13,8 +13,12 @@ Document-specific enhancements:
   and referencia_factura to enable intelligent downstream accounting classification.
 """
 
+import time
 import uuid
 from pathlib import Path
+
+import httpx
+from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.agents.agent_utils import append_log
 from app.agents.llm_retry import llm_with_parse_retry
@@ -31,6 +35,41 @@ except ImportError:
 
 logger = get_logger("app.agents.ingest")
 
+PARSE_CACHE_TTL_DAYS = 30
+
+
+def _is_transient_parse_error(exc: BaseException) -> bool:
+    """True for LlamaParse failures worth retrying — network/timeout/5xx."""
+    if isinstance(
+        exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+    ):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return 500 <= exc.response.status_code < 600
+    # LlamaParse sometimes wraps errors as RuntimeError with status code in str
+    if isinstance(exc, RuntimeError):
+        msg = str(exc).lower()
+        return any(s in msg for s in ("timeout", "503", "502", "504", "connection"))
+    return False
+
+
+def _llama_parse_with_retry(parser: "LlamaParse", file_path: str) -> list:
+    """Invoke LlamaParse.load_data with retry on transient errors only.
+
+    Retries up to 3 times with exponential backoff (1s, 2s, 4s) on network /
+    timeout / 5xx. Permanent errors (ValueError, schema mismatches) reraise
+    on first failure.
+    """
+    for attempt in Retrying(
+        retry=retry_if_exception(_is_transient_parse_error),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        reraise=True,
+    ):
+        with attempt:
+            return parser.load_data(file_path)
+    raise RuntimeError("unreachable")  # for type-checker
+
 
 def _build_llama_parse_kwargs(mode: str, api_key: str) -> dict:
     kwargs = {"api_key": api_key, "result_type": "markdown"}
@@ -41,6 +80,30 @@ def _build_llama_parse_kwargs(mode: str, api_key: str) -> dict:
     elif mode == "gpt4o":
         kwargs["gpt4o_mode"] = True
     return kwargs
+
+
+def _prune_parse_cache(cache_dir: Path, ttl_days: int = PARSE_CACHE_TTL_DAYS) -> int:
+    """Delete `.parse_cache` entries older than `ttl_days`. Returns count deleted.
+
+    Best-effort: any OSError per-file is logged and skipped. The cache is an
+    optimization, so a failed prune must never break ingest.
+    """
+    if not cache_dir.exists():
+        return 0
+    cutoff = time.time() - ttl_days * 86400
+    deleted = 0
+    for entry in cache_dir.iterdir():
+        try:
+            if entry.is_file() and entry.stat().st_mtime < cutoff:
+                entry.unlink()
+                deleted += 1
+        except OSError as err:
+            logger.warning("parse cache prune failed for %s: %s", entry, err)
+    if deleted:
+        logger.info(
+            "parse cache: pruned %d entries older than %d days", deleted, ttl_days
+        )
+    return deleted
 
 
 def _parse_single_file(file_path: str, state: AgentState) -> str:
@@ -97,9 +160,9 @@ def _parse_single_file(file_path: str, state: AgentState) -> str:
                     settings.llama_cloud_api_key,
                 )
             )
-            documents = parser.load_data(file_path)
+            documents = _llama_parse_with_retry(parser, file_path)
             raw_text = "\n\n".join([doc.text for doc in documents])
-        except (KeyError, Exception) as _parse_err:
+        except Exception as _parse_err:
             logger.warning(
                 "LlamaParse markdown mode failed (%s) — retrying with result_type='text'",
                 _parse_err,
@@ -116,11 +179,12 @@ def _parse_single_file(file_path: str, state: AgentState) -> str:
             )
             fallback_kwargs["result_type"] = "text"
             parser = LlamaParse(**fallback_kwargs)
-            documents = parser.load_data(file_path)
+            documents = _llama_parse_with_retry(parser, file_path)
             raw_text = "\n\n".join([doc.text for doc in documents])
 
         if raw_text and raw_text.strip() and _cache_path is not None:
             _cache_dir.mkdir(parents=True, exist_ok=True)
+            _prune_parse_cache(_cache_dir)
             _cache_path.write_text(raw_text, encoding="utf-8")
 
         return raw_text
@@ -310,7 +374,6 @@ def ingest_node(state: AgentState) -> AgentState:
     file_path = state["file_path"]
     ext = Path(file_path).suffix.lower()
     is_retry = bool(state.get("correction_feedback"))
-    settings = get_settings()
 
     append_log(
         state,
@@ -362,112 +425,21 @@ def ingest_node(state: AgentState) -> AgentState:
             else:
                 file_path = state["file_path"]
                 ext = Path(file_path).suffix.lower()
-                if ext == ".xlsx":
-                    # Excel: may already be extracted by supervisor classify step
-                    if not state.get("raw_text"):
-                        from app.services.excel_parser import parse_excel
-
-                        logger.info(
-                            f"Ingest: Extracting text from {file_path} using excel_parser"
-                        )
-                        raw_text, tabular_data = parse_excel(file_path)
-                        state["raw_text"] = raw_text
-                        state["parsed_content"] = tabular_data
-                    else:
-                        logger.info(
-                            "Ingest: Re-using Excel text extracted by supervisor"
-                        )
+                # Excel-specific optimization: supervisor may have pre-parsed.
+                if ext == ".xlsx" and state.get("raw_text"):
+                    logger.info("Ingest: Re-using Excel text extracted by supervisor")
                     raw_text = state["raw_text"]
-                elif ext == ".xml":
-                    logger.info(
-                        f"Ingest: Extracting text from {file_path} using XML parser"
-                    )
-                    from app.services.xml_parser import parse_xml
-
-                    raw_text = parse_xml(file_path)
-                    state["raw_text"] = raw_text
-                elif ext in (".pdf", ".jpg", ".jpeg", ".png"):
-                    format_label = (
-                        "image" if ext in (".jpg", ".jpeg", ".png") else "PDF"
-                    )
-                    logger.info(
-                        f"Ingest: Extracting text from {file_path} ({format_label}) using LlamaParse"
-                    )
-                    if LlamaParse is None:
-                        raise RuntimeError(
-                            "LlamaParse client is not available. "
-                            "Install llama-parse and configure LLAMA_CLOUD_API_KEY."
-                        )
-
-                    # Cache parsed text by content hash — keying by filename caused
-                    # collisions when different uploads shared a name (e.g. every user
-                    # uploading "balance_general_2024.pdf" got the first user's data).
-                    import hashlib
-
-                    _cache_dir = Path(file_path).parent / ".parse_cache"
-                    try:
-                        _file_bytes = Path(file_path).read_bytes()
-                        _content_hash = hashlib.sha256(_file_bytes).hexdigest()
-                    except OSError:
-                        _content_hash = None
-                    _cache_path = (
-                        _cache_dir / f"{_content_hash}.md" if _content_hash else None
-                    )
-                    if _cache_path and _cache_path.exists():
-                        logger.info(
-                            "Ingest: Using cached parse for %s (hash=%s...)",
-                            Path(file_path).name,
-                            _content_hash[:12],
-                        )
-                        raw_text = _cache_path.read_text(encoding="utf-8")
-                    else:
-                        try:
-                            parser = LlamaParse(
-                                **_build_llama_parse_kwargs(
-                                    state.get("parser_mode", "fast"),
-                                    settings.llama_cloud_api_key,
-                                )
-                            )
-                            documents = parser.load_data(file_path)
-                            raw_text = "\n\n".join([doc.text for doc in documents])
-                        except (KeyError, Exception) as _parse_err:
-                            logger.warning(
-                                "LlamaParse markdown mode failed (%s) — retrying with result_type='text'",
-                                _parse_err,
-                            )
-                            raw_text = ""
-
-                        # LlamaParse can silently return empty text on some scanned PDFs
-                        # without raising an exception — fall back to plain text mode.
-                        if not raw_text.strip():
-                            logger.warning(
-                                "LlamaParse markdown returned empty text — retrying with result_type='text'"
-                            )
-                            fallback_kwargs = _build_llama_parse_kwargs(
-                                state.get("parser_mode", "fast"),
-                                settings.llama_cloud_api_key,
-                            )
-                            fallback_kwargs["result_type"] = "text"
-                            parser = LlamaParse(**fallback_kwargs)
-                            documents = parser.load_data(file_path)
-                            raw_text = "\n\n".join([doc.text for doc in documents])
-
-                        # Save to cache only if non-empty AND we have a content
-                        # hash — caching transient failures permanently breaks the
-                        # file, and caching without a content key collides across
-                        # uploads that share a filename.
-                        if raw_text and raw_text.strip() and _cache_path is not None:
-                            _cache_dir.mkdir(parents=True, exist_ok=True)
-                            _cache_path.write_text(raw_text, encoding="utf-8")
-
-                    state["raw_text"] = raw_text
                 else:
-                    state["error"] = f"Unsupported file format: {ext}"
-                    logger.error(state["error"])
-                    append_log(
-                        state, "ingesta", "node_error", {"error": state["error"]}
-                    )
-                    return state
+                    try:
+                        raw_text = _parse_single_file(file_path, state)
+                    except ValueError as _fmt_err:
+                        state["error"] = str(_fmt_err)
+                        logger.error(state["error"])
+                        append_log(
+                            state, "ingesta", "node_error", {"error": state["error"]}
+                        )
+                        return state
+                    state["raw_text"] = raw_text
         else:
             raw_text = state["raw_text"]
             logger.info(

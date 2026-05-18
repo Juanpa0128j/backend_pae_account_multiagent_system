@@ -39,6 +39,7 @@ dependencies = [
     "langsmith>=0.7.9",
     "python-jose[cryptography]>=3.5.0",
     "inngest>=0.5.18",
+    "tenacity>=8.0.0",
 ]
 
 [tool.setuptools]

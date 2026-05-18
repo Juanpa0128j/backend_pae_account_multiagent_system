@@ -38,6 +38,12 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+# Silence noisy 3rd-party loggers that flood the console:
+# - httpx: Inngest dev server polls /api/inngest every ~5s
+# - sqlalchemy.engine: per-statement DDL/DML at INFO level
+# - urllib3 / httpcore: low-level HTTP plumbing
+for _noisy in ("httpx", "httpcore", "urllib3", "sqlalchemy.engine"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
