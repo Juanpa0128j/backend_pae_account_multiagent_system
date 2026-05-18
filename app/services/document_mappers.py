@@ -242,6 +242,69 @@ def build_structured_transactions(
             }
         ]
 
+    if doc_type == "planilla_seguridad_social":
+        empresa = interpreted.get("empresa") or {}
+        periodo = as_str(interpreted.get("periodo"), "")
+        numero_planilla = as_str(interpreted.get("numero_planilla"), "")
+
+        total_salud = safe_decimal(interpreted.get("total_salud")) or Decimal("0")
+        total_pension = safe_decimal(interpreted.get("total_pension")) or Decimal("0")
+        total_arl = safe_decimal(interpreted.get("total_arl")) or Decimal("0")
+        total_caja = safe_decimal(interpreted.get("total_caja")) or Decimal("0")
+        total_parafiscales = safe_decimal(
+            interpreted.get("total_parafiscales")
+        ) or Decimal("0")
+
+        total_a_pagar = safe_decimal(interpreted.get("total_a_pagar"))
+        if total_a_pagar is None or total_a_pagar == 0:
+            total_a_pagar = (
+                total_salud
+                + total_pension
+                + total_arl
+                + total_caja
+                + total_parafiscales
+            )
+
+        concepto = "Planilla seguridad social"
+        if numero_planilla:
+            concepto = f"{concepto} #{numero_planilla}"
+        if periodo:
+            concepto = f"{concepto} ({periodo})"
+
+        return [
+            {
+                "fecha": interpreted.get("fecha") or interpreted.get("periodo"),
+                "nit_emisor": as_str(
+                    empresa.get("nit") or interpreted.get("nit_emisor"), ""
+                ),
+                "nit_receptor": as_str(
+                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                ),
+                "total": str(total_a_pagar),
+                "total_salud": str(total_salud),
+                "total_pension": str(total_pension),
+                "total_arl": str(total_arl),
+                "total_caja": str(total_caja),
+                "total_parafiscales": str(total_parafiscales),
+                "total_a_pagar": str(total_a_pagar),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "items": sanitize_for_json(
+                    [
+                        {
+                            "numero_planilla": interpreted.get("numero_planilla"),
+                            "periodo": periodo,
+                            "total_salud": str(total_salud),
+                            "total_pension": str(total_pension),
+                            "total_arl": str(total_arl),
+                            "total_caja": str(total_caja),
+                            "total_parafiscales": str(total_parafiscales),
+                        }
+                    ]
+                ),
+            }
+        ]
+
     if doc_type == "recibo_pago_impuesto":
         raw_total = (
             interpreted.get("total_pagado")

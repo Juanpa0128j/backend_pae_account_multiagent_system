@@ -164,6 +164,26 @@ _DOC_GUIDANCE: dict[str, str] = {
         "Debita/acredita banco (111005) vs la cuenta contraparte correspondiente. "
         "NO reproceses movimientos ya contabilizados."
     ),
+    "planilla_seguridad_social": (
+        "REGLA PLANILLA SEGURIDAD SOCIAL (PILA): Documento de pago consolidado de aportes "
+        "al sistema de seguridad social (EPS, pensión, ARL, caja, parafiscales).\n"
+        "Tratamiento: comprobante de pago — debita las cuentas de gasto por concepto y "
+        "acredita banco (111005) por el total.\n"
+        "TODAS las cuentas DEBEN ser códigos HOJA de 6 dígitos EXACTOS — NUNCA uses "
+        "códigos de 4 dígitos como '5105', '5110', '2370'; siempre 6 dígitos.\n"
+        "Usa los campos explícitos de la transacción (NO sumes los items por empleado):\n"
+        "  - 'total_salud' (si > 0) → D 510527 (Aportes EPS empleador) — código 510527\n"
+        "  - 'total_pension' (si > 0) → D 510533 (Aportes pensión empleador) — código 510533\n"
+        "  - 'total_arl' (si > 0) → D 510530 (Aportes ARL) — código 510530\n"
+        "  - 'total_caja' (si > 0) → D 510568 (Caja de Compensación) — código 510568 (NUNCA '5105')\n"
+        "  - 'total_parafiscales' (si > 0) → D 510569 (SENA) y/o D 510570 (ICBF); si no hay desglose, divide 50/50\n"
+        "  - C 111005 (Banco) por 'total_a_pagar' (o por la suma de los débitos)\n"
+        "OMITE líneas con valor 0 o nulo. NO incluyas detalle por empleado, solo los totales agregados.\n"
+        "NO dupliques aportes del empleado (salud 4%, pensión 4%) — esos ya fueron retenidos en el "
+        "asiento de nómina mensual y registrados como 237005/237006.\n"
+        "NO agregues IVA, retefuente, ni reteICA — la PILA no causa impuestos transaccionales.\n"
+        "Validación obligatoria: Σdébitos == Σcréditos == total_a_pagar; toda cuenta_puc debe tener 6 dígitos."
+    ),
     "recibo_pago_impuesto": (
         "REGLA RECIBO PAGO IMPUESTO: Debita la cuenta de impuesto por pagar correspondiente "
         "(240802 IVA, 240815 Retefuente, 2368 ICA, 240405 Renta) y acredita banco (111005). "

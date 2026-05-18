@@ -54,9 +54,12 @@ class StatementDeriver:
         # Emit both legacy ("cuenta"/"saldo") and standard ("cuenta_puc"/"valor")
         # field aliases so older consumers and newer report renderers (which
         # expect `cuenta_puc` + `valor`) both work without parseFloat-NaN.
+        # Only classes 1 (Activos), 2 (Pasivos), 3 (Patrimonio) belong on the
+        # BG. Classes 4/5/6 flow into utilidad_neta and are detailed in the ER.
         cuentas = [
             {"cuenta": k, "cuenta_puc": k, "saldo": v, "valor": v}
             for k, v in sorted(account_balances.items())
+            if k and k[0] in ("1", "2", "3")
         ]
 
         return {
