@@ -556,3 +556,53 @@ account. Reordering the pages fixes it without code changes.
 A permanent fix would be a natural sort of `file_paths` in
 `app/agents/ingest_agent.py` before the concat loop (~10 LOC); not implemented
 yet by design.
+
+### Bank statements require `parser_mode=premium`
+
+For `extracto_bancario` uploads, the default `fast` and `gpt4o` LlamaParse
+modes produce unreliable OCR on multi-column bank tables: they invert
+debit/credit signs, fabricate spurious rows (e.g. inventing a $22M "ABONO
+INTERESES AHORROS" that does not exist in the source PDF), and drop large
+movements. Always pick `premium` in the upload UI for this doc type.
+
+Premium parses ~5–10× slower than `fast` but reconciles cleanly: sum of
+extracted movements matches the statement's `total_abonos + total_cargos`
+within OCR-cent tolerance, intereses generados match the `valor intereses
+pagados` line, and saldo_inicial + Σ creditos − Σ debitos equals saldo_final.
+
+Cache keys now embed the parser mode (`<sha256>.<mode>.md`), so switching
+between fast / premium / gpt4o forces a fresh parse instead of silently
+returning the previous mode's output. See [`app/agents/ingest_agent.py`](app/agents/ingest_agent.py).
+
+### `cuenta_cobro` — IVA siempre 0, retención condicional
+
+Cuentas de cobro are issued by natural persons not obliged to invoice and
+not IVA-responsible. The pipeline enforces:
+
+- `totales.total_iva = 0` always (regardless of OCR output).
+- If the document text says *"no aplicar retención según artículo X ET"* (or
+  equivalent), the ingest prompt sets
+  `informacion_adicional.aplicar_retencion = false`. Tributario respects this
+  flag and zeroes both retefuente and reteICA.
+- Below the 27-UVT monthly minimum ($1,414,098 in 2026 at UVT=$52,374),
+  retefuente is zeroed automatically even without the flag. Tributario uses
+  `BASE_MINIMA_RETEFUENTE_UVT` per `tipo_transaccion` (servicios=4 UVT,
+  bienes/arrendamiento=27 UVT) and `BASE_MINIMA_RETEICA_UVT=4 UVT`.
+- Contador maps the expense account by concept: honorarios contables /
+  asesoría / outsourcing → 511505 (or 511595), comisiones → 511510,
+  servicios técnicos → 511525, arrendamientos → 511525/5140. Account 5305
+  (Gastos Financieros) is explicitly forbidden for CC docs.
+
+### Multi-transaction documents loop the contador per movement
+
+Bank statements, tax payment receipts with `conceptos` tables, and any other
+mapper that returns more than one `raw_transaction` now call
+`extract_contador_output` **once per movement** instead of sending the whole
+batch in a single LLM call. The single-call path remains for single-tx docs
+(facturas, CC, DS, CE).
+
+Without the loop the LLM lazily returns a single asiento pair and
+`persist_node._asientos_for_tx` clones it across every pending transaction,
+producing N posted rows with identical (wrong) accounting. With the loop
+each movement gets its own classification, RAG context, and journal entry.
+See [`app/agents/contador_agent.py`](app/agents/contador_agent.py).
