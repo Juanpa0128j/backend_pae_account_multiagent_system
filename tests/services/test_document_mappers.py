@@ -274,3 +274,72 @@ def test_generic_infers_total_from_items_when_missing() -> None:
     assert len(txs) == 1
     assert txs[0]["total"] == "500.00"
     assert txs[0]["concepto"] == "Servicios"
+
+
+def test_cuenta_cobro_branch_preserves_iva_zero_and_retencion_flag() -> None:
+    """`cuenta_cobro` is issued by natural persons (no IVA, no invoice). The
+    dedicated mapper branch must force `totales.total_iva=0`, surface
+    `prestador.cedula`/`nit` as `nit_emisor`, and pass through the
+    `aplicar_retencion=false` flag and any extracted retenciones so tributario
+    can respect them downstream.
+    """
+    interpreted = {
+        "numero": "2026-013",
+        "fecha": "2026-01-24",
+        "prestador": {"cedula": "1234567890", "nombre": "Vanessa Gomez"},
+        "contratante": {"nit": "901016386", "razon_social": "Testing SAS"},
+        "valor": 875000,
+        "valor_neto": 875000,
+        "concepto": "Outsourcing contable enero 2026",
+        "retenciones": [],
+        "informacion_adicional": {
+            "aplicar_retencion": False,
+            "motivo_no_retencion": "no aplicar retención según artículo 383 ET",
+        },
+    }
+
+    txs = build_structured_transactions(interpreted, "cuenta_cobro")
+
+    assert len(txs) == 1
+    tx = txs[0]
+    # nit_emisor falls back to prestador.cedula when prestador.nit is absent.
+    assert tx["nit_emisor"] == "1234567890"
+    assert tx["nit_receptor"] == "901016386"
+    # CC by definition has no IVA — extractor must force total_iva=0.
+    assert tx["totales"]["total_iva"] == "0"
+    assert tx["totales"]["subtotal"] == "875000"
+    assert tx["totales"]["total"] == "875000"
+    # Retención opt-out flag must be preserved verbatim for tributario.
+    assert tx["informacion_adicional"]["aplicar_retencion"] is False
+    assert tx["retenciones_aplicadas"] == []
+    # Concepto annotated with the document number (mapper concatenation).
+    assert "2026-013" in tx["concepto"]
+    assert "Outsourcing" in tx["concepto"]
+
+
+def test_cuenta_cobro_branch_uses_prestador_nit_when_present() -> None:
+    """When the prestador exposes a NIT (e.g. PN registered as proveedor) the
+    mapper prefers `prestador.nit` over `prestador.cedula`.
+    """
+    interpreted = {
+        "fecha": "2026-02-01",
+        "prestador": {
+            "nit": "901999888",
+            "cedula": "1234567890",
+            "nombre": "Asesor PN",
+        },
+        "contratante": {"nit": "901016386"},
+        "valor": 500000,
+        "concepto": "Asesoría jurídica",
+        "retenciones": [{"tipo": "retefuente", "valor": 50000}],
+        "informacion_adicional": {},
+    }
+
+    txs = build_structured_transactions(interpreted, "cuenta_cobro")
+
+    assert len(txs) == 1
+    tx = txs[0]
+    assert tx["nit_emisor"] == "901999888"
+    assert tx["totales"]["total_iva"] == "0"
+    # Extracted retenciones are preserved as-is for tributario consumption.
+    assert tx["retenciones_aplicadas"] == [{"tipo": "retefuente", "valor": 50000}]

@@ -202,7 +202,7 @@ class TestIngestNodeRoutes:
         # Cache is keyed by content hash, not filename, so two uploads of
         # different files with the same name don't collide.
         content_hash = hashlib.sha256(Path(pdf_file).read_bytes()).hexdigest()
-        cache_file = cache_dir / f"{content_hash}.md"
+        cache_file = cache_dir / f"{content_hash}.fast.md"
         cache_file.write_text("cached parsed text for ingest", encoding="utf-8")
 
         llama_cls = MagicMock()
@@ -255,7 +255,7 @@ class TestIngestNodeRoutes:
         import hashlib
 
         content_hash = hashlib.sha256(Path(pdf_file).read_bytes()).hexdigest()
-        cache_file = Path(pdf_file).parent / ".parse_cache" / f"{content_hash}.md"
+        cache_file = Path(pdf_file).parent / ".parse_cache" / f"{content_hash}.fast.md"
         assert cache_file.exists()
         assert "text mode output" in cache_file.read_text(encoding="utf-8")
 

@@ -291,3 +291,133 @@ def test_exhausted_validation_user_message_has_clean_bullets_not_raw_dicts() -> 
 
     # Should be formatted as bullet points (lines starting with "-")
     assert any(line.strip().startswith("-") for line in user_msg.splitlines())
+
+
+def test_multi_tx_loop_calls_extract_per_movement() -> None:
+    """When raw_transactions has more than one entry the contador must call the
+    LLM once per movement and merge their asientos. Guards against the bug where
+    a single LLM call returned one asiento pair and persist cloned it across
+    every pending transaction.
+    """
+    raw_txs = [
+        {
+            "fecha": "2026-01-04",
+            "descripcion": "ABONO INTERESES AHORROS",
+            "total": 103.24,
+            "bank_direction": "entrada",
+        },
+        {
+            "fecha": "2026-01-05",
+            "descripcion": "PAGO DE TERC MADECENTRO COLO",
+            "total": 2353292.00,
+            "bank_direction": "salida",
+        },
+        {
+            "fecha": "2026-01-06",
+            "descripcion": "IMPTO GOBIERNO 4X1000",
+            "total": 1397.20,
+            "bank_direction": "salida",
+        },
+    ]
+    per_tx_outputs = [
+        {
+            "fecha_registro": "2026-01-04",
+            "tipo_documento": "extracto",
+            "descripcion_general": "Abono intereses",
+            "asientos": [
+                {
+                    "cuenta_puc": "111005",
+                    "nombre_cuenta": "Bancos",
+                    "tipo_movimiento": "debito",
+                    "valor": "103.24",
+                    "descripcion": "Abono intereses banco",
+                },
+                {
+                    "cuenta_puc": "4210",
+                    "nombre_cuenta": "Ingresos financieros",
+                    "tipo_movimiento": "credito",
+                    "valor": "103.24",
+                    "descripcion": "Ingreso intereses",
+                },
+            ],
+            "total_debitos": "103.24",
+            "total_creditos": "103.24",
+        },
+        {
+            "fecha_registro": "2026-01-05",
+            "tipo_documento": "extracto",
+            "descripcion_general": "Pago a terceros",
+            "asientos": [
+                {
+                    "cuenta_puc": "220505",
+                    "nombre_cuenta": "Cuentas por pagar",
+                    "tipo_movimiento": "debito",
+                    "valor": "2353292.00",
+                    "descripcion": "Cancelación CxP Madecentro",
+                },
+                {
+                    "cuenta_puc": "111005",
+                    "nombre_cuenta": "Bancos",
+                    "tipo_movimiento": "credito",
+                    "valor": "2353292.00",
+                    "descripcion": "Salida bancaria",
+                },
+            ],
+            "total_debitos": "2353292.00",
+            "total_creditos": "2353292.00",
+        },
+        {
+            "fecha_registro": "2026-01-06",
+            "tipo_documento": "extracto",
+            "descripcion_general": "GMF",
+            "asientos": [
+                {
+                    "cuenta_puc": "530525",
+                    "nombre_cuenta": "Gastos bancarios",
+                    "tipo_movimiento": "debito",
+                    "valor": "1397.20",
+                    "descripcion": "GMF 4x1000",
+                },
+                {
+                    "cuenta_puc": "111005",
+                    "nombre_cuenta": "Bancos",
+                    "tipo_movimiento": "credito",
+                    "valor": "1397.20",
+                    "descripcion": "Salida bancaria por GMF",
+                },
+            ],
+            "total_debitos": "1397.20",
+            "total_creditos": "1397.20",
+        },
+    ]
+
+    mock_llm = MagicMock()
+    mock_llm.extract_contador_output.side_effect = per_tx_outputs
+
+    with (
+        patch("app.agents.contador_agent.get_llm_client", return_value=mock_llm),
+        patch(
+            "app.services.rag_service.get_rag_service",
+            side_effect=Exception("rag unavailable"),
+        ),
+    ):
+        state = _base_state(raw_transactions=raw_txs)
+        state["interpreted_data"] = {"doc_type": "extracto_bancario"}
+        result = contador_node(state)
+
+    assert result["error"] is None
+    assert mock_llm.extract_contador_output.call_count == 3
+
+    asientos = result["contador_output"]["asientos"]
+    # 3 movements × 2 asientos each = 6 entries, all distinct (no clones).
+    assert len(asientos) == 6
+    pucs = [a["cuenta_puc"] for a in asientos]
+    assert pucs.count("111005") == 3  # banco aparece en cada movement
+    assert "4210" in pucs
+    assert "220505" in pucs
+    assert "530525" in pucs
+
+    from decimal import Decimal as _D
+
+    assert _D(result["contador_output"]["total_debitos"]) == _D("2354792.44")
+    assert _D(result["contador_output"]["total_creditos"]) == _D("2354792.44")

@@ -566,13 +566,15 @@ def contador_node(state: AgentState) -> AgentState:
                         puc_ingresos_catalog=puc_ingresos_catalog or None,
                         agent_label=f"contador-tx-{idx}",
                     )
-                except Exception as mov_err:  # noqa: BLE001 — surface but continue
-                    logger.warning(
-                        "contador: raw_transaction %d failed (%s); skipping",
+                except Exception as mov_err:  # noqa: BLE001 — fail closed on partial batch errors
+                    logger.exception(
+                        "contador: raw_transaction %d failed (%s); aborting multi-tx batch",
                         idx,
                         mov_err,
                     )
-                    continue
+                    raise RuntimeError(
+                        f"contador failed for raw_transaction index {idx} during multi-tx aggregation"
+                    ) from mov_err
                 tx_asientos = tx_output.get("asientos") or []
                 all_asientos.extend(tx_asientos)
                 for a in tx_asientos:
