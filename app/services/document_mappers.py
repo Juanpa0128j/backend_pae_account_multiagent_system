@@ -280,7 +280,9 @@ def build_structured_transactions(
                 parsed_total = Decimal("0")
 
         concepto = "Liquidacion cesantias"
-        numero = as_str(interpreted.get("numero_documento") or interpreted.get("consecutivo"), "").strip()
+        numero = as_str(
+            interpreted.get("numero_documento") or interpreted.get("consecutivo"), ""
+        ).strip()
         if numero:
             concepto = f"Liquidacion cesantias {numero}"
 
@@ -289,15 +291,46 @@ def build_structured_transactions(
 
         tx = {
             "fecha": fecha,
-            "nit_emisor": as_str(empresa.get("nit") or interpreted.get("nit_emisor"), ""),
-            "nit_receptor": as_str(interpreted.get("nit_receptor") or "", ""),
+            "nit_emisor": as_str(
+                empresa.get("nit") or interpreted.get("nit_emisor"), ""
+            ),
+            "nit_receptor": as_str(
+                interpreted.get("nit_receptor") or empresa.get("nit"), ""
+            ),
             "total": str(parsed_total),
-            "total_cesantias_liquidadas": str(safe_decimal(raw_total_cesantias) or parsed_total),
-            "total_intereses_cesantias": str(safe_decimal(raw_total_intereses)) if raw_total_intereses is not None and safe_decimal(raw_total_intereses) is not None else None,
-            "total_prima_servicios": str(safe_decimal(raw_total_prima)) if raw_total_prima is not None and safe_decimal(raw_total_prima) is not None else None,
-            "total_vacaciones": str(safe_decimal(raw_total_vacaciones)) if raw_total_vacaciones is not None and safe_decimal(raw_total_vacaciones) is not None else None,
-            "total_retenciones": str(safe_decimal(raw_total_retenciones)) if raw_total_retenciones is not None and safe_decimal(raw_total_retenciones) is not None else None,
-            "total_neto_pagar": str(safe_decimal(raw_total_neto)) if raw_total_neto is not None and safe_decimal(raw_total_neto) is not None else None,
+            "total_cesantias_liquidadas": str(
+                safe_decimal(raw_total_cesantias) or parsed_total
+            ),
+            "total_intereses_cesantias": (
+                str(safe_decimal(raw_total_intereses))
+                if raw_total_intereses is not None
+                and safe_decimal(raw_total_intereses) is not None
+                else None
+            ),
+            "total_prima_servicios": (
+                str(safe_decimal(raw_total_prima))
+                if raw_total_prima is not None
+                and safe_decimal(raw_total_prima) is not None
+                else None
+            ),
+            "total_vacaciones": (
+                str(safe_decimal(raw_total_vacaciones))
+                if raw_total_vacaciones is not None
+                and safe_decimal(raw_total_vacaciones) is not None
+                else None
+            ),
+            "total_retenciones": (
+                str(safe_decimal(raw_total_retenciones))
+                if raw_total_retenciones is not None
+                and safe_decimal(raw_total_retenciones) is not None
+                else None
+            ),
+            "total_neto_pagar": (
+                str(safe_decimal(raw_total_neto))
+                if raw_total_neto is not None
+                and safe_decimal(raw_total_neto) is not None
+                else None
+            ),
             "concepto": concepto,
             "descripcion": concepto,
             "items": items,

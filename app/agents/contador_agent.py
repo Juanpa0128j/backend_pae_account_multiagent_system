@@ -54,8 +54,8 @@ _DOC_TYPE_TO_CONTADOR_ENUM = {
     "autorretencion_ica": "otro",
     "anexo_iva": "otro",
     "auxiliar_iva": "otro",
-    "nomina": "nomina",
-    "liquidacion_cesantias": "liquidacion_cesantias",
+    "nomina": "otro",
+    "liquidacion_cesantias": "otro",
     "planilla_seguridad_social": "otro",
 }
 
@@ -548,6 +548,8 @@ def contador_node(state: AgentState) -> AgentState:
                     if isinstance(tx, dict):
                         company_nit = (
                             tx.get("company_nit")
+                            or tx.get("nit_receptor")
+                            or tx.get("nit_emisor")
                             or tx.get("empresa", {}).get("nit")
                             or tx.get("nit")
                         )

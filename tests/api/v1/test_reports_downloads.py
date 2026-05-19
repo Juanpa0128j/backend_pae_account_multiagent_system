@@ -217,3 +217,73 @@ def test_balance_download_returns_422_on_export_failure(monkeypatch):
 
     assert response.status_code == 422
     assert "Export failed" in response.json()["detail"]
+
+
+def test_run_report_backfills_period_end_when_stored_statement_has_none(monkeypatch):
+    from app.api.v1.reports import _run_report
+
+    monkeypatch.setattr(
+        "app.api.v1.reports._try_stored_statement",
+        lambda *args, **kwargs: {
+            "report_type": "balance",
+            "period_end": None,
+            "activos": 100.0,
+            "pasivos": 40.0,
+            "patrimonio": 60.0,
+        },
+    )
+
+    monkeypatch.setattr(
+        "app.api.v1.reports.invoke_reporting_pipeline",
+        lambda *args, **kwargs: {
+            "error": "pipeline should not be called when stored statement exists"
+        },
+    )
+
+    result = _run_report(
+        report_type="balance",
+        params={"end_date": "2026-05-18"},
+        company_nit="800999888-2",
+    )
+
+    assert result["period_end"] == "2026-05-18"
+    assert result["company_nit"]
+    assert result["generated_at"]
+    assert isinstance(result["notas_normativas"], list)
+
+
+def test_run_report_backfills_period_end_when_pipeline_report_has_none(monkeypatch):
+    from app.api.v1.reports import _run_report
+
+    monkeypatch.setattr(
+        "app.api.v1.reports._try_stored_statement",
+        lambda *args, **kwargs: None,
+    )
+
+    monkeypatch.setattr(
+        "app.api.v1.reports.invoke_reporting_pipeline",
+        lambda *args, **kwargs: {
+            "report": {
+                "report_type": "balance_sheet",
+                "period_end": None,
+                "activos": 100.0,
+                "pasivos": 40.0,
+                "patrimonio": 60.0,
+                "utilidad_neta": 0.0,
+                "patrimonio_total": 60.0,
+                "cuadre": True,
+                "mensaje_cuadre": "ok",
+                "activos_detalle": [],
+                "pasivos_detalle": [],
+                "patrimonio_detalle": [],
+            }
+        },
+    )
+
+    result = _run_report(
+        report_type="balance",
+        params={"end_date": "2026-05-18"},
+        company_nit="800999888-2",
+    )
+
+    assert result["period_end"] == "2026-05-18"

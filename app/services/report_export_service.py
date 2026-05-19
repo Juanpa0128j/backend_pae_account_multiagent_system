@@ -431,7 +431,9 @@ class PnLExporter:
             pct = (saldo / ingresos_total * 100) if ingresos_total > 0 else 0
             ingresos_data.append(
                 [
-                    _cell(f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}"),
+                    _cell(
+                        f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}"
+                    ),
                     _format_currency(saldo),
                     f"{pct:.1f}%",
                 ]
@@ -467,7 +469,9 @@ class PnLExporter:
         for cuenta in report.get("costo_ventas", []):
             costo_data.append(
                 [
-                    _cell(f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}"),
+                    _cell(
+                        f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}"
+                    ),
                     _format_currency(float(cuenta.get("saldo", 0))),
                 ]
             )
