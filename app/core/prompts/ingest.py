@@ -396,10 +396,18 @@ def planilla_seg_social(text: str, *, correction_feedback: str | None = None) ->
     instructions = (
         "Eres un experto contable colombiano especializado en seguridad social. Extrae la información de esta "
         "PLANILLA DE APORTES A SEGURIDAD SOCIAL (PILA).\n\n"
-        "Extrae obligatoriamente: empresa (NIT, razón social), período (YYYY-MM), número de planilla, para cada empleado: "
-        "nombre, cédula, salario base de cotización, aportes a salud (empleado + empleador), pensión (empleado + empleador), "
-        "ARL, caja de compensación. También extrae los totales por rubro (salud, pensión, ARL, caja, parafiscales SENA/ICBF) "
-        "y total a pagar."
+        "Extrae obligatoriamente:\n"
+        "- 'fecha' (formato YYYY-MM-DD): la fecha de PAGO o de generación de la planilla — suele aparecer "
+        "como 'Fecha:' en la cabecera del comprobante (p. ej. '2026-01-06'). Esta es la fecha contable del asiento.\n"
+        "- 'periodo' (formato YYYY-MM): el período DE COTIZACIÓN que cubre la planilla — suele aparecer como "
+        "'Período de Cotización Para Salud: enero de 2026' o similar. Convierte 'enero de 2026' a '2026-01'.\n"
+        "- empresa (NIT, razón social), número de planilla.\n"
+        "- Para cada empleado: nombre, cédula, salario base de cotización, aportes a salud (empleado + empleador), "
+        "pensión (empleado + empleador), ARL, caja de compensación.\n"
+        "- Totales por rubro: total_salud, total_pension, total_arl, total_caja, total_parafiscales "
+        "(SENA/ICBF si aplica) y total_a_pagar.\n\n"
+        "IMPORTANTE: si solo encuentras el período mensual y no una fecha específica de pago, usa el primer "
+        "día de ese mes como 'fecha' (p. ej. periodo '2026-01' → fecha '2026-01-01')."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 

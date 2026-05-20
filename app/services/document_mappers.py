@@ -34,14 +34,45 @@ def safe_decimal(value: Any) -> Optional[Decimal]:
 
 
 def safe_datetime(value: Any) -> Optional[datetime]:
-    """Safely parse a value into a timezone-aware UTC datetime."""
+    """Safely parse a value into a timezone-aware UTC datetime.
+
+    Accepts a wide range of formats commonly produced by LLM extraction:
+    - Full ISO 8601 with or without timezone (e.g. ``2026-01-06T10:26:58+00:00``)
+    - Date only (``2026-01-06``)
+    - Month only (``2026-01``) → returns first day of the month
+    - DD/MM/YYYY and DD-MM-YYYY (Colombian common formats)
+    """
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
-    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y", "%d-%m-%Y"):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # Prefer the stdlib fromisoformat for full ISO strings — handles timezone
+    # offsets like "+00:00" and trailing "Z" (the latter only since Python 3.11).
+    try:
+        normalized = text.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%Y-%m",  # PILA / monthly tax periods → first day of month
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+    ):
         try:
-            return datetime.strptime(str(value), fmt).replace(tzinfo=timezone.utc)
+            parsed = datetime.strptime(text, fmt)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
         except ValueError:
             continue
     return None

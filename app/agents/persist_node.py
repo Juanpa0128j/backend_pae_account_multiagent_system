@@ -198,16 +198,24 @@ def _auto_derive_statements(
         )
         return None
 
-    period_start, period_end = period
+    min_fecha, max_fecha = period
 
     # Guard: ensure period values are real datetimes (not Mock objects from tests)
-    if not isinstance(period_start, datetime) or not isinstance(period_end, datetime):
+    if not isinstance(min_fecha, datetime) or not isinstance(max_fecha, datetime):
         logger.warning(
             "[persist] Unexpected period type (%s, %s) — skipping derivation",
-            type(period_start).__name__,
-            type(period_end).__name__,
+            type(min_fecha).__name__,
+            type(max_fecha).__name__,
         )
         return None
+
+    # Expand the min/max journal dates to full calendar-month boundaries so the
+    # derived BG/ER cover the natural accounting period the documents belong to
+    # (e.g. a PILA dated 2026-01-06 yields a period 2026-01-01 → 2026-01-31).
+    from app.services.date_utils import first_of_month, last_of_month
+
+    period_start = first_of_month(min_fecha)
+    period_end = last_of_month(max_fecha)
 
     logger.info(
         "[persist] Deriving statements for %s (%s -> %s)",
@@ -502,7 +510,13 @@ def _run_persist(state: AgentState) -> AgentState:
                 )
 
         for tx_data in transactions:
-            fecha = safe_datetime(tx_data.get("fecha")) or datetime.now(timezone.utc)
+            # Parse fecha from the LLM-extracted document; if unparseable, keep
+            # ``None`` so the pre-persist auditor can route the ingest to HITL
+            # (rule ING-FECHA-MISSING). NEVER fall back to datetime.now() here
+            # — that silently mis-dates accounting entries.
+            fecha = safe_datetime(tx_data.get("fecha"))
+            if fecha is None:
+                tx_data.setdefault("needs_user_fecha", True)
             total = safe_decimal(
                 tx_data.get("total") or tx_data.get("valor_total")
             ) or Decimal("0")

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Depends, HTTPException
+from fastapi import APIRouter, Query, Depends, HTTPException, Body
 from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -6,9 +6,14 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.services import db_service
+from app.services.document_mappers import safe_datetime
 from app.services.nit_utils import normalize_optional_nit
 from app.services.parse_utils import safe_float
-from app.models.database import FinancialStatement, TransactionStatus
+from app.models.database import (
+    FinancialStatement,
+    TransactionPending,
+    TransactionStatus,
+)
 
 router = APIRouter()
 
@@ -314,6 +319,52 @@ def _delete_transaction_cascade(db: Session, txn_id: str) -> None:
         db.delete(posted)
 
     db.delete(txn)
+
+
+class SetFechaPayload(BaseModel):
+    fecha: str  # ISO date (YYYY-MM-DD) or DD/MM/YYYY
+
+
+@router.patch("/{id}/fecha")
+async def set_transaction_fecha(
+    id: str,
+    payload: SetFechaPayload = Body(...),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Set or update a TransactionPending.fecha.
+
+    Used by the HITL pending-review flow when the contador couldn't extract a
+    date and the auditor blocked the persist with rule ``ING-FECHA-MISSING``.
+    After the user supplies a date here, the frontend retriggers persistence
+    via ``POST /api/v1/process/{process_id}/audit-confirm``.
+    """
+    txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+
+    parsed = safe_datetime(payload.fecha)
+    if parsed is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Could not parse fecha '{payload.fecha}'. Use YYYY-MM-DD, "
+                "YYYY-MM, or DD/MM/YYYY."
+            ),
+        )
+
+    txn.fecha = parsed
+    raw = dict(txn.raw_data or {})
+    raw["fecha"] = parsed.date().isoformat()
+    raw.pop("needs_user_fecha", None)
+    txn.raw_data = raw
+
+    db.commit()
+    db.refresh(txn)
+    return {
+        "id": txn.id,
+        "fecha": txn.fecha.isoformat() if txn.fecha else None,
+    }
 
 
 @router.delete("/{id}", status_code=204)
