@@ -380,32 +380,6 @@ def _run_persist(state: AgentState) -> AgentState:
             raise RuntimeError(msg)
 
         raw_txs = state.get("raw_transactions") or []
-        base_tx = raw_txs[0] if raw_txs and isinstance(raw_txs[0], dict) else {}
-
-        total = base_tx.get("total")
-        if total is None:
-            total = (
-                contador_output.get("total_debitos")
-                or contador_output.get("total_creditos")
-                or 0
-            )
-
-        fecha = base_tx.get("fecha") or contador_output.get("fecha_registro")
-        nit_emisor = base_tx.get("nit_emisor", "")
-        nit_receptor = base_tx.get("nit_receptor", "")
-        descripcion = base_tx.get("descripcion") or contador_output.get(
-            "descripcion_general", ""
-        )
-        items = base_tx.get("items", [])
-
-        debit_line = next(
-            (
-                a
-                for a in asientos
-                if str(a.get("tipo_movimiento", "")).lower() == "debito"
-            ),
-            None,
-        )
 
         # Pull tax values from tributario_output so they are persisted correctly.
         tributario_output = state.get("tributario_output") or {}
@@ -422,26 +396,96 @@ def _run_persist(state: AgentState) -> AgentState:
             )
             return str(val) if val is not None else None
 
-        tx_data = {
-            "fecha": fecha,
-            "nit_emisor": nit_emisor,
-            "nit_receptor": nit_receptor,
-            "total": total,
-            "concepto": descripcion,
-            "descripcion": descripcion,
-            "items": items,
-            "cuenta_puc": (debit_line or {}).get("cuenta_puc", ""),
-            "cuenta_nombre": (debit_line or {}).get("nombre_cuenta", ""),
-            "retefuente": _get_trib_tax("retefuente"),
-            "reteica": _get_trib_tax("reteica"),
-            "iva": _get_trib_tax("IVA"),
-            "ica": _get_trib_tax("ica"),
-            "renta": _get_trib_tax("renta"),
-            "referencias_legales": tributario_output.get("referencias_legales", []),
-            "agent_reasoning": (state.get("result") or {}).get("agent_reasoning"),
-            "_contador_asientos": asientos,
-        }
-        transactions = [tx_data]
+        # Group asientos by matching debit amounts to raw_tx totals so each
+        # transaction gets its own paired journal entries. For single-tx batches
+        # (the common case) all asientos belong to that one transaction.
+        def _asientos_for_tx(raw_tx: dict, all_asientos: list, used: set) -> list:
+            tx_total = safe_decimal(raw_tx.get("total")) or Decimal("0")
+            matched: list = []
+            # Find a debit+credit pair whose debit amount equals this tx total.
+            for a in all_asientos:
+                if id(a) in used:
+                    continue
+                if str(a.get("tipo_movimiento", "")).lower() == "debito":
+                    valor = safe_decimal(a.get("valor")) or Decimal("0")
+                    if abs(valor - tx_total) < Decimal("1"):
+                        matched.append(a)
+                        used.add(id(a))
+                        # Also grab the matching credit line(s) with the same amount.
+                        for b in all_asientos:
+                            if id(b) in used:
+                                continue
+                            if str(b.get("tipo_movimiento", "")).lower() == "credito":
+                                bval = safe_decimal(b.get("valor")) or Decimal("0")
+                                if abs(bval - tx_total) < Decimal("1"):
+                                    matched.append(b)
+                                    used.add(id(b))
+                                    break
+                        break
+            has_debit = any(
+                str(a.get("tipo_movimiento", "")).lower() == "debito" for a in matched
+            )
+            has_credit = any(
+                str(a.get("tipo_movimiento", "")).lower() == "credito" for a in matched
+            )
+            if has_debit and has_credit:
+                return matched
+            return all_asientos  # fallback: balanced fallback when no exact match found
+
+        used_asiento_ids: set = set()
+        transactions = []
+        for raw_tx in raw_txs if raw_txs else [{}]:
+            if not isinstance(raw_tx, dict):
+                continue
+            tx_asientos = _asientos_for_tx(raw_tx, asientos, used_asiento_ids)
+            debit_line = next(
+                (
+                    a
+                    for a in tx_asientos
+                    if str(a.get("tipo_movimiento", "")).lower() == "debito"
+                ),
+                None,
+            )
+            base_tx = raw_tx
+            total = base_tx.get("total")
+            if total is None:
+                total = (
+                    contador_output.get("total_debitos")
+                    or contador_output.get("total_creditos")
+                    or 0
+                )
+            fecha = base_tx.get("fecha") or contador_output.get("fecha_registro")
+            nit_emisor = base_tx.get("nit_emisor", "")
+            nit_receptor = base_tx.get("nit_receptor", "")
+            descripcion = base_tx.get("descripcion") or contador_output.get(
+                "descripcion_general", ""
+            )
+            items = base_tx.get("items", [])
+            transactions.append(
+                {
+                    "fecha": fecha,
+                    "nit_emisor": nit_emisor,
+                    "nit_receptor": nit_receptor,
+                    "total": total,
+                    "concepto": descripcion,
+                    "descripcion": descripcion,
+                    "items": items,
+                    "cuenta_puc": (debit_line or {}).get("cuenta_puc", ""),
+                    "cuenta_nombre": (debit_line or {}).get("nombre_cuenta", ""),
+                    "retefuente": _get_trib_tax("retefuente"),
+                    "reteica": _get_trib_tax("reteica"),
+                    "iva": _get_trib_tax("IVA"),
+                    "ica": _get_trib_tax("ica"),
+                    "renta": _get_trib_tax("renta"),
+                    "referencias_legales": tributario_output.get(
+                        "referencias_legales", []
+                    ),
+                    "agent_reasoning": (state.get("result") or {}).get(
+                        "agent_reasoning"
+                    ),
+                    "_contador_asientos": tx_asientos,
+                }
+            )
     else:
         # New rich-schema path: interpreted_data is a typed content dict (FacturaVentaContent, etc.)
         # Build one or multiple tx rows from structured fields.
@@ -509,7 +553,8 @@ def _run_persist(state: AgentState) -> AgentState:
                     },
                 )
 
-        for tx_data in transactions:
+        pending_ids_ordered = list(state.get("pending_transaction_ids") or [])
+        for tx_idx, tx_data in enumerate(transactions):
             # Parse fecha from the LLM-extracted document; if unparseable, keep
             # ``None`` so the pre-persist auditor can route the ingest to HITL
             # (rule ING-FECHA-MISSING). NEVER fall back to datetime.now() here
@@ -540,11 +585,18 @@ def _run_persist(state: AgentState) -> AgentState:
             )
             items = tx_data.get("items") or tx_data.get("detalle_items") or []
 
-            if mode == "process" and state.get("pending_transaction_id"):
-                pending_id = as_str(state.get("pending_transaction_id"), "")
+            if mode == "process" and (
+                state.get("pending_transaction_id") or pending_ids_ordered
+            ):
+                # Use per-transaction ID from ordered list when available; fall back to
+                # the legacy single-ID for backwards compat with single-transaction batches.
+                if tx_idx < len(pending_ids_ordered):
+                    resolve_pending_id = pending_ids_ordered[tx_idx]
+                else:
+                    resolve_pending_id = as_str(state.get("pending_transaction_id"), "")
                 txn_pending = (
                     db.query(TransactionPending)
-                    .filter(TransactionPending.id == pending_id)
+                    .filter(TransactionPending.id == resolve_pending_id)
                     .first()
                 )
                 if not txn_pending:

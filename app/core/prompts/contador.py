@@ -185,9 +185,35 @@ _DOC_GUIDANCE: dict[str, str] = {
         "Validación obligatoria: Σdébitos == Σcréditos == total_a_pagar; toda cuenta_puc debe tener 6 dígitos."
     ),
     "recibo_pago_impuesto": (
-        "REGLA RECIBO PAGO IMPUESTO: Debita la cuenta de impuesto por pagar correspondiente "
-        "(240802 IVA, 240815 Retefuente, 2368 ICA, 240405 Renta) y acredita banco (111005). "
-        "Un asiento por impuesto pagado."
+        "REGLA RECIBO PAGO IMPUESTO: Por cada transacción genera UN par balanceado de asientos: "
+        "DÉBITO en la cuenta de impuesto por pagar correspondiente al concepto "
+        "(240802 IVA, 240815 Retefuente, 2368 ICA, 240405 Renta — si el concepto es desconocido usa 240805) "
+        "por el valor EXACTO de esa transacción, y CRÉDITO 111005 (Banco) por el mismo valor. "
+        "CRÍTICO: débito y crédito deben ser iguales en cada par. "
+        "Si hay varias transacciones, genera un par por cada una. No sumes ni promedies entre transacciones."
+    ),
+    "liquidacion_cesantias": (
+        "REGLA LIQUIDACION CESANTIAS:\n"
+        "- El documento puede venir en formato resumido con dias_base, salario_base_liquidacion, auxilio_transporte y valor_cesantias.\n"
+        "- Si solo hay un valor de cesantias por empleado o documento, usa ese valor como base principal del asiento.\n"
+        "- PRIORIDAD DE CAMPOS: usa primero totales consolidados del raw transaction (total_cesantias_liquidadas, total_intereses_cesantias, total_prima_servicios, total_vacaciones, total_retenciones, total_neto_pagar).\n"
+        "- Solo si falta algun total consolidado, calcula el valor sumando campos por empleado (p. ej. prima_servicios_liquidada, vacaciones_liquidadas, neto_pagar).\n"
+        "DÉBITOS:\n"
+        "- 510510 (Cesantías gasto) por total_cesantias_liquidadas. CRÍTICO: NO confundas con 510515 (intereses).\n"
+        "- 510515 (Intereses cesantías) por total_intereses_cesantias. Este es un concepto diferente, no suma al anterior.\n"
+        "- 510518 (Prima servicios) por total_prima_servicios SI APLICA (o suma de prima_servicios_liquidada por empleado si no hay total).\n"
+        "- 521505 (Vacaciones) por total_vacaciones SI APLICA (o suma de vacaciones_liquidadas por empleado si no hay total).\n"
+        "CRÉDITOS:\n"
+        "- 111005 (Banco) o 110505 (Caja) por total_neto_pagar (valor efectivamente girado).\n"
+        "- 2365 (Retefuente por pagar) por retenciones retefuente (usa total_retenciones o desglose por empleado si existe).\n"
+        "- 236570 (Retención salud) por retención salud empleado.\n"
+        "- 236545 (Retención pensión) por retención pensión empleado.\n"
+        "PASIVOS DE APORTE:\n"
+        "- 2510 (Provisión cesantías) si hay saldo acumulado no liquidado.\n"
+        "- 251010 (Fondo cesantías privado) o 251015 (Fondo público) según tipo_fondo_cesantias.\n"
+        "VALIDACIÓN OBLIGATORIA:\n"
+        "Σdébitos == Σcréditos. La mayoría de débitos debe igualar total_neto_pagar al banco (ajustado por retenciones cuando aplique).\n"
+        "NOTA: Si el documento trae `asientos_documento` (tabla contable pre-armada), respeta EXACTAMENTE esos códigos y montos."
     ),
 }
 

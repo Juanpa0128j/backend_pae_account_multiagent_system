@@ -127,7 +127,9 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
         stored.setdefault("report_type", report_type)
         stored.setdefault("company_nit", normalized_company_nit)
         stored.setdefault("generated_at", _dt.now(timezone.utc).isoformat())
-        stored.setdefault("period_end", params.get("end_date") or "")
+        # setdefault does not replace an existing None value.
+        if not stored.get("period_end"):
+            stored["period_end"] = params.get("end_date") or date.today().isoformat()
         stored.setdefault("notas_normativas", [])
         return stored
 
@@ -138,7 +140,11 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
     )
     if result.get("error"):
         raise HTTPException(status_code=500, detail=result["error"])
-    return result.get("report", {})
+    report = result.get("report", {})
+    # Defensive: response models require period_end as non-null string.
+    if isinstance(report, dict) and not report.get("period_end"):
+        report["period_end"] = params.get("end_date") or date.today().isoformat()
+    return report
 
 
 def _normalize_stored_statement(report_type: str, data: dict) -> dict:
@@ -200,7 +206,7 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
 
         return {
             "period_start": data.get("periodo_inicio"),
-            "period_end": data.get("periodo_fin"),
+            "period_end": data.get("periodo_fin") or data.get("period_end"),
             "activos": _to_float(data.get("total_activos")),
             "pasivos": _to_float(data.get("total_pasivos")),
             "patrimonio": patrimonio_value,
@@ -259,7 +265,7 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
 
         return {
             "period_start": data.get("periodo_inicio"),
-            "period_end": data.get("periodo_fin"),
+            "period_end": data.get("periodo_fin") or data.get("period_end"),
             "ingresos": ingresos,
             "gastos": gastos,
             "costo_ventas": costo_ventas,
@@ -287,7 +293,7 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
         nic7 = info_adicional.get("nic7_identity") or {}
         return {
             "period_start": data.get("periodo_inicio"),
-            "period_end": data.get("periodo_fin"),
+            "period_end": data.get("periodo_fin") or data.get("period_end"),
             "metodo": data.get("metodo", "indirecto"),
             "verificacion": data.get("verificacion"),
             "efectivo_inicio": efectivo_ini,

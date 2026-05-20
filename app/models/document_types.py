@@ -42,6 +42,7 @@ class DocumentType(str, Enum):
     DOCUMENTO_SOPORTE = "documento_soporte"
     RECIBO_CAJA = "recibo_caja"
     NOMINA = "nomina"
+    LIQUIDACION_CESANTIAS = "liquidacion_cesantias"
     CONCILIACION_BANCARIA = "conciliacion_bancaria"
     CUENTA_COBRO = "cuenta_cobro"
     PLANILLA_SEGURIDAD_SOCIAL = "planilla_seguridad_social"
@@ -88,6 +89,7 @@ PATHWAY_MAP: dict[DocumentType, IngestPathway] = {
     DocumentType.DOCUMENTO_SOPORTE: IngestPathway.BUILD_FROM_SCRATCH,
     DocumentType.RECIBO_CAJA: IngestPathway.BUILD_FROM_SCRATCH,
     DocumentType.NOMINA: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.LIQUIDACION_CESANTIAS: IngestPathway.BUILD_FROM_SCRATCH,
     DocumentType.CONCILIACION_BANCARIA: IngestPathway.BUILD_FROM_SCRATCH,
     DocumentType.CUENTA_COBRO: IngestPathway.BUILD_FROM_SCRATCH,
     DocumentType.PLANILLA_SEGURIDAD_SOCIAL: IngestPathway.BUILD_FROM_SCRATCH,
@@ -129,6 +131,7 @@ DOCUMENT_TYPE_LABELS: dict[DocumentType, str] = {
     DocumentType.DOCUMENTO_SOPORTE: "Documento soporte",
     DocumentType.RECIBO_CAJA: "Recibo de caja",
     DocumentType.NOMINA: "Nomina",
+    DocumentType.LIQUIDACION_CESANTIAS: "Liquidacion de cesantias",
     DocumentType.CONCILIACION_BANCARIA: "Conciliacion bancaria",
     DocumentType.CUENTA_COBRO: "Cuenta de cobro",
     DocumentType.PLANILLA_SEGURIDAD_SOCIAL: "Planilla seguridad social",

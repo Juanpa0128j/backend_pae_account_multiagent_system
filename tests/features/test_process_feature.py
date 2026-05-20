@@ -73,10 +73,15 @@ def test_start_process_job_returns_process_id(monkeypatch):
         ),
     )
 
-    async def _start(pid: str):
+    async def _start(pid: str, force_persist: bool = False):
         captured["started"] = pid
 
     monkeypatch.setattr(jobs, "start_process_job", _start)
+
+    async def _dispatch(pid, force_persist=False, company_nit=None):
+        captured["started"] = pid
+
+    monkeypatch.setattr("app.api.v1.process.dispatch_process_start", _dispatch)
 
     response = client.post("/api/v1/process/accounting/ing_001")
     assert response.status_code == 200
@@ -231,10 +236,15 @@ def test_post_accounting_returns_existing_process_job_idempotent(monkeypatch):
         lambda db, ingest_id, **kwargs: new_job,
     )
 
-    async def _start(pid: str):
+    async def _start(pid: str, force_persist: bool = False):
         captured["started_count"] += 1
 
     monkeypatch.setattr(jobs, "start_process_job", _start)
+
+    async def _dispatch(pid, force_persist=False, company_nit=None):
+        captured["started_count"] += 1
+
+    monkeypatch.setattr("app.api.v1.process.dispatch_process_start", _dispatch)
 
     # First POST - should create and start
     response1 = client.post("/api/v1/process/accounting/ing_001")
@@ -300,10 +310,15 @@ def test_post_accounting_creates_new_job_if_previous_failed(monkeypatch):
         _create_job,
     )
 
-    async def _start(pid: str):
+    async def _start(pid: str, force_persist: bool = False):
         captured["started_count"] += 1
 
     monkeypatch.setattr(jobs, "start_process_job", _start)
+
+    async def _dispatch(pid, force_persist=False, company_nit=None):
+        captured["started_count"] += 1
+
+    monkeypatch.setattr("app.api.v1.process.dispatch_process_start", _dispatch)
 
     # First POST - creates job
     response1 = client.post("/api/v1/process/accounting/ing_002")

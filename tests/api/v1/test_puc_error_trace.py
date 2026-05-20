@@ -55,9 +55,9 @@ class TestPUCErrorInTrace:
         assert trace.overall_status == "failed"
         # Should contain a blocker with PERS-ACCOUNT-NOT-FOUND rule_id
         blockers = [f for f in trace.blockers if f.rule_id == "PERS-ACCOUNT-NOT-FOUND"]
-        assert len(blockers) > 0, (
-            "PUC error should create PERS-ACCOUNT-NOT-FOUND blocker"
-        )
+        assert (
+            len(blockers) > 0
+        ), "PUC error should create PERS-ACCOUNT-NOT-FOUND blocker"
 
     def test_puc_error_finding_has_spanish_user_message(self):
         """PUC error finding should have Spanish user_message_es."""

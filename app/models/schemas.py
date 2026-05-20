@@ -9,6 +9,7 @@ class IngestResponse(BaseModel):
     ingest_id: str
     status: str
     file_name: str
+    ingest_ids: Optional[List[str]] = None
     extracted_transactions: int = 0
     raw_preview: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None

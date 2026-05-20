@@ -48,6 +48,6 @@ def test_ica_declaration_sql_uses_company_nit(client):
     assert rsp.status_code == 200
     sql = executed_sql["text"]
     assert "tp.company_nit" in sql, f"SQL should join on tp.company_nit, got: {sql}"
-    assert "tp.nit_receptor" not in sql, (
-        f"SQL should not reference tp.nit_receptor, got: {sql}"
-    )
+    assert (
+        "tp.nit_receptor" not in sql
+    ), f"SQL should not reference tp.nit_receptor, got: {sql}"

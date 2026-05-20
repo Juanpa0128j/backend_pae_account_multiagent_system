@@ -33,6 +33,7 @@ from app.models.ingest_schemas import (
     FlujoDeCajaContent,
     LibroDiarioContent,
     NominaContent,
+    LiquidacionCesantiasContent,
     NotaCreditoContent,
     NotaDebitoContent,
     NotasEstadosFinancierosContent,
@@ -128,15 +129,19 @@ class LLMClient:
         return self._groq
 
     def _get_providers(self) -> list[tuple[str, Any]]:
-        """Build the ordered provider fallback list (OpenAI → Gemini → Groq)."""
+        """Build the ordered provider fallback list (OpenAI → Gemini → Groq).
+
+        Providers are initialised on-demand: Gemini and Groq are never
+        instantiated unless OpenAI is unavailable or has already failed.
+        """
         providers: list[tuple[str, Any]] = []
         openai_provider = self._get_openai()
         if openai_provider is not None:
             providers.append(("OpenAI", openai_provider))
         if self._gemini_key:
-            providers.append(("Gemini", self._get_gemini()))
+            providers.append(("Gemini", None))  # lazy — resolved in _invoke
         if self._groq_key:
-            providers.append(("Groq", self._get_groq()))
+            providers.append(("Groq", None))  # lazy — resolved in _invoke
         return providers
 
     def _invoke(self, schema_cls: type[BaseModel], prompt: str) -> BaseModel:
@@ -146,6 +151,11 @@ class LLMClient:
         last_exc: Exception | None = None
         failure_trace: list[str] = []
         for idx, (name, provider) in enumerate(providers):
+            if provider is None:
+                if name == "Gemini":
+                    provider = self._get_gemini()
+                elif name == "Groq":
+                    provider = self._get_groq()
             try:
                 return provider.invoke(schema_cls, prompt)
             except Exception as exc:
@@ -422,6 +432,11 @@ Y cita fuentes legales."""
         last_exc: Exception | None = None
         failure_trace: list[str] = []
         for idx, (name, provider) in enumerate(providers):
+            if provider is None:
+                if name == "Gemini":
+                    provider = self._get_gemini()
+                elif name == "Groq":
+                    provider = self._get_groq()
             try:
                 classify_fn = getattr(provider, "classify", provider.invoke)
                 result = classify_fn(ClassificationResponse, prompt)
@@ -629,6 +644,17 @@ Y cita fuentes legales."""
         self._ingest_debug_log("nomina", text, prompt, data)
         return data
 
+    def extract_liquidacion_cesantias(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        prompt = ingest.liquidacion_cesantias(
+            text, correction_feedback=correction_feedback
+        )
+        result_obj = self._invoke(LiquidacionCesantiasContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("liquidacion_cesantias", text, prompt, data)
+        return data
+
     def extract_conciliacion_bancaria(
         self, text: str, *, correction_feedback: str | None = None
     ) -> dict:
@@ -750,6 +776,11 @@ Y cita fuentes legales."""
         last_exc: Exception | None = None
         failure_trace: list[str] = []
         for idx, (name, provider) in enumerate(providers):
+            if provider is None:
+                if name == "Gemini":
+                    provider = self._get_gemini()
+                elif name == "Groq":
+                    provider = self._get_groq()
             try:
                 yield from provider.stream(prompt)
                 return
