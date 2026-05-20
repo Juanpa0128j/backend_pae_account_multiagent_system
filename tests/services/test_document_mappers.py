@@ -110,6 +110,37 @@ def test_safe_datetime_returns_none_for_unparseable() -> None:
     assert safe_datetime("not-a-date") is None
 
 
+def test_safe_datetime_parses_yyyy_mm_to_first_of_month() -> None:
+    """PILA / monthly tax docs deliver ``periodo`` as YYYY-MM. The parser must
+    treat that as the first day of that month at 00:00 UTC.
+    """
+    from datetime import datetime, timezone
+
+    result = safe_datetime("2026-01")
+    assert result == datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+
+def test_safe_datetime_normalizes_offset_to_utc() -> None:
+    """Inputs with explicit non-UTC offsets (e.g. Colombian -05:00) must be
+    converted to UTC so persisted rows never mix offsets.
+    """
+    from datetime import datetime, timezone
+
+    # 2026-01-06 10:26:58 Bogotá == 2026-01-06 15:26:58 UTC
+    result = safe_datetime("2026-01-06T10:26:58-05:00")
+    assert result is not None
+    assert result == datetime(2026, 1, 6, 15, 26, 58, tzinfo=timezone.utc)
+    offset = result.utcoffset()
+    assert offset is not None and offset.total_seconds() == 0
+
+
+def test_safe_datetime_handles_z_suffix() -> None:
+    from datetime import datetime, timezone
+
+    result = safe_datetime("2026-01-06T10:26:58Z")
+    assert result == datetime(2026, 1, 6, 10, 26, 58, tzinfo=timezone.utc)
+
+
 def test_infer_total_from_line_totals() -> None:
     items = [
         {"valor_total_sin_impuesto": "100.00"},

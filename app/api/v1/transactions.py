@@ -343,6 +343,21 @@ async def set_transaction_fecha(
     if not txn:
         raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
 
+    # Once the transaction has been posted, its fecha is already replicated to
+    # JournalEntryLine.fecha and into the derived FinancialStatement periods.
+    # Letting the user patch it here without cascading would leave the pending
+    # row out of sync with the posted ledger — reject and require a full
+    # re-process flow instead.
+    if txn.status == TransactionStatus.POSTED:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "La transacción ya fue contabilizada; su fecha no puede modificarse "
+                "directamente sin re-procesar el asiento. Anule el asiento y vuelva a "
+                "procesarlo con la fecha correcta."
+            ),
+        )
+
     parsed = safe_datetime(payload.fecha)
     if parsed is None:
         raise HTTPException(

@@ -11,14 +11,32 @@ import calendar
 from datetime import datetime, timezone
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Return ``dt`` as a tz-aware UTC datetime (converting offsets if needed)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def first_of_month(dt: datetime) -> datetime:
-    """Return the first day of the month containing ``dt`` (00:00:00 UTC)."""
-    tz = dt.tzinfo or timezone.utc
-    return datetime(dt.year, dt.month, 1, 0, 0, 0, tzinfo=tz)
+    """Return the first day of the month containing ``dt`` (00:00:00 UTC).
+
+    If ``dt`` is offset-aware (non-UTC), it is converted to UTC first so the
+    resulting month boundary is always anchored to UTC. This matches how the
+    DB stores ``DateTime(timezone=True)`` columns and avoids mixed-offset
+    period boundaries in queries.
+    """
+    dt_utc = _as_utc(dt)
+    return datetime(dt_utc.year, dt_utc.month, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 
 def last_of_month(dt: datetime) -> datetime:
-    """Return the last day of the month containing ``dt`` (23:59:59 UTC)."""
-    tz = dt.tzinfo or timezone.utc
-    last_day = calendar.monthrange(dt.year, dt.month)[1]
-    return datetime(dt.year, dt.month, last_day, 23, 59, 59, tzinfo=tz)
+    """Return the last day of the month containing ``dt`` (23:59:59 UTC).
+
+    See ``first_of_month`` for the timezone handling rationale.
+    """
+    dt_utc = _as_utc(dt)
+    last_day = calendar.monthrange(dt_utc.year, dt_utc.month)[1]
+    return datetime(
+        dt_utc.year, dt_utc.month, last_day, 23, 59, 59, tzinfo=timezone.utc
+    )

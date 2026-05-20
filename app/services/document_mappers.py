@@ -33,19 +33,39 @@ def safe_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
+def _to_utc(parsed: datetime) -> datetime:
+    """Normalize a parsed datetime to UTC.
+
+    - tz-naive → assume the parsed components are already UTC, attach UTC tzinfo.
+    - tz-aware UTC → return the value unchanged (preserves identity for callers
+      and avoids an unnecessary copy).
+    - tz-aware non-UTC → convert to UTC so persisted rows never mix offsets.
+    """
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    if parsed.utcoffset() == timezone.utc.utcoffset(parsed):
+        return parsed
+    return parsed.astimezone(timezone.utc)
+
+
 def safe_datetime(value: Any) -> Optional[datetime]:
     """Safely parse a value into a timezone-aware UTC datetime.
 
     Accepts a wide range of formats commonly produced by LLM extraction:
-    - Full ISO 8601 with or without timezone (e.g. ``2026-01-06T10:26:58+00:00``)
+    - Full ISO 8601 with or without timezone (e.g. ``2026-01-06T10:26:58+00:00``
+      or ``2026-01-06T10:26:58-05:00`` — any explicit offset is converted to UTC)
     - Date only (``2026-01-06``)
     - Month only (``2026-01``) → returns first day of the month
     - DD/MM/YYYY and DD-MM-YYYY (Colombian common formats)
+
+    The return value is always tz-aware UTC; any explicit offset on the input
+    is converted via ``astimezone(timezone.utc)`` so downstream queries can
+    compare dates without mixed-offset bugs.
     """
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return _to_utc(value)
 
     text = str(value).strip()
     if not text:
@@ -56,7 +76,7 @@ def safe_datetime(value: Any) -> Optional[datetime]:
     try:
         normalized = text.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(normalized)
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return _to_utc(parsed)
     except ValueError:
         pass
 
@@ -72,7 +92,7 @@ def safe_datetime(value: Any) -> Optional[datetime]:
     ):
         try:
             parsed = datetime.strptime(text, fmt)
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            return _to_utc(parsed)
         except ValueError:
             continue
     return None
