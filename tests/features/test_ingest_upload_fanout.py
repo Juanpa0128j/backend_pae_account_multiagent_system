@@ -80,6 +80,7 @@ async def test_fanout_documents_mode_inngest_creates_n_jobs(fake_files) -> None:
     assert len(created_jobs) == 3
     assert mock_dispatch.await_count == 3
     assert response.ingest_id == "job-0"
+    assert response.ingest_ids == ["job-0", "job-1", "job-2"]
 
 
 @pytest.mark.asyncio
