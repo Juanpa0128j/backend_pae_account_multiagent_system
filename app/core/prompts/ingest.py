@@ -385,9 +385,24 @@ def cuenta_cobro(text: str, *, correction_feedback: str | None = None) -> str:
     instructions = (
         "Eres un experto contable colombiano. Extrae la información de esta "
         "CUENTA DE COBRO.\n\n"
-        "Extrae obligatoriamente: número, fecha, datos del prestador de servicios (cédula/NIT y nombre, persona natural no obligada a facturar), "
-        "datos del contratante (NIT y razón social), descripción del servicio prestado, valor bruto cobrado, "
-        "retenciones que debe practicar el contratante (retefuente según actividad, reteICA si aplica), y valor neto a pagar."
+        "Extrae obligatoriamente: número, fecha, datos del prestador de servicios "
+        "(cédula/NIT y nombre, persona natural no obligada a facturar), "
+        "datos del contratante (NIT y razón social), descripción del servicio prestado, "
+        "valor bruto cobrado, retenciones que debe practicar el contratante "
+        "(retefuente según actividad, reteICA si aplica), y valor neto a pagar.\n\n"
+        "REGLAS OBLIGATORIAS:\n"
+        "1. Una cuenta de cobro es emitida por persona natural NO obligada a facturar y NO responsable de IVA. "
+        "Por definición total_iva = 0. Devuelve siempre:\n"
+        '   totales: {"subtotal": <valor>, "total_iva": 0, "total": <valor>}\n'
+        '2. Si el documento dice literalmente "no aplicar retención" / "no aplica retención" / '
+        '"no se practica retención" (citando Art 383 ET, Art 392 ET, base mínima UVT, etc.), '
+        "devuelve retenciones_aplicadas: [] e incluye en informacion_adicional:\n"
+        '   {"aplicar_retencion": false, "motivo_no_retencion": "<frase exacta del doc>"}\n'
+        "3. Si el doc NO menciona exoneración pero tampoco lista retenciones explícitas, "
+        "devuelve retenciones_aplicadas: [] sin flag (el agente tributario decidirá según concepto y base UVT).\n"
+        "4. Si el doc lista retenciones con valores explícitos, devuélvelas en retenciones_aplicadas: "
+        "[{tipo, base, tarifa, valor}].\n"
+        "5. nit_emisor debe ser la cédula o NIT del prestador (persona natural)."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 

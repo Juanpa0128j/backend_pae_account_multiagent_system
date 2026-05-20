@@ -96,19 +96,21 @@ VALID_CONTADOR_OUTPUT_BIENES = {
             "cuenta_puc": "1524",  # Activos — bienes
             "nombre_cuenta": "Equipos de cómputo",
             "tipo_movimiento": "debito",
-            "valor": 1000000,
+            # Base $2,000,000 sits above the 27-UVT minimum for bienes ($1,414,098
+            # at UVT 2026 = $52,374). Below it the agent zeroes retefuente.
+            "valor": 2000000,
             "descripcion": "Compra suministros",
         },
         {
             "cuenta_puc": "1110",
             "nombre_cuenta": "Bancos",
             "tipo_movimiento": "credito",
-            "valor": 1000000,
+            "valor": 2000000,
             "descripcion": "Pago bancario",
         },
     ],
-    "total_debitos": 1000000,
-    "total_creditos": 1000000,
+    "total_debitos": 2000000,
+    "total_creditos": 2000000,
 }
 
 
@@ -339,14 +341,18 @@ def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_llm_fn):
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_retefuente_bienes_2_5_percent(mock_rag_cls, mock_llm_fn):
-    """Retefuente = 2.5% for bienes declarantes (non-5xxx PUC), base 1,000,000."""
+    """Retefuente = 2.5% for bienes declarantes (non-5xxx PUC), base 2,000,000.
+
+    Base must exceed the 27-UVT minimum ($1,414,098 at UVT 2026) for the
+    agent to actually withhold; otherwise retefuente is correctly zeroed.
+    """
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT_BIENES)
     result = tributario_node(state)
 
     impuestos = result["tributario_output"]["impuestos"]
     retefuente = next(i for i in impuestos if i["tipo_impuesto"] == "retefuente")
-    assert Decimal(retefuente["valor_impuesto"]) == Decimal("25000.00")
+    assert Decimal(retefuente["valor_impuesto"]) == Decimal("50000.00")
 
 
 @patch("app.agents.tributario_agent.get_llm_client")

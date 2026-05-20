@@ -144,12 +144,18 @@ def _parse_single_file(file_path: str, state: AgentState) -> str:
             _content_hash = hashlib.sha256(_file_bytes).hexdigest()
         except OSError:
             _content_hash = None
-        _cache_path = _cache_dir / f"{_content_hash}.md" if _content_hash else None
+        # Cache key includes parser_mode so switching fast↔premium↔gpt4o forces
+        # a fresh parse instead of silently returning the previous mode's output.
+        _cache_mode = state.get("parser_mode") or "fast"
+        _cache_path = (
+            _cache_dir / f"{_content_hash}.{_cache_mode}.md" if _content_hash else None
+        )
         if _cache_path and _cache_path.exists():
             logger.info(
-                "Ingest: Using cached parse for %s (hash=%s...)",
+                "Ingest: Using cached parse for %s (hash=%s..., mode=%s)",
                 Path(file_path).name,
                 _content_hash[:12],
+                _cache_mode,
             )
             return _cache_path.read_text(encoding="utf-8")
 

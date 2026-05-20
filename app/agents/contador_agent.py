@@ -557,18 +557,92 @@ def contador_node(state: AgentState) -> AgentState:
                             break
             company_context = _load_company_context(company_nit)
 
-        contador_output = llm_with_parse_retry(
-            llm.extract_contador_output,
-            raw_transactions=raw_transactions,
-            doc_type=doc_type_normalized,
-            doc_subtype=doc_type_full,
-            rag_context=rag_context,
-            correction_feedback=state.get("correction_feedback") if is_retry else None,
-            source_taxes=source_taxes,
-            company_context=company_context,
-            puc_ingresos_catalog=puc_ingresos_catalog or None,
-            agent_label="contador",
-        )
+        # Multi-tx docs (bank statements, tax payment receipts with conceptos,
+        # bank reconciliations, etc.) need one LLM call per raw_transaction —
+        # otherwise the LLM tends to return a single asiento pair for the whole
+        # batch and persist clones it across every pending tx. Single-tx docs
+        # (factura_venta, factura_compra, DS, CC, CE) keep the original single
+        # call path.
+        if len(raw_transactions) > 1:
+            from decimal import Decimal as _Decimal
+
+            all_asientos: list[dict] = []
+            total_debitos = _Decimal("0")
+            total_creditos = _Decimal("0")
+            fecha_registro: str | None = None
+            descripcion_general: str | None = None
+
+            for idx, tx in enumerate(raw_transactions):
+                try:
+                    tx_output = llm_with_parse_retry(
+                        llm.extract_contador_output,
+                        raw_transactions=[tx],
+                        doc_type=doc_type_normalized,
+                        doc_subtype=doc_type_full,
+                        rag_context=rag_context,
+                        correction_feedback=(
+                            state.get("correction_feedback") if is_retry else None
+                        ),
+                        source_taxes=source_taxes,
+                        company_context=company_context,
+                        puc_ingresos_catalog=puc_ingresos_catalog or None,
+                        agent_label=f"contador-tx-{idx}",
+                    )
+                except Exception as mov_err:  # noqa: BLE001 — fail closed on partial batch errors
+                    logger.exception(
+                        "contador: raw_transaction %d failed (%s); aborting multi-tx batch",
+                        idx,
+                        mov_err,
+                    )
+                    raise RuntimeError(
+                        f"contador failed for raw_transaction index {idx} during multi-tx aggregation"
+                    ) from mov_err
+                tx_asientos = tx_output.get("asientos") or []
+                all_asientos.extend(tx_asientos)
+                for a in tx_asientos:
+                    try:
+                        valor = _Decimal(str(a.get("valor", 0)))
+                    except Exception:  # noqa: BLE001
+                        valor = _Decimal("0")
+                    if (a.get("tipo_movimiento") or "").lower() == "debito":
+                        total_debitos += valor
+                    else:
+                        total_creditos += valor
+                if fecha_registro is None:
+                    fecha_registro = tx_output.get("fecha_registro")
+                if descripcion_general is None:
+                    descripcion_general = tx_output.get("descripcion_general")
+
+            contador_output = {
+                "asientos": all_asientos,
+                "total_debitos": str(total_debitos),
+                "total_creditos": str(total_creditos),
+                "fecha_registro": fecha_registro
+                or (raw_transactions[0] or {}).get("fecha"),
+                "tipo_documento": doc_type_normalized,
+                "descripcion_general": descripcion_general
+                or f"{doc_type_normalized} — {len(raw_transactions)} transacciones",
+            }
+            logger.info(
+                "contador: multi-tx loop produced %d asientos for %d raw_transactions",
+                len(all_asientos),
+                len(raw_transactions),
+            )
+        else:
+            contador_output = llm_with_parse_retry(
+                llm.extract_contador_output,
+                raw_transactions=raw_transactions,
+                doc_type=doc_type_normalized,
+                doc_subtype=doc_type_full,
+                rag_context=rag_context,
+                correction_feedback=(
+                    state.get("correction_feedback") if is_retry else None
+                ),
+                source_taxes=source_taxes,
+                company_context=company_context,
+                puc_ingresos_catalog=puc_ingresos_catalog or None,
+                agent_label="contador",
+            )
 
         # Rewrite generic 5195 fallbacks to specific PUC subaccounts, swap CE
         # 220505 cred -> 111005, and specialize 4-digit class codes. Runs

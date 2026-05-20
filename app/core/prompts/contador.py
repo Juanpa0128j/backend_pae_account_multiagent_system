@@ -15,10 +15,25 @@ _EXCLUDED = {"_contador_asientos", "_tributario_output"}
 
 _DOC_GUIDANCE: dict[str, str] = {
     "extracto_bancario": (
-        "REGLA EXTRACTO BANCARIO: Cada movimiento genera exactamente DOS asientos: "
-        "debito en cuenta bancaria (111005) y credito en la contraparte (o viceversa). "
-        "NO agregues retenciones (retefuente, reteICA, IVA) — esas las calcula el agente tributario. "
-        "El valor del asiento debe ser el campo 'debito' o 'credito' del movimiento, NO el saldo."
+        "REGLA EXTRACTO BANCARIO: Cada movimiento genera EXACTAMENTE DOS asientos balanceados: "
+        "uno en banco 111005 (Bancos Nacionales) y otro en la contraparte. "
+        "Dirección por `bank_direction` del movement:\n"
+        "  - bank_direction='entrada' (abono al cliente) → D 111005 / C contraparte\n"
+        "  - bank_direction='salida' (cargo al cliente) → D contraparte / C 111005\n"
+        "Contraparte según descripción del movement:\n"
+        "  - GMF / 4X1000 / IMPTO GOBIERNO → 530525 (Gastos bancarios) — siempre salida\n"
+        "  - Cuota manejo / comisión bancaria / mantenimiento tarjeta → 530525\n"
+        "  - ABONO INTERESES AHORROS / rendimientos → 421005 (Ingresos financieros) — entrada\n"
+        "  - AJUSTE INTERESES AHORROS DB → 421005 (reverso) — salida\n"
+        "  - PAGO PSE IMPUESTO DIAN / DIR → 240XXX (impuesto por pagar) — salida\n"
+        "  - PAGO DE PROV / PAGO DE TERC → 220505 (CxP) reverso — salida\n"
+        "  - TRANSFERENCIA CTA SUC VIRTUAL → 1110XX (otra cuenta propia) o 220505 según destino\n"
+        "  - PAGO PSE [Empresa] → 220505 reverso — salida\n"
+        "  - Consignación / depósito de cliente → 130505 (CxC) reverso — entrada\n"
+        "Valor de cada asiento = campo 'debito' o 'credito' del movement, NUNCA el saldo. "
+        "NO agregues retenciones (retefuente, reteICA, IVA) — tributario las omite para extracto. "
+        "NUNCA uses 519595 ni 4170 como fallback genérico — elige el código específico por concepto. "
+        "Si la descripción es ambigua: 530525 para salidas, 421005 para entradas."
     ),
     "factura_venta": (
         "REGLA FACTURA VENTA (la empresa es VENDEDOR / EMISOR):\n"
@@ -154,9 +169,20 @@ _DOC_GUIDANCE: dict[str, str] = {
         "NO dupliques retenciones."
     ),
     "cuenta_cobro": (
-        "REGLA CUENTA COBRO: Debita gasto o activo y acredita cuentas por pagar (220505). "
-        "Similar a factura de compra sin IVA. "
-        "NO dupliques retenciones — el agente tributario las maneja."
+        "REGLA CUENTA COBRO: Documento informal de cobro emitido por persona natural "
+        "NO obligada a facturar y NO responsable de IVA. NUNCA incluyas D 240802 "
+        "(IVA descontable) — no hay IVA por definición. Cuenta gasto según concepto del servicio:\n"
+        "  - Honorarios contables, jurídicos, asesoría, consultoría → 511505 Honorarios\n"
+        "  - Outsourcing (contable, administrativo, operativo) → 511505 o 511595\n"
+        "  - Comisiones → 511510\n"
+        "  - Servicios técnicos especializados → 511525\n"
+        "  - Arrendamientos pagados → 511525 o 5140\n"
+        "  - Otros honorarios no clasificados → 511595\n"
+        "NUNCA uses 5305 (Gastos Financieros) — esa cuenta es exclusiva de intereses "
+        "y comisiones bancarias. NUNCA uses 530505 (no existe en el catálogo). "
+        "Estructura: D gasto (5110xx/5115xx) + C 220505 (CxP) por el valor neto. "
+        "El agente tributario añadirá retenciones (2365 retefuente, 2368 reteICA) SI corresponde; "
+        "NO las dupliques aquí."
     ),
     "conciliacion_bancaria": (
         "REGLA CONCILIACION BANCARIA: Solo genera asientos de ajuste para partidas conciliatorias "

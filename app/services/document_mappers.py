@@ -491,6 +491,55 @@ def build_structured_transactions(
             }
         ]
 
+    if doc_type == "cuenta_cobro":
+        prestador = interpreted.get("prestador") or {}
+        contratante = interpreted.get("contratante") or {}
+        raw_total = interpreted.get("valor") or interpreted.get("valor_neto")
+        parsed_total = safe_decimal(raw_total) or Decimal("0")
+        concepto = as_str(interpreted.get("concepto"), "").strip() or "Cuenta de cobro"
+        numero = as_str(interpreted.get("numero"), "").strip()
+        if numero:
+            concepto = f"Cuenta de cobro {numero} - {concepto}"
+
+        # Cuenta de cobro is emitted by a non-IVA-responsible natural person —
+        # total_iva = 0 by definition. Make it explicit so tributario does not
+        # back-compute IVA from the gross total.
+        totales_out = {
+            "subtotal": str(parsed_total),
+            "total_iva": "0",
+            "total": str(parsed_total),
+        }
+
+        info_adicional = interpreted.get("informacion_adicional") or {}
+        if not isinstance(info_adicional, dict):
+            info_adicional = {}
+
+        retenciones_extracted = interpreted.get("retenciones") or []
+        if not isinstance(retenciones_extracted, list):
+            retenciones_extracted = []
+
+        return [
+            {
+                "fecha": interpreted.get("fecha"),
+                "nit_emisor": as_str(
+                    prestador.get("nit")
+                    or prestador.get("cedula")
+                    or interpreted.get("nit_emisor"),
+                    "",
+                ),
+                "nit_receptor": as_str(
+                    contratante.get("nit") or interpreted.get("nit_receptor"), ""
+                ),
+                "total": str(parsed_total),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "totales": totales_out,
+                "retenciones_aplicadas": sanitize_for_json(retenciones_extracted),
+                "informacion_adicional": sanitize_for_json(info_adicional),
+                "items": [],
+            }
+        ]
+
     # --- Generic fallback mapping ---
     raw_total = (
         # Invoice-like schemas
