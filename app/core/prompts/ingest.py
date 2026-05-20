@@ -425,3 +425,48 @@ def recibo_pago_impuesto(text: str, *, correction_feedback: str | None = None) -
         "En el Formulario 490, esta tabla aparece en la segunda hoja."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
+
+
+def liquidacion_cesantias(text: str, *, correction_feedback: str | None = None) -> str:
+    instructions = (
+        "Eres un experto contable colombiano especializado en liquidaciones de cesantías. "
+        "Extrae la información de este DOCUMENTO DE LIQUIDACIÓN DE CESANTÍAS.\n\n"
+        "Extrae OBLIGATORIAMENTE:\n"
+        "- empresa: NIT (con dígito verificador) y/o razón social\n"
+        "- fecha_liquidacion: fecha del documento (YYYY-MM-DD)\n"
+        "- fecha_pago: fecha de pago si aparece, o la misma fecha_liquidacion si el documento no trae otra fecha\n"
+        "- numero_documento: número de referencia del documento\n"
+        "- motivo_retiro: renuncia | despido | vencimiento_contrato | jubilacion | muerte | incapacidad | otro\n"
+        "- Si el documento viene en formato resumido, prioriza estos campos mínimos por empleado:\n"
+        "  * dias_base\n"
+        "  * salario_base_liquidacion\n"
+        "  * auxilio_transporte (si aparece)\n"
+        "  * valor_cesantias o cesantias_liquidadas\n"
+        "  * razón social / nombre del empleador o beneficiario si solo aparece textual\n"
+        "- fecha_pago es un campo a nivel documento; si aparece, extráelo en el nivel superior y no dentro de cada empleado\n"
+        "- Para CADA EMPLEADO:\n"
+        "  * nombre, cédula, cargo\n"
+        "  * dias_base y salario_base_liquidacion si el documento solo trae el cálculo resumido\n"
+        "  * auxilio_transporte si forma parte de la base de liquidación\n"
+        "  * valor_cesantias cuando el documento entregue un único valor total por empleado\n"
+        "  * fecha_ingreso y fecha_retiro (YYYY-MM-DD)\n"
+        "  * salario_promedio: promedio salarial usado para cálculo\n"
+        "  * dias_cesantia: días trabajados acumulados\n"
+        "  * cesantias_acumuladas: cesantías devengadas hasta fecha de retiro (30 días de salario por año)\n"
+        "  * cesantias_liquidadas: valor efectivamente pagado al empleado\n"
+        "  * intereses_cesantias: intereses (12% anual sobre cesantías, DIFERENTE de cesantías base)\n"
+        "  * prima_servicios_liquidada: si aplica (8 días por año o la parte proporcional)\n"
+        "  * vacaciones_liquidadas: días pendientes de vacaciones pagadas\n"
+        "  * retenciones: desglose de retefuente, salud, pensión, etc.\n"
+        "  * total_deducciones y neto_pagar\n"
+        "  * tipo_fondo_cesantias: fondo_privado | fondo_publico (si es fondo privado, diferencia la administradora)\n"
+        "- Totales consolidados: total_cesantias_liquidadas, total_intereses_cesantias, total_prima_servicios, total_vacaciones, total_retenciones, total_neto_pagar\n\n"
+        "NOTAS CRÍTICAS:\n"
+        "- Cesantías ≠ Intereses cesantías (son CUENTAS DIFERENTES: 510510 vs 510515)\n"
+        "- Prima de servicios es DIFERENTE de cesantías (cuenta 510518)\n"
+        "- Si el documento solo trae dias_base, salario_base_liquidacion, auxilio_transporte y valor_cesantias, rellena esos campos sin inventar los demás\n"
+        "- Si solo hay un valor total de cesantías, úsalo en valor_cesantias y, si aplica, también en cesantias_liquidadas\n"
+        "- Si hay TABLA CONTABLE (CODIGO CUENTA, CONCEPTO, TERCERO, DEBITO, CREDITO), extrae en `asientos_documento`\n"
+        "- Respeta EXACTAMENTE los valores impresos en la tabla si existen"
+    )
+    return _build_prompt(instructions, text, correction_feedback=correction_feedback)

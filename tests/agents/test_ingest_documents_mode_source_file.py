@@ -214,14 +214,14 @@ class TestPersistNodeSourceFilePassthrough:
         import inspect
 
         sig = inspect.signature(create_transaction_pending)
-        assert "source_file" in sig.parameters, (
-            "create_transaction_pending must accept source_file parameter"
-        )
+        assert (
+            "source_file" in sig.parameters
+        ), "create_transaction_pending must accept source_file parameter"
 
     def test_transaction_pending_model_has_source_file(self):
         """TransactionPending ORM model must have source_file column."""
         from app.models.database import TransactionPending
 
-        assert hasattr(TransactionPending, "source_file"), (
-            "TransactionPending must have source_file column"
-        )
+        assert hasattr(
+            TransactionPending, "source_file"
+        ), "TransactionPending must have source_file column"

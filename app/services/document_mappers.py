@@ -242,6 +242,107 @@ def build_structured_transactions(
             }
         ]
 
+    if doc_type == "liquidacion_cesantias":
+        empresa = interpreted.get("empresa") or {}
+        fecha = (
+            interpreted.get("fecha_pago")
+            or interpreted.get("fecha_liquidacion")
+            or interpreted.get("fecha")
+        )
+
+        # Prefer explicit consolidated totals exposed by the extractor.
+        raw_total_cesantias = (
+            interpreted.get("total_cesantias_liquidadas")
+            or interpreted.get("total_cesantias")
+            or interpreted.get("total")
+        )
+        raw_total_intereses = interpreted.get("total_intereses_cesantias")
+        raw_total_prima = interpreted.get("total_prima_servicios")
+        raw_total_vacaciones = interpreted.get("total_vacaciones")
+        raw_total_retenciones = interpreted.get("total_retenciones")
+        raw_total_neto = interpreted.get("total_neto_pagar")
+
+        parsed_total = safe_decimal(raw_total_cesantias)
+        if parsed_total is None or parsed_total == Decimal("0"):
+            empleados = interpreted.get("empleados") or []
+            if isinstance(empleados, list):
+                parsed_total = sum(
+                    [
+                        safe_decimal((e or {}).get("valor_cesantias"))
+                        or safe_decimal((e or {}).get("cesantias_liquidadas"))
+                        or Decimal("0")
+                        for e in empleados
+                        if isinstance(e, dict)
+                    ],
+                    Decimal("0"),
+                )
+            else:
+                parsed_total = Decimal("0")
+
+        concepto = "Liquidacion cesantias"
+        numero = as_str(
+            interpreted.get("numero_documento") or interpreted.get("consecutivo"), ""
+        ).strip()
+        if numero:
+            concepto = f"Liquidacion cesantias {numero}"
+
+        empleados = interpreted.get("empleados") or []
+        items = sanitize_for_json(empleados)
+
+        tx = {
+            "fecha": fecha,
+            "nit_emisor": as_str(
+                empresa.get("nit") or interpreted.get("nit_emisor"), ""
+            ),
+            "nit_receptor": as_str(
+                interpreted.get("nit_receptor") or empresa.get("nit"), ""
+            ),
+            "total": str(parsed_total),
+            "total_cesantias_liquidadas": str(
+                safe_decimal(raw_total_cesantias) or parsed_total
+            ),
+            "total_intereses_cesantias": (
+                str(safe_decimal(raw_total_intereses))
+                if raw_total_intereses is not None
+                and safe_decimal(raw_total_intereses) is not None
+                else None
+            ),
+            "total_prima_servicios": (
+                str(safe_decimal(raw_total_prima))
+                if raw_total_prima is not None
+                and safe_decimal(raw_total_prima) is not None
+                else None
+            ),
+            "total_vacaciones": (
+                str(safe_decimal(raw_total_vacaciones))
+                if raw_total_vacaciones is not None
+                and safe_decimal(raw_total_vacaciones) is not None
+                else None
+            ),
+            "total_retenciones": (
+                str(safe_decimal(raw_total_retenciones))
+                if raw_total_retenciones is not None
+                and safe_decimal(raw_total_retenciones) is not None
+                else None
+            ),
+            "total_neto_pagar": (
+                str(safe_decimal(raw_total_neto))
+                if raw_total_neto is not None
+                and safe_decimal(raw_total_neto) is not None
+                else None
+            ),
+            "concepto": concepto,
+            "descripcion": concepto,
+            "items": items,
+        }
+
+        # Preserve pre-armed asiento table when present
+        asientos_documento = interpreted.get("asientos_documento")
+        if isinstance(asientos_documento, list) and asientos_documento:
+            tx["asientos_documento"] = sanitize_for_json(asientos_documento)
+
+        return [tx]
+
     if doc_type == "recibo_pago_impuesto":
         fecha = interpreted.get("fecha_pago") or interpreted.get("fecha")
         nit_emisor = as_str(

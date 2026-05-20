@@ -55,6 +55,8 @@ _DOC_TYPE_TO_CONTADOR_ENUM = {
     "anexo_iva": "otro",
     "auxiliar_iva": "otro",
     "nomina": "otro",
+    "liquidacion_cesantias": "otro",
+    "planilla_seguridad_social": "otro",
 }
 
 
@@ -443,6 +445,8 @@ def contador_node(state: AgentState) -> AgentState:
         doc_type_full = (state.get("document_classification") or {}).get("doc_type", "")
         doc_type_normalized = _normalize_doc_type_for_schema(doc_type_full)
         is_venta = doc_type_full in _VENTA_DOC_TYPES
+        is_nomina = doc_type_full == "nomina"
+        is_cesantias = doc_type_full == "liquidacion_cesantias"
 
         # Extract tax summary from the rich source document (populated by ingest pipeline)
         source_doc = state.get("source_document") or {}
@@ -521,7 +525,8 @@ def contador_node(state: AgentState) -> AgentState:
         # Enrich the prompt with empresa context + PUC ingresos catalog so the
         # LLM picks a 4xxx code that matches the actividad económica. Only
         # bother loading the catalog for venta-like docs (it's the only path
-        # that credits 4xxx). For compra-like docs the prompt stays slim.
+        # that credits 4xxx). For nóminas and cesantías, load company context for
+        # payroll classification. For compra-like docs the prompt stays slim.
         company_context: dict | None = None
         puc_ingresos_catalog: list[dict] = []
         if is_venta:
@@ -534,6 +539,23 @@ def contador_node(state: AgentState) -> AgentState:
                             break
             company_context = _load_company_context(company_nit)
             puc_ingresos_catalog = _load_puc_ingresos_catalog()
+        elif is_nomina or is_cesantias:
+            # For payroll documents (nomina, liquidacion_cesantias), load company context
+            # to understand cost centers, departamentos, and labor regime.
+            company_nit = state.get("company_nit")
+            if not company_nit:
+                for tx in raw_transactions:
+                    if isinstance(tx, dict):
+                        company_nit = (
+                            tx.get("company_nit")
+                            or tx.get("nit_receptor")
+                            or tx.get("nit_emisor")
+                            or tx.get("empresa", {}).get("nit")
+                            or tx.get("nit")
+                        )
+                        if company_nit:
+                            break
+            company_context = _load_company_context(company_nit)
 
         contador_output = llm_with_parse_retry(
             llm.extract_contador_output,

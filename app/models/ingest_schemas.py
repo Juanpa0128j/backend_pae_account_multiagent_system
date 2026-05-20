@@ -12,6 +12,8 @@ field where the LLM captures anything else relevant for downstream processing
 from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
 
+import re
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -24,6 +26,9 @@ def _parse_decimal(v):
         v = v.strip().replace("\xa0", "").replace(" ", "")
         if not v:
             return None
+        # Remove common currency symbols/letters (e.g. '$', 'COP', 'COL$', 'USD')
+        # Keep only digits, dots, commas and minus sign for decimal parsing.
+        v = re.sub(r"[^0-9\.,\-]", "", v)
         # Colombian format: 3.075.206,00 → 3075206.00
         if "," in v and v.count(".") >= 1:
             v = v.replace(".", "").replace(",", ".")
@@ -1353,7 +1358,7 @@ class NominaContent(ContentBase):
     total_neto_pagar: Optional[Decimal] = Field(None)
     aportes_patronales: Optional[Dict[str, Any]] = Field(
         None,
-        description="Employer contributions: salud, pension, ARL, SENA, ICBF, caja",
+        description="Employer contributions: salud, pension, ARL, SENA, ICBF, caja, fondo_cesantias",
     )
     moneda: Optional[str] = Field("COP")
     asientos_documento: Optional[List[AsientoLine]] = Field(
@@ -1369,7 +1374,137 @@ class NominaContent(ContentBase):
     )
 
     @field_validator(
-        "total_devengado", "total_deducciones", "total_neto_pagar", mode="before"
+        "total_devengado",
+        "total_deducciones",
+        "total_neto_pagar",
+        mode="before",
+    )
+    @classmethod
+    def parse_amounts(cls, v):
+        return _parse_decimal(v)
+
+
+# ---------------------------------------------------------------------------
+# 20.5. LiquidacionCesantiasContent — liquidacion_cesantias
+# ---------------------------------------------------------------------------
+
+
+class EmpleadoCesantias(BaseModel):
+    """Employee entry in a cesantías liquidation document."""
+
+    nombre: Optional[str] = Field(None)
+    cedula: Optional[str] = Field(None)
+    cargo: Optional[str] = Field(None)
+    dias_base: Optional[Decimal] = Field(
+        None,
+        description="Días base usados para la liquidación cuando el documento solo trae el cálculo resumido",
+    )
+    salario_base_liquidacion: Optional[Decimal] = Field(
+        None,
+        description="Salario base de liquidación usado para el cálculo resumido",
+    )
+    auxilio_transporte: Optional[Decimal] = Field(
+        None,
+        description="Auxilio de transporte incluido en la base si el documento lo menciona",
+    )
+    valor_cesantias: Optional[Decimal] = Field(
+        None,
+        description="Valor de cesantías liquidado en el documento cuando viene como único valor",
+    )
+    fecha_ingreso: Optional[str] = Field(None, description="YYYY-MM-DD")
+    fecha_retiro: Optional[str] = Field(None, description="YYYY-MM-DD")
+    salario_promedio: Optional[Decimal] = Field(
+        None, description="Promedio salarial para cálculo de cesantías"
+    )
+    dias_cesantia: Optional[int] = Field(
+        None, description="Días trabajados acumulados para cesantía"
+    )
+    cesantias_acumuladas: Optional[Decimal] = Field(
+        None, description="Cesantías devengadas hasta fecha de retiro"
+    )
+    cesantias_liquidadas: Optional[Decimal] = Field(
+        None, description="Cesantías efectivamente pagadas (valor girado)"
+    )
+    intereses_cesantias: Optional[Decimal] = Field(
+        None, description="Intereses sobre cesantías (12% anual, cuenta 510515)"
+    )
+    prima_servicios_liquidada: Optional[Decimal] = Field(
+        None, description="Prima de servicios liquidada (si aplica)"
+    )
+    vacaciones_liquidadas: Optional[Decimal] = Field(
+        None, description="Vacaciones liquidadas (si aplica)"
+    )
+    retenciones: Optional[Dict[str, Decimal]] = Field(
+        None, description="Retenciones: retefuente, salud, pension, etc."
+    )
+    total_deducciones: Optional[Decimal] = Field(None)
+    neto_pagar: Optional[Decimal] = Field(None)
+    tipo_fondo_cesantias: Optional[str] = Field(
+        None, description="fondo_privado | fondo_publico"
+    )
+
+    @field_validator(
+        "dias_base",
+        "salario_base_liquidacion",
+        "auxilio_transporte",
+        "valor_cesantias",
+        "salario_promedio",
+        "cesantias_acumuladas",
+        "cesantias_liquidadas",
+        "intereses_cesantias",
+        "prima_servicios_liquidada",
+        "vacaciones_liquidadas",
+        "total_deducciones",
+        "neto_pagar",
+        mode="before",
+    )
+    @classmethod
+    def parse_amounts(cls, v):
+        return _parse_decimal(v)
+
+
+class LiquidacionCesantiasContent(ContentBase):
+    """Liquidación de cesantías — specialized severance/termination settlement document."""
+
+    empresa: Optional[NitEntidad] = Field(None)
+    fecha_pago: Optional[str] = Field(None, description="YYYY-MM-DD")
+    fecha_liquidacion: Optional[str] = Field(None, description="YYYY-MM-DD")
+    numero_documento: Optional[str] = Field(
+        None, description="Document number/reference"
+    )
+    motivo_retiro: Optional[str] = Field(
+        None,
+        description="renuncia | despido | vencimiento_contrato | jubilacion | muerte | incapacidad | otro",
+    )
+    empleados: Optional[List[EmpleadoCesantias]] = Field(None)
+    total_cesantias_liquidadas: Optional[Decimal] = Field(None)
+    total_intereses_cesantias: Optional[Decimal] = Field(None)
+    total_prima_servicios: Optional[Decimal] = Field(None)
+    total_vacaciones: Optional[Decimal] = Field(None)
+    total_retenciones: Optional[Decimal] = Field(None)
+    total_neto_pagar: Optional[Decimal] = Field(None)
+    moneda: Optional[str] = Field("COP")
+    asientos_documento: Optional[List[AsientoLine]] = Field(
+        None,
+        description=(
+            "Journal entry table printed on the liquidation document. "
+            "When present, the pipeline respects these lines as the final asiento. "
+            "CRITICAL for cesantías liquidation."
+        ),
+    )
+    informacion_adicional: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Additional accounting data: fondo cesantías, acreedor, reason codes, labor agreements.",
+    )
+
+    @field_validator(
+        "total_cesantias_liquidadas",
+        "total_intereses_cesantias",
+        "total_prima_servicios",
+        "total_vacaciones",
+        "total_retenciones",
+        "total_neto_pagar",
+        mode="before",
     )
     @classmethod
     def parse_amounts(cls, v):
@@ -1602,6 +1737,7 @@ INGEST_CONTENT_SCHEMAS: dict[str, type[BaseModel]] = {
     DocumentType.DOCUMENTO_SOPORTE.value: DocumentoSoporteContent,
     DocumentType.RECIBO_CAJA.value: ReciboCajaContent,
     DocumentType.NOMINA.value: NominaContent,
+    DocumentType.LIQUIDACION_CESANTIAS.value: LiquidacionCesantiasContent,
     DocumentType.CONCILIACION_BANCARIA.value: ConciliacionBancariaContent,
     DocumentType.CUENTA_COBRO.value: CuentaCobroContent,
     DocumentType.PLANILLA_SEGURIDAD_SOCIAL.value: PlanillaSegSocialContent,

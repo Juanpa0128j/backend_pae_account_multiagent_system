@@ -33,6 +33,7 @@ from app.models.ingest_schemas import (
     FlujoDeCajaContent,
     LibroDiarioContent,
     NominaContent,
+    LiquidacionCesantiasContent,
     NotaCreditoContent,
     NotaDebitoContent,
     NotasEstadosFinancierosContent,
@@ -641,6 +642,17 @@ Y cita fuentes legales."""
         result_obj = self._invoke(NominaContent, prompt)
         data = self._as_dict(result_obj)
         self._ingest_debug_log("nomina", text, prompt, data)
+        return data
+
+    def extract_liquidacion_cesantias(
+        self, text: str, *, correction_feedback: str | None = None
+    ) -> dict:
+        prompt = ingest.liquidacion_cesantias(
+            text, correction_feedback=correction_feedback
+        )
+        result_obj = self._invoke(LiquidacionCesantiasContent, prompt)
+        data = self._as_dict(result_obj)
+        self._ingest_debug_log("liquidacion_cesantias", text, prompt, data)
         return data
 
     def extract_conciliacion_bancaria(

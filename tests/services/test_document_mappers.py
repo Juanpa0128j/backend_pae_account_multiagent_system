@@ -240,6 +240,78 @@ def test_recibo_pago_impuesto_uses_total_pagado() -> None:
     assert "2024-01" in txs[0]["concepto"]
 
 
+def test_liquidacion_cesantias_uses_consolidated_total_when_present() -> None:
+    interpreted = {
+        "empresa": {"nit": "900123456-7"},
+        "fecha_pago": "2024-02-15",
+        "numero_documento": "CES-001",
+        "total_cesantias_liquidadas": "1250000.00",
+        "total_intereses_cesantias": "150000.00",
+        "total_prima_servicios": "0",
+        "total_vacaciones": "0",
+        "total_retenciones": "50000.00",
+        "total_neto_pagar": "1350000.00",
+        "empleados": [{"nombre": "Ana"}],
+    }
+
+    txs = build_structured_transactions(interpreted, "liquidacion_cesantias")
+
+    assert len(txs) == 1
+    assert txs[0]["total"] == "1250000.00"
+    assert txs[0]["total_cesantias_liquidadas"] == "1250000.00"
+    assert txs[0]["total_intereses_cesantias"] == "150000.00"
+    assert txs[0]["fecha"] == "2024-02-15"
+    assert txs[0]["nit_receptor"] == "900123456-7"
+
+
+def test_liquidacion_cesantias_fallback_sums_empleados_when_total_missing() -> None:
+    interpreted = {
+        "empresa": {"nit": "900123456-7"},
+        "fecha_liquidacion": "2024-02-10",
+        "empleados": [
+            {"valor_cesantias": "500000.00"},
+            {"cesantias_liquidadas": "300000.00"},
+            {"valor_cesantias": "200000.00"},
+        ],
+    }
+
+    txs = build_structured_transactions(interpreted, "liquidacion_cesantias")
+
+    assert len(txs) == 1
+    assert txs[0]["total"] == "1000000.00"
+    assert txs[0]["total_cesantias_liquidadas"] == "1000000.00"
+    assert txs[0]["fecha"] == "2024-02-10"
+
+
+def test_liquidacion_cesantias_preserves_asientos_documento() -> None:
+    interpreted = {
+        "empresa": {"nit": "900123456-7"},
+        "total_cesantias_liquidadas": "1000.00",
+        "asientos_documento": [
+            {
+                "codigo_cuenta": "510510",
+                "concepto": "Cesantias",
+                "debito": Decimal("1000.00"),
+                "credito": Decimal("0"),
+            },
+            {
+                "codigo_cuenta": "111005",
+                "concepto": "Banco",
+                "debito": Decimal("0"),
+                "credito": Decimal("1000.00"),
+            },
+        ],
+    }
+
+    txs = build_structured_transactions(interpreted, "liquidacion_cesantias")
+
+    assert len(txs) == 1
+    assert "asientos_documento" in txs[0]
+    assert len(txs[0]["asientos_documento"]) == 2
+    assert txs[0]["asientos_documento"][0]["codigo_cuenta"] == "510510"
+    assert txs[0]["asientos_documento"][0]["debito"] == "1000.00"
+
+
 def test_generic_invoice_like_mapping() -> None:
     interpreted = {
         "emisor": {"nit": "111"},
