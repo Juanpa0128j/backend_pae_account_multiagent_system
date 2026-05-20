@@ -148,6 +148,15 @@ def correct_5195_fallback(line: dict) -> dict:
     )
     suggested = _suggest_puc(description)
     if not suggested:
+        # Persist as 5195 but surface a warning so it shows up in audit logs.
+        # CLAUDE.md mandates a logger.warning whenever the 5195/519595 fallback
+        # is used — otherwise these silently accumulate as "Gastos Diversos".
+        logger.warning(
+            "contador_puc_corrector: 5195 (Gastos Diversos) fallback persisted "
+            "without remap — descripcion=%r. Consider extending _suggest_puc "
+            "keyword list or adding doc-type guidance in contador prompt.",
+            description[:120],
+        )
         return line
     logger.info(
         "contador_puc_corrector: rewriting 5195 -> %s based on description=%r",

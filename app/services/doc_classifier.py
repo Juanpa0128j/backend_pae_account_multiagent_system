@@ -48,16 +48,28 @@ class DocumentClassification(BaseModel):
     )
 
 
-def _classify_with_llm(text_preview: str) -> ClassificationResponse:
+def _classify_with_llm(
+    text_preview: str,
+    *,
+    company_nit: str | None = None,
+    company_name: str | None = None,
+) -> ClassificationResponse:
     """Thin wrapper that calls the shared LLMClient. Isolated for test mocking."""
     from app.core.llm_client import get_llm_client
 
-    return get_llm_client().classify_document(text_preview)
+    return get_llm_client().classify_document(
+        text_preview,
+        company_nit=company_nit,
+        company_name=company_name,
+    )
 
 
 def classify_document(
     text_preview: str,
     source_format: str,
+    *,
+    company_nit: str | None = None,
+    company_name: str | None = None,
 ) -> DocumentClassification:
     """
     Classify a document using the shared LLMClient (OpenAI → Gemini → Groq).
@@ -65,6 +77,11 @@ def classify_document(
     Args:
         text_preview: First ~3000 chars of extracted text.
         source_format: File extension without dot ("pdf", "xlsx", "xml", ...).
+        company_nit: Receiver's NIT — lets the LLM determine factura_venta vs
+            factura_compra direction by comparing against emisor/adquirente NITs
+            in the document. Optional; when None the LLM uses fallback rules.
+        company_name: Receiver's razón social — secondary direction signal when
+            NITs are redacted or unreadable. Optional.
 
     Returns:
         DocumentClassification with type, pathway, and metadata.
@@ -88,7 +105,11 @@ def classify_document(
         )
 
     try:
-        response = _classify_with_llm(text_preview)
+        response = _classify_with_llm(
+            text_preview,
+            company_nit=company_nit,
+            company_name=company_name,
+        )
 
         try:
             doc_type = DocumentType(response.doc_type)
@@ -100,6 +121,45 @@ def classify_document(
             doc_type = DocumentType.OTRO
 
         pathway = get_pathway(doc_type)
+
+        direction_signal = getattr(response, "direction_signal", None)
+        emisor_extracted = getattr(response, "emisor_extracted", None)
+        entity_nit_value = (response.entity_nit or "").strip()
+
+        # Defensive override for factura_venta hallucinations. Two paths:
+        # 1) LLM reported nit_match_emisor without extracting a NIT
+        # 2) emisor_extracted is set but does NOT contain company_name
+        #    (substring match either way) — proveedor externo, must be compra.
+        emisor_lower = (emisor_extracted or "").strip().lower()
+        company_lower = (company_name or "").strip().lower()
+        emisor_mismatch = (
+            bool(emisor_lower)
+            and bool(company_lower)
+            and company_lower not in emisor_lower
+            and emisor_lower not in company_lower
+        )
+        if doc_type == DocumentType.FACTURA_VENTA and (
+            (direction_signal == "nit_match_emisor" and not entity_nit_value)
+            or emisor_mismatch
+        ):
+            override_reason = (
+                "override_no_nit_evidence"
+                if not entity_nit_value
+                else "override_emisor_mismatch"
+            )
+            logger.warning(
+                "doc_classifier: overriding factura_venta -> factura_compra "
+                "(reason=%s). emisor_extracted=%s, company_name=%s, "
+                "entity_nit=%s, direction_signal_llm=%s",
+                override_reason,
+                emisor_extracted or "—",
+                company_name or "—",
+                entity_nit_value or "—",
+                direction_signal or "—",
+            )
+            doc_type = DocumentType.FACTURA_COMPRA
+            pathway = get_pathway(doc_type)
+            direction_signal = override_reason
 
         classification = DocumentClassification(
             doc_type=doc_type,
@@ -113,10 +173,14 @@ def classify_document(
         )
 
         logger.info(
-            "doc_classifier: classified as %s (pathway=%s, confidence=%.2f)",
+            "doc_classifier: classified as %s (pathway=%s, confidence=%.2f, "
+            "company_nit=%s, direction_signal=%s, emisor_extracted=%s)",
             classification.doc_type.value,
             classification.pathway.value,
             classification.confidence,
+            company_nit or "—",
+            direction_signal or "—",
+            emisor_extracted or "—",
         )
         return classification
 

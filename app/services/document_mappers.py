@@ -542,8 +542,10 @@ def build_structured_transactions(
 
     # --- Generic fallback mapping ---
     raw_total = (
-        # Invoice-like schemas
-        totales.get("total_a_pagar")
+        # Invoice-like schemas — total_factura is the canonical
+        # IVA-inclusive total emitted by FacturaContent / BillContent.
+        totales.get("total_factura")
+        or totales.get("total_a_pagar")
         or totales.get("total")
         # Voucher-like schemas
         or interpreted.get("valor_neto")

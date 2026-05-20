@@ -463,9 +463,30 @@ class ClassificationResponse(BaseModel):
     )
     entity_nit: Optional[str] = Field(default=None, description="NIT of the entity")
     entity_name: Optional[str] = Field(default=None, description="Name of the entity")
+    direction_signal: Optional[str] = Field(
+        default=None,
+        description=(
+            "For factura_venta/factura_compra: which signal determined the "
+            "direction. One of: nit_match_emisor, nit_match_adquirente, "
+            "name_match_venta, name_match_compra, default_compra. Null for "
+            "non-factura doc types."
+        ),
+    )
+    emisor_extracted: Optional[str] = Field(
+        default=None,
+        description=(
+            "For factura_venta/factura_compra: the emisor's razón social as "
+            "literally read from the document body. Null if redacted/missing. "
+            "Used to validate direction_signal post-hoc."
+        ),
+    )
 
 
 CLASSIFICATION_PROMPT = """Eres un experto contable colombiano. Analiza el siguiente contenido extraído de un documento y clasifícalo.
+
+TU EMPRESA (perspectiva del clasificador):
+- NIT: {company_nit}
+- Razón social: {company_name}
 
 Tipos de documento posibles:
 
@@ -526,7 +547,23 @@ REGLAS PRIORIDAD 1 — TÍTULO O ENCABEZADO EXPLÍCITO (buscar en las primeras l
 - Título contiene "EXTRACTO BANCARIO" o "ESTADO DE CUENTA" bancario → extracto_bancario
 
 REGLAS PRIORIDAD 2 — PREFIJOS Y SEÑALES ESTRUCTURALES
-- Tiene CUFE o resolución DIAN → factura_venta (si es emitida) o factura_compra (si es recibida)
+- Tiene CUFE o resolución DIAN → factura (ver REGLA DIRECCIÓN abajo para determinar venta vs compra)
+
+REGLA DIRECCIÓN PARA FACTURAS (aplica cuando el doc tiene CUFE o resolución DIAN):
+
+PASO 1 — EXTRAE el emisor literal del bloque "Datos del Emisor" / "Razón social del emisor" / etc, y reporta en el campo emisor_extracted. Si no logras extraerlo (redactado, ilegible, ausente del preview), DEJA emisor_extracted=null.
+
+PASO 2 — DECIDE dirección:
+1. Si extraes un NIT del emisor Y coincide con TU NIT ({company_nit}) → factura_venta. Señal: nit_match_emisor. PROHIBIDO reportar nit_match_emisor sin haber extraído literalmente un NIT del doc — eso es hallucination.
+2. Si extraes un NIT del adquirente/receptor Y coincide con TU NIT → factura_compra. Señal: nit_match_adquirente.
+3. Si los NITs no son extraíbles pero SÍ extrajiste emisor_extracted:
+   - Si emisor_extracted contiene/iguala tu razón social ({company_name}) → factura_venta. Señal: name_match_venta.
+   - Si emisor_extracted NO contiene tu razón social → factura_compra. Señal: name_match_compra. Rama común cuando NITs vienen redactados pero el doc identifica un proveedor externo (ej. "CORPORACIÓN COUNTRY CLUB EJECUTIVOS", "EDIFICIO AVIÑON", "PARCELACION CAUCA VIEJO").
+4. Si NO logras extraer NI NIT NI emisor del doc → factura_compra por defecto (conservador para empresa receptora). Señal: default_compra.
+
+REGLA ANTI-HALLUCINATION: el header "Factura Electrónica de Venta" describe el TIPO de comprobante DIAN, NO la dirección. Una factura de venta del proveedor X es factura_compra desde tu perspectiva. NO uses el título del comprobante como signal de dirección.
+
+Reporta direction_signal Y emisor_extracted obligatoriamente cuando doc_type sea factura_venta o factura_compra.
 - Prefijo "DS"/"DM" en el número o proveedor "No responsable de IVA" o "Generado por: Solución Gratuita DIAN" → documento_soporte
 - Prefijo "CE" o texto "Comprobante de Egreso" → comprobante_egreso
 - Prefijo "RC" o texto "Recibo de Caja" → recibo_caja

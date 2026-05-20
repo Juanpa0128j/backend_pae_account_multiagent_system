@@ -56,7 +56,13 @@ _DOC_GUIDANCE: dict[str, str] = {
     ),
     "factura_compra": (
         "REGLA FACTURA COMPRA: debita el gasto/activo y acredita cuentas por pagar (220505). "
-        "NO dupliques el IVA ni las retenciones — el agente tributario las maneja.\n"
+        "OBLIGATORIO IVA DESCONTABLE: cuando totales.total_iva > 0 en el documento fuente, "
+        "DEBES emitir una línea separada D 240810 IVA descontable por exactamente ese valor. "
+        "NUNCA mezcles el IVA dentro del crédito a proveedor — el crédito a proveedor "
+        "debe ser igual al subtotal sin IVA (luego tributario reduce por retenciones). "
+        "Si NO booqueas la línea D 240810 cuando hay IVA, el agente tributario "
+        "double-cuenta el IVA y la partida doble falla.\n"
+        "NO dupliques las retenciones — el agente tributario las maneja.\n"
         "CUENTAS DE GASTO COMUNES (úsalas SIEMPRE en lugar de 5195):\n"
         "- 510505 Sueldos        - 510510 Cesantías          - 510515 Intereses cesantías\n"
         "- 510518 Prima servicios- 510521 Vacaciones         - 510527 Aportes EPS\n"
@@ -65,7 +71,14 @@ _DOC_GUIDANCE: dict[str, str] = {
         "- 513025 Combustibles   - 513540 Servicios públicos - 514505 Mantenimiento\n"
         "- 519520 Cuotas afiliación - 521505 ICA gasto ventas - 529505 Diversos\n"
         "- 143005 Inventario     - 152405 Equipo cómputo     - 152805 Equipo oficina\n"
-        "SOLO usa 5195 si el concepto es realmente ambiguo (último recurso)."
+        "CLUBES DEPORTIVOS/SOCIALES (sostenimiento, cuotas extraordinarias, fomento "
+        "deportivo, country clubs): usa 519520 Cuotas afiliación o 511595 Otros "
+        "honorarios. NUNCA 5195 para clubes.\n"
+        "ADMIN PROPIEDAD HORIZONTAL (edificios, conjuntos, parcelaciones — cuotas de "
+        "administración, intereses de mora PH, extra ascensores): usa 511595 Otros "
+        "honorarios o 511525 Servicios técnicos. NUNCA 5195 para PH.\n"
+        "SOLO usa 5195 si el concepto es realmente ambiguo (último recurso) — "
+        "esto disparará un warning en logs de auditoría."
     ),
     "nota_credito": (
         "REGLA NOTA CREDITO: Asiento de reversión. Debita la cuenta de ingreso específica "

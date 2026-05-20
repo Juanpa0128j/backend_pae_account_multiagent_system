@@ -200,3 +200,45 @@ class TestClassifyDocument:
         )
         assert result.doc_type == DocumentType.AUXILIAR_IMPUESTO
         assert result.pathway == IngestPathway.BUILD_FROM_SCRATCH
+
+    @patch("app.services.doc_classifier._classify_with_llm")
+    def test_factura_compra_when_emisor_differs_from_company(self, mock_classify):
+        """Emisor (Country Club) ≠ company → factura_compra."""
+        mock_classify.return_value = ClassificationResponse(
+            doc_type="factura_compra",
+            confidence=0.93,
+            entity_nit="900390126",
+            entity_name="CORPORACIÓN COUNTRY CLUB EJECUTIVOS",
+            direction_signal="name_match",
+        )
+
+        result = classify_document(
+            text_preview="Factura Electrónica de Venta FES29664 emisor Country Club...",
+            source_format="jpg",
+            company_nit="901016386",
+            company_name="testing_insane SAS",
+        )
+        assert result.doc_type == DocumentType.FACTURA_COMPRA
+        mock_classify.assert_called_once()
+        _, kwargs = mock_classify.call_args
+        assert kwargs["company_nit"] == "901016386"
+        assert kwargs["company_name"] == "testing_insane SAS"
+
+    @patch("app.services.doc_classifier._classify_with_llm")
+    def test_factura_venta_when_emisor_matches_company(self, mock_classify):
+        """Emisor NIT == company NIT → factura_venta."""
+        mock_classify.return_value = ClassificationResponse(
+            doc_type="factura_venta",
+            confidence=0.95,
+            entity_nit="901016386",
+            entity_name="testing_insane SAS",
+            direction_signal="nit_match_emisor",
+        )
+
+        result = classify_document(
+            text_preview="Factura de Venta FV-192 emisor testing_insane SAS NIT 901016386...",
+            source_format="pdf",
+            company_nit="901016386",
+            company_name="testing_insane SAS",
+        )
+        assert result.doc_type == DocumentType.FACTURA_VENTA
