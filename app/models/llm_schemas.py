@@ -51,12 +51,21 @@ class RawTransactionsList(BaseModel):
 class AsientoContable(BaseModel):
     """Simplified journal entry schema for structured output."""
 
-    cuenta_puc: str = Field(
+    cuenta_puc: Optional[str] = Field(
+        default=None,
         description=(
             "PUC account code (1-12 digits). 4-6 digits = official Decreto 2650 catalog; "
             "7-12 digits = ERP auxiliary subdivision."
-        )
+        ),
     )
+
+    @field_validator("cuenta_puc", mode="before")
+    @classmethod
+    def coerce_cuenta_puc(cls, v):  # noqa: N805
+        if v is None:
+            return None
+        return str(v).strip() or None
+
     descripcion: Optional[str] = Field(
         default=None, description="Description of the entry"
     )
@@ -104,6 +113,24 @@ class ContadorOutput(BaseModel):
         if isinstance(v, (int, float)):
             return Decimal(str(v))
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def filter_null_cuenta_asientos(cls, data: Any) -> Any:
+        """Drop asientos where LLM returned null cuenta_puc to avoid parse failure."""
+        if isinstance(data, dict) and "asientos" in data:
+            before = len(data["asientos"] or [])
+            data["asientos"] = [
+                a for a in (data["asientos"] or []) if a.get("cuenta_puc") is not None
+            ]
+            if len(data["asientos"]) < before:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Dropped %d asiento(s) with null cuenta_puc",
+                    before - len(data["asientos"]),
+                )
+        return data
 
     @model_validator(mode="after")
     def ensure_totals(self) -> "ContadorOutput":
