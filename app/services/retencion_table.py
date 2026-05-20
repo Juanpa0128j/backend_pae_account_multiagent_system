@@ -4,20 +4,29 @@ Tabla de Retención en la Fuente — Colombia 2026
 Source: Carolina García, Contadora Pública (H&G Abogados y Contadores)
 UVT 2026: $52.374
 
+Vigencia dual (Decreto 0572 suspendido 07-05-2026):
+  - Pagos con fecha 01-05-2026 a 07-05-2026: tabla original
+  - Pagos con fecha >= 08-05-2026: tabla modificada (solo cambian bases mínimas)
+
 Usage:
     from app.services.retencion_table import get_retencion_rate, RetencionConcepto
+    import datetime
 
     rate = get_retencion_rate(
         concepto=RetencionConcepto.SERVICIOS_GENERALES,
         es_declarante=True,
         base_pesos=1_500_000,
+        fecha_pago=datetime.date(2026, 5, 10),
     )
 """
 
+import datetime
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 from typing import Optional
+
+_FECHA_NUEVA_TABLA = datetime.date(2026, 5, 8)
 
 UVT_2026: int = 52_374
 
@@ -62,9 +71,9 @@ class RetencionRegla:
     aplica_declarante: Optional[bool]
 
 
-# Tabla completa 2026 — UVT $52.374
+# Tabla original 2026 — UVT $52.374 — vigente hasta 07-05-2026
 # Source: Carolina García, H&G Abogados y Contadores
-_TABLA: list[RetencionRegla] = [
+_TABLA_ORIGINAL: list[RetencionRegla] = [
     # ── Compras ──────────────────────────────────────────────────────────────
     RetencionRegla(RetencionConcepto.COMPRAS_GENERALES, Decimal("0.025"), 10, True),
     RetencionRegla(RetencionConcepto.COMPRAS_GENERALES, Decimal("0.035"), 10, False),
@@ -136,6 +145,91 @@ _TABLA: list[RetencionRegla] = [
     RetencionRegla(RetencionConcepto.RETENCION_IVA_COMPRAS, Decimal("0.15"), 10, None),
 ]
 
+# Tabla modificada — vigente desde 08-05-2026
+# Suspensión decreto 0572 (07-05-2026). Solo cambian bases mínimas, no tarifas.
+# Source: Carolina García, H&G Abogados y Contadores
+_TABLA_MAYO_2026: list[RetencionRegla] = [
+    # ── Compras ──────────────────────────────────────────────────────────────
+    RetencionRegla(RetencionConcepto.COMPRAS_GENERALES, Decimal("0.025"), 27, True),
+    RetencionRegla(RetencionConcepto.COMPRAS_GENERALES, Decimal("0.035"), 27, False),
+    RetencionRegla(RetencionConcepto.COMPRAS_TARJETA, Decimal("0.015"), 0, None),
+    RetencionRegla(
+        RetencionConcepto.COMPRAS_AGRICOLAS_SIN_PROCESO, Decimal("0.015"), 92, None
+    ),
+    RetencionRegla(
+        RetencionConcepto.COMPRAS_AGRICOLAS_CON_PROCESO, Decimal("0.025"), 27, True
+    ),
+    RetencionRegla(
+        RetencionConcepto.COMPRAS_AGRICOLAS_CON_PROCESO, Decimal("0.035"), 27, False
+    ),
+    RetencionRegla(RetencionConcepto.COMPRAS_COMBUSTIBLES, Decimal("0.001"), 0, None),
+    RetencionRegla(RetencionConcepto.COMPRAS_VEHICULOS, Decimal("0.01"), 0, None),
+    RetencionRegla(
+        RetencionConcepto.COMPRAS_BIENES_RAICES_VIVIENDA, Decimal("0.01"), 0, None
+    ),
+    RetencionRegla(
+        RetencionConcepto.COMPRAS_BIENES_RAICES_NO_VIVIENDA, Decimal("0.025"), 0, None
+    ),
+    # ── Servicios ────────────────────────────────────────────────────────────
+    RetencionRegla(RetencionConcepto.SERVICIOS_GENERALES, Decimal("0.04"), 4, True),
+    RetencionRegla(RetencionConcepto.SERVICIOS_GENERALES, Decimal("0.06"), 4, False),
+    RetencionRegla(
+        RetencionConcepto.SERVICIOS_TRANSPORTE_CARGA, Decimal("0.01"), 4, None
+    ),
+    RetencionRegla(
+        RetencionConcepto.SERVICIOS_TRANSPORTE_TERRESTRE, Decimal("0.035"), 27, None
+    ),
+    RetencionRegla(
+        RetencionConcepto.SERVICIOS_TRANSPORTE_AEREO_MARITIMO, Decimal("0.01"), 4, None
+    ),
+    RetencionRegla(RetencionConcepto.SERVICIOS_TEMPORALES, Decimal("0.01"), 4, None),
+    RetencionRegla(
+        RetencionConcepto.SERVICIOS_VIGILANCIA_ASEO, Decimal("0.02"), 4, None
+    ),
+    RetencionRegla(RetencionConcepto.SERVICIOS_IPS, Decimal("0.02"), 4, None),
+    RetencionRegla(
+        RetencionConcepto.SERVICIOS_HOTELES_RESTAURANTES, Decimal("0.035"), 4, None
+    ),
+    # ── Arrendamientos ───────────────────────────────────────────────────────
+    RetencionRegla(RetencionConcepto.ARRENDAMIENTO_MUEBLES, Decimal("0.04"), 0, None),
+    RetencionRegla(
+        RetencionConcepto.ARRENDAMIENTO_INMUEBLES, Decimal("0.035"), 27, None
+    ),
+    # ── Otros ingresos ───────────────────────────────────────────────────────
+    RetencionRegla(RetencionConcepto.OTROS_INGRESOS, Decimal("0.025"), 27, True),
+    RetencionRegla(RetencionConcepto.OTROS_INGRESOS, Decimal("0.035"), 27, False),
+    # ── Honorarios y comisiones ──────────────────────────────────────────────
+    RetencionRegla(RetencionConcepto.HONORARIOS_COMISIONES, Decimal("0.11"), 0, True),
+    RetencionRegla(RetencionConcepto.HONORARIOS_COMISIONES, Decimal("0.10"), 0, False),
+    # ── Software ─────────────────────────────────────────────────────────────
+    RetencionRegla(
+        RetencionConcepto.SOFTWARE_LICENCIAMIENTO, Decimal("0.035"), 0, None
+    ),
+    RetencionRegla(RetencionConcepto.SOFTWARE_DESARROLLO, Decimal("0.035"), 0, True),
+    RetencionRegla(RetencionConcepto.SOFTWARE_DESARROLLO, Decimal("0.11"), 0, False),
+    # ── Financieros ──────────────────────────────────────────────────────────
+    RetencionRegla(RetencionConcepto.INTERESES_RENDIMIENTOS, Decimal("0.07"), 0, None),
+    RetencionRegla(RetencionConcepto.RENDIMIENTOS_RENTA_FIJA, Decimal("0.04"), 0, None),
+    # ── Otros ────────────────────────────────────────────────────────────────
+    RetencionRegla(RetencionConcepto.LOTERIAS_RIFAS, Decimal("0.20"), 48, None),
+    RetencionRegla(
+        RetencionConcepto.CONSTRUCCION_URBANIZACION, Decimal("0.02"), 27, None
+    ),
+    # ── Retención de IVA ─────────────────────────────────────────────────────
+    RetencionRegla(RetencionConcepto.RETENCION_IVA_SERVICIOS, Decimal("0.15"), 4, None),
+    RetencionRegla(RetencionConcepto.RETENCION_IVA_COMPRAS, Decimal("0.15"), 27, None),
+]
+
+
+def _get_tabla(fecha_pago: Optional[datetime.date]) -> list[RetencionRegla]:
+    if fecha_pago is not None and fecha_pago >= _FECHA_NUEVA_TABLA:
+        return _TABLA_MAYO_2026
+    return _TABLA_ORIGINAL
+
+
+# Backward-compat alias: points to original table (pre-May-8 behavior)
+_TABLA = _TABLA_ORIGINAL
+
 
 def get_base_minima_pesos(base_minima_uvt: int) -> int:
     return base_minima_uvt * UVT_2026
@@ -145,6 +239,7 @@ def get_retencion_rate(
     concepto: RetencionConcepto,
     es_declarante: bool,
     base_pesos: float,
+    fecha_pago: Optional[datetime.date] = None,
 ) -> Optional[Decimal]:
     """
     Return the applicable retention rate.
@@ -155,11 +250,15 @@ def get_retencion_rate(
         concepto: The retention concept.
         es_declarante: True if the recipient is a declarante de renta.
         base_pesos: Taxable base in Colombian pesos.
+        fecha_pago: Payment date. Determines which table applies:
+            - None or < 2026-05-08: tabla original (Decreto 0572 vigente)
+            - >= 2026-05-08: tabla modificada (suspensión Decreto 0572)
 
     Returns:
         Decimal rate (e.g. Decimal("0.04") for 4%), or None if not applicable.
     """
-    for regla in _TABLA:
+    tabla = _get_tabla(fecha_pago)
+    for regla in tabla:
         if regla.concepto != concepto:
             continue
         if (
@@ -177,11 +276,15 @@ def calcular_retencion(
     concepto: RetencionConcepto,
     es_declarante: bool,
     base_pesos: Decimal,
+    fecha_pago: Optional[datetime.date] = None,
 ) -> Decimal:
     """
     Calculate retention amount. Returns Decimal("0") if below threshold or no rule.
+
+    Args:
+        fecha_pago: Payment date. Determines which table applies (see get_retencion_rate).
     """
-    rate = get_retencion_rate(concepto, es_declarante, float(base_pesos))
+    rate = get_retencion_rate(concepto, es_declarante, float(base_pesos), fecha_pago)
     if rate is None:
         return Decimal("0")
     return (base_pesos * rate).quantize(Decimal("0.01"))
