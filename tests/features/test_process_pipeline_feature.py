@@ -541,8 +541,15 @@ class TestFullProcessPipeline:
 
     @patch("app.agents.supervisor.db_service.validate_puc_exists")
     @patch("app.agents.contador_agent.get_llm_client")
-    def test_process_pipeline_exhausted_retries(self, mock_get_client, mock_puc_check):
+    @patch("app.services.rag_service.get_rag_service")
+    def test_process_pipeline_exhausted_retries(
+        self, mock_get_rag, mock_get_client, mock_puc_check
+    ):
         """Pipeline should fail after MAX_RETRIES with invalid output."""
+        mock_rag_svc = MagicMock()
+        mock_rag_svc.search_normativo.return_value = []
+        mock_get_rag.return_value = mock_rag_svc
+
         # Mock Gemini to always return invalid output
         mock_client = MagicMock()
         mock_client.extract_contador_output.return_value = (
