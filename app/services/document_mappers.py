@@ -912,8 +912,9 @@ def build_structured_transactions(
             total_creditos = safe_decimal(cuenta.get("total_creditos")) or Decimal("0")
             saldo_inicial = safe_decimal(cuenta.get("saldo_inicial")) or Decimal("0")
 
-            if saldo_final > Decimal("0"):
-                total = saldo_final
+            # IVA generado accounts carry a credit (negative) saldo_final — use abs().
+            if saldo_final != Decimal("0"):
+                total = abs(saldo_final)
             else:
                 total = max(total_debitos, total_creditos)
 
