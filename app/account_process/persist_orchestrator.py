@@ -34,14 +34,24 @@ class PersistOrchestrator:
         transaction_posted_id: str,
         company_nit: str,
     ) -> List[JournalEntryLine]:
-        """Create JournalEntryLine ORM objects from plain dicts."""
+        """Create JournalEntryLine ORM objects from plain dicts.
+
+        Uses ``safe_datetime`` (multi-format) to accept ISO datetimes, plain
+        dates, and monthly YYYY-MM strings. Raises ``ValueError`` when the
+        ``fecha`` is missing or unparseable — the pre-persist auditor must
+        catch that condition earlier and route to HITL, so reaching this
+        path with a bad date means we have a bug to surface.
+        """
+        from app.services.document_mappers import safe_datetime
+
         created: List[JournalEntryLine] = []
         for entry in entries:
             fecha_raw = entry.get("fecha")
-            if isinstance(fecha_raw, str):
-                fecha = datetime.fromisoformat(fecha_raw)
-            else:
-                fecha = fecha_raw or datetime.now()
+            fecha = safe_datetime(fecha_raw)
+            if fecha is None:
+                raise ValueError(
+                    f"JournalEntry missing or unparseable fecha (got {fecha_raw!r})"
+                )
 
             line = JournalEntryLine(
                 transaction_posted_id=transaction_posted_id,

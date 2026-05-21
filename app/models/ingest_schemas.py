@@ -1617,6 +1617,10 @@ class PlanillaSegSocialContent(ContentBase):
     """Social security contributions form (PILA)."""
 
     empresa: Optional[NitEntidad] = Field(None)
+    fecha: Optional[str] = Field(
+        None,
+        description="Payment / generation date in YYYY-MM-DD (used as the accounting date for the asiento).",
+    )
     periodo: Optional[str] = Field(None, description="YYYY-MM")
     numero_planilla: Optional[str] = Field(None)
     empleados: Optional[List[AporteEmpleado]] = Field(None)

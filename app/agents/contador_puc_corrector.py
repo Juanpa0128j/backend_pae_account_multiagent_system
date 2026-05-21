@@ -39,6 +39,17 @@ _KEYWORD_TO_PUC: tuple[tuple[str, str], ...] = (
     ("fondo de pensiones", "510533"),
     ("pension", "510533"),
     ("seguridad social", "510527"),
+    ("caja de compensacion", "510568"),
+    ("caja compensacion", "510568"),
+    ("caja de compensación", "510568"),
+    ("comfama", "510568"),
+    ("comfenalco", "510568"),
+    ("compensar", "510568"),
+    ("colsubsidio", "510568"),
+    ("cafam", "510568"),
+    ("sena", "510569"),
+    ("icbf", "510570"),
+    ("parafiscal", "510568"),
     ("salario", "510505"),
     ("sueldo", "510505"),
     ("nomina", "510505"),
@@ -252,8 +263,20 @@ def correct_class_only_codes(line: dict) -> dict:
         return line
     if not cuenta or cuenta[0] not in _CLASS_REQUIRES_SPECIALIZATION:
         return line
-    description = str(
-        line.get("descripcion") or line.get("concepto") or line.get("description") or ""
+    # Cover every field the contador or downstream may have populated. The
+    # cuenta name (puc_descripcion / nombre_cuenta) is often more informative
+    # than the journal-line descripcion for keyword matching.
+    description = " ".join(
+        str(line.get(k) or "")
+        for k in (
+            "descripcion",
+            "concepto",
+            "description",
+            "puc_descripcion",
+            "nombre_cuenta",
+            "nombre",
+            "detalle",
+        )
     )
     suggested = _suggest_puc(description)
     if not suggested or not suggested.startswith(cuenta[0]):

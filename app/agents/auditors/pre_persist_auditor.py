@@ -51,6 +51,48 @@ def run(state: AgentState, attempt: int = 1) -> AuditReport:
     asientos = (
         contador_output.get("asientos", []) if isinstance(contador_output, dict) else []
     )
+
+    # Validate the document's accounting date. Without it the journal lines
+    # would silently fall back to "today" and corrupt the financial period.
+    from app.services.document_mappers import safe_datetime
+
+    raw_transactions = state.get("raw_transactions") or []
+    base_tx = raw_transactions[0] if raw_transactions else {}
+    fecha_raw = (base_tx or {}).get("fecha") or (
+        contador_output.get("fecha_registro")
+        if isinstance(contador_output, dict)
+        else None
+    )
+    parsed_fecha = safe_datetime(fecha_raw)
+    needs_user_fecha = bool((base_tx or {}).get("needs_user_fecha"))
+    if needs_user_fecha or parsed_fecha is None:
+        pending_id_for_evidence = str(state.get("pending_transaction_id") or "").strip()
+        findings.append(
+            AuditFinding(
+                target=AuditTarget.PRE_PERSIST,
+                rule_id="ING-FECHA-MISSING",
+                severity=Severity.BLOCKER,
+                fixable=True,
+                responsible_agent="contador",
+                technical_message=(
+                    f"Document fecha is missing or unparseable (got {fecha_raw!r}); "
+                    "cannot derive an accounting period."
+                ),
+                user_message_es=(
+                    "No se pudo determinar la fecha del documento. Por favor ingrésela "
+                    "manualmente desde la cola de revisión pendiente."
+                ),
+                suggested_action_es=(
+                    "Indique la fecha del documento (DD/MM/AAAA) y reintente."
+                ),
+                evidence={
+                    "transaction_id": pending_id_for_evidence,
+                    "raw_fecha": str(fecha_raw) if fecha_raw is not None else None,
+                    "doc_type": str((base_tx or {}).get("concepto") or ""),
+                },
+            )
+        )
+
     if not asientos:
         findings.append(
             AuditFinding(

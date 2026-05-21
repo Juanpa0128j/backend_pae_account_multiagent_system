@@ -498,6 +498,42 @@ class PnLExporter:
         gastos_total = float(report.get("total_gastos", 0))
         utilidad_neta = float(report.get("utilidad_neta", 0))
 
+        # Detailed gastos breakdown — without this the PDF only shows the
+        # aggregate total in the summary, hiding the per-account expense
+        # composition that the Excel export already displays.
+        story.append(Paragraph("GASTOS OPERACIONALES", section_style))
+
+        gastos_data = [["Concepto", "Valor (COP)"]]
+        for cuenta in report.get("gastos", []):
+            gastos_data.append(
+                [
+                    _cell(
+                        f"{_get_cuenta_codigo(cuenta)} - {_get_cuenta_nombre(cuenta)}"
+                    ),
+                    _format_currency(float(cuenta.get("saldo", 0))),
+                ]
+            )
+        gastos_data.append(
+            ["TOTAL GASTOS OPERACIONALES", _format_currency(gastos_total)]
+        )
+
+        gastos_table = Table(gastos_data, colWidths=[5.0 * inch, 2.0 * inch])
+        gastos_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f4788")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fdecea")),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+                ]
+            )
+        )
+        story.append(gastos_table)
+        story.append(Spacer(1, 0.15 * inch))
+
         summary_data = [
             ["UTILIDAD BRUTA", _format_currency(utilidad_bruta)],
             ["GASTOS OPERACIONALES", _format_currency(gastos_total)],

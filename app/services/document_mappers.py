@@ -33,15 +33,66 @@ def safe_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
+def _to_utc(parsed: datetime) -> datetime:
+    """Normalize a parsed datetime to UTC.
+
+    - tz-naive → assume the parsed components are already UTC, attach UTC tzinfo.
+    - tz-aware UTC → return the value unchanged (preserves identity for callers
+      and avoids an unnecessary copy).
+    - tz-aware non-UTC → convert to UTC so persisted rows never mix offsets.
+    """
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    if parsed.utcoffset() == timezone.utc.utcoffset(parsed):
+        return parsed
+    return parsed.astimezone(timezone.utc)
+
+
 def safe_datetime(value: Any) -> Optional[datetime]:
-    """Safely parse a value into a timezone-aware UTC datetime."""
+    """Safely parse a value into a timezone-aware UTC datetime.
+
+    Accepts a wide range of formats commonly produced by LLM extraction:
+    - Full ISO 8601 with or without timezone (e.g. ``2026-01-06T10:26:58+00:00``
+      or ``2026-01-06T10:26:58-05:00`` — any explicit offset is converted to UTC)
+    - Date only (``2026-01-06``)
+    - Month only (``2026-01``) → returns first day of the month
+    - DD/MM/YYYY and DD-MM-YYYY (Colombian common formats)
+
+    The return value is always tz-aware UTC; any explicit offset on the input
+    is converted via ``astimezone(timezone.utc)`` so downstream queries can
+    compare dates without mixed-offset bugs.
+    """
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
-    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y", "%d-%m-%Y"):
+        return _to_utc(value)
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # Prefer the stdlib fromisoformat for full ISO strings — handles timezone
+    # offsets like "+00:00" and trailing "Z" (the latter only since Python 3.11).
+    try:
+        normalized = text.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        return _to_utc(parsed)
+    except ValueError:
+        pass
+
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%Y-%m",  # PILA / monthly tax periods → first day of month
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+    ):
         try:
-            return datetime.strptime(str(value), fmt).replace(tzinfo=timezone.utc)
+            parsed = datetime.strptime(text, fmt)
+            return _to_utc(parsed)
         except ValueError:
             continue
     return None
@@ -237,6 +288,69 @@ def build_structured_transactions(
                         {k: v for k, v in (e or {}).items() if k != "neto_pagar"}
                         for e in (interpreted.get("empleados") or [])
                         if isinstance(e, dict)
+                    ]
+                ),
+            }
+        ]
+
+    if doc_type == "planilla_seguridad_social":
+        empresa = interpreted.get("empresa") or {}
+        periodo = as_str(interpreted.get("periodo"), "")
+        numero_planilla = as_str(interpreted.get("numero_planilla"), "")
+
+        total_salud = safe_decimal(interpreted.get("total_salud")) or Decimal("0")
+        total_pension = safe_decimal(interpreted.get("total_pension")) or Decimal("0")
+        total_arl = safe_decimal(interpreted.get("total_arl")) or Decimal("0")
+        total_caja = safe_decimal(interpreted.get("total_caja")) or Decimal("0")
+        total_parafiscales = safe_decimal(
+            interpreted.get("total_parafiscales")
+        ) or Decimal("0")
+
+        total_a_pagar = safe_decimal(interpreted.get("total_a_pagar"))
+        if total_a_pagar is None or total_a_pagar == 0:
+            total_a_pagar = (
+                total_salud
+                + total_pension
+                + total_arl
+                + total_caja
+                + total_parafiscales
+            )
+
+        concepto = "Planilla seguridad social"
+        if numero_planilla:
+            concepto = f"{concepto} #{numero_planilla}"
+        if periodo:
+            concepto = f"{concepto} ({periodo})"
+
+        return [
+            {
+                "fecha": interpreted.get("fecha") or interpreted.get("periodo"),
+                "nit_emisor": as_str(
+                    empresa.get("nit") or interpreted.get("nit_emisor"), ""
+                ),
+                "nit_receptor": as_str(
+                    interpreted.get("nit_receptor") or receptor.get("nit"), ""
+                ),
+                "total": str(total_a_pagar),
+                "total_salud": str(total_salud),
+                "total_pension": str(total_pension),
+                "total_arl": str(total_arl),
+                "total_caja": str(total_caja),
+                "total_parafiscales": str(total_parafiscales),
+                "total_a_pagar": str(total_a_pagar),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "items": sanitize_for_json(
+                    [
+                        {
+                            "numero_planilla": interpreted.get("numero_planilla"),
+                            "periodo": periodo,
+                            "total_salud": str(total_salud),
+                            "total_pension": str(total_pension),
+                            "total_arl": str(total_arl),
+                            "total_caja": str(total_caja),
+                            "total_parafiscales": str(total_parafiscales),
+                        }
                     ]
                 ),
             }
