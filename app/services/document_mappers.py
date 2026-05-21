@@ -133,7 +133,7 @@ def infer_total_from_items(items: Any) -> Optional[Decimal]:
     return inferred
 
 
-def _derive_period_end(anio: int, periodicidad: str, periodo_numero: int) -> str:
+def _derive_period_end(anio: int, periodicidad: str, periodo_numero: int) -> str | None:
     """Return the last day of the tax period as YYYY-MM-DD."""
     import calendar
 
@@ -146,8 +146,10 @@ def _derive_period_end(anio: int, periodicidad: str, periodo_numero: int) -> str
         month = cuatrimestral_end.get(periodo_numero, 12)
     elif "mensual" in periodicidad:
         month = max(1, min(periodo_numero, 12))
-    else:
+    elif "anual" in periodicidad:
         month = 12
+    else:
+        return None
 
     last_day = calendar.monthrange(anio, month)[1]
     return f"{anio}-{month:02d}-{last_day:02d}"
@@ -711,7 +713,6 @@ def build_structured_transactions(
                 {
                     "fecha": fecha,
                     "nit_emisor": nit_emisor,
-                    "nit_receptor": "",
                     "total": str(parsed_total),
                     "concepto": concepto,
                     "descripcion": concepto,
@@ -754,6 +755,33 @@ def build_structured_transactions(
             ]
 
         # declaracion_iva — TaxDeclarationContent
+        # TaxDeclarationContent has `periodo` (YYYY-MM) but no anio/periodo_numero.
+        # Derive fecha from the periodo string when anio/periodo_numero were unavailable.
+        if not fecha and periodo_str:
+            import re
+            import calendar as _calendar
+
+            m = re.match(r"^(\d{4})-(\d{2})$", periodo_str.strip())
+            parsed_year = None
+            parsed_month = None
+            if m:
+                parsed_year = int(m.group(1))
+                parsed_month = int(m.group(2))
+                if not (1 <= parsed_month <= 12):
+                    parsed_month = None  # skip invalid month
+            if parsed_year is not None and parsed_month is not None:
+                if "bimestral" in periodicidad:
+                    bimestre_num = (parsed_month + 1) // 2
+                    fecha = _derive_period_end(parsed_year, "bimestral", bimestre_num)
+                elif "cuatrimestral" in periodicidad:
+                    cuatri_num = (parsed_month + 3) // 4
+                    fecha = _derive_period_end(parsed_year, "cuatrimestral", cuatri_num)
+                elif "mensual" in periodicidad:
+                    fecha = _derive_period_end(parsed_year, "mensual", parsed_month)
+                else:
+                    last_day = _calendar.monthrange(parsed_year, parsed_month)[1]
+                    fecha = f"{parsed_year}-{parsed_month:02d}-{last_day:02d}"
+
         raw_total = interpreted.get("total_a_pagar") or interpreted.get("saldo_a_favor")
         parsed_total = safe_decimal(raw_total) or Decimal("0")
 
@@ -767,7 +795,6 @@ def build_structured_transactions(
             {
                 "fecha": fecha,
                 "nit_emisor": nit_emisor,
-                "nit_receptor": "",
                 "total": str(parsed_total),
                 "concepto": concepto,
                 "descripcion": concepto,

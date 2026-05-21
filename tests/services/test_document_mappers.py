@@ -865,6 +865,93 @@ def test_cuenta_cobro_branch_uses_prestador_nit_when_present() -> None:
     assert tx["retenciones_aplicadas"] == [{"tipo": "retefuente", "valor": 50000}]
 
 
+class TestAnexoIVAMapper:
+    def test_total_from_saldo_a_pagar(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "anio": 2026,
+            "periodicidad": "bimestral",
+            "periodo_numero": 1,
+            "saldo_a_pagar": "1500000",
+        }
+        txs = build_structured_transactions(interpreted, "anexo_iva")
+        assert len(txs) == 1
+        assert txs[0]["total"] == "1500000"
+
+    def test_total_falls_back_to_iva_generado(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "anio": 2026,
+            "periodicidad": "bimestral",
+            "periodo_numero": 1,
+            "total_iva_generado": "800000",
+        }
+        txs = build_structured_transactions(interpreted, "anexo_iva")
+        assert len(txs) == 1
+        assert txs[0]["total"] == "800000"
+
+    def test_fecha_derived_from_anio_periodicidad_periodo_numero(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "anio": 2026,
+            "periodicidad": "bimestral",
+            "periodo_numero": 1,
+            "saldo_a_pagar": "500000",
+        }
+        txs = build_structured_transactions(interpreted, "anexo_iva")
+        # Bimestre 1 of 2026 ends Feb 28
+        assert txs[0]["fecha"] == "2026-02-28"
+
+    def test_nit_emisor_from_nit_declarante(self) -> None:
+        interpreted = {"nit_declarante": "800555444", "saldo_a_pagar": "200000"}
+        txs = build_structured_transactions(interpreted, "anexo_iva")
+        assert txs[0]["nit_emisor"] == "800555444"
+
+
+class TestDeclaracionIVAMapper:
+    def test_total_from_total_a_pagar(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "periodo": "2026-01",
+            "periodicidad": "bimestral",
+            "total_a_pagar": "3000000",
+        }
+        txs = build_structured_transactions(interpreted, "declaracion_iva")
+        assert len(txs) == 1
+        assert txs[0]["total"] == "3000000"
+
+    def test_fecha_derived_from_periodo_string_bimestral(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "periodo": "2026-01",
+            "periodicidad": "bimestral",
+            "total_a_pagar": "1000000",
+        }
+        txs = build_structured_transactions(interpreted, "declaracion_iva")
+        # periodo "2026-01" = month 1, bimestral → bimestre 1 → ends Feb 28
+        assert txs[0]["fecha"] == "2026-02-28"
+
+    def test_fecha_derived_from_periodo_string_mensual(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "periodo": "2026-03",
+            "periodicidad": "mensual",
+            "total_a_pagar": "750000",
+        }
+        txs = build_structured_transactions(interpreted, "declaracion_iva")
+        assert txs[0]["fecha"] == "2026-03-31"
+
+    def test_no_nit_receptor_field(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "periodo": "2026-01",
+            "periodicidad": "bimestral",
+            "total_a_pagar": "500000",
+        }
+        txs = build_structured_transactions(interpreted, "declaracion_iva")
+        assert "nit_receptor" not in txs[0]
+
+
 class TestReciboCajaMapper:
     def test_asientos_documento_passthrough_when_present(self) -> None:
         """When `interpreted` has `asientos_documento` list, the returned tx includes it."""
