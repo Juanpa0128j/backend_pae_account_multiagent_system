@@ -480,7 +480,12 @@ def recibo_pago_impuesto(text: str, *, correction_feedback: str | None = None) -
         "tabla de detalle con filas numeradas (columnas: concepto pago, N° declaración, "
         "N° documento origen, valor impuesto, intereses de mora, valor sanción, total), "
         "extrae TODAS las filas no vacías en el campo 'conceptos'. "
-        "En el Formulario 490, esta tabla aparece en la segunda hoja."
+        "En el Formulario 490, esta tabla aparece en la segunda hoja.\n\n"
+        "CONSTRUCCIÓN DE periodo_gravable (obligatorio si hay datos de período):\n"
+        "- Usa campo 1 (Año) + campo 3 (Período) + campo 2 (Concepto) para construir el período.\n"
+        "- Formato: 'Año {anio} Período {periodo}' o 'Bimestre {periodo}/{anio}' según contexto.\n"
+        "- Si el documento dice '1. Año: 2025  3. Período: 6', extrae: periodo_gravable='Año 2025 Período 6' (el campo 2 Concepto es el código de tipo impuesto, no el período).\n"
+        "- Nunca dejes periodo_gravable en blanco si hay campos de año y período en el documento."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 

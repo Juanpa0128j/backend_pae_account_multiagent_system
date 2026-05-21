@@ -271,6 +271,105 @@ def test_recibo_pago_impuesto_uses_total_pagado() -> None:
     assert "2024-01" in txs[0]["concepto"]
 
 
+class TestReciboPagoImpuestoMapper:
+    def test_multi_concepto_creates_one_tx_per_row(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "fecha_pago": "2025-07-15",
+            "periodo_gravable": "Año 2025 Período 6",
+            "conceptos": [
+                {
+                    "codigo_concepto": "30",
+                    "total": "1369000",
+                    "valor_impuesto": "1369000",
+                },
+                {
+                    "codigo_concepto": "58",
+                    "total": "5865000",
+                    "valor_impuesto": "5865000",
+                },
+                {
+                    "codigo_concepto": "29",
+                    "total": "507000",
+                    "valor_impuesto": "507000",
+                },
+            ],
+        }
+        txs = build_structured_transactions(interpreted, "recibo_pago_impuesto")
+        assert len(txs) == 3
+        totals = {tx["total"] for tx in txs}
+        assert "1369000" in totals
+        assert "5865000" in totals
+        assert "507000" in totals
+
+    def test_multi_concepto_skips_zero_value_rows(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "fecha_pago": "2025-07-15",
+            "conceptos": [
+                {
+                    "codigo_concepto": "30",
+                    "total": "1369000",
+                    "valor_impuesto": "1369000",
+                },
+                {"codigo_concepto": "99", "total": "0", "valor_impuesto": "0"},
+                {"codigo_concepto": "98", "total": None, "valor_impuesto": None},
+            ],
+        }
+        txs = build_structured_transactions(interpreted, "recibo_pago_impuesto")
+        assert len(txs) == 1
+        assert txs[0]["total"] == "1369000"
+
+    def test_multi_concepto_includes_codigo_and_periodo(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "fecha_pago": "2025-07-15",
+            "periodo_gravable": "Año 2025 Período 6",
+            "conceptos": [
+                {"codigo_concepto": "58", "total": "5865000"},
+            ],
+        }
+        txs = build_structured_transactions(interpreted, "recibo_pago_impuesto")
+        assert len(txs) == 1
+        assert "58" in txs[0]["concepto"]
+        assert "Año 2025 Período 6" in txs[0]["concepto"]
+
+    def test_multi_concepto_items_contain_detail_fields(self) -> None:
+        interpreted = {
+            "nit_declarante": "900123456",
+            "fecha_pago": "2025-07-15",
+            "conceptos": [
+                {
+                    "codigo_concepto": "30",
+                    "total": "1369000",
+                    "valor_impuesto": "1369000",
+                    "valor_intereses": "5000",
+                    "numero_documento_origen": "DOC-001",
+                },
+            ],
+        }
+        txs = build_structured_transactions(interpreted, "recibo_pago_impuesto")
+        assert len(txs) == 1
+        items = txs[0]["items"]
+        assert len(items) == 1
+        assert items[0]["numero_documento_origen"] == "DOC-001"
+        assert items[0]["valor_impuesto"] == "1369000"
+        assert items[0]["valor_intereses"] == "5000"
+
+    def test_fallback_single_tx_includes_periodo_gravable_in_concepto(self) -> None:
+        interpreted = {
+            "nit_declarante": "900111222",
+            "fecha_pago": "2026-01-20",
+            "total_pagado": "7741000",
+            "tipo_impuesto": "renta",
+            "periodo_gravable": "Año 2025 Período 6",
+        }
+        txs = build_structured_transactions(interpreted, "recibo_pago_impuesto")
+        assert len(txs) == 1
+        assert "renta" in txs[0]["concepto"]
+        assert "Año 2025 Período 6" in txs[0]["concepto"]
+
+
 def test_liquidacion_cesantias_uses_consolidated_total_when_present() -> None:
     interpreted = {
         "empresa": {"nit": "900123456-7"},

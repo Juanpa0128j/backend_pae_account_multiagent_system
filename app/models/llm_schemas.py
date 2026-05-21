@@ -524,6 +524,7 @@ REGLAS PRIORIDAD 1 — TÍTULO O ENCABEZADO EXPLÍCITO (buscar en las primeras l
 - Título contiene "NOTAS A LOS ESTADOS FINANCIEROS" o "REVELACIONES" → notas_estados_financieros
 - Título contiene "CONCILIACIÓN BANCARIA" → conciliacion_bancaria
 - Título contiene "EXTRACTO BANCARIO" o "ESTADO DE CUENTA" bancario → extracto_bancario
+- Título contiene "RECIBO OFICIAL DE PAGO IMPUESTOS NACIONALES" o "RECIBO OFICIAL DE PAGO" o "Formulario 490" → recibo_pago_impuesto
 
 REGLAS PRIORIDAD 2 — PREFIJOS Y SEÑALES ESTRUCTURALES
 - Tiene CUFE o resolución DIAN → factura_venta (si es emitida) o factura_compra (si es recibida)
