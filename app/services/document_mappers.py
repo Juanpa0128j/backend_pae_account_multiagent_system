@@ -696,12 +696,19 @@ def build_structured_transactions(
             fecha = _derive_period_end(int(anio), periodicidad, int(periodo_numero))
 
         if doc_type == "anexo_iva":
-            raw_total = (
-                interpreted.get("saldo_a_pagar")
-                or interpreted.get("saldo_a_favor")
-                or interpreted.get("total_iva_generado")
-            )
-            parsed_total = safe_decimal(raw_total) or Decimal("0")
+            # Use safe_decimal first — model_dump(mode="json") serialises Decimal("0")
+            # as the string "0" which is truthy, so a bare `or` chain would stop there.
+            _saldo_pagar = safe_decimal(interpreted.get("saldo_a_pagar"))
+            _saldo_favor = safe_decimal(interpreted.get("saldo_a_favor"))
+            _total_gen = safe_decimal(interpreted.get("total_iva_generado"))
+            if _saldo_pagar and _saldo_pagar > Decimal("0"):
+                parsed_total = _saldo_pagar
+            elif _saldo_favor and _saldo_favor > Decimal("0"):
+                parsed_total = _saldo_favor
+            elif _total_gen and _total_gen > Decimal("0"):
+                parsed_total = _total_gen
+            else:
+                parsed_total = Decimal("0")
 
             concepto = "Anexo IVA"
             if periodo_str:
@@ -782,8 +789,14 @@ def build_structured_transactions(
                     last_day = _calendar.monthrange(parsed_year, parsed_month)[1]
                     fecha = f"{parsed_year}-{parsed_month:02d}-{last_day:02d}"
 
-        raw_total = interpreted.get("total_a_pagar") or interpreted.get("saldo_a_favor")
-        parsed_total = safe_decimal(raw_total) or Decimal("0")
+        _total_a_pagar = safe_decimal(interpreted.get("total_a_pagar"))
+        _saldo_a_favor = safe_decimal(interpreted.get("saldo_a_favor"))
+        if _total_a_pagar and _total_a_pagar > Decimal("0"):
+            parsed_total = _total_a_pagar
+        elif _saldo_a_favor and _saldo_a_favor > Decimal("0"):
+            parsed_total = _saldo_a_favor
+        else:
+            parsed_total = Decimal("0")
 
         concepto = "Declaracion IVA"
         if periodo_str:

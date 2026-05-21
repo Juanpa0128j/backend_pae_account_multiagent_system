@@ -685,6 +685,21 @@ def _run_persist(state: AgentState) -> AgentState:
                 puc_descripcion = as_str(tx_data.get("cuenta_nombre"), "")
 
             puc_record = db_service.validate_puc_exists(db, cuenta_puc)
+            if not puc_record and len(cuenta_puc) > 6:
+                # ERP auxiliary codes (7-12 digits) are company-specific subdivisions.
+                # Walk up the hierarchy (6 → 5 → 4 digits) to find the parent account.
+                for parent_len in (6, 5, 4):
+                    parent_code = cuenta_puc[:parent_len]
+                    parent_record = db_service.validate_puc_exists(db, parent_code)
+                    if parent_record:
+                        logger.info(
+                            "db_persist: auxiliary PUC %s → resolved to parent %s",
+                            cuenta_puc,
+                            parent_code,
+                        )
+                        cuenta_puc = parent_code
+                        puc_record = parent_record
+                        break
             if puc_record:
                 puc_descripcion = as_str(getattr(puc_record, "nombre", ""), "")
             elif mode == "process":
