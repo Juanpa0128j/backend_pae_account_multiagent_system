@@ -462,7 +462,7 @@ class TaxDeclarationContent(ContentBase):
     base_gravable: Optional[Decimal] = Field(
         None, description="Total taxable base declared"
     )
-    renglones: Optional[Dict[str, Decimal]] = Field(
+    renglones: Optional[Dict[str, Optional[Decimal]]] = Field(
         None, description="DIAN form row values keyed by row number"
     )
     impuestos_descontables: Optional[Dict[str, Any]] = Field(
@@ -479,6 +479,13 @@ class TaxDeclarationContent(ContentBase):
     @classmethod
     def parse_total(cls, v):
         return _parse_decimal(v)
+
+    @field_validator("renglones", mode="before")
+    @classmethod
+    def parse_renglones(cls, v):
+        if not isinstance(v, dict):
+            return v
+        return {k: _parse_decimal(val) for k, val in v.items() if val is not None}
 
 
 # ---------------------------------------------------------------------------
