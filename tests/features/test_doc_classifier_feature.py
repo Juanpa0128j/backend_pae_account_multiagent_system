@@ -200,3 +200,113 @@ class TestClassifyDocument:
         )
         assert result.doc_type == DocumentType.AUXILIAR_IMPUESTO
         assert result.pathway == IngestPathway.BUILD_FROM_SCRATCH
+
+    @patch("app.services.doc_classifier._classify_with_llm")
+    def test_factura_compra_when_emisor_differs_from_company(self, mock_classify):
+        """Emisor (Country Club) ≠ company → factura_compra."""
+        mock_classify.return_value = ClassificationResponse(
+            doc_type="factura_compra",
+            confidence=0.93,
+            entity_nit="900390126",
+            entity_name="CORPORACIÓN COUNTRY CLUB EJECUTIVOS",
+            direction_signal="name_match_compra",
+        )
+
+        result = classify_document(
+            text_preview="Factura Electrónica de Venta FES29664 emisor Country Club...",
+            source_format="jpg",
+            company_nit="901016386",
+            company_name="testing_insane SAS",
+        )
+        assert result.doc_type == DocumentType.FACTURA_COMPRA
+        assert result.direction_signal == "name_match_compra"
+        mock_classify.assert_called_once()
+        _, kwargs = mock_classify.call_args
+        assert kwargs["company_nit"] == "901016386"
+        assert kwargs["company_name"] == "testing_insane SAS"
+
+    @patch("app.services.doc_classifier._classify_with_llm")
+    def test_factura_venta_when_emisor_matches_company(self, mock_classify):
+        """Emisor NIT == company NIT → factura_venta."""
+        mock_classify.return_value = ClassificationResponse(
+            doc_type="factura_venta",
+            confidence=0.95,
+            entity_nit="901016386",
+            entity_name="testing_insane SAS",
+            direction_signal="nit_match_emisor",
+        )
+
+        result = classify_document(
+            text_preview="Factura de Venta FV-192 emisor testing_insane SAS NIT 901016386...",
+            source_format="pdf",
+            company_nit="901016386",
+            company_name="testing_insane SAS",
+        )
+        assert result.doc_type == DocumentType.FACTURA_VENTA
+        assert result.direction_signal == "nit_match_emisor"
+
+    @patch("app.services.doc_classifier._classify_with_llm")
+    def test_override_when_nit_match_emisor_has_empty_entity_nit(self, mock_classify):
+        """LLM claims nit_match_emisor but did not extract a NIT → override to compra."""
+        mock_classify.return_value = ClassificationResponse(
+            doc_type="factura_venta",
+            confidence=0.92,
+            entity_nit="",
+            entity_name=None,
+            direction_signal="nit_match_emisor",
+            emisor_extracted=None,
+        )
+
+        result = classify_document(
+            text_preview="Factura Electrónica de Venta ...",
+            source_format="jpg",
+            company_nit="901016386",
+            company_name="testing_insane SAS",
+        )
+        assert result.doc_type == DocumentType.FACTURA_COMPRA
+        assert result.direction_signal == "override_no_nit_evidence"
+
+    @patch("app.services.doc_classifier._classify_with_llm")
+    def test_override_when_emisor_extracted_mismatches_company(self, mock_classify):
+        """Emisor extracted differs from company → override to compra even if entity_nit present."""
+        mock_classify.return_value = ClassificationResponse(
+            doc_type="factura_venta",
+            confidence=0.94,
+            entity_nit="900390126",
+            entity_name="CORPORACIÓN COUNTRY CLUB EJECUTIVOS",
+            direction_signal="nit_match_emisor",
+            emisor_extracted="CORPORACIÓN COUNTRY CLUB EJECUTIVOS",
+        )
+
+        result = classify_document(
+            text_preview="Factura Electrónica de Venta FES29664 ...",
+            source_format="jpg",
+            company_nit="901016386",
+            company_name="testing_insane SAS",
+        )
+        assert result.doc_type == DocumentType.FACTURA_COMPRA
+        assert result.direction_signal == "override_emisor_mismatch"
+        assert result.emisor_extracted == "CORPORACIÓN COUNTRY CLUB EJECUTIVOS"
+
+    @patch("app.services.doc_classifier._classify_with_llm")
+    def test_no_override_when_emisor_matches_company_via_accent_fold(
+        self, mock_classify
+    ):
+        """Accent-folded 'CORPORACIÓN TESTING INSANE' matches 'Corporacion Testing Insane' → no override."""
+        mock_classify.return_value = ClassificationResponse(
+            doc_type="factura_venta",
+            confidence=0.95,
+            entity_nit="901016386",
+            entity_name="CORPORACIÓN TESTING INSANE SAS",
+            direction_signal="nit_match_emisor",
+            emisor_extracted="CORPORACIÓN TESTING INSANE SAS",
+        )
+
+        result = classify_document(
+            text_preview="Factura de Venta emisor Corporacion Testing Insane ...",
+            source_format="pdf",
+            company_nit="901016386",
+            company_name="Corporacion Testing Insane SAS",
+        )
+        assert result.doc_type == DocumentType.FACTURA_VENTA
+        assert result.direction_signal == "nit_match_emisor"

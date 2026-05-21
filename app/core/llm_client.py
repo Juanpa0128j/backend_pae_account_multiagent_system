@@ -414,7 +414,13 @@ Y cita fuentes legales."""
         )
         return response
 
-    def classify_document(self, text_preview: str) -> ClassificationResponse:
+    def classify_document(
+        self,
+        text_preview: str,
+        *,
+        company_nit: str | None = None,
+        company_name: str | None = None,
+    ) -> ClassificationResponse:
         """Classify a document using each provider's classifier-specific model.
 
         Providers that expose a `classify()` method use a stronger model
@@ -422,11 +428,19 @@ Y cita fuentes legales."""
         the smaller gpt-4.1-nano used for extraction). This matches the
         pre-refactor doc_classifier behaviour which hardcoded gpt-4o-mini.
 
+        `company_nit` and `company_name` give the LLM the receiver's identity
+        so it can resolve factura_venta vs factura_compra direction. When the
+        document's NITs are redacted, the LLM falls back to name comparison.
+
         The defensive coercion guards against providers that, in some
         LangChain versions, return a dict or sibling BaseModel instead of
         the requested schema instance.
         """
-        prompt = CLASSIFICATION_PROMPT.format(text_preview=text_preview)
+        prompt = CLASSIFICATION_PROMPT.format(
+            text_preview=text_preview,
+            company_nit=company_nit or "no especificado",
+            company_name=company_name or "no especificada",
+        )
         providers = self._get_providers()
 
         last_exc: Exception | None = None

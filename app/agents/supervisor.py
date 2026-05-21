@@ -301,9 +301,22 @@ def supervisor_node(state: AgentState) -> AgentState:
                         state["pathway"] = pathway_value
 
             if not use_confirmed:
+                provided_company_nit = normalize_optional_nit(state.get("company_nit"))
+                provided_company_name: str | None = None
+                if provided_company_nit:
+                    db = SessionLocal()
+                    try:
+                        cs = db_service.get_company_settings(db, provided_company_nit)
+                        if cs and cs.nombre:
+                            provided_company_name = cs.nombre
+                    finally:
+                        db.close()
+
                 classification = classify_document(
                     text_preview=text_preview,
                     source_format=ext.lstrip("."),
+                    company_nit=provided_company_nit,
+                    company_name=provided_company_name,
                 )
                 # `getattr` guards mocks that don't define the attribute; explicit
                 # str check avoids treating MagicMock auto-attrs as truthy.

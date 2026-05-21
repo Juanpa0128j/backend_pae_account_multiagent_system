@@ -6,7 +6,10 @@ from decimal import Decimal, InvalidOperation
 from app.agents.state import AgentState
 from app.models.audit import AuditFinding, AuditReport, AuditTarget, Severity
 
-_BALANCE_TOLERANCE = Decimal("0.01")
+# DIAN facturas electrónicas routinely apply centavos rounding on totals
+# (e.g. $2,156,199.80 → $2,156,200.00 "Redondeo Aplicado: 0.20"). Tolerating
+# up to $1 captures real rounding without masking actual misclassifications.
+_BALANCE_TOLERANCE = Decimal("1.00")
 
 
 def run(state: AgentState, attempt: int = 1) -> AuditReport:

@@ -158,12 +158,54 @@ def _tax_accounts_for(doc_type: str, cuenta_ica_propio: str | None = None) -> di
 # ---------------------------------------------------------------------------
 
 
-def _detect_transaction_type(asientos: list[dict]) -> str:
+_SERVICIOS_KEYWORDS = (
+    "servicio",
+    "sostenim",
+    "asesor",
+    "consultor",
+    "club",
+    "administr",
+    "honorar",
+    "comision",
+    "mantenim",
+    "limpieza",
+    "vigilan",
+    "publicid",
+    "telecomun",
+    "transporte",
+    "capacit",
+    "afilia",
+    "fomento",
+    "cuota extra",
+    "internet",
+    "hospedaj",
+)
+_ARRENDAMIENTO_KEYWORDS = ("arrendam", "alquiler", "renta ", "leasing")
+_BIENES_KEYWORDS = (
+    "compra de ",
+    "insumo",
+    "mercanc",
+    "inventario",
+    "materia prima",
+    "repuesto",
+    "equipo",
+    "papeler",
+    "combustible",
+)
+
+
+def _detect_transaction_type(
+    asientos: list[dict],
+    doc_type: str | None = None,
+    items: list[dict] | None = None,
+    descripcion_general: str | None = None,
+) -> str:
     """
-    Infer transaction type from debit PUC codes.
+    Infer transaction type from debit PUC codes, falling back to doc_type +
+    item/descripcion keywords when no 5xxx debit is present yet (e.g. when the
+    detector runs before contador injected the expense line).
 
     Returns 'servicios', 'bienes', or 'arrendamiento'.
-    Defaults to 'bienes' if no 5xxx debit line is found.
     """
     for asiento in asientos:
         if (asiento.get("tipo_movimiento") or "").lower() == "debito":
@@ -172,9 +214,35 @@ def _detect_transaction_type(asientos: list[dict]) -> str:
                 puc_int = int(puc_raw)
                 if PUC_SERVICIOS_START <= puc_int <= PUC_SERVICIOS_END:
                     desc = (asiento.get("descripcion") or "").lower()
-                    if "arrendamiento" in desc or "alquiler" in desc:
+                    if any(kw in desc for kw in _ARRENDAMIENTO_KEYWORDS):
                         return "arrendamiento"
                     return "servicios"
+
+    # Fallback: no 5xxx debit detected. Use doc_type + item/descripcion keywords
+    # so the rate table picks the right tarifa even when contador has not yet
+    # injected the expense line.
+    if (doc_type or "").lower() == "factura_compra":
+        haystack_parts: list[str] = []
+        if descripcion_general:
+            haystack_parts.append(str(descripcion_general).lower())
+        for it in items or []:
+            if isinstance(it, dict):
+                for key in ("descripcion", "concepto", "nombre"):
+                    val = it.get(key)
+                    if val:
+                        haystack_parts.append(str(val).lower())
+        haystack = " ".join(haystack_parts)
+        if haystack:
+            if any(kw in haystack for kw in _ARRENDAMIENTO_KEYWORDS):
+                return "arrendamiento"
+            if any(kw in haystack for kw in _SERVICIOS_KEYWORDS):
+                return "servicios"
+            if any(kw in haystack for kw in _BIENES_KEYWORDS):
+                return "bienes"
+        # Conservative default for factura_compra: servicios (4% vs bienes 2.5%)
+        # avoids sub-retención when keywords inconclusive.
+        return "servicios"
+
     return "bienes"
 
 
@@ -408,6 +476,52 @@ def _extract_source_taxes(source_doc: dict) -> dict:
             result["base_gravable_from_items"] = base_items.quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
+
+        # Fallback: when extraction did not populate `es_gravado` flags,
+        # infer IVA-bearing items from `impuestos[].tarifa > 0` and sum their
+        # base_gravable. Needed for facturas with mixed taxable/excluded lines
+        # (e.g. club sostenimiento + cuota extraordinaria + fomento) so the
+        # downstream retef/reteica base is the IVA-bearing subtotal, not the
+        # full mixed subtotal.
+        if "base_gravable_from_items" not in result:
+            iva_base = Decimal("0")
+            saw_mixed = False
+            saw_iva_item = False
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                impuestos = it.get("impuestos") or []
+                item_iva_base = Decimal("0")
+                item_has_iva = False
+                if isinstance(impuestos, list):
+                    for imp in impuestos:
+                        if not isinstance(imp, dict):
+                            continue
+                        if str(imp.get("tipo", "")).upper() == "IVA":
+                            try:
+                                tarifa = Decimal(str(imp.get("tarifa") or 0))
+                            except Exception:
+                                tarifa = Decimal("0")
+                            if tarifa > 0:
+                                item_has_iva = True
+                                try:
+                                    item_iva_base += Decimal(
+                                        str(imp.get("base_gravable") or 0)
+                                    )
+                                except Exception:
+                                    pass
+                if item_has_iva:
+                    saw_iva_item = True
+                    iva_base += item_iva_base
+                else:
+                    saw_mixed = True
+            # Only override when the doc actually mixes IVA and non-IVA lines.
+            # A pure-IVA factura (all items gravados) leaves base = subtotal,
+            # which the downstream calc already handles correctly.
+            if saw_iva_item and saw_mixed and iva_base > 0:
+                result["base_gravable_from_items"] = iva_base.quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
 
     return result
 
@@ -724,7 +838,12 @@ def tributario_node(state: AgentState) -> AgentState:
         # ------------------------------------------------------------------
         # Step 2 — Determine transaction type from PUC codes
         # ------------------------------------------------------------------
-        tipo_transaccion = _detect_transaction_type(asientos)
+        tipo_transaccion = _detect_transaction_type(
+            asientos,
+            doc_type=doc_type,
+            items=(source_doc.get("items") if isinstance(source_doc, dict) else None),
+            descripcion_general=contador_output.get("descripcion_general"),
+        )
         logger.info(f"Tributario: detected transaction type = {tipo_transaccion}")
 
         # ------------------------------------------------------------------
@@ -1003,8 +1122,63 @@ def tributario_node(state: AgentState) -> AgentState:
 
         total_retenciones = retefuente_val + reteica_val
         iva_to_add = iva_val if not iva_presente else Decimal("0")
-        net_adjustment = iva_to_add - total_retenciones
         target_movement = "debito" if is_venta else "credito"
+
+        # Sanity: contador may have booked the largest credit/debit as
+        # total_factura (IVA already embedded) without emitting a separate
+        # 240802/240805 IVA line. In that case _has_iva_in_asientos returned
+        # False so iva_to_add > 0 — but adding IVA again would double-count.
+        # Detect by comparing the largest target line to source totales.total_factura
+        # (or total_a_pagar / total). When they match within $1, subtract IVA
+        # from that line BEFORE applying retenciones, and let the separate
+        # IVA descontable / IVA generado line be inserted downstream.
+        if iva_to_add > 0:
+            totales_src = (
+                source_doc.get("totales") if isinstance(source_doc, dict) else None
+            ) or {}
+            total_factura_src = Decimal("0")
+            for key in ("total_factura", "total_a_pagar", "total"):
+                val = totales_src.get(key)
+                if val is not None:
+                    try:
+                        total_factura_src = Decimal(str(val))
+                        if total_factura_src > 0:
+                            break
+                    except Exception:
+                        pass
+            if total_factura_src > 0:
+                cand = [
+                    Decimal(str(e.get("valor", 0)))
+                    for e in asientos_enriquecidos
+                    if e.get("tipo_movimiento", "").lower() == target_movement
+                ]
+                largest_now = max(cand) if cand else Decimal("0")
+                if largest_now > 0 and abs(largest_now - total_factura_src) < Decimal(
+                    "1.00"
+                ):
+                    logger.info(
+                        "Tributario: %s %s = %s ≈ source total_factura %s — "
+                        "IVA already embedded; subtracting IVA from line and "
+                        "inserting separate IVA descontable",
+                        target_movement,
+                        "largest",
+                        largest_now,
+                        total_factura_src,
+                    )
+                    # Find that largest entry and subtract IVA from it so the
+                    # downstream net_adjustment math operates on the pre-IVA base.
+                    for entry in asientos_enriquecidos:
+                        if (
+                            entry.get("tipo_movimiento", "").lower() == target_movement
+                            and Decimal(str(entry.get("valor", 0))) == largest_now
+                        ):
+                            new_val = (largest_now - iva_to_add).quantize(
+                                Decimal("0.01"), rounding=ROUND_HALF_UP
+                            )
+                            entry["valor"] = str(new_val)
+                            break
+
+        net_adjustment = iva_to_add - total_retenciones
 
         if total_retenciones > 0 or iva_to_add > 0:
             candidate_entries = [
