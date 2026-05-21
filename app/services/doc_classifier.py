@@ -7,11 +7,27 @@ fallback chain per CLAUDE.md conventions.
 """
 
 import logging
+import unicodedata
 from typing import Literal, Optional, cast
 
 from app.models.document_types import DocumentType, IngestPathway, get_pathway
 from app.models.llm_schemas import ClassificationResponse
 from pydantic import BaseModel, Field
+
+
+def _normalize_name(value: str | None) -> str:
+    """Lowercase + NFKD accent-fold + collapse whitespace for fuzzy name match.
+
+    Used by the factura_venta/factura_compra direction override to compare
+    emisor_extracted vs company_name without false negatives from accents
+    ("CORPORACIÓN" vs "Corporacion") or punctuation variance.
+    """
+    if not value:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", value)
+    folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return " ".join(folded.lower().split())
+
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +53,23 @@ class DocumentClassification(BaseModel):
     )
     entity_name: Optional[str] = Field(
         default=None, description="Entity name if detected in document"
+    )
+    direction_signal: Optional[str] = Field(
+        default=None,
+        description=(
+            "For factura_venta/factura_compra: signal that determined the "
+            "direction (nit_match_emisor, nit_match_adquirente, "
+            "name_match_venta, name_match_compra, default_compra, "
+            "override_no_nit_evidence, override_emisor_mismatch). "
+            "Surfaced for audit traces and frontend debug."
+        ),
+    )
+    emisor_extracted: Optional[str] = Field(
+        default=None,
+        description=(
+            "Razón social del emisor literalmente extraída del cuerpo del "
+            "documento por el LLM. Null si redactado/ausente."
+        ),
     )
     error: Optional[str] = Field(
         default=None,
@@ -130,13 +163,13 @@ def classify_document(
         # 1) LLM reported nit_match_emisor without extracting a NIT
         # 2) emisor_extracted is set but does NOT contain company_name
         #    (substring match either way) — proveedor externo, must be compra.
-        emisor_lower = (emisor_extracted or "").strip().lower()
-        company_lower = (company_name or "").strip().lower()
+        emisor_norm = _normalize_name(emisor_extracted)
+        company_norm = _normalize_name(company_name)
         emisor_mismatch = (
-            bool(emisor_lower)
-            and bool(company_lower)
-            and company_lower not in emisor_lower
-            and emisor_lower not in company_lower
+            bool(emisor_norm)
+            and bool(company_norm)
+            and company_norm not in emisor_norm
+            and emisor_norm not in company_norm
         )
         if doc_type == DocumentType.FACTURA_VENTA and (
             (direction_signal == "nit_match_emisor" and not entity_nit_value)
@@ -170,6 +203,8 @@ def classify_document(
             period_end=response.period_end,
             entity_nit=response.entity_nit,
             entity_name=response.entity_name,
+            direction_signal=direction_signal,
+            emisor_extracted=emisor_extracted,
         )
 
         logger.info(

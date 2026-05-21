@@ -57,10 +57,10 @@ _DOC_GUIDANCE: dict[str, str] = {
     "factura_compra": (
         "REGLA FACTURA COMPRA: debita el gasto/activo y acredita cuentas por pagar (220505). "
         "OBLIGATORIO IVA DESCONTABLE: cuando totales.total_iva > 0 en el documento fuente, "
-        "DEBES emitir una línea separada D 240810 IVA descontable por exactamente ese valor. "
+        "DEBES emitir una línea separada D 240802 IVA descontable por exactamente ese valor. "
         "NUNCA mezcles el IVA dentro del crédito a proveedor — el crédito a proveedor "
         "debe ser igual al subtotal sin IVA (luego tributario reduce por retenciones). "
-        "Si NO booqueas la línea D 240810 cuando hay IVA, el agente tributario "
+        "Si NO registras la línea D 240802 cuando hay IVA, el agente tributario "
         "double-cuenta el IVA y la partida doble falla.\n"
         "NO dupliques las retenciones — el agente tributario las maneja.\n"
         "CUENTAS DE GASTO COMUNES (úsalas SIEMPRE en lugar de 5195):\n"

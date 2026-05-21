@@ -547,7 +547,7 @@ REGLAS PRIORIDAD 1 — TÍTULO O ENCABEZADO EXPLÍCITO (buscar en las primeras l
 - Título contiene "EXTRACTO BANCARIO" o "ESTADO DE CUENTA" bancario → extracto_bancario
 
 REGLAS PRIORIDAD 2 — PREFIJOS Y SEÑALES ESTRUCTURALES
-- Tiene CUFE o resolución DIAN → factura (ver REGLA DIRECCIÓN abajo para determinar venta vs compra)
+- Tiene CUFE o resolución DIAN → clasifica como factura_venta o factura_compra aplicando la REGLA DIRECCIÓN abajo (NUNCA uses el valor genérico "factura")
 
 REGLA DIRECCIÓN PARA FACTURAS (aplica cuando el doc tiene CUFE o resolución DIAN):
 

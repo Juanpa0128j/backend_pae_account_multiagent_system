@@ -304,15 +304,9 @@ def supervisor_node(state: AgentState) -> AgentState:
                 provided_company_nit = normalize_optional_nit(state.get("company_nit"))
                 provided_company_name: str | None = None
                 if provided_company_nit:
-                    from app.models.database import CompanySettings
-
                     db = SessionLocal()
                     try:
-                        cs = (
-                            db.query(CompanySettings)
-                            .filter_by(nit=provided_company_nit)
-                            .first()
-                        )
+                        cs = db_service.get_company_settings(db, provided_company_nit)
                         if cs and cs.nombre:
                             provided_company_name = cs.nombre
                     finally:
