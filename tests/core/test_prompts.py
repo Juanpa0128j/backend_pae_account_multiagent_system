@@ -95,6 +95,29 @@ class TestIngestPrompts:
         assert "TODAS las p\u00e1ginas" in prompt
 
 
+class TestNotasFinancierasPrompt:
+    """Vertical slice tests for notas_financieras prompt improvements."""
+
+    def test_notas_financieras_prompt_contains_periodo_fin_rule(self):
+        from app.core.prompts.ingest import notas_financieras
+
+        prompt = notas_financieras("sample text")
+        assert "periodo_fin" in prompt
+
+    def test_notas_financieras_prompt_contains_dic_31_example(self):
+        from app.core.prompts.ingest import notas_financieras
+
+        prompt = notas_financieras("sample text")
+        assert "DIC 31" in prompt
+
+    def test_notas_financieras_prompt_contains_cifras_relevantes_guidance(self):
+        from app.core.prompts.ingest import notas_financieras
+
+        prompt = notas_financieras("sample text")
+        assert "pesos COP" in prompt
+        assert "bancos" in prompt
+
+
 class TestContadorPrompt:
     """Vertical slice tests for app.core.prompts.contador."""
 

@@ -273,7 +273,17 @@ def notas_financieras(text: str, *, correction_feedback: str | None = None) -> s
         "Extrae obligatoriamente: entidad, período, moneda funcional, marco de presentación (NIIF plenas/Pymes/microempresas), "
         "hipótesis de negocio en marcha, y para cada nota: número, título, categoría (políticas contables/estimaciones/"
         "detalle de partida/contingencias/hechos posteriores/partes relacionadas/impuestos/otra), resumen del contenido clave "
-        "(máx. 500 palabras), cifras relevantes mencionadas, y políticas contables descritas."
+        "(máx. 500 palabras), cifras relevantes de cada nota, y políticas contables descritas.\n\n"
+        "REGLAS PARA FECHAS:\n"
+        "- Extrae periodo_inicio y periodo_fin en formato YYYY-MM-DD\n"
+        '- "A DIC 31-25" o "al 31 de diciembre de 2025" → periodo_fin="2025-12-31"\n'
+        '- "Año terminado en diciembre 31 de 2025" → periodo_inicio="2025-01-01", periodo_fin="2025-12-31"\n'
+        "- Si solo hay fecha de corte, periodo_inicio = primer día del mismo año\n"
+        "- NUNCA dejes periodo_fin en blanco si el documento menciona fecha\n\n"
+        "REGLAS PARA cifras_relevantes DE CADA NOTA:\n"
+        "Extrae un diccionario con las cifras numéricas clave en pesos COP, usando el nombre de la cuenta o "
+        "concepto como llave y el valor numérico (sin símbolos) como valor. "
+        'Ejemplo: {"bancos": 18845818, "fiducia": 72413796}'
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
