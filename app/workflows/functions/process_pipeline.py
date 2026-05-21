@@ -47,7 +47,7 @@ async def _handle_audit_review(ctx: inngest.Context, process_id: str) -> dict:
         "await-audit-confirm",
         event="app/process.audit-confirmed",
         timeout=datetime.timedelta(hours=1),
-        if_=f"async.data.process_id == '{process_id}'",
+        if_exp=f"async.data.process_id == '{process_id}'",
     )
 
     if confirmed is None:

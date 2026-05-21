@@ -685,6 +685,21 @@ def _run_persist(state: AgentState) -> AgentState:
                 puc_descripcion = as_str(tx_data.get("cuenta_nombre"), "")
 
             puc_record = db_service.validate_puc_exists(db, cuenta_puc)
+            if not puc_record and len(cuenta_puc) > 4:
+                # ERP auxiliary codes (7-12 digits) are company-specific subdivisions.
+                # Walk up the hierarchy (6 → 5 → 4 digits) to find the parent account.
+                for parent_len in (6, 5, 4):
+                    parent_code = cuenta_puc[:parent_len]
+                    parent_record = db_service.validate_puc_exists(db, parent_code)
+                    if parent_record:
+                        logger.info(
+                            "db_persist: auxiliary PUC %s → resolved to parent %s",
+                            cuenta_puc,
+                            parent_code,
+                        )
+                        cuenta_puc = parent_code
+                        puc_record = parent_record
+                        break
             if puc_record:
                 puc_descripcion = as_str(getattr(puc_record, "nombre", ""), "")
             elif mode == "process":
@@ -721,9 +736,24 @@ def _run_persist(state: AgentState) -> AgentState:
             neto = safe_decimal(tx_data.get("neto_a_pagar")) or total
 
             if mode == "process":
+                import re as _re
+
+                _raw_asientos = tx_data.get("_contador_asientos", [])
+                _sanitized_asientos = []
+                for _a in _raw_asientos:
+                    if not isinstance(_a, dict):
+                        continue
+                    _puc = str(_a.get("cuenta_puc") or "")
+                    if not _re.match(r"^\d{1,12}$", _puc):
+                        _a = {
+                            **_a,
+                            "cuenta_puc": "519595",
+                            "nombre_cuenta": "Otros Gastos Diversos",
+                        }
+                    _sanitized_asientos.append(_a)
                 journal_json = JournalBuilder.build_from_contador(
                     fecha=fecha,
-                    asientos=tx_data.get("_contador_asientos", []),
+                    asientos=_sanitized_asientos,
                     nit=nit_emisor,
                     descripcion=descripcion,
                 )

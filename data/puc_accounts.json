@@ -16,6 +16,22 @@
     "descripcion": "Depósitos bancarios de la empresa en cuentas corrientes y de ahorros. Se debita con notas crédito bancarias y se acredita con notas débito."
   },
   {
+    "codigo": "1120",
+    "nombre": "Cuentas de Ahorro",
+    "clase": "1 - Activo",
+    "grupo": "11 - Disponible",
+    "naturaleza": "debito",
+    "descripcion": "Depósitos en cuentas de ahorro en instituciones financieras. Se debita al depositar fondos y se acredita al retirarlos."
+  },
+  {
+    "codigo": "1235",
+    "nombre": "Inversiones en Derechos Fiduciarios",
+    "clase": "1 - Activo",
+    "grupo": "12 - Inversiones",
+    "naturaleza": "debito",
+    "descripcion": "Inversiones en derechos fiduciarios y encargos de fiducia. Se debita al adquirir y se acredita al redimir o vender."
+  },
+  {
     "codigo": "1305",
     "nombre": "Clientes",
     "clase": "1 - Activo",
@@ -40,12 +56,28 @@
     "descripcion": "Valores entregados en garantía o como depósitos por arrendamientos, servicios públicos, etc."
   },
   {
+    "codigo": "1370",
+    "nombre": "IVA Descontable",
+    "clase": "1 - Activo",
+    "grupo": "13 - Deudores",
+    "naturaleza": "debito",
+    "descripcion": "IVA pagado en compras de bienes y servicios gravados que puede restarse del IVA generado en ventas. Tarifa general 19% Art. 468 E.T. Solo aplica para responsables del régimen ordinario."
+  },
+  {
     "codigo": "1380",
     "nombre": "Deudores Varios",
     "clase": "1 - Activo",
     "grupo": "13 - Deudores",
     "naturaleza": "debito",
     "descripcion": "Acreencias a favor de la empresa no clasificadas en otras cuentas del grupo Deudores."
+  },
+  {
+    "codigo": "1395",
+    "nombre": "Cuentas por Cobrar Diversas",
+    "clase": "1 - Activo",
+    "grupo": "13 - Deudores",
+    "naturaleza": "debito",
+    "descripcion": "Derechos de cobro por conceptos distintos a ventas y préstamos. Se debita al originar el derecho y se acredita al recaudar."
   },
   {
     "codigo": "1405",
@@ -110,6 +142,14 @@
     "grupo": "23 - Cuentas por Pagar",
     "naturaleza": "credito",
     "descripcion": "Obligaciones causadas y pendientes de pago: nómina causada, servicios públicos, honorarios, etc."
+  },
+  {
+    "codigo": "2360",
+    "nombre": "Dividendos y Participaciones por Pagar",
+    "clase": "2 - Pasivo",
+    "grupo": "23 - Cuentas por Pagar",
+    "naturaleza": "credito",
+    "descripcion": "Obligaciones por dividendos y participaciones decretados pendientes de pago. Se acredita al decretar y se debita al pagar."
   },
   {
     "codigo": "2365",
@@ -198,6 +238,22 @@
     "grupo": "41 - Operacionales",
     "naturaleza": "credito",
     "descripcion": "Ingresos por ventas en empresas comerciales. Principal cuenta de ingresos para negocios de compraventa de mercancías."
+  },
+  {
+    "codigo": "4140",
+    "nombre": "Arrendamientos",
+    "clase": "4 - Ingresos",
+    "grupo": "41 - Operacionales",
+    "naturaleza": "credito",
+    "descripcion": "Ingresos por arrendamiento de bienes inmuebles y muebles. Se acredita al reconocer el ingreso y se debita al cierre del período."
+  },
+  {
+    "codigo": "4170",
+    "nombre": "Servicios",
+    "clase": "4 - Ingresos",
+    "grupo": "41 - Operacionales",
+    "naturaleza": "credito",
+    "descripcion": "Ingresos por prestación de servicios. Se acredita al reconocer el ingreso y se debita al cierre del período."
   },
   {
     "codigo": "4175",
@@ -318,13 +374,5 @@
     "grupo": "62 - De Ventas",
     "naturaleza": "debito",
     "descripcion": "Costo de adquisición de las mercancías vendidas en empresas comerciales. Se registra al vender y se cuadra contra ingresos para determinar la utilidad bruta."
-  },
-  {
-    "codigo": "1370",
-    "nombre": "IVA Descontable",
-    "clase": "1 - Activo",
-    "grupo": "13 - Deudores",
-    "naturaleza": "debito",
-    "descripcion": "IVA pagado en compras de bienes y servicios gravados que puede restarse del IVA generado en ventas. Tarifa general 19% Art. 468 E.T. Solo aplica para responsables del régimen ordinario."
   }
 ]

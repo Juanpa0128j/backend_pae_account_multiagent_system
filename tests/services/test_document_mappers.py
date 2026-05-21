@@ -644,6 +644,28 @@ class TestAuxiliarIVAMapper:
         assert tx["saldo_inicial"] == "0"
         assert tx["saldo_final"] == "5000"
 
+    def test_negative_saldo_final_uses_abs(self) -> None:
+        from decimal import Decimal
+
+        payload = {
+            "entidad": {"nit": "900123456"},
+            "periodo_fin": "2026-02-28",
+            "cuentas": [
+                {
+                    "codigo_cuenta": "24080101",
+                    "nombre_cuenta": "IVA generado 19%",
+                    "tipo_iva": "generado",
+                    "saldo_inicial": Decimal("0"),
+                    "movimientos": [],
+                    "total_debitos": Decimal("0"),
+                    "total_creditos": Decimal("8500000"),
+                    "saldo_final": Decimal("-8500000"),
+                }
+            ],
+        }
+        txs = build_structured_transactions(payload, "auxiliar_iva")
+        assert txs[0]["total"] == "8500000"
+
 
 class TestAutorretencionICAMapper:
     def _base_payload(self) -> dict:

@@ -85,6 +85,8 @@ def _classify_process_error(
         "puc validation failed" in msg
         or "puc_not_found" in msg
         or "missing codes" in msg
+        or "db persist error: puc code" in msg
+        or "puc code" in msg
     ):
         return (
             "validation_error",

@@ -54,6 +54,22 @@ PUC_ACCOUNTS = [
         "descripcion": "Cuentas en bancos nacionales",
     },
     {
+        "codigo": "1120",
+        "nombre": "Cuentas de Ahorro",
+        "clase": 1,
+        "grupo": "11",
+        "naturaleza": "debito",
+        "descripcion": "Depósitos en cuentas de ahorro en instituciones financieras",
+    },
+    {
+        "codigo": "1235",
+        "nombre": "Inversiones en Derechos Fiduciarios",
+        "clase": 1,
+        "grupo": "12",
+        "naturaleza": "debito",
+        "descripcion": "Inversiones en derechos fiduciarios y encargos de fiducia",
+    },
+    {
         "codigo": "1305",
         "nombre": "Clientes",
         "clase": 1,

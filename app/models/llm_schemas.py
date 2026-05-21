@@ -62,9 +62,18 @@ class AsientoContable(BaseModel):
     @field_validator("cuenta_puc", mode="before")
     @classmethod
     def coerce_cuenta_puc(cls, v):  # noqa: N805
+        import re
+
         if v is None:
             return None
-        return str(v).strip() or None
+        s = str(v).strip()
+        if not s:
+            return None
+        # Extract leading digits only — drop entries where LLM wrote description text.
+        digits = re.match(r"^\d+", s)
+        if digits:
+            return digits.group(0)
+        return None  # non-numeric → drop asiento via filter_null_cuenta_asientos
 
     descripcion: Optional[str] = Field(
         default=None, description="Description of the entry"
@@ -121,7 +130,9 @@ class ContadorOutput(BaseModel):
         if isinstance(data, dict) and "asientos" in data:
             before = len(data["asientos"] or [])
             data["asientos"] = [
-                a for a in (data["asientos"] or []) if a.get("cuenta_puc") is not None
+                a
+                for a in (data["asientos"] or [])
+                if isinstance(a, dict) and a.get("cuenta_puc") is not None
             ]
             if len(data["asientos"]) < before:
                 import logging
