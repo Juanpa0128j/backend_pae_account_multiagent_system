@@ -736,9 +736,24 @@ def _run_persist(state: AgentState) -> AgentState:
             neto = safe_decimal(tx_data.get("neto_a_pagar")) or total
 
             if mode == "process":
+                import re as _re
+
+                _raw_asientos = tx_data.get("_contador_asientos", [])
+                _sanitized_asientos = []
+                for _a in _raw_asientos:
+                    if not isinstance(_a, dict):
+                        continue
+                    _puc = str(_a.get("cuenta_puc") or "")
+                    if not _re.match(r"^\d{1,12}$", _puc):
+                        _a = {
+                            **_a,
+                            "cuenta_puc": "519595",
+                            "nombre_cuenta": "Otros Gastos Diversos",
+                        }
+                    _sanitized_asientos.append(_a)
                 journal_json = JournalBuilder.build_from_contador(
                     fecha=fecha,
-                    asientos=tx_data.get("_contador_asientos", []),
+                    asientos=_sanitized_asientos,
                     nit=nit_emisor,
                     descripcion=descripcion,
                 )

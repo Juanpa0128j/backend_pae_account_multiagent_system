@@ -236,9 +236,19 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
             return
 
         staged_all = db_service.get_transactions_by_ingest(db, process_job.ingest_id)
-        staged_pending = [
-            tx for tx in staged_all if tx.status == TransactionStatus.PENDING
-        ]
+        # force_persist=True means the user confirmed a HITL review. Transactions
+        # left in PROCESSING from the failed first run must be retried as well.
+        if force_persist:
+            staged_pending = [
+                tx
+                for tx in staged_all
+                if tx.status
+                in (TransactionStatus.PENDING, TransactionStatus.PROCESSING)
+            ]
+        else:
+            staged_pending = [
+                tx for tx in staged_all if tx.status == TransactionStatus.PENDING
+            ]
 
         if not staged_pending:
             db_service.update_process_job(
@@ -333,8 +343,6 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
             "cambios_patrimonio",
             "notas_estados_financieros",
             "libro_diario",
-            # Tax ledger registers — already-processed data, no new journal entries needed
-            "auxiliar_iva",
             # Non-accounting documents (regulatory decrees, legal texts)
             "otro",
         }

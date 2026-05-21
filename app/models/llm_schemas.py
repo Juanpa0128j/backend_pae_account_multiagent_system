@@ -130,7 +130,9 @@ class ContadorOutput(BaseModel):
         if isinstance(data, dict) and "asientos" in data:
             before = len(data["asientos"] or [])
             data["asientos"] = [
-                a for a in (data["asientos"] or []) if a.get("cuenta_puc") is not None
+                a
+                for a in (data["asientos"] or [])
+                if isinstance(a, dict) and a.get("cuenta_puc") is not None
             ]
             if len(data["asientos"]) < before:
                 import logging
