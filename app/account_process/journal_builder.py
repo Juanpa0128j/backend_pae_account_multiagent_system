@@ -46,10 +46,18 @@ def _iso_fecha(fecha: datetime) -> str:
     return fecha.isoformat() if isinstance(fecha, datetime) else str(fecha)
 
 
+# DIAN facturas electrónicas routinely apply centavos rounding on totals
+# (e.g. subtotal+IVA exact $2,156,199.80 → factura total $2,156,200.00 with
+# "Redondeo Aplicado: 0.20"). Tolerate up to $1 in journal balance — anything
+# larger is a true partida-doble error worth blocking on.
+_BALANCE_TOLERANCE = Decimal("1.00")
+
+
 def _validate_balance(entries: List[JournalEntry], builder_name: str) -> None:
     total_debitos = sum(Decimal(e["debito"]) for e in entries)
     total_creditos = sum(Decimal(e["credito"]) for e in entries)
-    if total_debitos != total_creditos:
+    diff = abs(total_debitos - total_creditos)
+    if diff > _BALANCE_TOLERANCE:
         raise ValueError(
             f"Unbalanced journal entries ({builder_name}): D={total_debitos} C={total_creditos}"
         )
