@@ -598,32 +598,37 @@ def build_structured_transactions(
 
         tipo_recibo = as_str(interpreted.get("tipo_recibo"), "").strip()
 
-        return [
-            {
-                "fecha": interpreted.get("fecha"),
-                "nit_emisor": as_str(
-                    recibido_de.get("nit") or interpreted.get("nit_emisor"), ""
-                ),
-                "nit_receptor": "",
-                "total": str(parsed_total),
-                "concepto": concepto,
-                "descripcion": concepto,
-                "tipo_recibo": tipo_recibo,
-                "referencia_factura": referencia_factura,
-                "items": sanitize_for_json(
-                    [
-                        {
-                            "numero_recibo": interpreted.get("numero_recibo"),
-                            "recibido_de": sanitize_for_json(recibido_de),
-                            "forma_pago": interpreted.get("forma_pago"),
-                            "banco": interpreted.get("banco"),
-                            "numero_cheque": interpreted.get("numero_cheque"),
-                            "elaborado_por": interpreted.get("elaborado_por"),
-                        }
-                    ]
-                ),
-            }
-        ]
+        tx = {
+            "fecha": interpreted.get("fecha"),
+            "nit_emisor": as_str(
+                recibido_de.get("nit") or interpreted.get("nit_emisor"), ""
+            ),
+            "nit_receptor": "",
+            "total": str(parsed_total),
+            "concepto": concepto,
+            "descripcion": concepto,
+            "tipo_recibo": tipo_recibo,
+            "referencia_factura": referencia_factura,
+            "items": sanitize_for_json(
+                [
+                    {
+                        "numero_recibo": interpreted.get("numero_recibo"),
+                        "recibido_de": sanitize_for_json(recibido_de),
+                        "forma_pago": interpreted.get("forma_pago"),
+                        "banco": interpreted.get("banco"),
+                        "numero_cheque": interpreted.get("numero_cheque"),
+                        "elaborado_por": interpreted.get("elaborado_por"),
+                    }
+                ]
+            ),
+        }
+
+        # Preserve pre-armed asiento table when present
+        asientos_documento = interpreted.get("asientos_documento")
+        if isinstance(asientos_documento, list) and asientos_documento:
+            tx["asientos_documento"] = sanitize_for_json(asientos_documento)
+
+        return [tx]
 
     if doc_type == "cuenta_cobro":
         prestador = interpreted.get("prestador") or {}

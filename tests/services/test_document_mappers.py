@@ -764,3 +764,75 @@ def test_cuenta_cobro_branch_uses_prestador_nit_when_present() -> None:
     assert tx["totales"]["total_iva"] == "0"
     # Extracted retenciones are preserved as-is for tributario consumption.
     assert tx["retenciones_aplicadas"] == [{"tipo": "retefuente", "valor": 50000}]
+
+
+class TestReciboCajaMapper:
+    def test_asientos_documento_passthrough_when_present(self) -> None:
+        """When `interpreted` has `asientos_documento` list, the returned tx includes it."""
+        from decimal import Decimal
+
+        interpreted = {
+            "numero_recibo": "RC-001",
+            "fecha": "2026-02-15",
+            "recibido_de": {"nit": "800999888", "nombre": "Juan"},
+            "valor": "1000.00",
+            "concepto": "Pago servicios",
+            "asientos_documento": [
+                {
+                    "codigo_cuenta": "110505",
+                    "concepto": "Banco",
+                    "debito": Decimal("1000.00"),
+                    "credito": Decimal("0"),
+                },
+                {
+                    "codigo_cuenta": "420501",
+                    "concepto": "Ingresos por servicios",
+                    "debito": Decimal("0"),
+                    "credito": Decimal("1000.00"),
+                },
+            ],
+        }
+
+        txs = build_structured_transactions(interpreted, "recibo_caja")
+
+        assert len(txs) == 1
+        tx = txs[0]
+        assert "asientos_documento" in tx
+        assert len(tx["asientos_documento"]) == 2
+        assert tx["asientos_documento"][0]["codigo_cuenta"] == "110505"
+        assert tx["asientos_documento"][0]["debito"] == "1000.00"
+        assert tx["asientos_documento"][1]["codigo_cuenta"] == "420501"
+        assert tx["asientos_documento"][1]["credito"] == "1000.00"
+
+    def test_asientos_documento_not_included_when_absent(self) -> None:
+        """When `asientos_documento` is None or missing, key is absent from tx."""
+        interpreted = {
+            "numero_recibo": "RC-002",
+            "fecha": "2026-02-15",
+            "recibido_de": {"nit": "800999888"},
+            "valor": "500.00",
+            "concepto": "Pago alquiler",
+        }
+
+        txs = build_structured_transactions(interpreted, "recibo_caja")
+
+        assert len(txs) == 1
+        tx = txs[0]
+        assert "asientos_documento" not in tx
+
+    def test_asientos_documento_not_included_when_empty_list(self) -> None:
+        """When `asientos_documento` is empty list, key is absent from tx."""
+        interpreted = {
+            "numero_recibo": "RC-003",
+            "fecha": "2026-02-15",
+            "recibido_de": {"nit": "800999888"},
+            "valor": "750.00",
+            "concepto": "Pago comisión",
+            "asientos_documento": [],
+        }
+
+        txs = build_structured_transactions(interpreted, "recibo_caja")
+
+        assert len(txs) == 1
+        tx = txs[0]
+        assert "asientos_documento" not in tx
