@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import datetime
 import logging
-import uuid
+import re
 
 import inngest
 
@@ -37,12 +37,11 @@ async def _handle_audit_review(ctx: inngest.Context, process_id: str) -> dict:
     Returns the final handler result dict: ``{ok: True}`` after force-persist,
     or ``{timeout: True}`` if no confirmation arrives within the window.
     """
-    try:
-        uuid.UUID(process_id)
-    except (TypeError, ValueError) as exc:
+    # Validate for CEL injection safety — only allow alphanumeric, underscores, hyphens.
+    if not isinstance(process_id, str) or not re.match(r"^[A-Za-z0-9_-]+$", process_id):
         raise ValueError(
-            f"process_id must be UUID-shaped for CEL filter, got: {process_id!r}"
-        ) from exc
+            f"process_id contains unsafe characters for CEL filter, got: {process_id!r}"
+        )
 
     confirmed = await ctx.step.wait_for_event(
         "await-audit-confirm",
