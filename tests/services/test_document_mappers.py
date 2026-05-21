@@ -420,6 +420,324 @@ def test_cuenta_cobro_branch_preserves_iva_zero_and_retencion_flag() -> None:
     assert "Outsourcing" in tx["concepto"]
 
 
+class TestAuxiliarIVAMapper:
+    def _two_account_payload(self) -> dict:
+        from decimal import Decimal
+
+        return {
+            "entidad": {"nit": "900123456", "nombre": "Test SAS"},
+            "periodo_inicio": "2026-02-01",
+            "periodo_fin": "2026-02-28",
+            "cuentas": [
+                {
+                    "codigo_cuenta": "24080101",
+                    "nombre_cuenta": "IVA generado 19%",
+                    "tipo_iva": "generado",
+                    "saldo_inicial": Decimal("0"),
+                    "movimientos": [{"fecha": "2026-02-15", "valor": "1000"}],
+                    "total_debitos": Decimal("0"),
+                    "total_creditos": Decimal("5000"),
+                    "saldo_final": Decimal("5000"),
+                },
+                {
+                    "codigo_cuenta": "24080201",
+                    "nombre_cuenta": "IVA descontable 19%",
+                    "tipo_iva": "descontable",
+                    "saldo_inicial": Decimal("0"),
+                    "movimientos": [],
+                    "total_debitos": Decimal("3000"),
+                    "total_creditos": Decimal("0"),
+                    "saldo_final": Decimal("3000"),
+                },
+            ],
+            "moneda": "COP",
+        }
+
+    def test_produces_one_tx_per_account(self) -> None:
+        txs = build_structured_transactions(self._two_account_payload(), "auxiliar_iva")
+        assert len(txs) == 2
+
+    def test_fecha_is_periodo_fin(self) -> None:
+        txs = build_structured_transactions(self._two_account_payload(), "auxiliar_iva")
+        for tx in txs:
+            assert tx["fecha"] == "2026-02-28"
+
+    def test_total_uses_saldo_final_when_present(self) -> None:
+        txs = build_structured_transactions(self._two_account_payload(), "auxiliar_iva")
+        assert txs[0]["total"] == "5000"
+
+    def test_total_falls_back_to_max_debito_credito(self) -> None:
+        from decimal import Decimal
+
+        payload = {
+            "entidad": {"nit": "900123456"},
+            "periodo_fin": "2026-02-28",
+            "cuentas": [
+                {
+                    "codigo_cuenta": "24080101",
+                    "nombre_cuenta": "IVA generado",
+                    "tipo_iva": "generado",
+                    "saldo_inicial": Decimal("0"),
+                    "movimientos": [],
+                    "total_debitos": Decimal("2000"),
+                    "total_creditos": Decimal("7000"),
+                    "saldo_final": Decimal("0"),
+                }
+            ],
+        }
+        txs = build_structured_transactions(payload, "auxiliar_iva")
+        assert txs[0]["total"] == "7000"
+
+    def test_empty_cuentas_returns_fallback(self) -> None:
+        payload = {
+            "entidad": {"nit": "900123456"},
+            "periodo_fin": "2026-02-28",
+            "cuentas": None,
+        }
+        txs = build_structured_transactions(payload, "auxiliar_iva")
+        assert len(txs) == 1
+        assert txs[0]["total"] == "0"
+        assert txs[0]["concepto"] == "Auxiliar IVA"
+        assert txs[0]["fecha"] == "2026-02-28"
+        assert txs[0]["nit_emisor"] == "900123456"
+
+    def test_items_capped_at_20_movimientos(self) -> None:
+        from decimal import Decimal
+
+        movimientos = [
+            {"fecha": f"2026-02-{i:02d}", "valor": str(i)} for i in range(1, 26)
+        ]
+        payload = {
+            "entidad": {"nit": "900123456"},
+            "periodo_fin": "2026-02-28",
+            "cuentas": [
+                {
+                    "codigo_cuenta": "24080101",
+                    "nombre_cuenta": "IVA generado",
+                    "tipo_iva": "generado",
+                    "saldo_inicial": Decimal("0"),
+                    "movimientos": movimientos,
+                    "total_debitos": Decimal("0"),
+                    "total_creditos": Decimal("100"),
+                    "saldo_final": Decimal("100"),
+                }
+            ],
+        }
+        txs = build_structured_transactions(payload, "auxiliar_iva")
+        assert len(txs[0]["items"]) == 20
+
+    def test_concepto_uses_nombre_cuenta(self) -> None:
+        txs = build_structured_transactions(self._two_account_payload(), "auxiliar_iva")
+        assert txs[0]["concepto"] == "Auxiliar IVA IVA generado 19%"
+
+    def test_nit_emisor_from_entidad(self) -> None:
+        txs = build_structured_transactions(self._two_account_payload(), "auxiliar_iva")
+        assert txs[0]["nit_emisor"] == "900123456"
+        assert txs[0]["nit_receptor"] == ""
+
+    def test_account_fields_present(self) -> None:
+        txs = build_structured_transactions(self._two_account_payload(), "auxiliar_iva")
+        tx = txs[0]
+        assert tx["codigo_cuenta"] == "24080101"
+        assert tx["tipo_iva"] == "generado"
+        assert tx["total_debitos"] == "0"
+        assert tx["total_creditos"] == "5000"
+        assert tx["saldo_inicial"] == "0"
+        assert tx["saldo_final"] == "5000"
+
+
+class TestAutorretencionICAMapper:
+    def _base_payload(self) -> dict:
+        from decimal import Decimal
+
+        return {
+            "municipio": "Medellín",
+            "departamento": "Antioquia",
+            "anio": 2026,
+            "periodicidad": "bimestral",
+            "periodo_numero": 1,
+            "nit_declarante": "900123456",
+            "razon_social": "Test SAS",
+            "detalle_autorretenciones": [
+                {
+                    "actividad_economica": "Comercio",
+                    "codigo_ciiu": "4711",
+                    "tarifa_retencion_por_mil": Decimal("5"),
+                    "base_gravable": Decimal("10000000"),
+                    "valor_autorretencion": Decimal("50000"),
+                }
+            ],
+            "total_autorretenciones": Decimal("50000"),
+            "sanciones": Decimal("0"),
+            "intereses_mora": Decimal("0"),
+            "total_a_pagar": Decimal("50000"),
+            "tipo_declaracion": "inicial",
+            "fecha_presentacion": "2026-03-10",
+            "moneda": "COP",
+        }
+
+    def test_single_tx_produced(self) -> None:
+        txs = build_structured_transactions(self._base_payload(), "autorretencion_ica")
+        assert len(txs) == 1
+
+    def test_fecha_uses_fecha_presentacion_when_present(self) -> None:
+        txs = build_structured_transactions(self._base_payload(), "autorretencion_ica")
+        assert txs[0]["fecha"] == "2026-03-10"
+
+    def test_fecha_derives_from_period_when_no_presentacion(self) -> None:
+        payload = self._base_payload()
+        del payload["fecha_presentacion"]
+        # bimestral periodo 1 → end of Feb = 2026-02-28
+        txs = build_structured_transactions(payload, "autorretencion_ica")
+        assert txs[0]["fecha"] == "2026-02-28"
+
+    def test_total_uses_total_a_pagar(self) -> None:
+        from decimal import Decimal
+
+        payload = self._base_payload()
+        payload["total_a_pagar"] = Decimal("75000")
+        payload["total_autorretenciones"] = Decimal("50000")
+        txs = build_structured_transactions(payload, "autorretencion_ica")
+        assert txs[0]["total"] == "75000"
+
+    def test_total_falls_back_to_autorretenciones(self) -> None:
+        from decimal import Decimal
+
+        payload = self._base_payload()
+        payload["total_a_pagar"] = Decimal("0")
+        payload["total_autorretenciones"] = Decimal("50000")
+        txs = build_structured_transactions(payload, "autorretencion_ica")
+        assert txs[0]["total"] == "50000"
+
+    def test_total_falls_back_to_autorretenciones_when_none(self) -> None:
+        from decimal import Decimal
+
+        payload = self._base_payload()
+        payload["total_a_pagar"] = None
+        payload["total_autorretenciones"] = Decimal("50000")
+        txs = build_structured_transactions(payload, "autorretencion_ica")
+        assert txs[0]["total"] == "50000"
+
+    def test_concepto_includes_municipio_and_period(self) -> None:
+        txs = build_structured_transactions(self._base_payload(), "autorretencion_ica")
+        assert "Medellín" in txs[0]["concepto"]
+        assert "1" in txs[0]["concepto"]
+        assert "2026" in txs[0]["concepto"]
+
+    def test_items_contain_detalle_autorretenciones(self) -> None:
+        txs = build_structured_transactions(self._base_payload(), "autorretencion_ica")
+        assert len(txs[0]["items"]) == 1
+        assert txs[0]["items"][0]["codigo_ciiu"] == "4711"
+
+    def test_extra_fields_present(self) -> None:
+        payload = self._base_payload()
+        txs = build_structured_transactions(payload, "autorretencion_ica")
+        tx = txs[0]
+        assert tx["nit_emisor"] == "900123456"
+        assert tx["nit_receptor"] == ""
+        assert tx["municipio"] == "Medellín"
+        assert tx["departamento"] == "Antioquia"
+        assert tx["total_autorretenciones"] == "50000"
+        assert tx["sanciones"] == "0"
+        assert tx["intereses_mora"] == "0"
+
+
+class TestDeclaracionICAMapper:
+    def _base_payload(self) -> dict:
+        from decimal import Decimal
+
+        return {
+            "municipio": "Bogotá",
+            "departamento": "Cundinamarca",
+            "anio": 2026,
+            "periodicidad": "bimestral",
+            "periodo_numero": 1,
+            "nit_declarante": "900111222",
+            "razon_social": "Test SA",
+            "actividades_economicas": [
+                {
+                    "codigo_ciiu": "6201",
+                    "descripcion": "Desarrollo software",
+                    "tarifa_ica_por_mil": Decimal("5"),
+                }
+            ],
+            "ingresos_brutos": Decimal("10000000"),
+            "total_ingresos_gravables": Decimal("9500000"),
+            "liquidacion": {
+                "impuesto_ica": Decimal("47500"),
+                "impuesto_avisos_tableros": Decimal("0"),
+                "sobretasa_bomberil": Decimal("0"),
+                "intereses_mora": Decimal("0"),
+                "sanciones": Decimal("0"),
+                "total_a_pagar": Decimal("47500"),
+                "saldo_a_favor": Decimal("0"),
+            },
+            "tipo_declaracion": "inicial",
+            "fecha_presentacion": "2026-03-15",
+            "moneda": "COP",
+        }
+
+    def test_single_tx_produced(self) -> None:
+        txs = build_structured_transactions(self._base_payload(), "declaracion_ica")
+        assert len(txs) == 1
+
+    def test_fecha_uses_fecha_presentacion(self) -> None:
+        txs = build_structured_transactions(self._base_payload(), "declaracion_ica")
+        assert txs[0]["fecha"] == "2026-03-15"
+
+    def test_fecha_derives_from_period_when_no_presentacion(self) -> None:
+        payload = self._base_payload()
+        del payload["fecha_presentacion"]
+        # bimestral periodo 1 → end of Feb = 2026-02-28
+        txs = build_structured_transactions(payload, "declaracion_ica")
+        assert txs[0]["fecha"] == "2026-02-28"
+
+    def test_total_uses_liquidacion_total_a_pagar(self) -> None:
+        from decimal import Decimal
+
+        payload = self._base_payload()
+        payload["liquidacion"]["total_a_pagar"] = Decimal("50000")
+        payload["liquidacion"]["impuesto_ica"] = Decimal("47500")
+        txs = build_structured_transactions(payload, "declaracion_ica")
+        assert txs[0]["total"] == "50000"
+
+    def test_total_falls_back_to_impuesto_ica(self) -> None:
+        from decimal import Decimal
+
+        payload = self._base_payload()
+        payload["liquidacion"]["total_a_pagar"] = Decimal("0")
+        payload["liquidacion"]["impuesto_ica"] = Decimal("47500")
+        txs = build_structured_transactions(payload, "declaracion_ica")
+        assert txs[0]["total"] == "47500"
+
+    def test_total_falls_back_to_saldo_a_favor(self) -> None:
+        from decimal import Decimal
+
+        payload = self._base_payload()
+        payload["liquidacion"]["total_a_pagar"] = Decimal("0")
+        payload["liquidacion"]["impuesto_ica"] = Decimal("0")
+        payload["liquidacion"]["saldo_a_favor"] = Decimal("5000")
+        txs = build_structured_transactions(payload, "declaracion_ica")
+        assert txs[0]["total"] == "5000"
+
+    def test_concepto_includes_municipio(self) -> None:
+        txs = build_structured_transactions(self._base_payload(), "declaracion_ica")
+        assert "Bogotá" in txs[0]["concepto"]
+        assert "1" in txs[0]["concepto"]
+        assert "2026" in txs[0]["concepto"]
+
+    def test_items_contain_actividades_economicas(self) -> None:
+        txs = build_structured_transactions(self._base_payload(), "declaracion_ica")
+        assert len(txs[0]["items"]) == 1
+        assert txs[0]["items"][0]["codigo_ciiu"] == "6201"
+
+    def test_handles_missing_liquidacion(self) -> None:
+        payload = self._base_payload()
+        payload["liquidacion"] = None
+        txs = build_structured_transactions(payload, "declaracion_ica")
+        assert txs[0]["total"] == "0"
+
+
 def test_cuenta_cobro_branch_uses_prestador_nit_when_present() -> None:
     """When the prestador exposes a NIT (e.g. PN registered as proveedor) the
     mapper prefers `prestador.nit` over `prestador.cedula`.

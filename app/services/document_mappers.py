@@ -133,6 +133,26 @@ def infer_total_from_items(items: Any) -> Optional[Decimal]:
     return inferred
 
 
+def _derive_period_end(anio: int, periodicidad: str, periodo_numero: int) -> str:
+    """Return the last day of the tax period as YYYY-MM-DD."""
+    import calendar
+
+    bimestral_end = {1: 2, 2: 4, 3: 6, 4: 8, 5: 10, 6: 12}
+    cuatrimestral_end = {1: 4, 2: 8, 3: 12}
+
+    if "bimestral" in periodicidad:
+        month = bimestral_end.get(periodo_numero, 12)
+    elif "cuatrimestral" in periodicidad:
+        month = cuatrimestral_end.get(periodo_numero, 12)
+    elif "mensual" in periodicidad:
+        month = max(1, min(periodo_numero, 12))
+    else:
+        month = 12
+
+    last_day = calendar.monthrange(anio, month)[1]
+    return f"{anio}-{month:02d}-{last_day:02d}"
+
+
 def build_structured_transactions(
     interpreted: dict[str, Any], doc_type: str
 ) -> list[dict[str, Any]]:
@@ -651,6 +671,319 @@ def build_structured_transactions(
                 "retenciones_aplicadas": sanitize_for_json(retenciones_extracted),
                 "informacion_adicional": sanitize_for_json(info_adicional),
                 "items": [],
+            }
+        ]
+
+    if doc_type in ("anexo_iva", "declaracion_iva"):
+        nit_emisor = as_str(
+            interpreted.get("nit_declarante") or interpreted.get("nit_emisor"), ""
+        )
+        # Prefer explicit periodo string; fall back to derived period-end date.
+        periodo_str = as_str(interpreted.get("periodo"), "").strip()
+        anio = interpreted.get("anio")
+        periodicidad = as_str(interpreted.get("periodicidad"), "").lower().strip()
+        periodo_numero = interpreted.get("periodo_numero")
+
+        fecha = interpreted.get("fecha_presentacion") or interpreted.get("fecha")
+        if not fecha and anio and periodo_numero:
+            fecha = _derive_period_end(int(anio), periodicidad, int(periodo_numero))
+
+        if doc_type == "anexo_iva":
+            raw_total = (
+                interpreted.get("saldo_a_pagar")
+                or interpreted.get("saldo_a_favor")
+                or interpreted.get("total_iva_generado")
+            )
+            parsed_total = safe_decimal(raw_total) or Decimal("0")
+
+            concepto = "Anexo IVA"
+            if periodo_str:
+                concepto = f"Anexo IVA {periodo_str}"
+            elif anio and periodo_numero:
+                concepto = f"Anexo IVA periodo {periodo_numero} / {anio}"
+
+            return [
+                {
+                    "fecha": fecha,
+                    "nit_emisor": nit_emisor,
+                    "nit_receptor": "",
+                    "total": str(parsed_total),
+                    "concepto": concepto,
+                    "descripcion": concepto,
+                    "total_iva_generado": str(
+                        safe_decimal(interpreted.get("total_iva_generado"))
+                        or Decimal("0")
+                    ),
+                    "total_iva_descontable": str(
+                        safe_decimal(interpreted.get("total_iva_descontable"))
+                        or Decimal("0")
+                    ),
+                    "saldo_a_pagar": str(
+                        safe_decimal(interpreted.get("saldo_a_pagar")) or Decimal("0")
+                    ),
+                    "saldo_a_favor": str(
+                        safe_decimal(interpreted.get("saldo_a_favor")) or Decimal("0")
+                    ),
+                    "retenciones_iva_practicadas": str(
+                        safe_decimal(interpreted.get("retenciones_iva_practicadas"))
+                        or Decimal("0")
+                    ),
+                    "retenciones_iva_que_le_practicaron": str(
+                        safe_decimal(
+                            interpreted.get("retenciones_iva_que_le_practicaron")
+                        )
+                        or Decimal("0")
+                    ),
+                    "items": sanitize_for_json(
+                        [
+                            {
+                                "iva_generado": interpreted.get("iva_generado"),
+                                "iva_descontable": interpreted.get("iva_descontable"),
+                                "periodicidad": periodicidad,
+                                "periodo_numero": periodo_numero,
+                                "anio": anio,
+                            }
+                        ]
+                    ),
+                }
+            ]
+
+        # declaracion_iva — TaxDeclarationContent
+        raw_total = interpreted.get("total_a_pagar") or interpreted.get("saldo_a_favor")
+        parsed_total = safe_decimal(raw_total) or Decimal("0")
+
+        concepto = "Declaracion IVA"
+        if periodo_str:
+            concepto = f"Declaracion IVA {periodo_str}"
+        elif anio and periodo_numero:
+            concepto = f"Declaracion IVA periodo {periodo_numero} / {anio}"
+
+        return [
+            {
+                "fecha": fecha,
+                "nit_emisor": nit_emisor,
+                "nit_receptor": "",
+                "total": str(parsed_total),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "total_a_pagar": str(
+                    safe_decimal(interpreted.get("total_a_pagar")) or Decimal("0")
+                ),
+                "saldo_a_favor": str(
+                    safe_decimal(interpreted.get("saldo_a_favor")) or Decimal("0")
+                ),
+                "items": sanitize_for_json(
+                    [
+                        {
+                            "formulario": interpreted.get("formulario"),
+                            "renglones": interpreted.get("renglones"),
+                            "impuestos_descontables": interpreted.get(
+                                "impuestos_descontables"
+                            ),
+                            "periodicidad": periodicidad,
+                            "periodo_numero": periodo_numero,
+                            "anio": anio,
+                        }
+                    ]
+                ),
+            }
+        ]
+
+    if doc_type == "autorretencion_ica":
+        nit_emisor = as_str(interpreted.get("nit_declarante"), "")
+        municipio = as_str(interpreted.get("municipio"), "").strip()
+        departamento = as_str(interpreted.get("departamento"), "").strip()
+        anio = interpreted.get("anio")
+        periodicidad = as_str(interpreted.get("periodicidad"), "").lower().strip()
+        periodo_numero = interpreted.get("periodo_numero")
+
+        fecha = interpreted.get("fecha_presentacion")
+        if not fecha and anio and periodicidad and periodo_numero:
+            fecha = _derive_period_end(int(anio), periodicidad, int(periodo_numero))
+
+        total_a_pagar = safe_decimal(interpreted.get("total_a_pagar"))
+        total_autorretenciones = safe_decimal(interpreted.get("total_autorretenciones"))
+        if total_a_pagar and total_a_pagar > Decimal("0"):
+            total = total_a_pagar
+        elif total_autorretenciones and total_autorretenciones > Decimal("0"):
+            total = total_autorretenciones
+        else:
+            total = Decimal("0")
+
+        if municipio and periodo_numero is not None and anio:
+            concepto = f"Autorretencion ICA {municipio} periodo {periodo_numero}/{anio}"
+        else:
+            concepto = "Autorretencion ICA"
+
+        detalle = interpreted.get("detalle_autorretenciones") or []
+        if not isinstance(detalle, list):
+            detalle = []
+
+        return [
+            {
+                "fecha": fecha,
+                "nit_emisor": nit_emisor,
+                "nit_receptor": "",
+                "total": str(total),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "total_autorretenciones": str(
+                    total_autorretenciones
+                    if total_autorretenciones is not None
+                    else Decimal("0")
+                ),
+                "sanciones": str(
+                    safe_decimal(interpreted.get("sanciones")) or Decimal("0")
+                ),
+                "intereses_mora": str(
+                    safe_decimal(interpreted.get("intereses_mora")) or Decimal("0")
+                ),
+                "municipio": municipio,
+                "departamento": departamento,
+                "items": sanitize_for_json(detalle),
+            }
+        ]
+
+    if doc_type == "auxiliar_iva":
+        entidad = interpreted.get("entidad") or {}
+        if isinstance(entidad, dict):
+            nit_emisor = as_str(entidad.get("nit"), "")
+        else:
+            nit_emisor = as_str(getattr(entidad, "nit", None), "")
+        fecha = interpreted.get("periodo_fin")
+        cuentas = interpreted.get("cuentas") or []
+
+        if not isinstance(cuentas, list) or not cuentas:
+            return [
+                {
+                    "fecha": fecha,
+                    "nit_emisor": nit_emisor,
+                    "nit_receptor": "",
+                    "total": "0",
+                    "concepto": "Auxiliar IVA",
+                    "descripcion": "Auxiliar IVA",
+                    "items": [],
+                }
+            ]
+
+        txs = []
+        for cuenta in cuentas:
+            if not isinstance(cuenta, dict):
+                continue
+            codigo = as_str(cuenta.get("codigo_cuenta"), "")
+            nombre = as_str(cuenta.get("nombre_cuenta"), "").strip()
+            tipo_iva = as_str(cuenta.get("tipo_iva"), "")
+            concepto = f"Auxiliar IVA {nombre}" if nombre else f"Auxiliar IVA {codigo}"
+
+            saldo_final = safe_decimal(cuenta.get("saldo_final")) or Decimal("0")
+            total_debitos = safe_decimal(cuenta.get("total_debitos")) or Decimal("0")
+            total_creditos = safe_decimal(cuenta.get("total_creditos")) or Decimal("0")
+            saldo_inicial = safe_decimal(cuenta.get("saldo_inicial")) or Decimal("0")
+
+            if saldo_final > Decimal("0"):
+                total = saldo_final
+            else:
+                total = max(total_debitos, total_creditos)
+
+            movimientos = cuenta.get("movimientos") or []
+            if not isinstance(movimientos, list):
+                movimientos = []
+
+            txs.append(
+                {
+                    "fecha": fecha,
+                    "nit_emisor": nit_emisor,
+                    "nit_receptor": "",
+                    "total": str(total),
+                    "concepto": concepto,
+                    "descripcion": concepto,
+                    "codigo_cuenta": codigo,
+                    "tipo_iva": tipo_iva,
+                    "total_debitos": str(total_debitos),
+                    "total_creditos": str(total_creditos),
+                    "saldo_inicial": str(saldo_inicial),
+                    "saldo_final": str(saldo_final),
+                    "items": sanitize_for_json(movimientos[:20]),
+                }
+            )
+
+        if txs:
+            return txs
+
+        return [
+            {
+                "fecha": fecha,
+                "nit_emisor": nit_emisor,
+                "nit_receptor": "",
+                "total": "0",
+                "concepto": "Auxiliar IVA",
+                "descripcion": "Auxiliar IVA",
+                "items": [],
+            }
+        ]
+
+    if doc_type == "declaracion_ica":
+        nit_emisor = as_str(interpreted.get("nit_declarante"), "")
+        municipio = as_str(interpreted.get("municipio"), "").strip()
+        departamento = as_str(interpreted.get("departamento"), "").strip()
+        anio = interpreted.get("anio")
+        periodicidad = as_str(interpreted.get("periodicidad"), "").lower().strip()
+        periodo_numero = interpreted.get("periodo_numero")
+
+        fecha = interpreted.get("fecha_presentacion")
+        if not fecha and anio and periodicidad and periodo_numero:
+            fecha = _derive_period_end(int(anio), periodicidad, int(periodo_numero))
+
+        liq = interpreted.get("liquidacion") or {}
+        total_a_pagar = safe_decimal(liq.get("total_a_pagar"))
+        impuesto_ica = safe_decimal(liq.get("impuesto_ica"))
+        saldo_a_favor = safe_decimal(liq.get("saldo_a_favor"))
+
+        if total_a_pagar and total_a_pagar > Decimal("0"):
+            total = total_a_pagar
+        elif impuesto_ica and impuesto_ica > Decimal("0"):
+            total = impuesto_ica
+        elif saldo_a_favor and saldo_a_favor > Decimal("0"):
+            total = saldo_a_favor
+        else:
+            total = Decimal("0")
+
+        if municipio and periodo_numero is not None and anio:
+            concepto = f"Declaracion ICA {municipio} periodo {periodo_numero}/{anio}"
+        else:
+            concepto = "Declaracion ICA"
+
+        actividades = interpreted.get("actividades_economicas") or []
+        if not isinstance(actividades, list):
+            actividades = []
+
+        return [
+            {
+                "fecha": fecha,
+                "nit_emisor": nit_emisor,
+                "nit_receptor": "",
+                "total": str(total),
+                "concepto": concepto,
+                "descripcion": concepto,
+                "total_a_pagar": str(
+                    total_a_pagar if total_a_pagar is not None else Decimal("0")
+                ),
+                "impuesto_ica": str(
+                    impuesto_ica if impuesto_ica is not None else Decimal("0")
+                ),
+                "saldo_a_favor": str(
+                    saldo_a_favor if saldo_a_favor is not None else Decimal("0")
+                ),
+                "municipio": municipio,
+                "departamento": departamento,
+                "ingresos_brutos": str(
+                    safe_decimal(interpreted.get("ingresos_brutos")) or Decimal("0")
+                ),
+                "total_ingresos_gravables": str(
+                    safe_decimal(interpreted.get("total_ingresos_gravables"))
+                    or Decimal("0")
+                ),
+                "items": sanitize_for_json(actividades),
             }
         ]
 
