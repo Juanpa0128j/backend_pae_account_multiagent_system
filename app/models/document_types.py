@@ -17,6 +17,8 @@ class ParserMode(str, Enum):
     STANDARD = "standard"
     PREMIUM = "premium"
     GPT4O = "gpt4o"
+    AGENTIC = "agentic"
+    AGENTIC_PLUS = "agentic_plus"
 
 
 class DocumentType(str, Enum):

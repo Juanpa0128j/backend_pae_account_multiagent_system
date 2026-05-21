@@ -72,13 +72,25 @@ def _llama_parse_with_retry(parser: "LlamaParse", file_path: str) -> list:
 
 
 def _build_llama_parse_kwargs(mode: str, api_key: str) -> dict:
-    kwargs = {"api_key": api_key, "result_type": "markdown"}
+    kwargs: dict = {"api_key": api_key, "result_type": "markdown"}
     if mode == "fast":
         kwargs["fast_mode"] = True
     elif mode == "premium":
         kwargs["premium_mode"] = True
     elif mode == "gpt4o":
         kwargs["gpt4o_mode"] = True
+    elif mode == "agentic":
+        # LlamaCloud Agentic preset: per-page agent parsing with a vision LLM.
+        # Best for low-quality scans / images where OCR + reasoning are needed.
+        kwargs["parse_mode"] = "parse_page_with_agent"
+        kwargs["adaptive_long_table"] = True
+        kwargs["outlined_table_extraction"] = True
+    elif mode == "agentic_plus":
+        # Heaviest mode: agent operates over the whole doc, slower but reasons
+        # across pages. Use for complex multi-page financial statements.
+        kwargs["parse_mode"] = "parse_document_with_agent"
+        kwargs["adaptive_long_table"] = True
+        kwargs["outlined_table_extraction"] = True
     return kwargs
 
 

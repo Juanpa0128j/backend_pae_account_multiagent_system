@@ -293,7 +293,7 @@ async def upload_file(
     ),
     parser_mode: Optional[str] = Form(
         "fast",
-        description="LlamaParse extraction quality mode: fast, standard, premium, gpt4o.",
+        description="LlamaParse extraction quality mode: fast, standard, premium, gpt4o, agentic, agentic_plus.",
     ),
     multi_file_mode: Literal["pages", "documents"] = Form(
         "pages",
@@ -345,7 +345,7 @@ async def upload_file(
         except ValueError:
             raise HTTPException(
                 status_code=422,
-                detail=f"Modo de extracción '{parser_mode}' no válido. Opciones: fast, standard, premium, gpt4o",
+                detail=f"Modo de extracción '{parser_mode}' no válido. Opciones: fast, standard, premium, gpt4o, agentic, agentic_plus",
             )
 
         # Magic-byte check: reject obviously wrong/corrupt files early
