@@ -74,6 +74,10 @@ REGLAS DE CLASIFICACIÓN:
 - Si la pregunta menciona "proyecciones", "predicciones", "futuro", "próximos meses", "estimación" → analysis
 - Si la pregunta menciona "ratios", "indicadores", "liquidez", "rentabilidad", "endeudamiento", "rotación" → ratios
 - Si la pregunta pide "análisis", "insights", "recomendaciones", "alertas", "salud financiera" → analysis
+- Si la pregunta menciona "IVA", "iva generado", "iva descontable", "iva a pagar" → iva (NUNCA general_question)
+- Si la pregunta menciona "retención", "retefuente", "reteica", "retenciones" → withholdings (NUNCA general_question)
+- Si la pregunta menciona "impuestos a pagar", "qué impuestos debo", "impuestos pendientes" Y combina IVA+retenciones → analysis (incluye ambas categorías)
+- general_question SOLO para preguntas conceptuales sin datos del usuario (ej. "qué es el IVA"). Si la pregunta pide CIFRAS o ESTADO de impuestos → usa iva / withholdings / analysis.
 - Si la pregunta menciona varias cosas, elige la intención PRINCIPAL.
 
 Historial reciente:

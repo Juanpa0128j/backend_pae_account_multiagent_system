@@ -1,5 +1,5 @@
 from datetime import date, datetime, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -43,13 +43,14 @@ _REPORT_TYPE_ALIASES: dict[str, set[str]] = {
 
 def _build_params(
     start_date: Optional[date],
-    resolved_end_date: date,
+    resolved_end_date: Optional[date],
     include_analysis: bool = False,
 ) -> dict:
     params: dict = {}
     if start_date:
         params["start_date"] = start_date.isoformat()
-    params["end_date"] = resolved_end_date.isoformat()
+    if resolved_end_date:
+        params["end_date"] = resolved_end_date.isoformat()
     if include_analysis:
         params["include_analysis"] = True
     return params
@@ -89,13 +90,30 @@ def _try_stored_statement(
 
     db = SessionLocal()
     try:
+        # Para empresas Vía A (`build_from_scratch`) los FinancialStatement son
+        # derived snapshots — duplican lo que el pipeline reportero recalcula
+        # en vivo desde journal_entry_lines y suelen quedar stale al subir más
+        # docs. Para Vía A: ignorar stored y dejar que el caller invoque el
+        # pipeline fresh. Stored solo es la fuente de verdad para Vía B
+        # (`work_with_existing` — uploads directos de estados financieros).
+        try:
+            from app.services import db_service as _db_svc  # noqa: PLC0415
+
+            pathway = _db_svc.get_company_locked_pathway(db, normalized_company_nit)
+        except Exception:
+            pathway = None
+        if pathway != "work_with_existing":
+            return None
+
         q = db.query(FinancialStatement).filter(
             FinancialStatement.entity_nit == normalized_company_nit,
             FinancialStatement.statement_type == statement_type,
         )
+        # Snapshot vigente para la fecha: periodo del statement debe haber
+        # INICIADO antes/en el cutoff. Ordenar por created_at DESC para fresh.
         if period_end is not None:
-            q = q.filter(FinancialStatement.period_end <= period_end)
-        stmt = q.order_by(FinancialStatement.period_end.desc()).first()
+            q = q.filter(FinancialStatement.period_start <= period_end)
+        stmt = q.order_by(FinancialStatement.created_at.desc()).first()
         if stmt is None:
             return None
         return _normalize_stored_statement(report_type, stmt.data or {})
@@ -633,10 +651,7 @@ async def get_balance_report(
     Aggregates posted journal entries up to *end_date* grouped by PUC class.
     Returns assets, liabilities, equity, net profit and a balance-validation flag.
     """
-    resolved_end_date = end_date or date.today()
-    return _run_report(
-        "balance", _build_params(start_date, resolved_end_date), company_nit
-    )
+    return _run_report("balance", _build_params(start_date, end_date), company_nit)
 
 
 @router.get("/pnl", response_model=PnLOutput)
@@ -653,8 +668,7 @@ async def get_pnl_report(
     Aggregates revenue (class 4), COGS (class 6) and expenses (class 5)
     for the specified period. Optionally includes LLM-powered analysis.
     """
-    resolved_end_date = end_date or date.today()
-    return _run_report("pnl", _build_params(start_date, resolved_end_date), company_nit)
+    return _run_report("pnl", _build_params(start_date, end_date), company_nit)
 
 
 @router.get("/cashflow", response_model=CashFlowOutput)
@@ -671,10 +685,93 @@ async def get_cashflow_report(
     Returns net balances of cash and bank accounts (class 11XX) for the period.
     Optionally includes LLM-powered analysis.
     """
-    resolved_end_date = end_date or date.today()
+    return _run_report("cashflow", _build_params(start_date, end_date), company_nit)
+
+
+# ---------------------------------------------------------------------------
+# JSON GET endpoints for report types previously available only as PDF/Excel
+# downloads. Return raw builder dicts (no strict Pydantic schema) so the
+# frontend can render interactive views (tables, drill-downs) without
+# downloading a file.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/libro_diario")
+async def get_libro_diario_report(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Libro Diario (Daily Journal) — chronological list of every journal entry
+    line for the period. Used by the frontend to render the Libros tab without
+    downloading a PDF first.
+    """
+    return _run_report("libro_diario", _build_params(start_date, end_date), company_nit)
+
+
+@router.get("/libro_auxiliar")
+async def get_libro_auxiliar_report(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Libro Auxiliar (Subsidiary Ledger) — journal entries grouped by cuenta_puc
+    with cumulative debit/credit totals per account.
+    """
     return _run_report(
-        "cashflow", _build_params(start_date, resolved_end_date), company_nit
+        "libro_auxiliar", _build_params(start_date, end_date), company_nit
     )
+
+
+@router.get("/cambios_patrimonio")
+async def get_cambios_patrimonio_report(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Estado de Cambios en el Patrimonio (Statement of Changes in Equity).
+    Movements of class-3 accounts (capital, reserves, retained earnings) for
+    the period.
+    """
+    return _run_report(
+        "cambios_patrimonio", _build_params(start_date, end_date), company_nit
+    )
+
+
+@router.get("/notas_estados_financieros")
+async def get_notas_eeff_report(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Notas a los Estados Financieros — RAG-backed normative references plus a
+    balance summary. Used for compliance disclosures.
+    """
+    return _run_report("notas_eeff", _build_params(start_date, end_date), company_nit)
+
+
+@router.get("/analysis")
+async def get_analysis_report(
+    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
+    end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
+    company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Comprehensive Financial Analysis — 7 ratios, top accounts, anomaly
+    detection, 3-month predictions, LLM-narrated executive summary. Previously
+    only reachable via the chat `intent=analysis` flow; now exposed as REST
+    so the frontend Reportes tab can render it directly.
+    """
+    return _run_report("analysis", _build_params(start_date, end_date), company_nit)
 
 
 @router.get("/statements")

@@ -28,6 +28,31 @@ def _format_currency(value: float) -> str:
     return f"$ {value:,.0f}"
 
 
+def _format_periodo(period_start: Any, period_end: Any) -> str:
+    """Render the report period header consistently across exporters.
+
+    Handles None/empty values without leaking the literal "None" string into
+    PDFs (e.g. "Periodo: al None"). Returns:
+        - "Acumulado a la fecha" — when both ends are None/empty
+        - "{start} → {end}"      — when both are present
+        - "al {end}"              — when only end is present
+        - "desde {start}"         — when only start is present
+    """
+    s = str(period_start).strip() if period_start else ""
+    e = str(period_end).strip() if period_end else ""
+    if s and s.lower() == "none":
+        s = ""
+    if e and e.lower() == "none":
+        e = ""
+    if not s and not e:
+        return "Acumulado a la fecha"
+    if s and e:
+        return f"{s} → {e}"
+    if e:
+        return f"al {e}"
+    return f"desde {s}"
+
+
 def _get_cuenta_codigo(cuenta: Dict[str, Any]) -> str:
     """Return account code from normalized or legacy keys."""
     return str(cuenta.get("codigo") or cuenta.get("cuenta") or "N/A")
@@ -161,7 +186,7 @@ class BalanceSheetExporter:
         story.append(
             Paragraph(
                 f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
-                f"<b>Periodo:</b> al {_escape_paragraph_text(report.get('period_end', '--'))} | "
+                f"<b>Periodo:</b> {_escape_paragraph_text(_format_periodo(report.get('period_start'), report.get('period_end')))} | "
                 f"<b>Generado:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                 styles["Normal"],
             )
@@ -303,7 +328,9 @@ class BalanceSheetExporter:
         ws.merge_cells("A1:C1")
 
         ws["A2"] = f"Empresa: {company_name}"
-        ws["A3"] = f"Periodo al: {report.get('period_end', '--')}"
+        ws["A3"] = (
+            f"Periodo: {_format_periodo(report.get('period_start'), report.get('period_end'))}"
+        )
         ws["A4"] = f"Generado: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
         row = 6
@@ -415,8 +442,7 @@ class PnLExporter:
         story.append(
             Paragraph(
                 f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
-                f"<b>Periodo:</b> {_escape_paragraph_text(report.get('period_start', '--'))} "
-                f"a {_escape_paragraph_text(report.get('period_end', '--'))}",
+                f"<b>Periodo:</b> {_escape_paragraph_text(_format_periodo(report.get('period_start'), report.get('period_end')))}",
                 styles["Normal"],
             )
         )
@@ -573,7 +599,7 @@ class PnLExporter:
 
         ws["A2"] = f"Empresa: {company_name}"
         ws["A3"] = (
-            f"Periodo: {report.get('period_start', '--')} - {report.get('period_end', '--')}"
+            f"Periodo: {_format_periodo(report.get('period_start'), report.get('period_end'))}"
         )
 
         row = 5
@@ -729,8 +755,7 @@ class CashFlowExporter:
         story.append(
             Paragraph(
                 f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
-                f"<b>Periodo:</b> {_escape_paragraph_text(str(report.get('period_start', '--')))} "
-                f"a {_escape_paragraph_text(str(report.get('period_end', '--')))} | "
+                f"<b>Periodo:</b> {_escape_paragraph_text(_format_periodo(report.get('period_start'), report.get('period_end')))} | "
                 f"<b>Metodo:</b> {metodo}",
                 styles["Normal"],
             )
@@ -892,7 +917,7 @@ class CashFlowExporter:
 
         ws["A2"] = f"Empresa: {company_name}"
         ws["A3"] = (
-            f"Periodo: {report.get('period_start', '--')} - {report.get('period_end', '--')}"
+            f"Periodo: {_format_periodo(report.get('period_start'), report.get('period_end'))}"
         )
 
         row = 5
@@ -968,8 +993,7 @@ class LibroDiarioExporter:
         story.append(
             Paragraph(
                 f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
-                f"<b>Periodo:</b> {_escape_paragraph_text(report.get('period_start', '--'))} "
-                f"a {_escape_paragraph_text(report.get('period_end', '--'))}",
+                f"<b>Periodo:</b> {_escape_paragraph_text(_format_periodo(report.get('period_start'), report.get('period_end')))}",
                 styles["Normal"],
             )
         )
@@ -1112,7 +1136,7 @@ class LibroDiarioExporter:
 
         ws["A2"] = f"Empresa: {company_name}"
         ws["A3"] = (
-            f"Periodo: {report.get('period_start', '--')} - {report.get('period_end', '--')}"
+            f"Periodo: {_format_periodo(report.get('period_start'), report.get('period_end'))}"
         )
 
         row = 5
@@ -1251,8 +1275,7 @@ class LibroAuxiliarExporter:
         story.append(
             Paragraph(
                 f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
-                f"<b>Periodo:</b> {_escape_paragraph_text(report.get('period_start', '--'))} "
-                f"a {_escape_paragraph_text(report.get('period_end', '--'))}",
+                f"<b>Periodo:</b> {_escape_paragraph_text(_format_periodo(report.get('period_start'), report.get('period_end')))}",
                 styles["Normal"],
             )
         )
@@ -1329,7 +1352,7 @@ class LibroAuxiliarExporter:
 
         ws["A2"] = f"Empresa: {company_name}"
         ws["A3"] = (
-            f"Periodo: {report.get('period_start', '--')} - {report.get('period_end', '--')}"
+            f"Periodo: {_format_periodo(report.get('period_start'), report.get('period_end'))}"
         )
 
         row = 5
@@ -1426,8 +1449,7 @@ class CambiosPatrimonioExporter:
         story.append(
             Paragraph(
                 f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
-                f"<b>Periodo:</b> {_escape_paragraph_text(report.get('period_start', '--'))} "
-                f"a {_escape_paragraph_text(report.get('period_end', '--'))}",
+                f"<b>Periodo:</b> {_escape_paragraph_text(_format_periodo(report.get('period_start'), report.get('period_end')))}",
                 styles["Normal"],
             )
         )
@@ -1495,7 +1517,7 @@ class CambiosPatrimonioExporter:
 
         ws["A2"] = f"Empresa: {company_name}"
         ws["A3"] = (
-            f"Periodo: {report.get('period_start', '--')} - {report.get('period_end', '--')}"
+            f"Periodo: {_format_periodo(report.get('period_start'), report.get('period_end'))}"
         )
 
         row = 5
@@ -1573,7 +1595,7 @@ class NotasEstadosFinancierosExporter:
         story.append(
             Paragraph(
                 f"<b>Empresa:</b> {_escape_paragraph_text(company_name)} | "
-                f"<b>Periodo:</b> {_escape_paragraph_text(report.get('period_end', '--'))}",
+                f"<b>Periodo:</b> {_escape_paragraph_text(_format_periodo(report.get('period_start'), report.get('period_end')))}",
                 styles["Normal"],
             )
         )
@@ -1667,7 +1689,9 @@ class NotasEstadosFinancierosExporter:
         ws.merge_cells("A1:B1")
 
         ws["A2"] = f"Empresa: {company_name}"
-        ws["A3"] = f"Periodo: {report.get('period_end', '--')}"
+        ws["A3"] = (
+            f"Periodo: {_format_periodo(report.get('period_start'), report.get('period_end'))}"
+        )
 
         row = 5
         ws["A5"] = "Resumen Financiero"

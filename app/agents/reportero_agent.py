@@ -58,8 +58,16 @@ _PREFIX_PASIVOS_CORRIENTES = (
 )  # Obligaciones, Proveedores, Cuentas por pagar
 _PREFIX_INVENTARIOS = "14"  # Inventarios (excluded from acid test)
 
-# Specific tax retention accounts — corrected per Carolina García, Contadora Pública
-_CUENTA_IVA_GENERADO = "240808"
+# Specific tax retention accounts — corrected per Carolina García, Contadora Pública.
+# Decreto 2650/1993 oficial:
+#   2408   = Impuesto sobre las Ventas por Pagar (parent class)
+#   240802 = IVA Descontable (subaccount, naturaleza débito = activo recuperable)
+#   240805 = IVA Generado (subaccount, naturaleza crédito = pasivo)
+#   240810 = IVA Retenido (anticipo a favor)
+# El builder usa _PREFIX_IVA para capturar TODA subcuenta 2408* — el contador
+# a veces persiste con el código padre "2408" y a veces con subcuenta explícita.
+_PREFIX_IVA = "2408"
+_CUENTA_IVA_GENERADO = "240805"
 _CUENTA_IVA_DESCONTABLE = "240802"
 _CUENTA_RETEFUENTE = "2365"  # Retención en la Fuente por pagar (pasivo)
 _CUENTA_RETEICA = "2368"  # Retención ICA por pagar (pasivo)
@@ -482,14 +490,31 @@ def _build_balance(db, params: dict, svc) -> dict:
             "saldo": float(balance),
         }
 
-    activos_detalle = [
+    # Reclasificación contable: cualquier cuenta clase 2 (pasivos) con saldo
+    # DEUDOR indica un anticipo / saldo a favor / IVA recuperable contra el
+    # acreedor — debe presentarse como activo, no como pasivo negativo.
+    # Ejemplos comunes: 2408* IVA descontable (saldo a favor DIAN), 237005
+    # Aportes EPS pagados en exceso al fondo, 238030 anticipo pensión.
+    # Riesgo: si la cuenta tiene saldo deudor por ERROR contable (mal
+    # asiento), la reclasificación lo enmascara. Mitigamos con warning.
+    activos_detalle: list[dict] = [
         _to_cuenta(r, _debit_nature_balance(r))
         for r in _ledger_by_prefix(ledger, _CLASS_ACTIVOS)
     ]
-    pasivos_detalle = [
-        _to_cuenta(r, _credit_nature_balance(r))
-        for r in _ledger_by_prefix(ledger, _CLASS_PASIVOS)
-    ]
+    pasivos_detalle: list[dict] = []
+    for r in _ledger_by_prefix(ledger, _CLASS_PASIVOS):
+        saldo_credito = _credit_nature_balance(r)  # credit - debit
+        if saldo_credito < 0:
+            logger.warning(
+                "_build_balance: cuenta clase 2 con saldo deudor reclasificada "
+                "a activos — PUC=%s saldo=%s. Verifique si es anticipo/saldo "
+                "a favor (normal) o error contable.",
+                r.get("account"),
+                saldo_credito,
+            )
+            activos_detalle.append(_to_cuenta(r, abs(saldo_credito)))
+        else:
+            pasivos_detalle.append(_to_cuenta(r, saldo_credito))
     patrimonio_detalle = [
         _to_cuenta(r, _credit_nature_balance(r))
         for r in _ledger_by_prefix(ledger, _CLASS_PATRIMONIO)
@@ -639,20 +664,36 @@ def _build_iva(db, params: dict, svc) -> dict:
         db, start_date=start_date, end_date=end_date, company_nit=company_nit
     )
 
-    generado_row = _ledger_by_exact(ledger, _CUENTA_IVA_GENERADO)
-    descontable_row = _ledger_by_exact(ledger, _CUENTA_IVA_DESCONTABLE)
-
-    iva_generado = (
-        _credit_nature_balance(generado_row) if generado_row else Decimal("0")
-    )
-    iva_descontable = (
-        _debit_nature_balance(descontable_row) if descontable_row else Decimal("0")
-    )
+    # Sumar TODAS las cuentas 2408* — el contador puede persistir con código
+    # padre "2408" o subcuenta explícita (240802/240805/240810). Diferenciamos
+    # generado vs descontable por subcuenta cuando es identificable, y por
+    # naturaleza de saldo (D/C) cuando es el padre.
+    iva_generado = Decimal("0")
+    iva_descontable = Decimal("0")
+    for row in ledger:
+        code = str(row.get("account") or "").strip()
+        if not code.startswith(_PREFIX_IVA):
+            continue
+        debit = Decimal(str(row.get("total_debit") or 0))
+        credit = Decimal(str(row.get("total_credit") or 0))
+        if code.startswith("240805"):
+            iva_generado += credit  # crédito = pasivo a DIAN
+        elif code.startswith("240802") or code.startswith("240810"):
+            iva_descontable += debit  # débito = activo recuperable
+        elif code == _PREFIX_IVA:
+            # Cuenta padre — naturaleza por saldo neto.
+            saldo_neto = debit - credit
+            if saldo_neto > 0:
+                iva_descontable += saldo_neto  # saldo deudor = a favor
+            else:
+                iva_generado += abs(saldo_neto)
     iva_a_pagar = iva_generado - iva_descontable
     iva_status = (
         "saldo_a_pagar"
         if iva_a_pagar > 0
-        else "saldo_a_favor" if iva_a_pagar < 0 else "saldo_cero"
+        else "saldo_a_favor"
+        if iva_a_pagar < 0
+        else "saldo_cero"
     )
 
     rag_refs = _fetch_rag_referencias(
@@ -694,12 +735,16 @@ def _build_withholdings(db, params: dict, svc) -> dict:
     retefuente_status = (
         "saldo_a_pagar"
         if retefuente > 0
-        else "saldo_a_favor" if retefuente < 0 else "saldo_cero"
+        else "saldo_a_favor"
+        if retefuente < 0
+        else "saldo_cero"
     )
     reteica_status = (
         "saldo_a_pagar"
         if reteica > 0
-        else "saldo_a_favor" if reteica < 0 else "saldo_cero"
+        else "saldo_a_favor"
+        if reteica < 0
+        else "saldo_cero"
     )
     total_status = (
         "saldo_a_pagar" if total > 0 else "saldo_a_favor" if total < 0 else "saldo_cero"

@@ -424,10 +424,21 @@ def get_general_ledger(
     Libro Mayor — aggregated by cuenta_puc (posted transactions only).
     Returns list of dicts with: cuenta, nombre, saldo_debito, saldo_credito, saldo_neto
     """
+    # LEFT JOIN con CuentaPUC para hidratar el nombre desde el catálogo cuando
+    # `JournalEntryLine.cuenta_nombre` viene vacío (contador algunas veces no
+    # pobla el campo al persistir). COALESCE: catálogo > MAX(journal) > vacío.
+    # MAX() en cuenta_nombre journal es agregación que satisface GROUP BY
+    # (necesario porque cuenta_nombre journal NO está en GROUP BY — ver Bug U).
+    name_expr = func.coalesce(
+        CuentaPUC.nombre,
+        func.max(JournalEntryLine.cuenta_nombre),
+        "",
+    ).label("cuenta_nombre")
+
     query = (
         db.query(
             JournalEntryLine.cuenta_puc,
-            JournalEntryLine.cuenta_nombre,
+            name_expr,
             func.sum(JournalEntryLine.debito).label("total_debit"),
             func.sum(JournalEntryLine.credito).label("total_credit"),
         )
@@ -435,10 +446,16 @@ def get_general_ledger(
             TransactionPosted,
             JournalEntryLine.transaction_posted_id == TransactionPosted.id,
         )
+        .outerjoin(CuentaPUC, CuentaPUC.codigo == JournalEntryLine.cuenta_puc)
         .filter(TransactionPosted.status == TransactionStatus.POSTED)
+        # NOTA: NO incluir `JournalEntryLine.cuenta_nombre` en el GROUP BY.
+        # Si una cuenta tiene lines con cuenta_nombre vacío y otras con texto,
+        # GROUP BY los separaría en 2 filas (Bug U). Agrupamos solo por
+        # cuenta_puc + CuentaPUC.nombre (1-a-1 con puc) y el SELECT usa
+        # COALESCE para resolver el nombre display (catálogo prioritario).
         .group_by(
             JournalEntryLine.cuenta_puc,
-            JournalEntryLine.cuenta_nombre,
+            CuentaPUC.nombre,
         )
     )
 
@@ -454,7 +471,7 @@ def get_general_ledger(
     return [
         {
             "account": r.cuenta_puc,
-            "name": r.cuenta_nombre,
+            "name": r.cuenta_nombre or "",
             "total_debit": float(r.total_debit or 0),
             "total_credit": float(r.total_credit or 0),
             "net_balance": float((r.total_debit or 0) - (r.total_credit or 0)),
@@ -594,6 +611,13 @@ def get_balance_sheet(
     # Retained earnings = Revenue - Expenses - Cost of Sales
     net_profit = totals[4] - totals[5] - totals[6]
 
+    # Tolerancia $1 — DIAN facturas + Decimal rounding suelen dejar diferencias
+    # de centavos (e.g. activos=$9,937,909.24 vs P+E=$9,937,909.24 con diff
+    # exact $0.00 pero strict Decimal == puede fallar por trailing zeros).
+    # Mismo `_BALANCE_TOLERANCE = $1.00` que Fix G/H en auditores y journal_builder.
+    diff = abs(totals[1] - (totals[2] + totals[3] + net_profit))
+    is_balanced = diff <= Decimal("1.00")
+
     return {
         "assets": float(totals[1]),
         "liabilities": float(totals[2]),
@@ -603,7 +627,7 @@ def get_balance_sheet(
         "cost_of_sales": float(totals[6]),
         "net_profit": float(net_profit),
         "total_equity": float(totals[3] + net_profit),
-        "is_balanced": totals[1] == totals[2] + totals[3] + net_profit,
+        "is_balanced": is_balanced,
     }
 
 
@@ -1450,6 +1474,9 @@ def get_balance_sheet_for_period(
                 )
 
     net_profit = totals[4] - totals[5] - totals[6]
+    # Tolerancia $1 — consistente con `get_balance_sheet` y Fix G/H.
+    diff = abs(totals[1] - (totals[2] + totals[3] + net_profit))
+    is_balanced = diff <= Decimal("1.00")
     return {
         "assets": float(totals[1]),
         "liabilities": float(totals[2]),
@@ -1459,7 +1486,7 @@ def get_balance_sheet_for_period(
         "cost_of_sales": float(totals[6]),
         "net_profit": float(net_profit),
         "total_equity": float(totals[3] + net_profit),
-        "is_balanced": totals[1] == totals[2] + totals[3] + net_profit,
+        "is_balanced": is_balanced,
     }
 
 

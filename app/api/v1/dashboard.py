@@ -5,6 +5,7 @@ Replaces mock data with real database queries.
 
 import logging
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -27,6 +28,21 @@ from app.services.parse_utils import safe_float
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _q(value) -> float:
+    """Quantize a numeric value to 2 decimals (DIAN/COP standard).
+
+    Evita artefactos IEEE 754 como `57706.700000000004` cuando se suman
+    floats acumulados. Convierte a Decimal, redondea con ROUND_HALF_UP,
+    devuelve float (compatibilidad con Pydantic response models).
+    """
+    try:
+        return float(
+            Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+    except Exception:
+        return 0.0
 
 
 class DashboardStatsResponse(BaseModel):
@@ -244,15 +260,26 @@ async def get_dashboard_stats(
         if r["account"].startswith("11")
     )
 
-    # IVA payable
-    iva_gen = next((r for r in ledger if r["account"] == "240808"), None)
-    iva_desc = next((r for r in ledger if r["account"] == "240802"), None)
-    iva_generado = (
-        float(iva_gen["total_credit"] - iva_gen["total_debit"]) if iva_gen else 0
-    )
-    iva_descontable = (
-        float(iva_desc["total_debit"] - iva_desc["total_credit"]) if iva_desc else 0
-    )
+    # IVA payable — sumar todas las subcuentas 2408* (igual lógica que
+    # /financial-summary y reportero_agent._build_iva).
+    iva_generado = 0.0
+    iva_descontable = 0.0
+    for r in ledger:
+        code = str(r.get("account") or "").strip()
+        if not code.startswith("2408"):
+            continue
+        debit = float(r.get("total_debit") or 0)
+        credit = float(r.get("total_credit") or 0)
+        if code.startswith("240805"):
+            iva_generado += credit
+        elif code.startswith("240802") or code.startswith("240810"):
+            iva_descontable += debit
+        elif code == "2408":
+            saldo_neto = debit - credit
+            if saldo_neto > 0:
+                iva_descontable += saldo_neto
+            else:
+                iva_generado += abs(saldo_neto)
     iva_por_pagar = iva_generado - iva_descontable
 
     # Total retenciones
@@ -282,12 +309,12 @@ async def get_dashboard_stats(
         documentos_pendientes=pending_count,
         transacciones_procesadas_mes=processed_month,
         alertas_activas=alerts_count,
-        total_activos_cop=balance["assets"],
-        total_pasivos_cop=balance["liabilities"],
-        utilidad_neta_cop=balance["net_profit"],
-        efectivo_disponible_cop=efectivo,
-        iva_por_pagar=iva_por_pagar,
-        total_retenciones=retfte + retica,
+        total_activos_cop=_q(balance["assets"]),
+        total_pasivos_cop=_q(balance["liabilities"]),
+        utilidad_neta_cop=_q(balance["net_profit"]),
+        efectivo_disponible_cop=_q(efectivo),
+        iva_por_pagar=_q(iva_por_pagar),
+        total_retenciones=_q(retfte + retica),
         transacciones_por_estado=txn_counts,
         pathway=pathway,
     )
@@ -319,15 +346,27 @@ async def get_financial_summary(
         if r["account"].startswith("11")
     )
 
-    # IVA
-    iva_gen = next((r for r in ledger if r["account"] == "240808"), None)
-    iva_desc = next((r for r in ledger if r["account"] == "240802"), None)
-    iva_generado = (
-        float(iva_gen["total_credit"] - iva_gen["total_debit"]) if iva_gen else 0
-    )
-    iva_descontable = (
-        float(iva_desc["total_debit"] - iva_desc["total_credit"]) if iva_desc else 0
-    )
+    # IVA — sumar todas las subcuentas 2408* (240802 descontable, 240805 generado,
+    # 240810 retenido, o cuenta padre 2408). Diferenciar por naturaleza de saldo
+    # cuando solo aparece el padre.
+    iva_generado = 0.0
+    iva_descontable = 0.0
+    for r in ledger:
+        code = str(r.get("account") or "").strip()
+        if not code.startswith("2408"):
+            continue
+        debit = float(r.get("total_debit") or 0)
+        credit = float(r.get("total_credit") or 0)
+        if code.startswith("240805"):
+            iva_generado += credit
+        elif code.startswith("240802") or code.startswith("240810"):
+            iva_descontable += debit
+        elif code == "2408":
+            saldo_neto = debit - credit
+            if saldo_neto > 0:
+                iva_descontable += saldo_neto
+            else:
+                iva_generado += abs(saldo_neto)
 
     # Retenciones (PUC 2026)
     retfte_row = next((r for r in ledger if r["account"] == "2365"), None)
@@ -361,15 +400,15 @@ async def get_financial_summary(
     recent = db_service.get_recent_activity(db, limit=10, company_nit=company_nit)
 
     return DashboardFinancialSummaryResponse(
-        total_activos=balance["assets"],
-        total_pasivos=balance["liabilities"],
-        patrimonio=balance["equity"],
-        utilidad_neta=balance["net_profit"],
-        efectivo_disponible=efectivo,
-        iva_por_pagar=iva_generado - iva_descontable,
-        total_retenciones=retfte + retica,
-        ingresos_periodo=ingresos,
-        gastos_periodo=gastos,
+        total_activos=_q(balance["assets"]),
+        total_pasivos=_q(balance["liabilities"]),
+        patrimonio=_q(balance["equity"]),
+        utilidad_neta=_q(balance["net_profit"]),
+        efectivo_disponible=_q(efectivo),
+        iva_por_pagar=_q(iva_generado - iva_descontable),
+        total_retenciones=_q(retfte + retica),
+        ingresos_periodo=_q(ingresos),
+        gastos_periodo=_q(gastos),
         transacciones_por_estado=txn_counts,
         actividad_reciente=recent,
     )
