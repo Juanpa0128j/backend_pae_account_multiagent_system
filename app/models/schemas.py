@@ -388,6 +388,48 @@ class TarifaRentaResponse(BaseModel):
     notas: Optional[str] = None
 
 
+# ---------------------------------------------------------------------------
+# Tax declaration workflow schemas
+# ---------------------------------------------------------------------------
+
+
+class TaxDeclarationDraftResponse(BaseModel):
+    """Full draft response including workflow audit fields."""
+
+    draft_id: str
+    company_nit: str
+    form_type: str
+    period_start: str
+    period_end: str
+    year: int
+    status: str
+    fields: List[Any]
+    warnings: List[Any]
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    # Workflow fields
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    filed_by: Optional[str] = None
+    filed_at: Optional[datetime] = None
+    dian_acknowledgment: Optional[str] = None
+    reopened_by: Optional[str] = None
+    reopened_at: Optional[datetime] = None
+    reopen_reason: Optional[str] = None
+
+
+class FileDraftRequest(BaseModel):
+    """Request body for POST /declarations/{draft_id}/file."""
+
+    dian_acknowledgment: Optional[str] = Field(None, max_length=64)
+
+
+class ReopenDraftRequest(BaseModel):
+    """Request body for POST /declarations/{draft_id}/reopen."""
+
+    reason: str = Field(..., min_length=5)
+
+
 class TarifaRentaUpsertRequest(BaseModel):
     """Request body for POST /api/v1/tax/tarifas-renta."""
 

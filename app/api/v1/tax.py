@@ -20,10 +20,12 @@ from app.core.database import get_db
 from app.models.agent_outputs import IVAOutput, WithholdingsOutput
 from app.models.schemas import (
     BaseMinimaUpsertRequest,
+    FileDraftRequest,
     ICADeclaracionOutput,
     PerdidaFiscalResponse,
     PerdidaFiscalUpsertRequest,
     RentaProvisionOutput,
+    ReopenDraftRequest,
     TarifaRentaResponse,
     TarifaRentaUpsertRequest,
     TaxConstantsResponse,
@@ -385,6 +387,16 @@ def api_update_draft_field(
     Accountant updates a field value (requires_review=True fields).
     After update the field is marked requires_review=False.
     """
+    # Block edits on non-draft status
+    _draft_for_lock = get_draft(db, draft_id)
+    if _draft_for_lock and _draft_for_lock.status != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "DRAFT_LOCKED",
+                "message": f"El borrador está en estado {_draft_for_lock.status}. Use reopen para editarlo.",
+            },
+        )
     try:
         draft = update_draft_field(db, draft_id, body.renglon, body.value)
     except FieldNotFoundError as e:
@@ -401,6 +413,154 @@ def api_update_draft_field(
         "fields": draft.fields_json,
         "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
     }
+
+
+def _draft_to_dict(draft: Any) -> Dict[str, Any]:
+    """Convert a TaxDeclarationDraft ORM object to API response dict."""
+    return {
+        "draft_id": draft.id,
+        "company_nit": draft.company_nit,
+        "form_type": draft.form_type,
+        "period_start": draft.period_start,
+        "period_end": draft.period_end,
+        "year": draft.year,
+        "status": draft.status,
+        "fields": draft.fields_json,
+        "warnings": draft.warnings_json,
+        "created_at": draft.created_at.isoformat() if draft.created_at else None,
+        "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
+        "reviewed_by": draft.reviewed_by,
+        "reviewed_at": draft.reviewed_at.isoformat() if draft.reviewed_at else None,
+        "filed_by": draft.filed_by,
+        "filed_at": draft.filed_at.isoformat() if draft.filed_at else None,
+        "dian_acknowledgment": draft.dian_acknowledgment,
+        "reopened_by": draft.reopened_by,
+        "reopened_at": draft.reopened_at.isoformat() if draft.reopened_at else None,
+        "reopen_reason": draft.reopen_reason,
+    }
+
+
+@router.post(
+    "/declarations/{draft_id}/review",
+    summary="Mark declaration draft as reviewed",
+)
+def api_review_draft(
+    draft_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Transition draft → reviewed.
+
+    Requires all fields_json entries to have requires_review == False (or absent).
+    """
+    draft = get_draft(db, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+
+    if draft.status != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo borradores pueden marcarse como revisados",
+        )
+
+    fields = draft.fields_json or []
+    pending = [f for f in fields if f.get("requires_review") is True]
+    if pending:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "FIELDS_PENDING_REVIEW",
+                "message": f"Hay {len(pending)} campos que requieren revisión",
+                "count": len(pending),
+            },
+        )
+
+    draft.status = "reviewed"
+    draft.reviewed_by = current_user.email
+    draft.reviewed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(draft)
+    return _draft_to_dict(draft)
+
+
+@router.post(
+    "/declarations/{draft_id}/file",
+    summary="Mark reviewed declaration as filed with DIAN",
+)
+def api_file_draft(
+    draft_id: str,
+    body: FileDraftRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Transition reviewed → filed. Optionally stores the DIAN radicado (MUISCA)."""
+    draft = get_draft(db, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+
+    if draft.status != "reviewed":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo declaraciones revisadas pueden marcarse como presentadas",
+        )
+
+    draft.status = "filed"
+    draft.filed_by = current_user.email
+    draft.filed_at = datetime.utcnow()
+    if body.dian_acknowledgment is not None:
+        draft.dian_acknowledgment = body.dian_acknowledgment
+    db.commit()
+    db.refresh(draft)
+    return _draft_to_dict(draft)
+
+
+@router.post(
+    "/declarations/{draft_id}/reopen",
+    summary="Reopen a reviewed or filed declaration for editing",
+)
+def api_reopen_draft(
+    draft_id: str,
+    body: ReopenDraftRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Move declaration backward in the workflow:
+    - filed → reviewed (clears filed_* fields)
+    - reviewed → draft (clears reviewed_* fields)
+    - draft → 400 (already editable)
+
+    `reason` is required (min 5 chars).
+    """
+    draft = get_draft(db, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+
+    if draft.status == "draft":
+        raise HTTPException(
+            status_code=400,
+            detail="Borrador ya está en estado editable",
+        )
+
+    now = datetime.utcnow()
+    draft.reopened_at = now
+    draft.reopened_by = current_user.email
+    draft.reopen_reason = body.reason
+
+    if draft.status == "filed":
+        draft.status = "reviewed"
+        draft.filed_at = None
+        draft.filed_by = None
+        draft.dian_acknowledgment = None
+    else:  # reviewed
+        draft.status = "draft"
+        draft.reviewed_at = None
+        draft.reviewed_by = None
+
+    db.commit()
+    db.refresh(draft)
+    return _draft_to_dict(draft)
 
 
 @router.get("/calendar", summary="DIAN 2026 tax calendar with deadlines")

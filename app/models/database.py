@@ -848,6 +848,20 @@ class TaxDeclarationDraft(Base):
         default=list,
         comment="List of {field, message} for fields that need accountant review",
     )
+    # Workflow audit fields (draft → reviewed → filed)
+    reviewed_by = Column(String(128), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    filed_by = Column(String(128), nullable=True)
+    filed_at = Column(DateTime(timezone=True), nullable=True)
+    dian_acknowledgment = Column(
+        String(64),
+        nullable=True,
+        comment="Número de radicado MUISCA — set when status=filed",
+    )
+    reopened_at = Column(DateTime(timezone=True), nullable=True)
+    reopened_by = Column(String(128), nullable=True)
+    reopen_reason = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
