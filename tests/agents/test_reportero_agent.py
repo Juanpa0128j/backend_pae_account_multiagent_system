@@ -578,7 +578,7 @@ class TestTaxAPI:
         ) as mock_fn:
             resp = client.get(
                 "/api/v1/tax/iva",
-                params={"start_date": _START, "end_date": _END},
+                params={"period_start": _START, "period_end": _END},
             )
 
         assert resp.status_code == 200

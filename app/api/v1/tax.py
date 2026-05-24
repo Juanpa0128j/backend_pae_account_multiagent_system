@@ -1,6 +1,7 @@
+import calendar
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -29,6 +30,29 @@ from app.services import db_service
 from app.services.nit_utils import normalize_nit
 
 router = APIRouter()
+
+
+def _resolve_period(
+    period_start: Optional[date],
+    period_end: Optional[date],
+) -> Tuple[date, date]:
+    """Return (start, end). Both None → current month. Partial → 400."""
+    if period_start is None and period_end is None:
+        today = date.today()
+        first_day = today.replace(day=1)
+        last_day = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+        return first_day, last_day
+    if period_start is None or period_end is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Debe enviar period_start y period_end juntos",
+        )
+    if period_end < period_start:
+        raise HTTPException(
+            status_code=400,
+            detail="period_end no puede ser anterior a period_start",
+        )
+    return period_start, period_end
 
 
 def _build_params(
@@ -68,9 +92,13 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
 
 @router.get("/iva", response_model=IVAOutput)
 async def get_iva_report(
-    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(
-        None, description="End date YYYY-MM-DD (default: today)"
+    period_start: Optional[date] = Query(
+        None,
+        description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
+    ),
+    period_end: Optional[date] = Query(
+        None,
+        description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     current_user: CurrentUser = Depends(get_current_user),
@@ -80,14 +108,19 @@ async def get_iva_report(
     Computes IVA generated (account 240808) vs. IVA deductible (account 240802)
     and returns the net IVA payable with applicable legal references.
     """
-    return _run_report("iva", _build_params(start_date, end_date), company_nit)
+    start, end = _resolve_period(period_start, period_end)
+    return _run_report("iva", _build_params(start, end), company_nit)
 
 
 @router.get("/withholdings", response_model=WithholdingsOutput)
 async def get_withholdings_report(
-    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(
-        None, description="End date YYYY-MM-DD (default: today)"
+    period_start: Optional[date] = Query(
+        None,
+        description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
+    ),
+    period_end: Optional[date] = Query(
+        None,
+        description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     current_user: CurrentUser = Depends(get_current_user),
@@ -98,14 +131,19 @@ async def get_withholdings_report(
     with applicable legal references.
     Optionally includes LLM-powered analysis when include_analysis=true.
     """
-    return _run_report("withholdings", _build_params(start_date, end_date), company_nit)
+    start, end = _resolve_period(period_start, period_end)
+    return _run_report("withholdings", _build_params(start, end), company_nit)
 
 
 @router.get("/ica", response_model=ICADeclaracionOutput)
 async def get_ica_declaration(
-    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(
-        None, description="End date YYYY-MM-DD (default: today)"
+    period_start: Optional[date] = Query(
+        None,
+        description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
+    ),
+    period_end: Optional[date] = Query(
+        None,
+        description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(
         None, description="Company NIT (nit_receptor) to filter by"
@@ -120,15 +158,13 @@ async def get_ica_declaration(
     (or national default 6.9‰).
     Ref: Ley 14/1983, Decreto 1333/1986.
     """
-    period_end = end_date or date.today()
+    start, end = _resolve_period(period_start, period_end)
 
     where_nit = "AND tp.company_nit = :nit" if company_nit else ""
-    where_start = "AND j.fecha >= :period_start" if start_date else ""
-    query_params: dict = {"period_end": period_end}
+    where_start = "AND j.fecha >= :period_start"
+    query_params: dict = {"period_end": end, "period_start": start}
     if company_nit:
         query_params["nit"] = company_nit
-    if start_date:
-        query_params["period_start"] = start_date
 
     row = db.execute(
         sql_text(f"""
@@ -156,8 +192,8 @@ async def get_ica_declaration(
     ica_a_pagar = _calc_ica(ingresos_brutos, tasa_ica)
 
     return ICADeclaracionOutput(
-        period_start=start_date.isoformat() if start_date else None,
-        period_end=period_end.isoformat(),
+        period_start=start.isoformat(),
+        period_end=end.isoformat(),
         generated_at=datetime.utcnow().isoformat(),
         ingresos_brutos=float(ingresos_brutos),
         tasa_ica=float(tasa_ica),
@@ -173,9 +209,13 @@ async def get_ica_declaration(
 
 @router.get("/renta-provision", response_model=RentaProvisionOutput)
 async def get_renta_provision(
-    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(
-        None, description="End date YYYY-MM-DD (default: today)"
+    period_start: Optional[date] = Query(
+        None,
+        description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
+    ),
+    period_end: Optional[date] = Query(
+        None,
+        description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(None, description="Company NIT to filter by"),
     db: Session = Depends(get_db),
@@ -186,7 +226,7 @@ async def get_renta_provision(
     Aggregates income (4xxx credits), costs (6xxx debits), and expenses (5xxx debits)
     from journal_entry_lines to compute net income and the corresponding tax provision.
     """
-    period_end = end_date or date.today()
+    start, end = _resolve_period(period_start, period_end)
 
     tasa_renta = TASA_RENTA
     if company_nit:
@@ -197,8 +237,8 @@ async def get_renta_provision(
     result = calc_period_renta_provision(
         db_session=db,
         nit_receptor=company_nit or "",
-        period_start=start_date,
-        period_end=period_end,
+        period_start=start,
+        period_end=end,
         tasa_renta=tasa_renta,
     )
     return RentaProvisionOutput(**result)
