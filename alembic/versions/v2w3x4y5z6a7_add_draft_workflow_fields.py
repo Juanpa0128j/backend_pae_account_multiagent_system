@@ -43,12 +43,18 @@ def upgrade() -> None:
             {"t": _TABLE, "c": col_name},
         ).fetchone()
         if not exists:
-            op.add_column(
-                _TABLE,
-                sa.Column(col_name, sa.text(col_type), nullable=True),
-            )
+            op.execute(f"ALTER TABLE {_TABLE} ADD COLUMN {col_name} {col_type}")
 
 
 def downgrade() -> None:
+    conn = op.get_bind()
     for col_name, _ in reversed(_NEW_COLUMNS):
-        op.drop_column(_TABLE, col_name)
+        exists = conn.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = :t AND column_name = :c"
+            ),
+            {"t": _TABLE, "c": col_name},
+        ).fetchone()
+        if exists:
+            op.execute(f"ALTER TABLE {_TABLE} DROP COLUMN {col_name}")
