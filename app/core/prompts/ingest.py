@@ -7,6 +7,31 @@ from __future__ import annotations
 
 from app.core.prompts._base import _build_prompt
 
+# Shared rule injected into every prompt that extracts a printed asientos table
+# into `asientos_documento`. Tightens `codigo_cuenta` extraction so column
+# labels (TERCERO, CONCEPTO, CODIGO, ...) and counterparty names never leak
+# into the cuenta field. Without this guidance the LLM occasionally
+# misaligns columns on dense PDFs, producing rows like
+# `{codigo_cuenta: "TERCERO", concepto: "TERCERO", ...}` that break the
+# downstream Pydantic `^\d{1,12}$` validator and force three retries before
+# the pipeline gives up.
+_ASIENTOS_CODIGO_CUENTA_RULES = (
+    "REGLAS ESTRICTAS PARA `codigo_cuenta` (CRÍTICO):\n"
+    "  - DEBE ser solo dígitos numéricos (1 a 12 dígitos). Ejemplos válidos: "
+    "`1110`, `240805`, `11200501`.\n"
+    "  - NUNCA copies en `codigo_cuenta` el TEXTO de un encabezado de columna "
+    "(`TERCERO`, `CONCEPTO`, `CODIGO`, `CODIGO CUENTA`, `CUENTA`, `DETALLE`, "
+    "`DEBITO`, `CREDITO`, `DEBE`, `HABER`, `OBSERVACIONES`). Esas son etiquetas, "
+    "no códigos.\n"
+    "  - NUNCA copies el NOMBRE del tercero (ej. `DIANA MESA`, `NUEVA EMPRESA`) "
+    "en `codigo_cuenta`. El nombre del tercero va en el campo `tercero`.\n"
+    "  - Si la celda de código está vacía, ilegible o contiene texto en vez de "
+    "un número, OMITE esa fila completa (no la incluyas en `asientos_documento`).\n"
+    "  - Si el código impreso tiene 7-9 dígitos auxiliares (ej. `11200501`), "
+    "respétalo tal cual — el normalizador downstream se encarga del recorte."
+)
+
+
 __all__ = [
     "factura_venta",
     "factura_compra",
@@ -304,7 +329,8 @@ def comprobante_egreso(text: str, *, correction_feedback: str | None = None) -> 
         "`concepto` (descripción de la fila), `tercero` (nombre o NIT impreso en esa fila), "
         "`debito` (valor en la columna débito, o 0 si está vacía) y `credito` (valor en la columna crédito, o 0 si está vacía). "
         "Respeta los valores EXACTOS impresos en el documento — no inventes, no redondees, no agregues impuestos. "
-        "Si el documento NO trae esa tabla, deja `asientos_documento` como null."
+        "Si el documento NO trae esa tabla, deja `asientos_documento` como null.\n\n"
+        + _ASIENTOS_CODIGO_CUENTA_RULES
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
@@ -356,7 +382,8 @@ def recibo_caja(text: str, *, correction_feedback: str | None = None) -> str:
         "otros equivalentes), extrae CADA FILA en el campo `asientos_documento` con las llaves: "
         "`codigo_cuenta`, `concepto`, `tercero`, `debito` (0 si vacío), `credito` (0 si vacío). "
         "Respeta los valores EXACTOS impresos. Si no hay tabla, deja `asientos_documento` como null.\n\n"
-        "NO extraigas ni propongas cuentas contables basado en lógica propia — eso lo determina el "
+        + _ASIENTOS_CODIGO_CUENTA_RULES
+        + "\n\nNO extraigas ni propongas cuentas contables basado en lógica propia — eso lo determina el "
         "sistema por separado. Solo extrae lo que está impreso."
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
@@ -381,7 +408,8 @@ def nomina(text: str, *, correction_feedback: str | None = None) -> str:
         "Si la nómina contiene una TABLA CONTABLE (encabezados `CODIGO CUENTA`, `CONCEPTO`, `TERCERO`, "
         "`DEBITO`, `CREDITO` u otros equivalentes), extrae CADA FILA en el campo `asientos_documento` "
         "con las llaves: `codigo_cuenta`, `concepto`, `tercero`, `debito` (0 si vacío), `credito` (0 si vacío). "
-        "Respeta los valores EXACTOS impresos. Si no hay tabla, deja `asientos_documento` como null."
+        "Respeta los valores EXACTOS impresos. Si no hay tabla, deja `asientos_documento` como null.\n\n"
+        + _ASIENTOS_CODIGO_CUENTA_RULES
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
 
@@ -530,6 +558,7 @@ def liquidacion_cesantias(text: str, *, correction_feedback: str | None = None) 
         "- Si el documento solo trae dias_base, salario_base_liquidacion, auxilio_transporte y valor_cesantias, rellena esos campos sin inventar los demás\n"
         "- Si solo hay un valor total de cesantías, úsalo en valor_cesantias y, si aplica, también en cesantias_liquidadas\n"
         "- Si hay TABLA CONTABLE (CODIGO CUENTA, CONCEPTO, TERCERO, DEBITO, CREDITO), extrae en `asientos_documento`\n"
-        "- Respeta EXACTAMENTE los valores impresos en la tabla si existen"
+        "- Respeta EXACTAMENTE los valores impresos en la tabla si existen\n\n"
+        + _ASIENTOS_CODIGO_CUENTA_RULES
     )
     return _build_prompt(instructions, text, correction_feedback=correction_feedback)
