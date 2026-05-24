@@ -10,7 +10,7 @@ Supported report types (state["report_type"]):
   - "balance"      → Balance General (Balance Sheet)
   - "pnl"          → Estado de Resultados (Profit & Loss)
   - "cashflow"     → Flujo de Caja (Cash Flow — direct method, class 11 accounts)
-  - "iva"          → Reporte IVA (accounts 240808 / 240802)
+  - "iva"          → Reporte IVA (accounts 240805 / 240802)
   - "withholdings" → Retenciones (accounts 2365 / 2368)
   - "analysis"     → Análisis Financiero Integral (ratios, predicciones, LLM narrative)
 
@@ -112,7 +112,7 @@ interpretaciones profundas, predicciones fundamentadas y recomendaciones acciona
 - **Clase 6 - Costo de Ventas** (naturaleza débito): Costo mercancía (61), Costo servicios (62)
 
 ## CUENTAS FISCALES ESPECÍFICAS
-- 240808: IVA Generado (pasivo, crédito) — IVA cobrado en ventas
+- 240805: IVA Generado (pasivo, crédito) — IVA cobrado en ventas
 - 240802: IVA Descontable (activo, débito) — IVA pagado en compras
 - 2365: Retención en la Fuente por pagar (pasivo, crédito)
 - 2368: Retención ICA por pagar (pasivo, crédito)

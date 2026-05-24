@@ -632,7 +632,7 @@ class IVAOutput(BaseModel):
     )
     generated_at: str = Field(..., description="ISO UTC timestamp of report generation")
     iva_generado: float = Field(
-        ..., ge=0, description="IVA generated on sales (account 240808)"
+        ..., ge=0, description="IVA generated on sales (account 240805)"
     )
     iva_descontable: float = Field(
         ..., ge=0, description="IVA deductible on purchases (account 240802)"

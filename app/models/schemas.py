@@ -13,6 +13,7 @@ class IngestResponse(BaseModel):
     extracted_transactions: int = 0
     raw_preview: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
+    per_file_results: Optional[List[Dict[str, Any]]] = None
 
 
 class RawTransaction(BaseModel):

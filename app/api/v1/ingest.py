@@ -472,6 +472,7 @@ async def upload_file(
 
         if fanout_enabled:
             jobs_created: list[IngestJob] = []
+            per_file_results: list[dict] = []
             for f, temp_path in zip(files, temp_file_paths):
                 job = db_service.create_ingest_job(
                     db,
@@ -495,6 +496,14 @@ async def upload_file(
                         parser_mode=validated_mode,
                         multi_file_mode="pages",
                     )
+                    per_file_results.append(
+                        {
+                            "ingest_id": str(job.id),
+                            "filename": f.filename,
+                            "dispatch_ok": True,
+                            "error": None,
+                        }
+                    )
                 except Exception as dispatch_err:
                     logger.warning(
                         "Failed to dispatch ingest %s to Inngest: %s",
@@ -508,6 +517,14 @@ async def upload_file(
                         extraction_errors=[
                             "No se pudo encolar el documento para procesamiento. Reintenta la subida.",
                         ],
+                    )
+                    per_file_results.append(
+                        {
+                            "ingest_id": str(job.id),
+                            "filename": f.filename,
+                            "dispatch_ok": False,
+                            "error": str(dispatch_err),
+                        }
                     )
                     continue
             if normalized_company_nit and confirmed_pathway:
@@ -524,6 +541,7 @@ async def upload_file(
                 created_at=first.created_at,
                 extracted_transactions=0,
                 raw_preview=None,
+                per_file_results=per_file_results,
             )
 
         first_file = files[0]

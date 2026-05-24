@@ -3,6 +3,7 @@ SQLAlchemy database setup for PostgreSQL.
 Provides engine, session factory, Base class, and FastAPI dependency.
 """
 
+import os
 import threading
 
 from sqlalchemy import create_engine, text
@@ -46,14 +47,14 @@ DB_WRITE_SEMAPHORE = threading.Semaphore(DB_WRITE_CONCURRENCY)
 # running >2 pipelines concurrently while the frontend polls every 2s
 # starves the pool and hangs the backend. This semaphore queues uploads
 # instead of running them all in parallel.
-INGEST_PIPELINE_CONCURRENCY = 2
+INGEST_PIPELINE_CONCURRENCY = int(os.getenv("INGEST_PIPELINE_CONCURRENCY", "1"))
 INGEST_PIPELINE_SEMAPHORE = threading.Semaphore(INGEST_PIPELINE_CONCURRENCY)
 
 # Global semaphore that limits concurrent process (accounting) pipelines.
 # Contador, Tributario, Auditor agents + persist phase all compete for DB
 # connections. With pool_size=10+overflow=15 (Supabase), we can safely run
 # 4 processes concurrently without contention. This semaphore queues jobs.
-PROCESS_PIPELINE_CONCURRENCY = 4
+PROCESS_PIPELINE_CONCURRENCY = int(os.getenv("PROCESS_PIPELINE_CONCURRENCY", "2"))
 PROCESS_PIPELINE_SEMAPHORE = threading.Semaphore(PROCESS_PIPELINE_CONCURRENCY)
 
 # Session factory
