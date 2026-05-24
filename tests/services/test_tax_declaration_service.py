@@ -158,12 +158,11 @@ class TestF300Draft:
         assert fields["42"]["value"] == pytest.approx(1_900_000.0)
         assert fields["42"]["requires_review"] is False
 
+    @patch("app.services.tax_declaration_service.db_service.get_revenue_by_tipo_iva")
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_prorrateo_operaciones_mixtas(self, mock_ledger):
-        """Test mixed operations (excluded/exempt sales) trigger prorrateo."""
+    def test_prorrateo_operaciones_mixtas(self, mock_ledger, mock_revenue):
+        """Mixed operations (Art. 490 ET) prorate descontable on renglon 67."""
         settings = _make_settings()
-        # Ledger: IVA generado 1M (19% rate) → base_gravada = 1M/0.19 ≈ 5.26M
-        # Total ingresos 10M → ingresos_no_gravados ≈ 4.74M → operaciones_mixtas=True
         ledger = [
             {
                 "account": "240805",
@@ -188,24 +187,19 @@ class TestF300Draft:
             },
         ]
         mock_ledger.return_value = ledger
+        # 60% gravado / 40% excluido -> factor 0.6
+        mock_revenue.return_value = {"gravado_19": 6_000_000.0, "excluido": 4_000_000.0}
         draft = generate_declaration_draft(
             _mock_db(settings), "900123456", "F300", date(2026, 1, 1), date(2026, 2, 28)
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # Field 66 should be marked requires_review=True when prorated
-        assert fields["66"]["requires_review"] is True
-        # Field 66_base (total before prorrateo) should exist
-        assert "66_base" in fields
-        assert fields["66_base"]["value"] == pytest.approx(500_000.0)
-        assert fields["66_base"]["requires_review"] is True
-        # Prorated value should be less than original
-        expected_factor = (1_000_000.0 / 0.19) / 10_000_000.0
-        expected_prorated = round(500_000.0 * expected_factor, 2)
-        assert fields["66"]["value"] == pytest.approx(expected_prorated)
-        # Warning should be emitted for field 66
+        # 66 = descontable bruto, 67 = prorateado con requires_review
+        assert fields["66"]["value"] == pytest.approx(500_000.0)
+        assert fields["67"]["requires_review"] is True
+        assert fields["67"]["value"] == pytest.approx(300_000.0)
         warning_fields = {w["field"] for w in draft.warnings_json}
-        assert "66" in warning_fields
+        assert "67" in warning_fields
 
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
     def test_non_iva_responsable_skips_prorrateo(self, mock_ledger):

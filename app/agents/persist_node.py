@@ -910,6 +910,12 @@ def _run_persist(state: AgentState) -> AgentState:
                 posted_ids.append(existing_posted_id)
                 continue
 
+            from app.services.tax_constants import infer_tipo_iva_from_journal
+
+            tipo_iva_inferred = infer_tipo_iva_from_journal(
+                journal_json, descripcion=descripcion
+            )
+
             txn_posted = db_service.create_transaction_posted(
                 db,
                 transaction_pending_id=as_str(getattr(txn_pending, "id", "")),
@@ -925,6 +931,7 @@ def _run_persist(state: AgentState) -> AgentState:
                 journal_entries_json=journal_json,
                 tax_references=tax_references,
                 agent_reasoning=agent_reasoning,
+                tipo_iva=tipo_iva_inferred,
             )
             posted_ids.append(as_str(getattr(txn_posted, "id", ""), ""))
             logger.info("db_persist: Created TransactionPosted %s", txn_posted.id)

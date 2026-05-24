@@ -511,6 +511,12 @@ class TransactionPosted(Base):
     provision_renta = Column(Numeric(15, 2), default=0)
     neto_a_pagar = Column(Numeric(15, 2), default=0)
 
+    # IVA classification for Art. 490 ET prorrateo. See
+    # app/services/tax_constants.py::TIPOS_IVA_VALIDOS for the vocabulary.
+    # NULL means "no clasificado" — F300 builder treats it as gravado for
+    # safety (prorateo fallback) but emits a warning.
+    tipo_iva = Column(String(20), nullable=True, index=True)
+
     # Journal entries as JSONB (denormalized for quick reads)
     journal_entries_json = Column(JSONB, nullable=True)
 

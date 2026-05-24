@@ -287,10 +287,24 @@ def create_transaction_posted(
     tax_references: Optional[List[str]] = None,
     agent_reasoning: Optional[Dict] = None,
     company_nit: Optional[str] = None,
+    tipo_iva: Optional[str] = None,
     commit: bool = True,
     created_by: str | None = None,
 ) -> TransactionPosted:
-    """Create a fully processed posted transaction."""
+    """Create a fully processed posted transaction.
+
+    ``tipo_iva`` (optional) classifies the operation under DIAN's IVA regime
+    so the F300 builder can compute Art. 490 ET prorrateo. Allowed values
+    live in ``app.services.tax_constants.TIPOS_IVA_VALIDOS``. ``None`` means
+    "no clasificado" (the builder treats it conservatively).
+    """
+    from app.services.tax_constants import is_valid_tipo_iva
+
+    if not is_valid_tipo_iva(tipo_iva):
+        raise ValueError(
+            f"Invalid tipo_iva: {tipo_iva!r}. Must be one of TIPOS_IVA_VALIDOS or None."
+        )
+
     posted = TransactionPosted(
         id=_generate_id("posted_"),
         transaction_pending_id=transaction_pending_id,
@@ -306,6 +320,7 @@ def create_transaction_posted(
         journal_entries_json=journal_entries_json,
         tax_references=tax_references,
         agent_reasoning=agent_reasoning,
+        tipo_iva=tipo_iva,
         status=TransactionStatus.POSTED,
     )
     db.add(posted)
@@ -483,6 +498,49 @@ def get_general_ledger(
         }
         for r in results
     ]
+
+
+def get_revenue_by_tipo_iva(
+    db: Session,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    company_nit: Optional[str] = None,
+    account_prefix: str = "4",
+) -> Dict[str, float]:
+    """Sum class-4 (or other prefix) credits grouped by transaction `tipo_iva`.
+
+    Used by the F300 builder to discriminate operaciones gravadas / exentas /
+    excluidas / exportaciones for Art. 490 ET prorrateo and renglones 26-30.
+
+    Returns a dict mapping ``tipo_iva`` (or ``"sin_clasificar"`` for NULL) to
+    total credits in COP for matching journal lines in the period.
+    """
+    rows = (
+        db.query(
+            TransactionPosted.tipo_iva,
+            func.sum(JournalEntryLine.credito).label("total_credit"),
+        )
+        .join(
+            JournalEntryLine,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+        .filter(JournalEntryLine.cuenta_puc.startswith(account_prefix))
+    )
+    if start_date:
+        rows = rows.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        rows = rows.filter(JournalEntryLine.fecha <= end_date)
+    if company_nit:
+        rows = rows.filter(JournalEntryLine.company_nit == company_nit)
+
+    rows = rows.group_by(TransactionPosted.tipo_iva).all()
+
+    result: Dict[str, float] = {}
+    for tipo, total in rows:
+        key = tipo if tipo else "sin_clasificar"
+        result[key] = float(total or 0)
+    return result
 
 
 def get_subsidiary_journal(

@@ -35,6 +35,14 @@ from sqlalchemy.orm import Session
 
 from app.services import db_service
 from app.models.database import CompanySettings, TaxDeclarationDraft
+from app.services.tax_constants import (
+    TIPO_IVA_EXCLUIDO,
+    TIPO_IVA_EXENTO,
+    TIPO_IVA_EXPORTACION,
+    TIPO_IVA_GRAVADO_5,
+    TIPO_IVA_GRAVADO_19,
+    TIPO_IVA_NO_GRAVADO,
+)
 
 # ---------------------------------------------------------------------------
 # Internal data structures
@@ -102,9 +110,59 @@ def _exact_debit(ledger: List[Dict[str, Any]], account: str) -> float:
 # ---------------------------------------------------------------------------
 
 
+def _compute_prorrateo_factor(
+    revenue_by_tipo: Dict[str, float],
+) -> tuple[float, Dict[str, float], bool]:
+    """Compute Art. 490 ET prorrateo factor.
+
+    Returns ``(factor, totals, requires_review)`` where:
+      * ``factor`` = (gravados + exportaciones) / total_ingresos clasificados.
+        Exportaciones cuentan como gravadas para descontable (Art. 481 ET).
+      * ``totals`` decomposes the revenue by bucket for downstream renglones.
+      * ``requires_review`` is True whenever the operation is "mixta"
+        (i.e. ``0 < factor < 1``) or when revenue is partially unclassified.
+    """
+    gravado_19 = float(revenue_by_tipo.get(TIPO_IVA_GRAVADO_19, 0.0))
+    gravado_5 = float(revenue_by_tipo.get(TIPO_IVA_GRAVADO_5, 0.0))
+    exento = float(revenue_by_tipo.get(TIPO_IVA_EXENTO, 0.0))
+    excluido = float(revenue_by_tipo.get(TIPO_IVA_EXCLUIDO, 0.0))
+    exportacion = float(revenue_by_tipo.get(TIPO_IVA_EXPORTACION, 0.0))
+    no_gravado = float(revenue_by_tipo.get(TIPO_IVA_NO_GRAVADO, 0.0))
+    sin_clasificar = float(revenue_by_tipo.get("sin_clasificar", 0.0))
+
+    totals = {
+        "gravado_19": round(gravado_19, 2),
+        "gravado_5": round(gravado_5, 2),
+        "exento": round(exento, 2),
+        "excluido": round(excluido, 2),
+        "exportacion": round(exportacion, 2),
+        "no_gravado": round(no_gravado, 2),
+        "sin_clasificar": round(sin_clasificar, 2),
+    }
+
+    # Numerator: operaciones con derecho a descontable.
+    # Exentas (Art. 477/478) y exportaciones (Art. 481) preservan descontable.
+    descontable_eligible = gravado_19 + gravado_5 + exento + exportacion
+    # Denominator: total de ingresos clasificados (excluye no_gravado y
+    # sin_clasificar para no contaminar el factor con renglones no asignables).
+    total_clasificado = descontable_eligible + excluido
+
+    if total_clasificado <= 0:
+        # No hay base para prorratear. Si hubo ingresos sin clasificar,
+        # marcar para revisión y devolver factor 1.0 (no recortar descontable).
+        factor = 1.0
+        requires_review = sin_clasificar > 0
+        return factor, totals, requires_review
+
+    factor = descontable_eligible / total_clasificado
+    requires_review = factor < 1.0 or sin_clasificar > 0
+    return factor, totals, requires_review
+
+
 def _build_f300(
     ledger: List[Dict[str, Any]],
     settings: CompanySettings,
+    revenue_by_tipo: Optional[Dict[str, float]] = None,
 ) -> tuple[List[DraftField], List[DraftWarning]]:
     """
     F300 IVA draft — filled from PUC accounts:
@@ -122,40 +180,95 @@ def _build_f300(
     # plus rate-specific subaccounts for 5%/exempt/INC). Treat the standard 19% slot
     # explicitly so the field downstream still reflects only that rate.
     iva_generado_19 = _exact_credit(ledger, "240805")
+    iva_generado_5 = _exact_credit(ledger, "240807")
     iva_descontable = _exact_debit(ledger, "240802")
 
-    # ── Prorrateo detection (Art. 490 ET) ──────────────────────────────────
+    # ── Prorrateo Art. 490 ET ──────────────────────────────────────────────
     # Default to False (más seguro): only assume IVA responsibility when the
-    # company explicitly opted in via settings. A None value should NOT default
-    # to True — that produces misleading prorateo on simplified-régimen tenants.
+    # company explicitly opted in via settings.
     iva_responsable = bool(getattr(settings, "iva_responsable", False))
-    tasa_iva = (
-        float(settings.tasa_iva_general)
-        if getattr(settings, "tasa_iva_general", None) is not None
-        else 0.19
-    )
-    ingresos_totales = _sum_credits(ledger, "4")
-    # Infer taxable sales base from IVA generated; remainder are excluded/exempt
-    if not iva_responsable:
-        base_gravada = 0.0
-        ingresos_no_gravados = 0.0
-        operaciones_mixtas = False
-    else:
-        base_gravada = (iva_generado_19 / tasa_iva) if tasa_iva else 0.0
-        ingresos_no_gravados = max(0.0, ingresos_totales - base_gravada)
-        operaciones_mixtas = ingresos_no_gravados > 1.0  # >$1 to ignore float noise
+    ingresos_totales_ledger = _sum_credits(ledger, "4")
 
-    if operaciones_mixtas and ingresos_totales > 0:
-        factor_prorrateo = base_gravada / ingresos_totales
-        iva_descontable_prorateable = round(iva_descontable * factor_prorrateo, 2)
-    else:
+    # Bucket totals from the per-transaction `tipo_iva` column. When the
+    # caller omits the breakdown (legacy path / unit tests), fall back to
+    # an empty dict — the helper then yields factor=1.0 and requires_review
+    # is False, preserving previous behavior.
+    revenue_by_tipo = revenue_by_tipo or {}
+    factor_prorrateo, bucket_totals, prorrateo_review = _compute_prorrateo_factor(
+        revenue_by_tipo
+    )
+
+    if not iva_responsable:
         # Non-IVA-responsable: no proration applies. Pass-through preserves the
         # ledger figure for accountant review without flagging a false warning.
         factor_prorrateo = 1.0
         iva_descontable_prorateable = iva_descontable
+        operaciones_mixtas = False
+    else:
+        iva_descontable_prorateable = round(iva_descontable * factor_prorrateo, 2)
+        operaciones_mixtas = factor_prorrateo < 1.0 or prorrateo_review
 
     # Preserve sign: positive = IVA a pagar, negative = saldo a favor del período
-    iva_neto = iva_generado_19 - iva_descontable_prorateable
+    iva_neto = (iva_generado_19 + iva_generado_5) - iva_descontable_prorateable
+
+    # ── Renglones 26-30: discriminación de ingresos por tipo IVA ───────────
+    total_ingresos_clasificados = (
+        bucket_totals["gravado_19"]
+        + bucket_totals["gravado_5"]
+        + bucket_totals["exento"]
+        + bucket_totals["excluido"]
+        + bucket_totals["exportacion"]
+    )
+    fields.append(
+        DraftField(
+            "26",
+            "Operaciones gravadas tarifa general 19%",
+            bucket_totals["gravado_19"],
+            "tipo_iva=gravado_19",
+            "high" if bucket_totals["gravado_19"] > 0 else "medium",
+            False,
+        )
+    )
+    fields.append(
+        DraftField(
+            "27",
+            "Operaciones gravadas tarifa diferencial 5%",
+            bucket_totals["gravado_5"],
+            "tipo_iva=gravado_5",
+            "high" if bucket_totals["gravado_5"] > 0 else "medium",
+            False,
+        )
+    )
+    fields.append(
+        DraftField(
+            "28",
+            "Operaciones exentas (Art. 477/478 ET)",
+            bucket_totals["exento"],
+            "tipo_iva=exento",
+            "high" if bucket_totals["exento"] > 0 else "medium",
+            False,
+        )
+    )
+    fields.append(
+        DraftField(
+            "29",
+            "Operaciones excluidas (Art. 424 ET)",
+            bucket_totals["excluido"],
+            "tipo_iva=excluido",
+            "high" if bucket_totals["excluido"] > 0 else "medium",
+            False,
+        )
+    )
+    fields.append(
+        DraftField(
+            "30",
+            "Exportaciones (Art. 481 ET)",
+            bucket_totals["exportacion"],
+            "tipo_iva=exportacion",
+            "high" if bucket_totals["exportacion"] > 0 else "medium",
+            False,
+        )
+    )
 
     fields.append(
         DraftField(
@@ -169,36 +282,73 @@ def _build_f300(
     )
     fields.append(
         DraftField(
+            "43",
+            "IVA generado tarifa diferencial 5%",
+            round(iva_generado_5, 2),
+            "cuenta_240807",
+            "high" if iva_generado_5 > 0 else "medium",
+            False,
+        )
+    )
+    fields.append(
+        DraftField(
+            "54",
+            "Total ingresos del período (renglones 26+27+28+29+30)",
+            round(total_ingresos_clasificados, 2),
+            "calculado",
+            "high",
+            False,
+        )
+    )
+    fields.append(
+        DraftField(
             "66",
-            (
-                "IVA descontable (compras y servicios)"
-                if not operaciones_mixtas
-                else f"IVA descontable prorateable (factor {factor_prorrateo:.4%})"
-            ),
-            round(iva_descontable_prorateable, 2),
+            "IVA descontable bruto (compras y servicios)",
+            round(iva_descontable, 2),
             "cuenta_240802",
             "high",
-            operaciones_mixtas,  # requires_review when prorated
+            False,
+        )
+    )
+    fields.append(
+        DraftField(
+            "67",
+            (f"IVA descontable prorateado Art. 490 ET (factor {factor_prorrateo:.4%})"),
+            round(iva_descontable_prorateable, 2),
+            "calculado",
+            "high",
+            operaciones_mixtas,
         )
     )
     if operaciones_mixtas:
-        fields.append(
-            DraftField(
-                "66_base",
-                "IVA descontable total antes de prorrateo",
-                round(iva_descontable, 2),
-                "cuenta_240802",
-                "medium",
-                True,
-            )
-        )
         warnings.append(
             DraftWarning(
-                "66",
-                f"Prorrateo IVA (Art. 490 ET): ingresos no gravados estimados "
-                f"${ingresos_no_gravados:,.2f} de ${ingresos_totales:,.2f} totales. "
+                "67",
+                f"Prorrateo IVA (Art. 490 ET): gravadas+exportaciones+exentas "
+                f"${(bucket_totals['gravado_19'] + bucket_totals['gravado_5'] + bucket_totals['exento'] + bucket_totals['exportacion']):,.2f} "
+                f"de ${total_ingresos_clasificados:,.2f} clasificados. "
                 f"Factor aplicado: {factor_prorrateo:.4%}. "
-                "Confirme factor con desglose real de ventas gravadas vs. excluidas/exentas.",
+                "Confirme desglose por tipo_iva con el contador.",
+            )
+        )
+    if bucket_totals["sin_clasificar"] > 0:
+        warnings.append(
+            DraftWarning(
+                "67",
+                f"Ingresos sin clasificar por tipo_iva: ${bucket_totals['sin_clasificar']:,.2f}. "
+                "Revise transacciones con tipo_iva NULL antes de presentar.",
+            )
+        )
+    if (
+        iva_responsable
+        and total_ingresos_clasificados == 0
+        and ingresos_totales_ledger > 0
+    ):
+        warnings.append(
+            DraftWarning(
+                "26",
+                "Ingresos en libro mayor sin clasificación tipo_iva. "
+                "F300 renglones 26-30 quedan en cero — requiere clasificación manual.",
             )
         )
     fields.append(
@@ -1050,6 +1200,24 @@ def generate_declaration_draft(
     if form_type == "F110":
         draft_fields, draft_warnings = _build_f110(
             ledger, settings, db=db, year=period_end.year, company_nit=company_nit
+        )
+    elif form_type == "F300":
+        try:
+            revenue_by_tipo = db_service.get_revenue_by_tipo_iva(
+                db=db,
+                start_date=start_dt,
+                end_date=end_dt,
+                company_nit=company_nit,
+            )
+        except Exception:
+            # Defensive: F300 must still draft even if the breakdown query
+            # fails (e.g. tipo_iva column not yet migrated). The builder
+            # falls back to legacy behavior when revenue_by_tipo is empty.
+            revenue_by_tipo = {}
+        if not isinstance(revenue_by_tipo, dict):
+            revenue_by_tipo = {}
+        draft_fields, draft_warnings = _build_f300(
+            ledger, settings, revenue_by_tipo=revenue_by_tipo
         )
     else:
         draft_fields, draft_warnings = builder(ledger, settings)
