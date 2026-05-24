@@ -5,7 +5,10 @@ services:
     plan: free
     region: oregon
     buildCommand: "pip install uv && rm -rf .venv && uv sync --frozen --no-dev"
-    startCommand: "uv run uvicorn main:app --host 0.0.0.0 --port $PORT --loop asyncio"
+    # Free tier does not support preDeployCommand, so migrations run as part of
+    # startCommand. Alembic upgrade is idempotent and cheap when no new
+    # revisions exist, so paying the cost on every cold start is acceptable.
+    startCommand: "uv run alembic upgrade head && uv run uvicorn main:app --host 0.0.0.0 --port $PORT --loop asyncio"
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION

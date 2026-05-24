@@ -167,13 +167,34 @@ def _extract_prearmed_asientos(source_doc: dict) -> list[dict] | None:
 
     from decimal import Decimal as _Decimal
 
+    _HEADER_TOKENS = {
+        "tercero",
+        "concepto",
+        "codigo_cuenta",
+        "codigo cuenta",
+        "codigo",
+        "cuenta",
+        "cuenta_puc",
+        "descripcion",
+        "debito",
+        "credito",
+        "debe",
+        "haber",
+        "detalle",
+        "observaciones",
+    }
+
     normalized: list[dict] = []
     sum_debitos = _Decimal("0")
     sum_creditos = _Decimal("0")
     for line in raw_lines:
         if not isinstance(line, dict):
             continue
-        codigo = str(line.get("codigo_cuenta") or "").strip()
+        raw_codigo = line.get("codigo_cuenta") or line.get("cuenta_puc") or ""
+        codigo = str(raw_codigo).strip()
+        if codigo.lower() in _HEADER_TOKENS:
+            logger.info("contador: dropped phantom header row codigo=%r", codigo[:60])
+            continue
         if not codigo:
             continue
         try:
@@ -458,7 +479,7 @@ def contador_node(state: AgentState) -> AgentState:
         # balanced journal entry (CE / RC / payroll voucher / manual journal),
         # skip the LLM entirely and persist those lines verbatim. The PUC
         # corrector runs afterwards to normalise out-of-catalogue subaccounts.
-        prearmed = _extract_prearmed_asientos(source_doc)
+        prearmed = None if is_retry else _extract_prearmed_asientos(source_doc)
         if prearmed:
             from decimal import Decimal as _Decimal
 

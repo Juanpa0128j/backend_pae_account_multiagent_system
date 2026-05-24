@@ -126,6 +126,45 @@ _KEYWORD_TO_PUC: tuple[tuple[str, str], ...] = (
 _ACCENT_TABLE = str.maketrans("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN")
 
 
+# Text tokens the LLM sometimes emits as cuenta_puc instead of a numeric code.
+# These leak from source documents where a column is labelled "Cuenta" but the
+# value is actually a counterparty descriptor. Map to the closest catalogue
+# account; if no good guess, fall back to 519595 so the schema validator stops
+# blocking the asiento and the auditor can flag it.
+_TEXT_TOKEN_TO_PUC: tuple[tuple[str, str], ...] = (
+    ("banco", "111005"),
+    ("bancaria", "111005"),
+    ("caja menor", "110510"),
+    ("caja", "110505"),
+    ("cliente", "130505"),
+    ("deudor", "130505"),
+    ("cuentas por cobrar", "130505"),
+    ("cxc", "130505"),
+    ("proveedor", "220505"),
+    ("cuentas por pagar", "220505"),
+    ("cxp", "220505"),
+    ("acreedor", "233525"),
+    ("nomina por pagar", "250505"),
+    ("salarios por pagar", "250505"),
+    ("retencion", "236540"),
+    ("iva por pagar", "240805"),
+    ("iva descontable", "240810"),
+    ("iva", "240805"),
+    ("ica", "236805"),
+    ("ingreso", "413535"),
+    ("venta", "413535"),
+    ("gasto", "519595"),
+    ("compra", "143505"),
+    ("inventario", "143505"),
+    ("activo", "151005"),
+    ("pasivo", "220505"),
+    ("patrimonio", "310505"),
+    ("capital", "310505"),
+)
+
+_TEXT_TOKEN_FALLBACK = "519595"  # Otros Gastos Diversos
+
+
 def _normalize(text: str) -> str:
     if not text:
         return ""
@@ -307,6 +346,67 @@ def correct_class_only_codes(line: dict) -> dict:
     return line
 
 
+_PUC_NUMERIC_RE = re.compile(r"^\d{1,12}$")
+
+
+def correct_non_numeric_puc(line: dict) -> dict:
+    """Replace non-numeric cuenta_puc strings (e.g. 'TERCERO', 'BANCO', 'CLIENTE')
+    with the closest numeric catalogue account.
+
+    The schema validator requires `^\\d{1,12}$`. When the LLM leaks a column
+    label or counterparty descriptor as the account code, every retry fails
+    with the same Pydantic error. Map text tokens to numeric codes BEFORE
+    other correctors run; if no token matches, fall back to 519595 (Gastos
+    Diversos) and emit a warning so the auditor can flag the line.
+    """
+    raw_cuenta = line.get("cuenta_puc")
+    if raw_cuenta is None:
+        return line
+    cuenta = str(raw_cuenta).strip()
+    if not cuenta or _PUC_NUMERIC_RE.match(cuenta):
+        return line
+
+    norm = _normalize(cuenta)
+    # First try keyword match against the cuenta value itself.
+    matched_code: str | None = None
+    for keyword, code in _TEXT_TOKEN_TO_PUC:
+        if keyword in norm:
+            matched_code = code
+            break
+
+    # Fall back: try the descripcion / nombre_cuenta fields.
+    if matched_code is None:
+        description = " ".join(
+            str(line.get(k) or "")
+            for k in (
+                "descripcion",
+                "concepto",
+                "description",
+                "puc_descripcion",
+                "nombre_cuenta",
+            )
+        )
+        matched_code = _suggest_puc(description)
+
+    if matched_code is None:
+        matched_code = _TEXT_TOKEN_FALLBACK
+        logger.warning(
+            "contador_puc_corrector: non-numeric cuenta_puc %r — no token match, "
+            "falling back to %s (Gastos Diversos). Audit recommended.",
+            cuenta[:60],
+            _TEXT_TOKEN_FALLBACK,
+        )
+    else:
+        logger.info(
+            "contador_puc_corrector: non-numeric cuenta_puc %r -> %s",
+            cuenta[:60],
+            matched_code,
+        )
+
+    line["cuenta_puc"] = matched_code
+    return line
+
+
 def correct_aux_codes_beyond_catalog(line: dict, *, db=None) -> dict:
     """Normalise auxiliary PUC codes that are longer than what the company
     catalogue supports.
@@ -396,6 +496,7 @@ def correct_asiento_lines(lines: Iterable[dict], doc_subtype: str = "") -> list[
     try:
         for raw in lines:
             line = dict(raw)
+            line = correct_non_numeric_puc(line)
             line = correct_aux_codes_beyond_catalog(line, db=db)
             line = correct_cross_class_codes(line)
             line = correct_5195_fallback(line)

@@ -740,11 +740,32 @@ def _run_persist(state: AgentState) -> AgentState:
 
                 _raw_asientos = tx_data.get("_contador_asientos", [])
                 _sanitized_asientos = []
+                _HEADER_TOKENS = {
+                    "TERCERO",
+                    "CODIGO",
+                    "CONCEPTO",
+                    "DEBITO",
+                    "CREDITO",
+                    "CUENTA",
+                }
                 for _a in _raw_asientos:
                     if not isinstance(_a, dict):
                         continue
                     _puc = str(_a.get("cuenta_puc") or "")
                     if not _re.match(r"^\d{1,12}$", _puc):
+                        _desc_token = (
+                            str(_a.get("descripcion") or _a.get("concepto") or "")
+                            .strip()
+                            .upper()
+                        )
+                        if _desc_token in _HEADER_TOKENS:
+                            logger.warning(
+                                "db_persist: dropping phantom header-row asiento "
+                                "(cuenta_puc=%r, descripcion=%r)",
+                                _puc,
+                                _desc_token,
+                            )
+                            continue
                         _a = {
                             **_a,
                             "cuenta_puc": "519595",
