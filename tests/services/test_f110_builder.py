@@ -509,3 +509,136 @@ class TestF110Warnings:
         draft = _generate_f110(settings, ledger)
         warning_fields = [w["field"] for w in draft.warnings_json]
         assert "general" in warning_fields
+
+
+# ---------------------------------------------------------------------------
+# TarifaRenta integration — ESAL 20%, financiero 2026 55%, hidroeléctrico 38%
+# ---------------------------------------------------------------------------
+
+
+def _generate_f110_with_tarifa(
+    settings, ledger, tarifa_info: dict | None, year: int = 2026
+):
+    """Helper: generate F110 draft with get_tarifa_renta patched to return tarifa_info."""
+    db = _mock_db_no_f2516_no_perdidas(settings, year)
+    with (
+        patch(
+            "app.services.tax_declaration_service.db_service.get_general_ledger",
+            return_value=ledger,
+        ),
+        patch(
+            "app.services.db_service.get_perdidas_disponibles",
+            MagicMock(return_value=[]),
+        ),
+        patch(
+            "app.services.db_service.sum_perdidas_disponibles",
+            MagicMock(return_value=Decimal("0")),
+        ),
+        patch(
+            "app.services.db_service.sum_retenciones_anio",
+            MagicMock(return_value=Decimal("0")),
+        ),
+        patch(
+            "app.services.db_service.get_latest_f2516_reviewed",
+            MagicMock(return_value=None),
+        ),
+        patch(
+            "app.services.tax_declaration_service.db_service.get_tarifa_renta",
+            return_value=tarifa_info,
+        ),
+    ):
+        draft = generate_declaration_draft(
+            db, "900123456", "F110", date(year, 1, 1), date(year, 12, 31)
+        )
+    return draft
+
+
+class TestF110WithTarifaRenta:
+    """Tests that _build_f110 applies the regulatory tarifa when available."""
+
+    def test_esal_20_percent(self):
+        """ESAL regime uses 20% tarifa from tarifas_renta table."""
+        settings = _make_settings(tasa_renta=Decimal("0.20"))
+        setattr(settings, "regimen_tributario", "esal")
+        setattr(settings, "actividad_economica", "general")
+
+        # ica_511505=0 to avoid class-5 sum including it
+        ledger = _make_ledger(
+            ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=0
+        )
+        tarifa_info = {
+            "tarifa_base": 0.20,
+            "sobretasa": 0.0,
+            "tarifa_efectiva": 0.20,
+            "base_legal": "Art. 19 ET",
+        }
+
+        draft = _generate_f110_with_tarifa(settings, ledger, tarifa_info)
+        fields = {f["renglon"]: f for f in draft.fields_json}
+
+        # RLG = 2_000_000 - 500_000 - 300_000 = 1_200_000
+        # impuesto_basico = 1_200_000 × 0.20 = 240_000
+        assert fields["80"]["value"] == pytest.approx(240_000.0, rel=1e-3)
+        assert "Art. 19 ET" in fields["80"]["label"]
+
+    def test_financiero_2026_sobretasa_emergencia(self):
+        """Sector financiero 2026: 35% base + 20% sobretasa (Decreto 0150) = 55%."""
+        settings = _make_settings(tasa_renta=Decimal("0.35"))
+        setattr(settings, "regimen_tributario", "ordinario")
+        setattr(settings, "actividad_economica", "financiero")
+
+        ledger = _make_ledger(
+            ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=0
+        )
+        tarifa_info = {
+            "tarifa_base": 0.35,
+            "sobretasa": 0.20,
+            "tarifa_efectiva": 0.55,
+            "base_legal": "Decreto 0150/2026 emergencia económica",
+        }
+
+        draft = _generate_f110_with_tarifa(settings, ledger, tarifa_info, year=2026)
+        fields = {f["renglon"]: f for f in draft.fields_json}
+
+        # RLG = 2M - 500k - 300k = 1_200_000, impuesto_basico = 1_200_000 × 0.55 = 660_000
+        assert fields["80"]["value"] == pytest.approx(660_000.0, rel=1e-3)
+        assert "Decreto 0150" in fields["80"]["label"]
+
+    def test_hidroelectrico_38_percent(self):
+        """Hidroeléctricas: 35% + 3% sobretasa = 38%."""
+        settings = _make_settings(tasa_renta=Decimal("0.35"))
+        setattr(settings, "regimen_tributario", "ordinario")
+        setattr(settings, "actividad_economica", "hidroelectrico")
+
+        ledger = _make_ledger(
+            ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=0
+        )
+        tarifa_info = {
+            "tarifa_base": 0.35,
+            "sobretasa": 0.03,
+            "tarifa_efectiva": 0.38,
+            "base_legal": "Art. 240 par. 5 ET",
+        }
+
+        draft = _generate_f110_with_tarifa(settings, ledger, tarifa_info)
+        fields = {f["renglon"]: f for f in draft.fields_json}
+
+        # RLG = 2M - 500k - 300k = 1_200_000, impuesto_basico = 1_200_000 × 0.38 = 456_000
+        assert fields["80"]["value"] == pytest.approx(456_000.0, rel=1e-3)
+        assert "Art. 240 par. 5 ET" in fields["80"]["label"]
+
+    def test_fallback_to_tasa_renta_when_no_tarifa(self):
+        """When get_tarifa_renta returns None, falls back to settings.tasa_renta (0.35)."""
+        settings = _make_settings(tasa_renta=Decimal("0.35"))
+        setattr(settings, "regimen_tributario", "ordinario")
+        setattr(settings, "actividad_economica", "general")
+
+        ledger = _make_ledger(
+            ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=0
+        )
+
+        draft = _generate_f110_with_tarifa(settings, ledger, tarifa_info=None)
+        fields = {f["renglon"]: f for f in draft.fields_json}
+
+        # RLG = 2M - 500k - 300k = 1_200_000, fallback 35% → 420_000
+        assert fields["80"]["value"] == pytest.approx(420_000.0, rel=1e-3)

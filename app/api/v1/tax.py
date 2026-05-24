@@ -24,6 +24,8 @@ from app.models.schemas import (
     PerdidaFiscalResponse,
     PerdidaFiscalUpsertRequest,
     RentaProvisionOutput,
+    TarifaRentaResponse,
+    TarifaRentaUpsertRequest,
     TaxConstantsResponse,
     UvtUpsertRequest,
     VALID_CONCEPTO_VALUES,
@@ -229,12 +231,22 @@ async def get_renta_provision(
     from journal_entry_lines to compute net income and the corresponding tax provision.
     """
     start, end = _resolve_period(period_start, period_end)
+    year = end.year
 
     tasa_renta = TASA_RENTA
+    settings = None
     if company_nit:
         settings = db_service.get_company_settings(db, company_nit)
         if settings and settings.tasa_renta:
             tasa_renta = Decimal(str(settings.tasa_renta))
+
+    # Try regulatory tarifa table first (supports regime / actividad / surcharges)
+    if settings is not None:
+        regimen = getattr(settings, "regimen_tributario", None) or "ordinario"
+        actividad = getattr(settings, "actividad_economica", None) or "general"
+        tarifa_info = db_service.get_tarifa_renta(db, regimen, actividad, year)
+        if tarifa_info is not None:
+            tasa_renta = Decimal(str(tarifa_info["tarifa_efectiva"]))
 
     result = calc_period_renta_provision(
         db_session=db,
@@ -716,6 +728,94 @@ async def delete_perdida_acumulada(
     if row is None:
         raise HTTPException(
             status_code=404, detail=f"Pérdida fiscal {perdida_id} no encontrada"
+        )
+    db.delete(row)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# TarifaRenta endpoints — regulatory income-tax rate table
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/tarifas-renta",
+    response_model=list[TarifaRentaResponse],
+    summary="Listar tarifas de renta PJ por régimen",
+)
+async def list_tarifas_renta(
+    year: Optional[int] = Query(
+        None,
+        description="Si se envía, filtra sólo las tarifas vigentes para ese año fiscal",
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[TarifaRentaResponse]:
+    """
+    List all rows in tarifas_renta. If `year` is provided, returns only rows where
+    year_from <= year <= year_to (or year_to IS NULL).
+    """
+    rows = db_service.list_tarifas_renta(db, year=year)
+    return [TarifaRentaResponse(**r) for r in rows]
+
+
+@router.post(
+    "/tarifas-renta",
+    response_model=TarifaRentaResponse,
+    status_code=201,
+    summary="Crear o actualizar tarifa de renta PJ",
+)
+async def upsert_tarifa_renta(
+    body: TarifaRentaUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TarifaRentaResponse:
+    """Insert or update a tarifa_renta row keyed by (regimen, actividad, year_from)."""
+    from decimal import Decimal
+
+    row = db_service.upsert_tarifa_renta(
+        db,
+        regimen=body.regimen,
+        actividad=body.actividad,
+        tarifa_base=Decimal(str(body.tarifa_base)),
+        sobretasa=Decimal(str(body.sobretasa)),
+        year_from=body.year_from,
+        year_to=body.year_to,
+        base_legal=body.base_legal,
+        notas=body.notas,
+    )
+    tarifa_efectiva = float(Decimal(str(row.tarifa_base)) + Decimal(str(row.sobretasa)))
+    return TarifaRentaResponse(
+        id=row.id,
+        regimen=row.regimen,
+        actividad=row.actividad,
+        tarifa_base=float(row.tarifa_base),
+        sobretasa=float(row.sobretasa),
+        tarifa_efectiva=tarifa_efectiva,
+        year_from=row.year_from,
+        year_to=row.year_to,
+        base_legal=row.base_legal,
+        notas=row.notas,
+    )
+
+
+@router.delete(
+    "/tarifas-renta/{tarifa_id}",
+    status_code=204,
+    summary="Eliminar tarifa de renta PJ",
+)
+async def delete_tarifa_renta(
+    tarifa_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Hard delete a tarifa_renta row by ID."""
+    from app.models.database import TarifaRenta
+
+    row = db.query(TarifaRenta).filter(TarifaRenta.id == tarifa_id).first()
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"Tarifa de renta {tarifa_id} no encontrada"
         )
     db.delete(row)
     db.commit()

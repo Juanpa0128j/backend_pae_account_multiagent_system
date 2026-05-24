@@ -28,6 +28,7 @@ from app.models.database import (
     ProcessStatus,
     ReteicaTarifa,
     PerdidaFiscalAcumulada,
+    TarifaRenta,
     TaxBaseMinima,
     TaxDeclarationDraft,
     Tercero,
@@ -2104,3 +2105,144 @@ def get_latest_f2516_reviewed(
         .order_by(TaxDeclarationDraft.created_at.desc())
         .first()
     )
+
+
+# ---------------------------------------------------------------------------
+# TarifaRenta helpers — Colombian Renta PJ regulatory rate table
+# ---------------------------------------------------------------------------
+
+
+def get_tarifa_renta(
+    db: Session, regimen: str, actividad: str, year: int
+) -> dict | None:
+    """Return {tarifa_base, sobretasa, tarifa_efectiva, base_legal} or None.
+
+    Lookup precedence:
+    1. Exact (regimen, actividad, year in [year_from, year_to or inf])
+       When multiple rows match (e.g. emergency surcharge with higher year_from),
+       return the most specific — highest year_from <= year.
+    2. Fallback (regimen, actividad=NULL, year matches)
+    3. None — caller should fall back to company_settings.tasa_renta
+    """
+
+    def _row_to_dict(row: TarifaRenta) -> dict:
+        tarifa_base = Decimal(str(row.tarifa_base))
+        sobretasa = Decimal(str(row.sobretasa))
+        return {
+            "tarifa_base": float(tarifa_base),
+            "sobretasa": float(sobretasa),
+            "tarifa_efectiva": float(tarifa_base + sobretasa),
+            "base_legal": row.base_legal,
+        }
+
+    def _year_filter(q):
+        return q.filter(
+            TarifaRenta.year_from <= year,
+            (TarifaRenta.year_to == None) | (TarifaRenta.year_to >= year),  # noqa: E711
+        )
+
+    # 1. Exact match (regimen + actividad)
+    row = (
+        _year_filter(
+            db.query(TarifaRenta).filter(
+                TarifaRenta.regimen == regimen,
+                TarifaRenta.actividad == actividad,
+            )
+        )
+        .order_by(TarifaRenta.year_from.desc())
+        .first()
+    )
+    if row:
+        return _row_to_dict(row)
+
+    # 2. Fallback — actividad=NULL (covers any actividad for this regimen)
+    row = (
+        _year_filter(
+            db.query(TarifaRenta).filter(
+                TarifaRenta.regimen == regimen,
+                TarifaRenta.actividad == None,  # noqa: E711
+            )
+        )
+        .order_by(TarifaRenta.year_from.desc())
+        .first()
+    )
+    if row:
+        return _row_to_dict(row)
+
+    return None
+
+
+def list_tarifas_renta(db: Session, year: int | None = None) -> list[dict]:
+    """List all tarifas_renta rows, optionally filtered to those applicable for a year."""
+    q = db.query(TarifaRenta)
+    if year is not None:
+        q = q.filter(
+            TarifaRenta.year_from <= year,
+            (TarifaRenta.year_to == None) | (TarifaRenta.year_to >= year),  # noqa: E711
+        )
+    rows = q.order_by(
+        TarifaRenta.regimen, TarifaRenta.actividad, TarifaRenta.year_from
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "regimen": r.regimen,
+            "actividad": r.actividad,
+            "tarifa_base": float(r.tarifa_base),
+            "sobretasa": float(r.sobretasa),
+            "tarifa_efectiva": float(
+                Decimal(str(r.tarifa_base)) + Decimal(str(r.sobretasa))
+            ),
+            "year_from": r.year_from,
+            "year_to": r.year_to,
+            "base_legal": r.base_legal,
+            "notas": r.notas,
+        }
+        for r in rows
+    ]
+
+
+def upsert_tarifa_renta(
+    db: Session,
+    regimen: str,
+    actividad: str | None,
+    tarifa_base: Decimal,
+    year_from: int,
+    sobretasa: Decimal = Decimal("0"),
+    year_to: int | None = None,
+    base_legal: str | None = None,
+    notas: str | None = None,
+) -> TarifaRenta:
+    """Insert or update a tarifa_renta row keyed by (regimen, actividad, year_from)."""
+    row = (
+        db.query(TarifaRenta)
+        .filter(
+            TarifaRenta.regimen == regimen,
+            TarifaRenta.actividad == actividad,
+            TarifaRenta.year_from == year_from,
+        )
+        .first()
+    )
+    if row is None:
+        row = TarifaRenta(
+            regimen=regimen,
+            actividad=actividad,
+            tarifa_base=tarifa_base,
+            sobretasa=sobretasa,
+            year_from=year_from,
+            year_to=year_to,
+            base_legal=base_legal,
+            notas=notas,
+        )
+        db.add(row)
+    else:
+        row.tarifa_base = tarifa_base
+        row.sobretasa = sobretasa
+        row.year_to = year_to
+        if base_legal is not None:
+            row.base_legal = base_legal
+        if notas is not None:
+            row.notas = notas
+    db.commit()
+    db.refresh(row)
+    return row

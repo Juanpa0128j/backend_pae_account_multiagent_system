@@ -31,7 +31,9 @@ from sqlalchemy import (
     Integer,
     Boolean,
     ForeignKey,
+    Index,
     PrimaryKeyConstraint,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.types import JSON
@@ -161,6 +163,22 @@ class CompanySettings(Base):
         comment="PUC account for ICA liability (ReteICA por pagar). Default 2368; override if company uses a different account.",
     )
 
+    # ── Tax regime columns (added migration u1v2w3x4y5z6) ──────────────────
+    regimen_tributario = Column(
+        String(32),
+        nullable=False,
+        default="ordinario",
+        server_default="ordinario",
+        comment="Tax regime: ordinario | esal | zona_franca | rst",
+    )
+    actividad_economica = Column(
+        String(32),
+        nullable=False,
+        default="general",
+        server_default="general",
+        comment="Economic activity type: general | financiero | hidroelectrico | otro",
+    )
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -168,6 +186,81 @@ class CompanySettings(Base):
 
     def __repr__(self):
         return f"<CompanySettings(nit={self.nit}, ciudad={self.ciudad})>"
+
+
+class TarifaRenta(Base):
+    """
+    Regulatory income-tax rate table for Colombian Renta PJ regimes.
+
+    One row per (regimen, actividad, year_from) combination. Supports
+    permanent surcharges (sobretasa) and temporary emergency surcharges.
+
+    Lookup precedence (see db_service.get_tarifa_renta):
+      1. Exact (regimen, actividad, year_from <= target_year <= year_to or NULL)
+      2. Fallback (regimen, actividad=NULL, year matches)
+      3. company_settings.tasa_renta fallback (0.35 default)
+
+    A contador updates rows directly; no redeploy required for DIAN reform.
+    """
+
+    __tablename__ = "tarifas_renta"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    regimen = Column(
+        String(32),
+        nullable=False,
+        comment="ordinario | esal | zona_franca | rst",
+    )
+    actividad = Column(
+        String(32),
+        nullable=True,
+        comment="general | financiero | hidroelectrico | otro — NULL means any actividad",
+    )
+    tarifa_base = Column(
+        Numeric(5, 4),
+        nullable=False,
+        comment="Base rate as decimal fraction, e.g. 0.3500",
+    )
+    sobretasa = Column(
+        Numeric(5, 4),
+        nullable=False,
+        default=Decimal("0"),
+        server_default="0",
+        comment="Surcharge decimal fraction, e.g. 0.0500 for financial sector",
+    )
+    year_from = Column(
+        Integer,
+        nullable=False,
+        comment="First tax year this row applies",
+    )
+    year_to = Column(
+        Integer,
+        nullable=True,
+        comment="Last tax year (inclusive); NULL = open-ended / currently valid",
+    )
+    base_legal = Column(
+        String(128),
+        nullable=True,
+        comment="Legal authority, e.g. 'Art. 240 ET (Ley 2277/2022)'",
+    )
+    notas = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "regimen", "actividad", "year_from", name="uq_tarifas_renta_key"
+        ),
+        Index("idx_tarifas_renta_year", "year_from", "year_to"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<TarifaRenta(regimen={self.regimen}, actividad={self.actividad}, "
+            f"year_from={self.year_from}, tarifa_base={self.tarifa_base}, sobretasa={self.sobretasa})>"
+        )
 
 
 class ReteicaTarifa(Base):

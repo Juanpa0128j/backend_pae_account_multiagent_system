@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class IngestResponse(BaseModel):
@@ -363,3 +363,62 @@ class PerdidaFiscalUpsertRequest(BaseModel):
     )
     decreto: Optional[str] = Field(None, max_length=100)
     notas: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# TarifaRenta schemas
+# ---------------------------------------------------------------------------
+
+_VALID_REGIMEN = frozenset({"ordinario", "esal", "zona_franca", "rst"})
+_VALID_ACTIVIDAD = frozenset({"general", "financiero", "hidroelectrico", "otro"})
+
+
+class TarifaRentaResponse(BaseModel):
+    """Single tarifa_renta row returned by the API."""
+
+    id: int
+    regimen: str
+    actividad: Optional[str] = None
+    tarifa_base: float
+    sobretasa: float
+    tarifa_efectiva: float
+    year_from: int
+    year_to: Optional[int] = None
+    base_legal: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class TarifaRentaUpsertRequest(BaseModel):
+    """Request body for POST /api/v1/tax/tarifas-renta."""
+
+    regimen: str = Field(..., description="ordinario | esal | zona_franca | rst")
+    actividad: Optional[str] = Field(
+        None,
+        description="general | financiero | hidroelectrico | otro | null (any)",
+    )
+    tarifa_base: float = Field(
+        ..., gt=0, le=1, description="Base rate as decimal fraction, e.g. 0.35"
+    )
+    sobretasa: float = Field(
+        0.0, ge=0, le=1, description="Surcharge decimal fraction, e.g. 0.05"
+    )
+    year_from: int = Field(..., ge=2000, le=2100)
+    year_to: Optional[int] = Field(None, ge=2000, le=2100)
+    base_legal: Optional[str] = Field(None, max_length=128)
+    notas: Optional[str] = None
+
+    @field_validator("regimen")
+    @classmethod
+    def validate_regimen(cls, v: str) -> str:
+        if v not in _VALID_REGIMEN:
+            raise ValueError(f"regimen must be one of {sorted(_VALID_REGIMEN)}")
+        return v
+
+    @field_validator("actividad")
+    @classmethod
+    def validate_actividad(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_ACTIVIDAD:
+            raise ValueError(
+                f"actividad must be one of {sorted(_VALID_ACTIVIDAD)} or null"
+            )
+        return v

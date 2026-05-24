@@ -522,15 +522,44 @@ def _build_f110(
     )
 
     # ── Impuesto básico ──────────────────────────────────────────────────────
-    tasa_renta = float(settings.tasa_renta) if settings.tasa_renta else 0.35
-    impuesto_basico = round(renta_liquida_gravable * tasa_renta, 2)
+    # Lookup regulatory tarifa first; fall back to company_settings.tasa_renta
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+
+    tarifa_info: dict | None = None
+    if db is not None and year is not None:
+        try:
+            regimen = getattr(settings, "regimen_tributario", None) or "ordinario"
+            actividad = getattr(settings, "actividad_economica", None) or "general"
+            tarifa_info = db_service.get_tarifa_renta(db, regimen, actividad, year)
+        except Exception:
+            tarifa_info = None
+
+    if tarifa_info is not None:
+        tasa_efectiva = tarifa_info["tarifa_efectiva"]
+        base_legal_label = tarifa_info.get("base_legal") or "Art. 240 ET"
+    else:
+        tasa_efectiva = float(settings.tasa_renta) if settings.tasa_renta else 0.35
+        base_legal_label = "Art. 240 ET (Ley 2277/2022)"
+        if tarifa_info is None and db is not None and year is not None:
+            _log.warning(
+                "get_tarifa_renta returned None for regimen=%s actividad=%s year=%s — "
+                "falling back to company_settings.tasa_renta=%.4f",
+                getattr(settings, "regimen_tributario", "ordinario"),
+                getattr(settings, "actividad_economica", "general"),
+                year,
+                tasa_efectiva,
+            )
+
+    impuesto_basico = round(renta_liquida_gravable * tasa_efectiva, 2)
 
     fields.append(
         DraftField(
             "80",
-            f"Impuesto básico de renta (tasa {tasa_renta:.0%})",
+            f"Impuesto básico de renta (tasa {tasa_efectiva:.0%}) — {base_legal_label}",
             impuesto_basico,
-            "calculado",
+            "calculado" if tarifa_info is None else f"tarifas_renta:{base_legal_label}",
             "medium",
             True,
         )
