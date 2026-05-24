@@ -363,13 +363,12 @@ def _build_f110(
       40  Renta bruta (clase 4 créditos)
       52  Costos (clase 6 débitos)
       60  Gastos deducibles (clase 5 débitos)
-      63  ICA deducible sugerido (511505+521505 × 50%)
+      63  ICA deducible (511505+521505) — ya incluido en gastos clase 5; Ley 2277/2022 Art. 19
       f110_renta_liquida_ordinaria  Renta líquida ordinaria = 40-52-60
       f110_perdidas_compensar       Pérdidas fiscales por compensar (Art. 147)
       f110_rentas_exentas           Rentas exentas (manual)
       72  Renta líquida gravable = max(0, RLO - pérdidas - exentas)
       80  Impuesto básico = 72 × tasa_renta
-      86_ica       Descuento ICA pagado 50% (Art. 115)
       86_donaciones Descuento donaciones (Art. 257)
       86_iva_capital Descuento IVA bienes capital (Art. 258-1)
       86_educacion  Descuento inversión educación/innovación (Art. 256)
@@ -538,15 +537,15 @@ def _build_f110(
     )
 
     # ── Descuentos tributarios (itemized) ───────────────────────────────────
-    # ICA pagado: auto-suggest 50% of 511505+521505 (Art. 115)
+    # ICA NOT a descuento — Ley 2277/2022 Art. 19 converted it to deducción 100%
+    # (Art. 115 ET). Already flows via class 5 PUC 511505/521505 into gastos.
     ica_pagado = _exact_debit(ledger, "511505") + _exact_debit(ledger, "521505")
-    ica_descuento_sugerido = round(ica_pagado * 0.5, 2)
 
-    # Also expose as renglon "63" for backward-compat with existing tests
+    # Expose as renglon "63" for informational purposes (ICA flows as deducción via clase 5)
     fields.append(
         DraftField(
             "63",
-            "ICA deducible (511505+521505)",
+            "ICA deducible (511505+521505) — ya incluido en gastos clase 5",
             round(ica_pagado, 2),
             "cuentas_511505_521505",
             "high",
@@ -556,14 +555,8 @@ def _build_f110(
 
     fields.extend(
         [
-            DraftField(
-                "86_ica",
-                "Descuento ICA pagado 50% (Art. 115) — sugerido",
-                ica_descuento_sugerido,
-                "cuentas_511505_521505",
-                "medium",
-                True,
-            ),
+            # ICA NOT a descuento — Ley 2277/2022 Art. 19 converted it to deducción 100%
+            # (Art. 115 ET). Already flows via class 5 PUC 511505/521505 into gastos.
             DraftField(
                 "86_donaciones",
                 "Descuento donaciones (Art. 257)",
@@ -599,7 +592,7 @@ def _build_f110(
         ]
     )
 
-    total_descuentos = ica_descuento_sugerido  # others start at 0
+    total_descuentos = 0.0  # ICA removed as descuento per Ley 2277/2022 Art. 19
     fields.append(
         DraftField(
             "86",

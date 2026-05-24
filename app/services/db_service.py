@@ -7,11 +7,11 @@ All DB operations used by agents, APIs, and the seed script go through here.
 # SQLAlchemy Column assignments are safe at runtime; Pylance flags them incorrectly.
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import distinct, extract, func
+from sqlalchemy import distinct, extract, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
@@ -685,6 +685,37 @@ def check_duplicates(
     )
 
 
+def find_duplicate_posted(
+    db: Session,
+    company_nit: str,
+    nit_emisor: str,
+    fecha: datetime,
+    total: Decimal,
+) -> Optional[TransactionPosted]:
+    """Return an existing TransactionPosted matching the natural key, or None.
+
+    Natural key: (company_nit, nit_emisor, fecha::date, total).
+    Used to skip duplicate postings on source-document re-upload.
+    """
+    day_start = fecha.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = fecha.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return (
+        db.query(TransactionPosted)
+        .join(
+            TransactionPending,
+            TransactionPosted.transaction_pending_id == TransactionPending.id,
+        )
+        .filter(
+            TransactionPosted.company_nit == company_nit,
+            TransactionPending.nit_emisor == nit_emisor,
+            TransactionPending.fecha >= day_start,
+            TransactionPending.fecha <= day_end,
+            TransactionPending.total == total,
+        )
+        .first()
+    )
+
+
 # ─── PUC ─────────────────────────────────────────────────────────
 
 
@@ -1273,6 +1304,66 @@ def get_reteica_tarifa(db: Session, ciudad: str, ciiu: str) -> Optional[float]:
     return None
 
 
+def get_reteica_base_minima_uvt(db: Session, ciudad: str, ciiu: str) -> Decimal | None:
+    """Return the municipal ReteICA base mínima in UVT units for a given city+CIIU.
+
+    Uses same 3-priority lookup as get_reteica_tarifa:
+      1. municipio + ciiu_seccion (exact)
+      2. municipio + 'general'   (city default)
+      3. 'general' + 'general'   (national fallback)
+
+    Returns Decimal(base_minima_uvt) or None if no row found / column null.
+    Falls back to BASE_MINIMA_RETEICA_UVT constant in tributario_agent when None.
+    """
+    municipio = _normalize_municipio(ciudad)
+    seccion = _ciiu_to_section(ciiu)
+
+    def _extract(r: ReteicaTarifa) -> Decimal | None:
+        if r is None or r.base_minima_uvt is None:
+            return None
+        return Decimal(str(r.base_minima_uvt))
+
+    if seccion != "general":
+        row = (
+            db.query(ReteicaTarifa)
+            .filter(
+                ReteicaTarifa.municipio == municipio,
+                ReteicaTarifa.ciiu_seccion == seccion,
+            )
+            .first()
+        )
+        if row:
+            val = _extract(row)
+            if val is not None:
+                return val
+
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == municipio,
+            ReteicaTarifa.ciiu_seccion == "general",
+        )
+        .first()
+    )
+    if row:
+        val = _extract(row)
+        if val is not None:
+            return val
+
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == "general",
+            ReteicaTarifa.ciiu_seccion == "general",
+        )
+        .first()
+    )
+    if row:
+        return _extract(row)
+
+    return None
+
+
 # ─── VectorDocument ───────────────────────────────────────────────────────────
 
 
@@ -1744,13 +1835,42 @@ def get_uvt(db: Session, year: int) -> Decimal | None:
     return Decimal(str(row.value))
 
 
-def get_base_minima(db: Session, concepto: str, year: int) -> Decimal | None:
-    """Return UVT units for given concepto+year, or None if not in DB."""
-    row = (
-        db.query(TaxBaseMinima)
-        .filter(TaxBaseMinima.concepto == concepto, TaxBaseMinima.year == year)
-        .first()
-    )
+def get_base_minima(
+    db: Session,
+    concepto: str,
+    year: int,
+    as_of_date: date | None = None,
+) -> Decimal | None:
+    """Return UVT units for given concepto+year (or as_of_date), or None.
+
+    If as_of_date is provided, filters rows where:
+        effective_from <= as_of_date AND (effective_to IS NULL OR effective_to >= as_of_date)
+    This enables temporal lookup for regulatory windows (e.g. Decreto 572 suspension
+    by Consejo de Estado on May 7 2026 → documents dated before/after use different bases).
+
+    If as_of_date is None, falls back to year-based lookup (most recently inserted row
+    matching the year), preserving backward compatibility.
+    """
+    if as_of_date is not None:
+        row = (
+            db.query(TaxBaseMinima)
+            .filter(
+                TaxBaseMinima.concepto == concepto,
+                TaxBaseMinima.year == year,
+                TaxBaseMinima.effective_from <= as_of_date,
+                or_(
+                    TaxBaseMinima.effective_to.is_(None),
+                    TaxBaseMinima.effective_to >= as_of_date,
+                ),
+            )
+            .first()
+        )
+    else:
+        row = (
+            db.query(TaxBaseMinima)
+            .filter(TaxBaseMinima.concepto == concepto, TaxBaseMinima.year == year)
+            .first()
+        )
     if row is None:
         return None
     return Decimal(str(row.uvt_units))

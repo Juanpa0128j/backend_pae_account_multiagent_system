@@ -208,6 +208,16 @@ class ReteicaTarifa(Base):
         nullable=True,
         comment="Legal source, e.g. 'Acuerdo 065 Bogotá 2016'",
     )
+    base_minima_uvt = Column(
+        Numeric(8, 2),
+        nullable=True,
+        server_default="4",
+        comment=(
+            "Municipal ReteICA base mínima in UVT units. "
+            "Bogotá=4, Medellín=15, Cali=3. Default 4 UVT (Bogotá reference). "
+            "Decreto 572 does NOT apply to ReteICA — each municipio sets its own base."
+        ),
+    )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

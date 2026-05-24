@@ -359,13 +359,27 @@ class TestF110WithPerdidas:
 
 
 class TestF110Descuentos:
-    def test_ica_descuento_86_ica_is_50_percent_of_511505(self):
+    def test_ica_not_a_descuento_86_ica_absent(self):
+        """Ley 2277/2022 Art. 19: ICA is now 100% deducción, not descuento.
+        86_ica must NOT appear in F110 output since AG 2023."""
         settings = _make_settings()
         ledger = _make_ledger(ica_511505=20_000)
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["86_ica"]["value"] == pytest.approx(10_000.0)
-        assert fields["86_ica"]["source"] == "cuentas_511505_521505"
+        assert "86_ica" not in fields, (
+            "86_ica debe estar ausente: Ley 2277/2022 Art. 19 convirtió ICA a "
+            "deducción 100% (Art. 115 ET), no descuento tributario"
+        )
+
+    def test_ica_flows_as_deduccion_via_renglon_63(self):
+        """ICA still visible via renglon 63 as informational deducción line."""
+        settings = _make_settings()
+        ledger = _make_ledger(ica_511505=20_000)
+        draft = _generate_f110(settings, ledger)
+        fields = {f["renglon"]: f for f in draft.fields_json}
+        assert "63" in fields
+        assert fields["63"]["value"] == pytest.approx(20_000.0)
+        assert fields["63"]["source"] == "cuentas_511505_521505"
 
     def test_descuentos_itemized_fields_present(self):
         settings = _make_settings()
@@ -373,7 +387,6 @@ class TestF110Descuentos:
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
         for renglon in [
-            "86_ica",
             "86_donaciones",
             "86_iva_capital",
             "86_educacion",
@@ -389,13 +402,14 @@ class TestF110Descuentos:
         for renglon in ["86_donaciones", "86_iva_capital", "86_educacion", "86_otros"]:
             assert fields[renglon]["requires_review"] is True
 
-    def test_total_descuentos_86_is_sum(self):
+    def test_total_descuentos_86_is_zero_without_other_descuentos(self):
+        """Without 86_ica, total descuentos starts at 0 (others manual/zero)."""
         settings = _make_settings()
-        ledger = _make_ledger(ica_511505=20_000)  # ICA = 20k → 50% = 10k
+        ledger = _make_ledger(ica_511505=20_000)
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # Only ICA contributes (others start at 0)
-        assert fields["86"]["value"] == pytest.approx(10_000.0)
+        # ICA is no longer a descuento per Ley 2277/2022 Art. 19
+        assert fields["86"]["value"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -406,8 +420,8 @@ class TestF110Descuentos:
 class TestF110Anticipo:
     def test_anticipo_calculated_from_impuesto_neto(self):
         # RLG = 1_200_000, tasa = 35% → impuesto_basico = 420_000
-        # ICA descuento = 10_000 → impuesto_neto = 410_000
-        # retenciones_año_anterior = 0 → anticipo = 410_000 × 0.75 = 307_500
+        # No ICA descuento (Ley 2277/2022 Art. 19) → impuesto_neto = 420_000
+        # retenciones_año_anterior = 0 → anticipo = 420_000 × 0.75 = 315_000
         settings = _make_settings()
         ledger = _make_ledger(
             ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=20_000

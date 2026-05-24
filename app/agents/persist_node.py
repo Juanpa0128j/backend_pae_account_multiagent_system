@@ -874,6 +874,42 @@ def _run_persist(state: AgentState) -> AgentState:
                     raw_reasoning if isinstance(raw_reasoning, dict) else {}
                 )
 
+            # ── Duplicate-posted guard ────────────────────────────────────────
+            # Same source document re-uploaded creates new IngestJob + new
+            # TransactionPending but must NOT create a duplicate TransactionPosted.
+            # Natural key: (company_nit, nit_emisor, fecha::date, total).
+            _existing_posted = None
+            if company_nit and nit_emisor and fecha and total:
+                try:
+                    _existing_posted = db_service.find_duplicate_posted(
+                        db,
+                        company_nit=company_nit,
+                        nit_emisor=nit_emisor,
+                        fecha=fecha,
+                        total=total,
+                    )
+                except Exception as _dup_err:
+                    logger.warning(
+                        "db_persist: duplicate-posted check failed (%s) — proceeding",
+                        _dup_err,
+                    )
+
+            if _existing_posted is not None:
+                existing_posted_id = as_str(getattr(_existing_posted, "id", ""), "")
+                logger.warning(
+                    "db_persist: duplicate_skipped — TransactionPosted %s already exists "
+                    "for company_nit=%s nit_emisor=%s total=%s fecha=%s; "
+                    "skipping re-post of re-uploaded document",
+                    existing_posted_id,
+                    company_nit,
+                    nit_emisor,
+                    total,
+                    fecha,
+                )
+                state["duplicate_skipped"] = True
+                posted_ids.append(existing_posted_id)
+                continue
+
             txn_posted = db_service.create_transaction_posted(
                 db,
                 transaction_pending_id=as_str(getattr(txn_pending, "id", "")),

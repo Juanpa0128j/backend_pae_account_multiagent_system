@@ -820,8 +820,10 @@ def tributario_node(state: AgentState) -> AgentState:
                 else TASA_RETEFUENTE["arrendamiento"]
             ),
         }
-        # ReteICA: attempt municipal tarifa DB lookup before falling back to config/default
+        # ReteICA: attempt municipal tarifa + base_minima_uvt DB lookup
+        # base_minima_uvt is per-municipio (Fix 4: Decreto 572 does NOT apply to ReteICA).
         _reteica_db_rate = None
+        _reteica_db_base_minima_uvt: "Decimal | None" = None
         if company_config:
             _ciudad = company_config.get("ciudad")
             _ciiu = company_config.get("codigo_ciiu")
@@ -832,12 +834,17 @@ def tributario_node(state: AgentState) -> AgentState:
                         _reteica_db_rate = _db_svc.get_reteica_tarifa(
                             _db2, _ciudad, _ciiu
                         )
+                        _reteica_db_base_minima_uvt = (
+                            _db_svc.get_reteica_base_minima_uvt(_db2, _ciudad, _ciiu)
+                        )
                         if _reteica_db_rate is not None:
                             logger.debug(
-                                "Tributario: ReteICA tarifa from DB for ciudad=%s ciiu=%s → %.4f",
+                                "Tributario: ReteICA tarifa from DB for ciudad=%s ciiu=%s → %.4f "
+                                "(base_minima_uvt=%s)",
                                 _ciudad,
                                 _ciiu,
                                 _reteica_db_rate,
+                                _reteica_db_base_minima_uvt,
                             )
                     finally:
                         _db2.close()
@@ -858,15 +865,21 @@ def tributario_node(state: AgentState) -> AgentState:
         # ------------------------------------------------------------------
         # UVT and base mínima — DB lookup with hardcoded fallback
         # ------------------------------------------------------------------
-        # Derive fiscal year from period_start state field or today.
+        # Derive fiscal year and as_of_date from period_start state field or today.
+        # as_of_date is passed to get_base_minima for temporal base mínima lookup
+        # (Fix 3: Decreto 572 suspended May 7 2026 → date-specific rows apply).
         _period_start_raw = state.get("period_start")
+        _as_of_date: "date | None" = None
         if _period_start_raw and isinstance(_period_start_raw, date):
             _fiscal_year = _period_start_raw.year
+            _as_of_date = _period_start_raw
         elif _period_start_raw and isinstance(_period_start_raw, str):
             try:
                 from datetime import datetime as _dt
 
-                _fiscal_year = _dt.fromisoformat(_period_start_raw[:10]).year
+                _parsed = _dt.fromisoformat(_period_start_raw[:10]).date()
+                _fiscal_year = _parsed.year
+                _as_of_date = _parsed
             except (ValueError, TypeError):
                 _fiscal_year = date.today().year
         else:
@@ -893,11 +906,16 @@ def tributario_node(state: AgentState) -> AgentState:
                     )
                 for _concepto_key in ("servicios", "bienes", "arrendamiento"):
                     _bm_db = _db_svc.get_base_minima(
-                        _db3, f"retefuente_{_concepto_key}", _fiscal_year
+                        _db3,
+                        f"retefuente_{_concepto_key}",
+                        _fiscal_year,
+                        as_of_date=_as_of_date,
                     )
                     if _bm_db is not None:
                         _base_minima_retefuente[_concepto_key] = _bm_db
-                _bm_reteica_db = _db_svc.get_base_minima(_db3, "reteica", _fiscal_year)
+                _bm_reteica_db = _db_svc.get_base_minima(
+                    _db3, "reteica", _fiscal_year, as_of_date=_as_of_date
+                )
                 if _bm_reteica_db is not None:
                     _base_minima_reteica = _bm_reteica_db
             finally:
@@ -906,6 +924,16 @@ def tributario_node(state: AgentState) -> AgentState:
             logger.warning(
                 "Tributario: UVT/base_minima DB lookup failed (%s), using fallback constants",
                 _uvt_err,
+            )
+
+        # Fix 4: Override reteica base mínima with municipal value when available.
+        # ReteICA is municipal — Decreto 572 does NOT apply. Each municipio sets own base.
+        # _reteica_db_base_minima_uvt comes from reteica_tarifas.base_minima_uvt column.
+        if _reteica_db_base_minima_uvt is not None:
+            _base_minima_reteica = _reteica_db_base_minima_uvt
+            logger.debug(
+                "Tributario: ReteICA base mínima from municipal table = %s UVT",
+                _base_minima_reteica,
             )
 
         tasa_iva_efectiva = (
