@@ -36,10 +36,11 @@ from app.services import db_service
 logger = get_logger(__name__)
 
 UVT_DATA = [
-    # (year, value, decreto)
-    (2024, Decimal("47065"), "Decreto 1235/2023"),
-    (2025, Decimal("49799"), "Decreto 2229/2024"),
-    (2026, Decimal("52374"), "Decreto 0024/2025"),
+    # (year, value, referencia_normativa)
+    (2024, Decimal("47065"), "Resolución 000187 de 2023"),
+    (2025, Decimal("49799"), "Resolución 000193 de 2024"),
+    # UVT 2026 fixed by DIAN Resolución 000238 de 2025 (no longer by Decreto)
+    (2026, Decimal("52374"), "Resolución 000238 de 2025"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -134,15 +135,24 @@ def seed() -> None:
 
     try:
         # ── UVT values ─────────────────────────────────────────────────────
-        for year, value, decreto in UVT_DATA:
+        for year, value, referencia_normativa in UVT_DATA:
             existing = db.query(UvtValue).filter(UvtValue.year == year).first()
-            db_service.upsert_uvt(db, year=year, value=value, decreto=decreto)
+            db_service.upsert_uvt(
+                db,
+                year=year,
+                value=value,
+                referencia_normativa=referencia_normativa,
+            )
             if existing:
                 uvt_updated += 1
-                logger.info("UVT %d updated: %s (%s)", year, value, decreto)
+                logger.info(
+                    "UVT %d updated: %s (%s)", year, value, referencia_normativa
+                )
             else:
                 uvt_inserted += 1
-                logger.info("UVT %d inserted: %s (%s)", year, value, decreto)
+                logger.info(
+                    "UVT %d inserted: %s (%s)", year, value, referencia_normativa
+                )
 
         # ── Temporal base mínima rows ───────────────────────────────────────
         for concepto, uvt_units, year, eff_from, eff_to in BASE_MINIMA_TEMPORAL:

@@ -1882,7 +1882,7 @@ def list_tax_constants(db: Session, year: int) -> dict:
 
     Shape:
         {
-            "uvt": {"year": int, "value": str, "decreto": str | None},
+            "uvt": {"year": int, "value": str, "referencia_normativa": str | None},
             "base_minima": [{"concepto": str, "uvt_units": str, "year": int}, ...]
         }
     """
@@ -1898,7 +1898,7 @@ def list_tax_constants(db: Session, year: int) -> dict:
             {
                 "year": uvt_row.year,
                 "value": str(uvt_row.value),
-                "decreto": uvt_row.decreto,
+                "referencia_normativa": uvt_row.referencia_normativa,
             }
             if uvt_row
             else None
@@ -1918,16 +1918,18 @@ def upsert_uvt(
     db: Session,
     year: int,
     value: Decimal,
-    decreto: str | None = None,
+    referencia_normativa: str | None = None,
 ) -> UvtValue:
     """Insert or update UVT value for given year."""
     row = db.query(UvtValue).filter(UvtValue.year == year).first()
     if row is None:
-        row = UvtValue(year=year, value=value, decreto=decreto)
+        row = UvtValue(
+            year=year, value=value, referencia_normativa=referencia_normativa
+        )
         db.add(row)
     else:
         row.value = value
-        row.decreto = decreto
+        row.referencia_normativa = referencia_normativa
     db.commit()
     db.refresh(row)
     return row

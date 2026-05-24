@@ -888,10 +888,13 @@ class UvtValue(Base):
         nullable=False,
         comment="UVT value in COP pesos, e.g. 52374.00",
     )
-    decreto = Column(
+    referencia_normativa = Column(
         String(64),
         nullable=True,
-        comment="DIAN decreto that published this UVT, e.g. 'Decreto 0024/2025'",
+        comment=(
+            "DIAN regulatory reference that published this UVT, "
+            "e.g. 'Resolución 000238 de 2025'"
+        ),
     )
     effective_from = Column(
         DateTime(timezone=False), nullable=True, comment="Start of validity period"
@@ -906,7 +909,8 @@ class UvtValue(Base):
 
     def __repr__(self):
         return (
-            f"<UvtValue(year={self.year}, value={self.value}, decreto={self.decreto})>"
+            f"<UvtValue(year={self.year}, value={self.value}, "
+            f"referencia_normativa={self.referencia_normativa})>"
         )
 
 

@@ -49,8 +49,8 @@ TASA_RETEFUENTE: dict[str, Decimal] = {
 TASA_RETEICA_DEFAULT = Decimal("0.0069")  # Tarifa Cali / default municipal
 
 # UVT fallback constants — used when DB has no row for the current year.
-# Update every January when DIAN publishes the new UVT decreto.
-UVT_FALLBACK = Decimal("52374")  # UVT 2026 — Decreto 0024/2025
+# Update every January when DIAN publishes the new UVT via Resolución.
+UVT_FALLBACK = Decimal("52374")  # UVT 2026 — Resolución 000238 de 2025
 # Keep legacy alias so any external references (tests, scripts) remain valid.
 UVT_2026 = UVT_FALLBACK
 BASE_MINIMA_RETEFUENTE_UVT: dict[str, Decimal] = {

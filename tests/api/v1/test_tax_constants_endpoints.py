@@ -27,7 +27,11 @@ class TestGetTaxConstants:
     def test_returns_uvt_and_base_minima(self, client_with_db):
         client, mock_db = client_with_db
         expected = {
-            "uvt": {"year": 2026, "value": "52374.00", "decreto": "Decreto 0024/2025"},
+            "uvt": {
+                "year": 2026,
+                "value": "52374.00",
+                "referencia_normativa": "Resolución 000238 de 2025",
+            },
             "base_minima": [
                 {"concepto": "retefuente_servicios", "uvt_units": "4.00", "year": 2026},
             ],
@@ -63,13 +67,17 @@ class TestUpsertUvtEndpoint:
         fake_row = MagicMock()
         fake_row.year = 2026
         fake_row.value = Decimal("52374")
-        fake_row.decreto = "Decreto 0024/2025"
+        fake_row.referencia_normativa = "Resolución 000238 de 2025"
         fake_row.updated_at = None
 
         with patch("app.services.db_service.upsert_uvt", return_value=fake_row):
             response = client.put(
                 "/api/v1/tax/constants/uvt",
-                json={"year": 2026, "value": 52374, "decreto": "Decreto 0024/2025"},
+                json={
+                    "year": 2026,
+                    "value": 52374,
+                    "referencia_normativa": "Resolución 000238 de 2025",
+                },
             )
         assert response.status_code == 200
         data = response.json()
@@ -79,7 +87,7 @@ class TestUpsertUvtEndpoint:
         client, _ = client_with_db
         response = client.put(
             "/api/v1/tax/constants/uvt",
-            json={"decreto": "Decreto X"},  # missing year and value
+            json={"referencia_normativa": "Decreto X"},  # missing year and value
         )
         assert response.status_code == 422
 

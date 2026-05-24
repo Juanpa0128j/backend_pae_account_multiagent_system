@@ -289,7 +289,7 @@ class UvtUpsertRequest(BaseModel):
 
     year: int = Field(..., ge=2000, le=2100)
     value: float = Field(..., gt=0, description="UVT value in COP pesos")
-    decreto: Optional[str] = Field(None, max_length=64)
+    referencia_normativa: Optional[str] = Field(None, max_length=64)
 
 
 class BaseMinimaUpsertRequest(BaseModel):
@@ -311,7 +311,7 @@ class UvtResponse(BaseModel):
 
     year: int
     value: str
-    decreto: Optional[str] = None
+    referencia_normativa: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

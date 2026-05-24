@@ -737,12 +737,12 @@ async def upsert_uvt_value(
         db,
         year=body.year,
         value=Decimal(str(body.value)),
-        decreto=body.decreto,
+        referencia_normativa=body.referencia_normativa,
     )
     return {
         "year": row.year,
         "value": str(row.value),
-        "decreto": row.decreto,
+        "referencia_normativa": row.referencia_normativa,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
