@@ -14,6 +14,7 @@ Tables:
 - ChatSession: Persistent chat conversation sessions
 - ChatMessage: Individual messages within a chat session
 - TaxDeclarationDraft: Pre-filled DIAN declaration drafts (F300, F350, F110, ICA)
+- PerdidaFiscalAcumulada: Multi-year fiscal loss carry-forward history (Art. 147 ET)
 """
 
 import enum
@@ -833,6 +834,61 @@ class TaxBaseMinima(Base):
         return (
             f"<TaxBaseMinima(concepto={self.concepto}, year={self.year}, "
             f"uvt_units={self.uvt_units})>"
+        )
+
+
+class PerdidaFiscalAcumulada(Base):
+    """
+    Accumulated fiscal losses per company per year (Art. 147 ET).
+
+    Tracks multi-year loss carry-forward history (12-year limit per Art. 147 ET).
+    Compensation is FIFO by year. monto_pendiente is a generated column in Postgres
+    but stored as a regular column here; update via register_compensacion helper.
+    """
+
+    __tablename__ = "perdidas_fiscales_acumuladas"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    company_nit = Column(
+        String(20),
+        ForeignKey("company_settings.nit", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Owning company NIT (tenant)",
+    )
+    year = Column(Integer, nullable=False, comment="Year the loss was incurred")
+    monto_perdida = Column(
+        Numeric(18, 2), nullable=False, comment="Total fiscal loss for the year"
+    )
+    monto_compensado = Column(
+        Numeric(18, 2),
+        nullable=False,
+        default=Decimal("0"),
+        comment="Amount already compensated in subsequent years",
+    )
+    monto_pendiente = Column(
+        Numeric(18, 2),
+        nullable=False,
+        default=Decimal("0"),
+        comment="Pending amount = monto_perdida - monto_compensado (maintained by app)",
+    )
+    decreto = Column(
+        String(100),
+        nullable=True,
+        comment="Regulatory reference, e.g. 'Art. 147 ET'",
+    )
+    notas = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    company = relationship("CompanySettings")
+
+    def __repr__(self):
+        return (
+            f"<PerdidaFiscalAcumulada(nit={self.company_nit}, year={self.year}, "
+            f"pendiente={self.monto_pendiente})>"
         )
 
 

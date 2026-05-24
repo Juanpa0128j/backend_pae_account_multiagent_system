@@ -331,9 +331,28 @@ class TestF350Draft:
 # ---------------------------------------------------------------------------
 
 
+_F110_DB_PATCHES = [
+    patch("app.services.db_service.get_latest_f2516_reviewed", return_value=None),
+    patch(
+        "app.services.db_service.sum_perdidas_disponibles", return_value=Decimal("0")
+    ),
+    patch(
+        "app.services.db_service.sum_retenciones_anio", return_value=Decimal("40000")
+    ),
+]
+
+
+def _apply_f110_patches(fn):
+    """Decorator that applies db_service patches needed by refactored _build_f110."""
+    for p in reversed(_F110_DB_PATCHES):
+        fn = p(fn)
+    return fn
+
+
 class TestF110Draft:
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_activos_from_clase_1(self, mock_ledger):
+    def test_activos_from_clase_1(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -349,8 +368,9 @@ class TestF110Draft:
             840_000.0
         )  # 1105(800k) + 135518(40k)
 
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_ica_deducible_from_511505_521505(self, mock_ledger):
+    def test_ica_deducible_from_511505_521505(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -364,8 +384,9 @@ class TestF110Draft:
         fields = {f["renglon"]: f for f in draft.fields_json}
         assert fields["63"]["value"] == pytest.approx(14_490.0)
 
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_retenciones_favor_from_135518(self, mock_ledger):
+    def test_retenciones_favor_from_135518(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -377,10 +398,12 @@ class TestF110Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
+        # renglon "92" = retenciones from DB (patched to 40_000)
         assert fields["92"]["value"] == pytest.approx(40_000.0)
 
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_anticipo_requires_review(self, mock_ledger):
+    def test_anticipo_requires_review(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -476,8 +499,9 @@ class TestGenerateDraftErrors:
 
 
 class TestDisclaimer:
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_disclaimer_always_present(self, mock_ledger):
+    def test_disclaimer_always_present(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
 

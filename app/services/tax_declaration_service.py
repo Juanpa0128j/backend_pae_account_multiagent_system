@@ -349,33 +349,45 @@ def _build_f350(
 def _build_f110(
     ledger: List[Dict[str, Any]],
     settings: CompanySettings,
+    *,
+    db: Optional[Any] = None,
+    year: Optional[int] = None,
+    company_nit: Optional[str] = None,
 ) -> tuple[List[DraftField], List[DraftWarning]]:
     """
-    F110 Renta PJ draft — requires full-year ledger.
-    ICA deducible: 511505 + 521505.
-    Retenciones a favor: 135518 / 135515.
+    F110 Renta PJ draft — full DIAN renglones with auto-calculation.
+
+    Renglones produced (DIAN F110 2026):
+      26  Total activos
+      27  Total pasivos
+      40  Renta bruta (clase 4 créditos)
+      52  Costos (clase 6 débitos)
+      60  Gastos deducibles (clase 5 débitos)
+      63  ICA deducible sugerido (511505+521505 × 50%)
+      f110_renta_liquida_ordinaria  Renta líquida ordinaria = 40-52-60
+      f110_perdidas_compensar       Pérdidas fiscales por compensar (Art. 147)
+      f110_rentas_exentas           Rentas exentas (manual)
+      72  Renta líquida gravable = max(0, RLO - pérdidas - exentas)
+      80  Impuesto básico = 72 × tasa_renta
+      86_ica       Descuento ICA pagado 50% (Art. 115)
+      86_donaciones Descuento donaciones (Art. 257)
+      86_iva_capital Descuento IVA bienes capital (Art. 258-1)
+      86_educacion  Descuento inversión educación/innovación (Art. 256)
+      86_otros      Otros descuentos tributarios
+      86  Total descuentos tributarios
+      88  Impuesto neto = max(0, 80-86)
+      92  Retenciones del año (135515+135518)
+      93  Saldo a pagar / saldo a favor = 88 - 92
+      95  Anticipo año siguiente = max(0, 88×0.75 - retenciones_año_anterior)
+      96  Saldo final = 93 + 95
+      97  Sanciones (manual)
     """
     fields: List[DraftField] = []
     warnings: List[DraftWarning] = []
 
+    # ── Balance sheet fields ─────────────────────────────────────────────────
     activos = _sum_debits(ledger, "1")
     pasivos = _sum_credits(ledger, "2")
-    ingresos_brutos = _sum_credits(ledger, "4")
-    costos_venta = _sum_debits(ledger, "6")
-    gastos_operacionales = _sum_debits(ledger, "5")
-    ica_deducible = _exact_debit(ledger, "511505") + _exact_debit(ledger, "521505")
-    retenciones_favor = _exact_debit(ledger, "135518") + _exact_debit(ledger, "135515")
-
-    # Renta líquida: clamp at 0 because negative accounting profit does not
-    # generate income tax (pérdida fiscal — carries forward, handled separately).
-    renta_liquida_raw = (
-        ingresos_brutos - costos_venta - gastos_operacionales - ica_deducible
-    )
-    renta_liquida = max(0.0, renta_liquida_raw)
-    tasa_renta = float(settings.tasa_renta) if settings.tasa_renta else 0.35
-    impuesto_basico = round(renta_liquida * tasa_renta, 2)
-    # Preserve sign of saldo: negative = saldo a favor (retenciones exceed tax)
-    total_a_cargo = impuesto_basico - retenciones_favor
 
     fields.extend(
         [
@@ -385,118 +397,344 @@ def _build_f110(
             DraftField(
                 "27", "Total pasivos", round(pasivos, 2), "clase_2_puc", "high", False
             ),
+        ]
+    )
+
+    # ── Renta bruta, costos, gastos ─────────────────────────────────────────
+    renta_bruta = _sum_credits(ledger, "4")
+    costos = _sum_debits(ledger, "6")
+    gastos_deducibles = _sum_debits(ledger, "5")
+
+    fields.extend(
+        [
             DraftField(
                 "40",
-                "Ingresos brutos operacionales",
-                round(ingresos_brutos, 2),
+                "Renta bruta (ingresos clase 4)",
+                round(renta_bruta, 2),
                 "clase_4_puc",
                 "high",
                 False,
             ),
             DraftField(
                 "52",
-                "Costos de venta",
-                round(costos_venta, 2),
+                "Costos (clase 6)",
+                round(costos, 2),
                 "clase_6_puc",
                 "high",
                 False,
             ),
             DraftField(
                 "60",
-                "Gastos operacionales",
-                round(gastos_operacionales, 2),
+                "Gastos deducibles (clase 5)",
+                round(gastos_deducibles, 2),
                 "clase_5_puc",
                 "high",
                 False,
             ),
-            DraftField(
-                "63",
-                "ICA deducible (511505+521505)",
-                round(ica_deducible, 2),
-                "cuentas_511505_521505",
-                "high",
-                False,
-            ),
-            DraftField(
-                "72",
-                "Renta líquida gravable (estimada)",
-                round(renta_liquida, 2),
-                "calculado",
-                "medium",
-                True,
-            ),
-            DraftField(
-                "80",
-                "Impuesto básico de renta",
-                round(impuesto_basico, 2),
-                "calculado",
-                "medium",
-                True,
-            ),
-            DraftField(
-                "86", "Descuentos tributarios", 0.0, "input_manual", "low", True
-            ),
-            DraftField(
-                "88",
-                (
-                    "Total impuesto a cargo"
-                    if total_a_cargo >= 0
-                    else "Saldo a favor (retenciones exceden impuesto)"
-                ),
-                round(total_a_cargo, 2),
-                "calculado",
-                "medium",
-                True,
-            ),
-            DraftField(
-                "92",
-                "Retenciones en la fuente a favor",
-                round(retenciones_favor, 2),
-                "cuentas_135518_135515",
-                "high",
-                False,
-            ),
-            DraftField(
-                "95", "Anticipo año siguiente", 0.0, "requiere_historico", "low", True
-            ),
-            DraftField("97", "Sanciones (si aplica)", 0.0, "input_manual", "low", True),
         ]
     )
 
-    if renta_liquida_raw < 0:
+    # ── Renta líquida ordinaria — may come from F2516 ───────────────────────
+    rlo_journal = renta_bruta - costos - gastos_deducibles
+    rlo_source = "journal"
+    rlo_requires_review = True
+    renta_liquida_ordinaria = rlo_journal
+
+    if db is not None and year is not None and company_nit is not None:
+        f2516 = db_service.get_latest_f2516_reviewed(db, company_nit, year)
+        if f2516 is not None:
+            # Extract renta líquida conciliada from F2516 fields_json (renglon "4")
+            for fld in f2516.fields_json or []:
+                if fld.get("renglon") == "4":
+                    try:
+                        renta_liquida_ordinaria = float(fld["value"])
+                        rlo_source = "f2516"
+                        rlo_requires_review = False
+                    except (KeyError, TypeError, ValueError):
+                        pass
+                    break
+
+    fields.append(
+        DraftField(
+            "f110_renta_liquida_ordinaria",
+            "Renta líquida ordinaria",
+            round(renta_liquida_ordinaria, 2),
+            rlo_source,
+            "high" if rlo_source == "f2516" else "medium",
+            rlo_requires_review,
+        )
+    )
+
+    if renta_liquida_ordinaria < 0:
         warnings.append(
             DraftWarning(
-                "72",
-                f"Pérdida fiscal estimada de ${abs(renta_liquida_raw):,.2f} — renta líquida gravable clamped a $0. "
-                "Consulte Art. 147 ET sobre compensación de pérdidas.",
+                "f110_renta_liquida_ordinaria",
+                f"Pérdida fiscal del período estimada de ${abs(renta_liquida_ordinaria):,.2f}. "
+                "Art. 147 ET: pérdidas compensables en los 12 años siguientes.",
             )
         )
-    if total_a_cargo < 0:
+
+    # ── Pérdidas fiscales por compensar ─────────────────────────────────────
+    perdidas_sum = 0.0
+    perdidas_requires_review = False
+    if db is not None and year is not None and company_nit is not None:
+        perdidas_dec = db_service.sum_perdidas_disponibles(db, company_nit, year)
+        perdidas_sum = float(perdidas_dec)
+        perdidas_requires_review = perdidas_sum > 0
+
+    fields.append(
+        DraftField(
+            "f110_perdidas_compensar",
+            "Pérdidas fiscales por compensar (Art. 147 ET)",
+            round(perdidas_sum, 2),
+            "perdidas_fiscales_acumuladas" if perdidas_sum > 0 else "journal",
+            "high" if perdidas_sum > 0 else "medium",
+            perdidas_requires_review,
+        )
+    )
+
+    # ── Rentas exentas (manual) ──────────────────────────────────────────────
+    fields.append(
+        DraftField(
+            "f110_rentas_exentas",
+            "Rentas exentas",
+            0.0,
+            "input_manual",
+            "low",
+            True,
+        )
+    )
+
+    # ── Renta líquida gravable ───────────────────────────────────────────────
+    renta_liquida_gravable = max(
+        0.0,
+        renta_liquida_ordinaria - perdidas_sum,  # rentas_exentas start at 0
+    )
+
+    fields.append(
+        DraftField(
+            "72",
+            "Renta líquida gravable",
+            round(renta_liquida_gravable, 2),
+            "calculado",
+            "medium",
+            True,
+        )
+    )
+
+    # ── Impuesto básico ──────────────────────────────────────────────────────
+    tasa_renta = float(settings.tasa_renta) if settings.tasa_renta else 0.35
+    impuesto_basico = round(renta_liquida_gravable * tasa_renta, 2)
+
+    fields.append(
+        DraftField(
+            "80",
+            f"Impuesto básico de renta (tasa {tasa_renta:.0%})",
+            impuesto_basico,
+            "calculado",
+            "medium",
+            True,
+        )
+    )
+
+    # ── Descuentos tributarios (itemized) ───────────────────────────────────
+    # ICA pagado: auto-suggest 50% of 511505+521505 (Art. 115)
+    ica_pagado = _exact_debit(ledger, "511505") + _exact_debit(ledger, "521505")
+    ica_descuento_sugerido = round(ica_pagado * 0.5, 2)
+
+    # Also expose as renglon "63" for backward-compat with existing tests
+    fields.append(
+        DraftField(
+            "63",
+            "ICA deducible (511505+521505)",
+            round(ica_pagado, 2),
+            "cuentas_511505_521505",
+            "high",
+            False,
+        )
+    )
+
+    fields.extend(
+        [
+            DraftField(
+                "86_ica",
+                "Descuento ICA pagado 50% (Art. 115) — sugerido",
+                ica_descuento_sugerido,
+                "cuentas_511505_521505",
+                "medium",
+                True,
+            ),
+            DraftField(
+                "86_donaciones",
+                "Descuento donaciones (Art. 257)",
+                0.0,
+                "input_manual",
+                "low",
+                True,
+            ),
+            DraftField(
+                "86_iva_capital",
+                "Descuento IVA bienes de capital (Art. 258-1)",
+                0.0,
+                "input_manual",
+                "low",
+                True,
+            ),
+            DraftField(
+                "86_educacion",
+                "Descuento inversión educación / innovación (Art. 256)",
+                0.0,
+                "input_manual",
+                "low",
+                True,
+            ),
+            DraftField(
+                "86_otros",
+                "Otros descuentos tributarios",
+                0.0,
+                "input_manual",
+                "low",
+                True,
+            ),
+        ]
+    )
+
+    total_descuentos = ica_descuento_sugerido  # others start at 0
+    fields.append(
+        DraftField(
+            "86",
+            "Total descuentos tributarios",
+            round(total_descuentos, 2),
+            "calculado",
+            "medium",
+            True,
+        )
+    )
+
+    # ── Impuesto neto ────────────────────────────────────────────────────────
+    impuesto_neto = max(0.0, impuesto_basico - total_descuentos)
+    fields.append(
+        DraftField(
+            "88",
+            "Impuesto neto de renta",
+            round(impuesto_neto, 2),
+            "calculado",
+            "medium",
+            True,
+        )
+    )
+
+    # ── Retenciones del año ──────────────────────────────────────────────────
+    retenciones_anio = 0.0
+    if db is not None and year is not None and company_nit is not None:
+        retenciones_dec = db_service.sum_retenciones_anio(db, company_nit, year)
+        retenciones_anio = float(retenciones_dec)
+    else:
+        # Fallback: read from ledger (for tests without DB)
+        retenciones_anio = _exact_debit(ledger, "135518") + _exact_debit(
+            ledger, "135515"
+        )
+
+    fields.append(
+        DraftField(
+            "92",
+            "Retenciones en la fuente a favor del año",
+            round(retenciones_anio, 2),
+            "cuentas_135518_135515",
+            "high",
+            False,
+        )
+    )
+
+    # ── Saldo a pagar / a favor ──────────────────────────────────────────────
+    saldo = impuesto_neto - retenciones_anio
+    fields.append(
+        DraftField(
+            "93",
+            "Saldo a pagar" if saldo >= 0 else "Saldo a favor",
+            round(saldo, 2),
+            "calculado",
+            "medium",
+            True,
+        )
+    )
+
+    if saldo < 0:
         warnings.append(
             DraftWarning(
-                "88",
-                f"Saldo a favor de ${abs(total_a_cargo):,.2f} — retenciones exceden el impuesto. "
+                "93",
+                f"Saldo a favor de ${abs(saldo):,.2f} — retenciones exceden el impuesto neto. "
                 "Verifique si aplica devolución o compensación (Art. 815 ET).",
             )
         )
 
+    # ── Anticipo año siguiente (Art. 807 ET) ─────────────────────────────────
+    # anticipo = max(0, impuesto_neto × 0.75 - retenciones_año_anterior)
+    retenciones_anio_anterior = 0.0
+    retenciones_anterior_warning = None
+    if db is not None and year is not None and company_nit is not None:
+        ret_ant_dec = db_service.sum_retenciones_anio(db, company_nit, year - 1)
+        retenciones_anio_anterior = float(ret_ant_dec)
+        if retenciones_anio_anterior == 0.0:
+            retenciones_anterior_warning = (
+                f"No se encontraron retenciones para el año {year - 1}. "
+                "Anticipo calculado asumiendo retenciones anteriores = $0."
+            )
+
+    anticipo = max(0.0, impuesto_neto * 0.75 - retenciones_anio_anterior)
+    fields.append(
+        DraftField(
+            "95",
+            "Anticipo año siguiente (Art. 807 ET)",
+            round(anticipo, 2),
+            "calculado",
+            "medium",
+            True,
+        )
+    )
+
+    if retenciones_anterior_warning:
+        warnings.append(DraftWarning("95", retenciones_anterior_warning))
+
+    # ── Saldo final ──────────────────────────────────────────────────────────
+    saldo_final = saldo + anticipo
+    fields.append(
+        DraftField(
+            "96",
+            "Saldo final (a pagar + anticipo)",
+            round(saldo_final, 2),
+            "calculado",
+            "medium",
+            True,
+        )
+    )
+
+    # ── Sanciones ────────────────────────────────────────────────────────────
+    fields.append(
+        DraftField("97", "Sanciones (si aplica)", 0.0, "input_manual", "low", True)
+    )
+
+    # ── Standard warnings ────────────────────────────────────────────────────
     warnings.extend(
         [
             DraftWarning(
-                "72",
-                "Renta líquida es estimación contable — la depuración fiscal puede diferir (diferencias temporarias, deducciones especiales).",
+                "f110_renta_liquida_ordinaria",
+                "Renta líquida ordinaria es estimación contable — la depuración fiscal puede diferir "
+                "(diferencias temporarias, deducciones especiales). "
+                + (
+                    "Valor tomado de F2516 revisado."
+                    if rlo_source == "f2516"
+                    else "Sin F2516 revisado: valor calculado desde el libro mayor."
+                ),
             ),
             DraftWarning(
                 "86",
-                "Descuentos tributarios (donaciones, ICA pagado, otros) requieren clasificación explícita del contador.",
-            ),
-            DraftWarning(
-                "95",
-                "Anticipo año siguiente requiere histórico de dos años — calcule según Art. 807 ET.",
+                "Descuentos tributarios requieren verificación explícita del contador antes de presentar.",
             ),
             DraftWarning(
                 "general",
-                "F110 requiere F2516 (Conciliación Fiscal) antes de presentar. El sistema no genera F2516 automáticamente.",
+                "F110 requiere F2516 (Conciliación Fiscal) antes de presentar. "
+                "Art. 772-1 ET obliga la conciliación fiscal anual.",
             ),
         ]
     )
@@ -766,7 +1004,12 @@ def generate_declaration_draft(
     )
 
     builder = _BUILDERS[form_type]
-    draft_fields, draft_warnings = builder(ledger, settings)
+    if form_type == "F110":
+        draft_fields, draft_warnings = _build_f110(
+            ledger, settings, db=db, year=period_end.year, company_nit=company_nit
+        )
+    else:
+        draft_fields, draft_warnings = builder(ledger, settings)
 
     disclaimer_field = {
         "renglon": "_disclaimer",

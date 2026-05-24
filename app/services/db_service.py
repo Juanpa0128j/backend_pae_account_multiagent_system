@@ -27,7 +27,9 @@ from app.models.database import (
     ProcessJob,
     ProcessStatus,
     ReteicaTarifa,
+    PerdidaFiscalAcumulada,
     TaxBaseMinima,
+    TaxDeclarationDraft,
     Tercero,
     TransactionPending,
     TransactionPosted,
@@ -1830,3 +1832,155 @@ def upsert_base_minima(
     db.commit()
     db.refresh(row)
     return row
+
+
+# ---------------------------------------------------------------------------
+# Pérdidas fiscales acumuladas (Art. 147 ET — 12-year carry-forward)
+# ---------------------------------------------------------------------------
+
+
+def get_perdidas_disponibles(
+    db: Session, company_nit: str, current_year: int
+) -> list[PerdidaFiscalAcumulada]:
+    """
+    Return rows with monto_pendiente > 0 from years prior to current_year.
+    Ordered ASC by year for FIFO compensation per Art. 147 ET.
+    """
+    return (
+        db.query(PerdidaFiscalAcumulada)
+        .filter(
+            PerdidaFiscalAcumulada.company_nit == company_nit,
+            PerdidaFiscalAcumulada.year < current_year,
+            PerdidaFiscalAcumulada.monto_pendiente > 0,
+        )
+        .order_by(PerdidaFiscalAcumulada.year.asc())
+        .all()
+    )
+
+
+def sum_perdidas_disponibles(
+    db: Session, company_nit: str, current_year: int
+) -> Decimal:
+    """Sum of all available (pending) fiscal losses prior to current_year."""
+    rows = get_perdidas_disponibles(db, company_nit, current_year)
+    return sum((r.monto_pendiente for r in rows), Decimal("0"))
+
+
+def upsert_perdida(
+    db: Session,
+    company_nit: str,
+    year: int,
+    monto_perdida: Decimal,
+    decreto: str | None = None,
+    notas: str | None = None,
+) -> PerdidaFiscalAcumulada:
+    """Insert or update a fiscal loss record for the given company and year."""
+    row = (
+        db.query(PerdidaFiscalAcumulada)
+        .filter(
+            PerdidaFiscalAcumulada.company_nit == company_nit,
+            PerdidaFiscalAcumulada.year == year,
+        )
+        .first()
+    )
+    if row is None:
+        row = PerdidaFiscalAcumulada(
+            company_nit=company_nit,
+            year=year,
+            monto_perdida=monto_perdida,
+            monto_compensado=Decimal("0"),
+            monto_pendiente=monto_perdida,
+            decreto=decreto,
+            notas=notas,
+        )
+        db.add(row)
+    else:
+        row.monto_perdida = monto_perdida
+        # Recalculate pending after updating total
+        row.monto_pendiente = monto_perdida - row.monto_compensado
+        if decreto is not None:
+            row.decreto = decreto
+        if notas is not None:
+            row.notas = notas
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def register_compensacion(
+    db: Session,
+    company_nit: str,
+    year: int,
+    monto_compensado_delta: Decimal,
+) -> PerdidaFiscalAcumulada:
+    """
+    Increment monto_compensado for the given year's loss record.
+    Raises ValueError if delta would exceed monto_perdida.
+    """
+    row = (
+        db.query(PerdidaFiscalAcumulada)
+        .filter(
+            PerdidaFiscalAcumulada.company_nit == company_nit,
+            PerdidaFiscalAcumulada.year == year,
+        )
+        .first()
+    )
+    if row is None:
+        raise ValueError(
+            f"No fiscal loss record found for NIT {company_nit}, year {year}"
+        )
+    new_compensado = row.monto_compensado + monto_compensado_delta
+    if new_compensado > row.monto_perdida:
+        raise ValueError(
+            f"Compensación de {monto_compensado_delta} excedería la pérdida total "
+            f"de {row.monto_perdida} para año {year}. "
+            f"Ya compensado: {row.monto_compensado}."
+        )
+    row.monto_compensado = new_compensado
+    row.monto_pendiente = row.monto_perdida - new_compensado
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def sum_retenciones_anio(db: Session, company_nit: str, year: int) -> Decimal:
+    """
+    Sum of retenciones a favor for the given year.
+    Sources: PUC 135515 + 135518 debit balances from journal_entry_lines (Jan 1 – Dec 31).
+    """
+    start_dt = datetime(year, 1, 1, 0, 0, 0)
+    end_dt = datetime(year, 12, 31, 23, 59, 59)
+
+    result = (
+        db.query(func.sum(JournalEntryLine.debito))
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(
+            TransactionPosted.status == TransactionStatus.POSTED,
+            JournalEntryLine.company_nit == company_nit,
+            JournalEntryLine.cuenta_puc.in_(["135515", "135518"]),
+            JournalEntryLine.fecha >= start_dt,
+            JournalEntryLine.fecha <= end_dt,
+        )
+        .scalar()
+    )
+    return Decimal(str(result or 0))
+
+
+def get_latest_f2516_reviewed(
+    db: Session, company_nit: str, year: int
+) -> "TaxDeclarationDraft | None":
+    """Return the latest F2516 draft with status='reviewed' for the given year, or None."""
+    return (
+        db.query(TaxDeclarationDraft)
+        .filter(
+            TaxDeclarationDraft.company_nit == company_nit,
+            TaxDeclarationDraft.form_type == "F2516",
+            TaxDeclarationDraft.year == year,
+            TaxDeclarationDraft.status == "reviewed",
+        )
+        .order_by(TaxDeclarationDraft.created_at.desc())
+        .first()
+    )

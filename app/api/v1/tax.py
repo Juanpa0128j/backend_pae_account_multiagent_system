@@ -21,6 +21,8 @@ from app.models.agent_outputs import IVAOutput, WithholdingsOutput
 from app.models.schemas import (
     BaseMinimaUpsertRequest,
     ICADeclaracionOutput,
+    PerdidaFiscalResponse,
+    PerdidaFiscalUpsertRequest,
     RentaProvisionOutput,
     TaxConstantsResponse,
     UvtUpsertRequest,
@@ -600,3 +602,120 @@ async def upsert_base_minima(
         "year": row.year,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Pérdidas fiscales acumuladas (Art. 147 ET)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/perdidas-acumuladas",
+    response_model=list[PerdidaFiscalResponse],
+    summary="Listar pérdidas fiscales acumuladas",
+)
+async def list_perdidas_acumuladas(
+    nit: str = Query(..., description="Company NIT"),
+    year: Optional[int] = Query(
+        None,
+        description="Si se envía, filtra pérdidas disponibles previas a este año",
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[PerdidaFiscalResponse]:
+    """
+    List all fiscal loss records for a company.
+    If `year` is provided, returns only losses with monto_pendiente > 0 from prior years.
+    """
+    from app.models.database import PerdidaFiscalAcumulada
+
+    try:
+        normalized_nit = normalize_nit(nit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+
+    if year is not None:
+        rows = db_service.get_perdidas_disponibles(db, normalized_nit, year)
+    else:
+        rows = (
+            db.query(PerdidaFiscalAcumulada)
+            .filter(PerdidaFiscalAcumulada.company_nit == normalized_nit)
+            .order_by(PerdidaFiscalAcumulada.year.asc())
+            .all()
+        )
+    return [
+        PerdidaFiscalResponse(
+            id=r.id,
+            company_nit=r.company_nit,
+            year=r.year,
+            monto_perdida=str(r.monto_perdida),
+            monto_compensado=str(r.monto_compensado),
+            monto_pendiente=str(r.monto_pendiente),
+            decreto=r.decreto,
+            notas=r.notas,
+        )
+        for r in rows
+    ]
+
+
+@router.post(
+    "/perdidas-acumuladas",
+    response_model=PerdidaFiscalResponse,
+    summary="Crear o actualizar pérdida fiscal acumulada",
+    status_code=201,
+)
+async def upsert_perdida_acumulada(
+    body: PerdidaFiscalUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PerdidaFiscalResponse:
+    """Insert or update a fiscal loss record for the given company and year."""
+    try:
+        normalized_nit = normalize_nit(body.company_nit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+
+    row = db_service.upsert_perdida(
+        db,
+        company_nit=normalized_nit,
+        year=body.year,
+        monto_perdida=Decimal(str(body.monto_perdida)),
+        decreto=body.decreto,
+        notas=body.notas,
+    )
+    return PerdidaFiscalResponse(
+        id=row.id,
+        company_nit=row.company_nit,
+        year=row.year,
+        monto_perdida=str(row.monto_perdida),
+        monto_compensado=str(row.monto_compensado),
+        monto_pendiente=str(row.monto_pendiente),
+        decreto=row.decreto,
+        notas=row.notas,
+    )
+
+
+@router.delete(
+    "/perdidas-acumuladas/{perdida_id}",
+    status_code=204,
+    summary="Eliminar pérdida fiscal acumulada",
+)
+async def delete_perdida_acumulada(
+    perdida_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Hard delete a fiscal loss record by ID."""
+    from app.models.database import PerdidaFiscalAcumulada
+
+    row = (
+        db.query(PerdidaFiscalAcumulada)
+        .filter(PerdidaFiscalAcumulada.id == perdida_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"Pérdida fiscal {perdida_id} no encontrada"
+        )
+    db.delete(row)
+    db.commit()

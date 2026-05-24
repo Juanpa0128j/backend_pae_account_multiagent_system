@@ -331,3 +331,35 @@ class TaxConstantsResponse(BaseModel):
 
     uvt: Optional[UvtResponse] = None
     base_minima: List[BaseMinimaItem] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Pérdidas fiscales acumuladas schemas
+# ---------------------------------------------------------------------------
+
+
+class PerdidaFiscalResponse(BaseModel):
+    """Single fiscal loss row returned by the API."""
+
+    id: int
+    company_nit: str
+    year: int
+    monto_perdida: str
+    monto_compensado: str
+    monto_pendiente: str
+    decreto: Optional[str] = None
+    notas: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class PerdidaFiscalUpsertRequest(BaseModel):
+    """Request body for POST /api/v1/tax/perdidas-acumuladas."""
+
+    company_nit: str = Field(..., min_length=1, max_length=20)
+    year: int = Field(..., ge=1990, le=2100)
+    monto_perdida: float = Field(
+        ..., gt=0, description="Total fiscal loss in COP pesos"
+    )
+    decreto: Optional[str] = Field(None, max_length=100)
+    notas: Optional[str] = None
