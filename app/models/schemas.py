@@ -464,3 +464,31 @@ class TarifaRentaUpsertRequest(BaseModel):
                 f"actividad must be one of {sorted(_VALID_ACTIVIDAD)} or null"
             )
         return v
+
+
+# ---------------------------------------------------------------------------
+# Preflight validation schemas
+# ---------------------------------------------------------------------------
+
+
+class PreflightCheck(BaseModel):
+    """Single preflight check result."""
+
+    code: str
+    severity: Literal["blocker", "warning", "info"]
+    passed: bool
+    message: str
+    cta_path: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class PreflightResponse(BaseModel):
+    """Aggregated preflight validation report."""
+
+    ready: bool
+    form_type: str
+    period_start: str
+    period_end: str
+    checks: List[PreflightCheck]
+    blockers: int
+    warnings: int

@@ -24,6 +24,7 @@ from app.models.schemas import (
     ICADeclaracionOutput,
     PerdidaFiscalResponse,
     PerdidaFiscalUpsertRequest,
+    PreflightResponse,
     RentaProvisionOutput,
     ReopenDraftRequest,
     TarifaRentaResponse,
@@ -293,6 +294,53 @@ class GenerateDraftRequest(BaseModel):
 class UpdateFieldRequest(BaseModel):
     renglon: str
     value: float
+
+
+@router.get(
+    "/declarations/preflight",
+    response_model=PreflightResponse,
+    summary="Pre-flight validation before generating a DIAN declaration draft",
+)
+def api_declarations_preflight(
+    company_nit: str = Query(..., min_length=1),
+    form_type: str = Query(..., description="F300 | F350 | F110 | F2516 | ICA"),
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> PreflightResponse:
+    """
+    Validate that all prerequisites are in place to generate a declaration
+    draft for the given form_type and period. Returns a structured list of
+    checks (blockers / warnings / info) so the UI can guide the accountant
+    before they click "Generar borrador".
+    """
+    from app.services.preflight_service import run_preflight
+
+    if period_end < period_start:
+        raise HTTPException(
+            status_code=400,
+            detail="period_end no puede ser anterior a period_start",
+        )
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as nit_err:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {nit_err}")
+
+    try:
+        result = run_preflight(
+            db=db,
+            company_nit=normalized_nit,
+            form_type=form_type,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "INVALID_FORM_TYPE", "message": str(e)},
+        )
+    return PreflightResponse(**result)
 
 
 @router.post(

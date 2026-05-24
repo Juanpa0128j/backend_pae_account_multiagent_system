@@ -985,8 +985,29 @@ def generate_declaration_draft(
         raise ValueError(f"CompanySettings not found for NIT: {company_nit}")
 
     # F110 requires F2516 (Conciliación Fiscal) to have been registered first.
-    # Art. 772-1 ET obliges fiscal reconciliation before income tax filing.
+    # Art. 772-1 ET obliges fiscal reconciliation before income tax filing,
+    # BUT only when previous-year gross income ≥ 45.000 UVT × UVT_value.
+    f2516_skipped_below_threshold = False
     if form_type == "F110":
+        year = period_end.year
+        # Threshold check: F2516 obligatorio solo si ingresos brutos fiscales
+        # del año anterior ≥ 45.000 UVT (Art. 772-1 ET).
+        uvt_year = db_service.get_uvt(db, year)
+        if uvt_year is not None:
+            prev_year = year - 1
+            prev_start = datetime(prev_year, 1, 1, 0, 0, 0)
+            prev_end = datetime(prev_year, 12, 31, 23, 59, 59)
+            prev_ledger = db_service.get_general_ledger(
+                db=db,
+                start_date=prev_start,
+                end_date=prev_end,
+                company_nit=company_nit,
+            )
+            prev_gross = _sum_credits(prev_ledger, "4")
+            threshold = float(uvt_year) * 45000
+            if prev_gross < threshold:
+                f2516_skipped_below_threshold = True
+    if form_type == "F110" and not f2516_skipped_below_threshold:
         year = period_end.year
         # Empty draft stubs do not satisfy the regulatory requirement: require
         # the F2516 to have moved past 'draft' status (reviewed or filed) so
@@ -1032,6 +1053,14 @@ def generate_declaration_draft(
         )
     else:
         draft_fields, draft_warnings = builder(ledger, settings)
+
+    if form_type == "F110" and f2516_skipped_below_threshold:
+        draft_warnings.append(
+            DraftWarning(
+                "f2516",
+                "F2516 no obligatorio (ingresos < 45.000 UVT)",
+            )
+        )
 
     disclaimer_field = {
         "renglon": "_disclaimer",

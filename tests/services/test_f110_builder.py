@@ -142,6 +142,10 @@ def _generate_f110(settings, ledger, extra_patches=None, year: int = 2026):
             return_value=ledger,
         ),
         patch(
+            "app.services.tax_declaration_service.db_service.get_uvt",
+            return_value=Decimal("52374"),
+        ),
+        patch(
             "app.services.db_service.get_perdidas_disponibles",
             patches["app.services.db_service.get_perdidas_disponibles"],
         ),
@@ -525,6 +529,10 @@ def _generate_f110_with_tarifa(
         patch(
             "app.services.tax_declaration_service.db_service.get_general_ledger",
             return_value=ledger,
+        ),
+        patch(
+            "app.services.tax_declaration_service.db_service.get_uvt",
+            return_value=Decimal("52374"),
         ),
         patch(
             "app.services.db_service.get_perdidas_disponibles",

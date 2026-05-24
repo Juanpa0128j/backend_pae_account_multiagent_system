@@ -339,6 +339,10 @@ _F110_DB_PATCHES = [
     patch(
         "app.services.db_service.sum_retenciones_anio", return_value=Decimal("40000")
     ),
+    patch(
+        "app.services.tax_declaration_service.db_service.get_uvt",
+        return_value=Decimal("52374"),
+    ),
 ]
 
 
