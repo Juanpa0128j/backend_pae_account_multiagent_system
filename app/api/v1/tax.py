@@ -17,7 +17,14 @@ from app.agents.tributario_agent import (
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.agent_outputs import IVAOutput, WithholdingsOutput
-from app.models.schemas import ICADeclaracionOutput, RentaProvisionOutput
+from app.models.schemas import (
+    BaseMinimaUpsertRequest,
+    ICADeclaracionOutput,
+    RentaProvisionOutput,
+    TaxConstantsResponse,
+    UvtUpsertRequest,
+    VALID_CONCEPTO_VALUES,
+)
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
 
@@ -257,7 +264,19 @@ def api_generate_draft(
             period_end=body.period_end,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        msg = str(e)
+        if "F2516" in msg or "requiere F2516" in msg or "Conciliación Fiscal" in msg:
+            error_code = "F2516_REQUIRED"
+        elif "CompanySettings not found" in msg:
+            error_code = "COMPANY_SETTINGS_MISSING"
+        elif "Unsupported form_type" in msg:
+            error_code = "UNSUPPORTED_FORM_TYPE"
+        else:
+            error_code = "GENERATION_FAILED"
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": error_code, "message": msg},
+        )
 
     return {
         "draft_id": draft.id,
@@ -473,4 +492,71 @@ def api_exogena(
         "total_rows": len(rows),
         "invalid_rows": invalid_count,
         "rows": rows,
+    }
+
+
+# ─── Admin: UVT & Base Mínima constants ──────────────────────────
+
+
+@router.get("/constants", response_model=TaxConstantsResponse)
+async def get_tax_constants(
+    year: int = Query(..., ge=2000, le=2100, description="Fiscal year, e.g. 2026"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaxConstantsResponse:
+    """Return UVT value and base mínima thresholds stored in DB for a given year."""
+    data = db_service.list_tax_constants(db, year)
+    return TaxConstantsResponse(
+        uvt=data["uvt"],
+        base_minima=data["base_minima"],
+    )
+
+
+@router.put("/constants/uvt", response_model=dict)
+async def upsert_uvt_value(
+    body: UvtUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Insert or update UVT value for a given year. Requires authentication."""
+    row = db_service.upsert_uvt(
+        db,
+        year=body.year,
+        value=Decimal(str(body.value)),
+        decreto=body.decreto,
+    )
+    return {
+        "year": row.year,
+        "value": str(row.value),
+        "decreto": row.decreto,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.put("/constants/base-minima", response_model=dict)
+async def upsert_base_minima(
+    body: BaseMinimaUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Insert or update base mínima UVT units for a given concepto+year. Requires authentication."""
+    if body.concepto not in VALID_CONCEPTO_VALUES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"concepto '{body.concepto}' no válido. "
+                f"Valores permitidos: {sorted(VALID_CONCEPTO_VALUES)}"
+            ),
+        )
+    row = db_service.upsert_base_minima(
+        db,
+        concepto=body.concepto,
+        uvt_units=Decimal(str(body.uvt_units)),
+        year=body.year,
+    )
+    return {
+        "concepto": row.concepto,
+        "uvt_units": str(row.uvt_units),
+        "year": row.year,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }

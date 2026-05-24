@@ -755,6 +755,87 @@ class TaxDeclarationDraft(Base):
         return f"<TaxDeclarationDraft(id={self.id}, form={self.form_type}, nit={self.company_nit}, period={self.period_end})>"
 
 
+class UvtValue(Base):
+    """Yearly UVT (Unidad de Valor Tributario) published by DIAN.
+
+    Used by tributario_agent to compute base mínima thresholds in pesos.
+    Falls back to UVT_FALLBACK constant when no row exists for the year.
+    """
+
+    __tablename__ = "uvt_values"
+
+    year = Column(Integer, primary_key=True, comment="Fiscal year, e.g. 2026")
+    value = Column(
+        Numeric(12, 2),
+        nullable=False,
+        comment="UVT value in COP pesos, e.g. 52374.00",
+    )
+    decreto = Column(
+        String(64),
+        nullable=True,
+        comment="DIAN decreto that published this UVT, e.g. 'Decreto 0024/2025'",
+    )
+    effective_from = Column(
+        DateTime(timezone=False), nullable=True, comment="Start of validity period"
+    )
+    effective_to = Column(
+        DateTime(timezone=False), nullable=True, comment="End of validity period"
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self):
+        return (
+            f"<UvtValue(year={self.year}, value={self.value}, decreto={self.decreto})>"
+        )
+
+
+class TaxBaseMinima(Base):
+    """Base mínima (in UVT units) per concepto per year for retención thresholds.
+
+    Conceptos: retefuente_servicios, retefuente_bienes, retefuente_arrendamiento, reteica.
+    Falls back to BASE_MINIMA_RETEFUENTE_UVT / BASE_MINIMA_RETEICA_UVT constants when
+    no DB row exists.
+    """
+
+    __tablename__ = "tax_base_minima"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    concepto = Column(
+        String(64),
+        nullable=False,
+        index=True,
+        comment=(
+            "One of: retefuente_servicios, retefuente_bienes, "
+            "retefuente_arrendamiento, reteica"
+        ),
+    )
+    uvt_units = Column(
+        Numeric(8, 2),
+        nullable=False,
+        comment="Threshold in UVT units, e.g. 4.00 for 4 UVT",
+    )
+    year = Column(Integer, nullable=False, index=True, comment="Fiscal year")
+    effective_from = Column(
+        DateTime(timezone=False), nullable=True, comment="Start of validity period"
+    )
+    effective_to = Column(
+        DateTime(timezone=False), nullable=True, comment="End of validity period"
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self):
+        return (
+            f"<TaxBaseMinima(concepto={self.concepto}, year={self.year}, "
+            f"uvt_units={self.uvt_units})>"
+        )
+
+
 class UserCompany(Base):
     """Association table linking users to companies they manage.
 

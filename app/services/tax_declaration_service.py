@@ -108,7 +108,7 @@ def _build_f300(
 ) -> tuple[List[DraftField], List[DraftWarning]]:
     """
     F300 IVA draft — filled from PUC accounts:
-      240808 (IVA generado 19%), 240802 (IVA descontable)
+      240805 (IVA generado 19%), 240802 (IVA descontable)
 
     Prorrateo (Art. 490 ET): if ingresos totales (clase 4) exceed the taxable
     base implied by IVA generado, the taxpayer has excluded/exempt sales.
@@ -118,10 +118,10 @@ def _build_f300(
     fields: List[DraftField] = []
     warnings: List[DraftWarning] = []
 
-    # IVA generado: scan all 2408xx subaccounts (240802=descontable, 240808=19% generado,
+    # IVA generado: scan all 2408xx subaccounts (240802=descontable, 240805=19% generado,
     # plus rate-specific subaccounts for 5%/exempt/INC). Treat the standard 19% slot
     # explicitly so the field downstream still reflects only that rate.
-    iva_generado_19 = _exact_credit(ledger, "240808")
+    iva_generado_19 = _exact_credit(ledger, "240805")
     iva_descontable = _exact_debit(ledger, "240802")
 
     # ── Prorrateo detection (Art. 490 ET) ──────────────────────────────────
@@ -162,7 +162,7 @@ def _build_f300(
             "42",
             "IVA generado tarifa general 19%",
             round(iva_generado_19, 2),
-            "cuenta_240808",
+            "cuenta_240805",
             "high",
             False,
         )

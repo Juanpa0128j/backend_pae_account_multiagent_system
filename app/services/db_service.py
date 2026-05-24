@@ -27,11 +27,13 @@ from app.models.database import (
     ProcessJob,
     ProcessStatus,
     ReteicaTarifa,
+    TaxBaseMinima,
     Tercero,
     TransactionPending,
     TransactionPosted,
     TransactionStatus,
     UserCompany,
+    UvtValue,
 )
 
 logger = get_logger(__name__)
@@ -1727,3 +1729,104 @@ def get_municipios(db: Session) -> list[str]:
         .all()
     )
     return [r.municipio for r in rows]
+
+
+# ─── UVT & Base Mínima ───────────────────────────────────────────
+
+
+def get_uvt(db: Session, year: int) -> Decimal | None:
+    """Return UVT value for given year, or None if not in DB."""
+    row = db.query(UvtValue).filter(UvtValue.year == year).first()
+    if row is None:
+        return None
+    return Decimal(str(row.value))
+
+
+def get_base_minima(db: Session, concepto: str, year: int) -> Decimal | None:
+    """Return UVT units for given concepto+year, or None if not in DB."""
+    row = (
+        db.query(TaxBaseMinima)
+        .filter(TaxBaseMinima.concepto == concepto, TaxBaseMinima.year == year)
+        .first()
+    )
+    if row is None:
+        return None
+    return Decimal(str(row.uvt_units))
+
+
+def list_tax_constants(db: Session, year: int) -> dict:
+    """Return UVT and base_minima constants for given year.
+
+    Shape:
+        {
+            "uvt": {"year": int, "value": str, "decreto": str | None},
+            "base_minima": [{"concepto": str, "uvt_units": str, "year": int}, ...]
+        }
+    """
+    uvt_row = db.query(UvtValue).filter(UvtValue.year == year).first()
+    bm_rows = (
+        db.query(TaxBaseMinima)
+        .filter(TaxBaseMinima.year == year)
+        .order_by(TaxBaseMinima.concepto)
+        .all()
+    )
+    return {
+        "uvt": (
+            {
+                "year": uvt_row.year,
+                "value": str(uvt_row.value),
+                "decreto": uvt_row.decreto,
+            }
+            if uvt_row
+            else None
+        ),
+        "base_minima": [
+            {
+                "concepto": r.concepto,
+                "uvt_units": str(r.uvt_units),
+                "year": r.year,
+            }
+            for r in bm_rows
+        ],
+    }
+
+
+def upsert_uvt(
+    db: Session,
+    year: int,
+    value: Decimal,
+    decreto: str | None = None,
+) -> UvtValue:
+    """Insert or update UVT value for given year."""
+    row = db.query(UvtValue).filter(UvtValue.year == year).first()
+    if row is None:
+        row = UvtValue(year=year, value=value, decreto=decreto)
+        db.add(row)
+    else:
+        row.value = value
+        row.decreto = decreto
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def upsert_base_minima(
+    db: Session,
+    concepto: str,
+    uvt_units: Decimal,
+    year: int,
+) -> TaxBaseMinima:
+    """Insert or update base mínima for given concepto+year."""
+    row = (
+        db.query(TaxBaseMinima)
+        .filter(TaxBaseMinima.concepto == concepto, TaxBaseMinima.year == year)
+        .first()
+    )
+    if row is None:
+        row = TaxBaseMinima(concepto=concepto, uvt_units=uvt_units, year=year)
+        db.add(row)
+    else:
+        row.uvt_units = uvt_units
+    db.commit()
+    db.refresh(row)
+    return row

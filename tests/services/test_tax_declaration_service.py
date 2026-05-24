@@ -42,7 +42,7 @@ def _make_settings(**overrides):
 def _make_ledger():
     return [
         {
-            "account": "240808",
+            "account": "240805",
             "name": "IVA Generado",
             "total_debit": 0.0,
             "total_credit": 1_900_000.0,
@@ -136,9 +136,7 @@ def _mock_db(settings):
     # check; provide a reviewed F2516 by default so generic tests don't fail.
     f2516 = MagicMock()
     f2516.status = "reviewed"
-    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
-        f2516
-    )
+    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = f2516
     return db
 
 
@@ -168,7 +166,7 @@ class TestF300Draft:
         # Total ingresos 10M → ingresos_no_gravados ≈ 4.74M → operaciones_mixtas=True
         ledger = [
             {
-                "account": "240808",
+                "account": "240805",
                 "name": "IVA Generado",
                 "total_debit": 0.0,
                 "total_credit": 1_000_000.0,
@@ -215,7 +213,7 @@ class TestF300Draft:
         settings = _make_settings(iva_responsable=False)
         ledger = [
             {
-                "account": "240808",
+                "account": "240805",
                 "name": "IVA Generado",
                 "total_debit": 0.0,
                 "total_credit": 1_000_000.0,
@@ -596,7 +594,7 @@ class TestSaldoAFavor:
         """Ledger where IVA descontable > IVA generado → saldo a favor."""
         return [
             {
-                "account": "240808",
+                "account": "240805",
                 "name": "IVA Generado",
                 "total_debit": 0.0,
                 "total_credit": 500_000.0,

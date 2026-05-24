@@ -270,3 +270,64 @@ class RentaProvisionOutput(BaseModel):
     cuenta_gasto_puc: str = "540502"
     cuenta_pasivo_puc: str = "240405"
     referencias: List[str]
+
+
+# ─── Tax constants (UVT + base mínima) admin schemas ─────────────
+
+VALID_CONCEPTO_VALUES = frozenset(
+    {
+        "retefuente_servicios",
+        "retefuente_bienes",
+        "retefuente_arrendamiento",
+        "reteica",
+    }
+)
+
+
+class UvtUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/constants/uvt."""
+
+    year: int = Field(..., ge=2000, le=2100)
+    value: float = Field(..., gt=0, description="UVT value in COP pesos")
+    decreto: Optional[str] = Field(None, max_length=64)
+
+
+class BaseMinimaUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/constants/base-minima."""
+
+    concepto: str = Field(
+        ...,
+        description=(
+            "One of: retefuente_servicios, retefuente_bienes, "
+            "retefuente_arrendamiento, reteica"
+        ),
+    )
+    uvt_units: float = Field(..., gt=0, description="Threshold in UVT units")
+    year: int = Field(..., ge=2000, le=2100)
+
+
+class UvtResponse(BaseModel):
+    """Single UVT row."""
+
+    year: int
+    value: str
+    decreto: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class BaseMinimaItem(BaseModel):
+    """Single base mínima row."""
+
+    concepto: str
+    uvt_units: str
+    year: int
+
+    model_config = {"from_attributes": True}
+
+
+class TaxConstantsResponse(BaseModel):
+    """Response for GET /api/v1/tax/constants?year=YYYY."""
+
+    uvt: Optional[UvtResponse] = None
+    base_minima: List[BaseMinimaItem] = Field(default_factory=list)
