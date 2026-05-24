@@ -5,8 +5,8 @@ not by Decreto. Rename the column to reflect the correct legal instrument.
 
 Idempotent: checks information_schema.columns before ALTER (both directions).
 
-Revision ID: t8u9v0w1x2y3
-Revises: s7t8u9v0w1x2
+Revision ID: w3x4y5z6a7b8
+Revises: v2w3x4y5z6a7
 Create Date: 2026-05-24 16:00:00.000000
 
 """
@@ -15,8 +15,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "t8u9v0w1x2y3"
-down_revision: Union[str, Sequence[str], None] = "s7t8u9v0w1x2"
+revision: str = "w3x4y5z6a7b8"
+down_revision: Union[str, Sequence[str], None] = "v2w3x4y5z6a7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
