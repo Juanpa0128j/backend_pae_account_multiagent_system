@@ -19,6 +19,8 @@ from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.agent_outputs import IVAOutput, WithholdingsOutput
 from app.models.schemas import (
+    AjusteFiscalResponse,
+    AjusteFiscalUpsertRequest,
     BaseMinimaUpsertRequest,
     FileDraftRequest,
     ICADeclaracionOutput,
@@ -1117,4 +1119,93 @@ async def delete_tax_concept_endpoint(
     if row is None:
         raise HTTPException(
             status_code=404, detail=f"Concepto de retención '{code}' no encontrado"
+        )
+
+
+# ---------------------------------------------------------------------------
+# AjusteFiscal endpoints — F2516 fiscal reconciliation adjustments
+# ---------------------------------------------------------------------------
+
+
+def _ajuste_to_response(row) -> AjusteFiscalResponse:
+    return AjusteFiscalResponse(
+        id=row.id,
+        company_nit=row.company_nit,
+        year=row.year,
+        seccion=row.seccion,
+        concepto=row.concepto,
+        valor_contable=float(row.valor_contable),
+        valor_fiscal=float(row.valor_fiscal),
+        tipo_diferencia=row.tipo_diferencia,
+        descripcion=row.descripcion,
+    )
+
+
+@router.get(
+    "/ajustes-fiscales",
+    response_model=list[AjusteFiscalResponse],
+    summary="Listar ajustes fiscales para F2516",
+)
+async def list_ajustes_fiscales(
+    company_nit: str = Query(..., description="Company NIT"),
+    year: int = Query(..., ge=1990, le=2100),
+    seccion: Optional[str] = Query(
+        None,
+        description="ESF_ACTIVO | ESF_PASIVO | ESF_PATRIMONIO | ERI_INGRESO | ERI_COSTO | ERI_GASTO",
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[AjusteFiscalResponse]:
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+
+    rows = db_service.list_ajustes_fiscales(db, normalized_nit, year, seccion)
+    return [_ajuste_to_response(r) for r in rows]
+
+
+@router.put(
+    "/ajustes-fiscales",
+    response_model=AjusteFiscalResponse,
+    summary="Crear o actualizar un ajuste fiscal (F2516)",
+)
+async def upsert_ajuste_fiscal(
+    body: AjusteFiscalUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AjusteFiscalResponse:
+    try:
+        normalized_nit = normalize_nit(body.company_nit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+
+    row = db_service.upsert_ajuste_fiscal(
+        db,
+        company_nit=normalized_nit,
+        year=body.year,
+        seccion=body.seccion,
+        concepto=body.concepto,
+        valor_contable=Decimal(str(body.valor_contable)),
+        valor_fiscal=Decimal(str(body.valor_fiscal)),
+        tipo_diferencia=body.tipo_diferencia,
+        descripcion=body.descripcion,
+    )
+    return _ajuste_to_response(row)
+
+
+@router.delete(
+    "/ajustes-fiscales/{ajuste_id}",
+    status_code=204,
+    summary="Eliminar un ajuste fiscal",
+)
+async def delete_ajuste_fiscal(
+    ajuste_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    deleted = db_service.delete_ajuste_fiscal(db, ajuste_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail=f"Ajuste fiscal {ajuste_id} no encontrado"
         )

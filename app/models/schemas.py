@@ -560,3 +560,71 @@ class TaxConceptUpsertRequest(BaseModel):
                 f"categoria must be one of {sorted(_VALID_CONCEPT_CATEGORIA)}"
             )
         return v
+
+
+# ---------------------------------------------------------------------------
+# AjusteFiscal schemas (F2516 reconciliation rows)
+# ---------------------------------------------------------------------------
+
+_VALID_AJUSTE_SECCIONES = frozenset(
+    {
+        "ESF_ACTIVO",
+        "ESF_PASIVO",
+        "ESF_PATRIMONIO",
+        "ERI_INGRESO",
+        "ERI_COSTO",
+        "ERI_GASTO",
+    }
+)
+
+_VALID_AJUSTE_TIPO_DIFERENCIA = frozenset(
+    {"permanente", "temporaria_imponible", "temporaria_deducible"}
+)
+
+
+class AjusteFiscalResponse(BaseModel):
+    """Single ajuste_fiscal row returned by the API."""
+
+    id: str
+    company_nit: str
+    year: int
+    seccion: str
+    concepto: str
+    valor_contable: float
+    valor_fiscal: float
+    tipo_diferencia: str
+    descripcion: Optional[str] = None
+
+
+class AjusteFiscalUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/ajustes-fiscales."""
+
+    company_nit: str = Field(..., min_length=1, max_length=20)
+    year: int = Field(..., ge=1990, le=2100)
+    seccion: str = Field(..., description="ESF_* | ERI_*")
+    concepto: str = Field(..., min_length=1, max_length=64)
+    valor_contable: float = Field(default=0.0)
+    valor_fiscal: float = Field(default=0.0)
+    tipo_diferencia: str = Field(
+        ...,
+        description="permanente | temporaria_imponible | temporaria_deducible",
+    )
+    descripcion: Optional[str] = None
+
+    @field_validator("seccion")
+    @classmethod
+    def _check_seccion(cls, v: str) -> str:
+        if v not in _VALID_AJUSTE_SECCIONES:
+            raise ValueError(
+                f"seccion must be one of {sorted(_VALID_AJUSTE_SECCIONES)}"
+            )
+        return v
+
+    @field_validator("tipo_diferencia")
+    @classmethod
+    def _check_tipo_diferencia(cls, v: str) -> str:
+        if v not in _VALID_AJUSTE_TIPO_DIFERENCIA:
+            raise ValueError(
+                f"tipo_diferencia must be one of {sorted(_VALID_AJUSTE_TIPO_DIFERENCIA)}"
+            )
+        return v

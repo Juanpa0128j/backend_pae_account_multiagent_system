@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
 from app.models.database import (
+    AjusteFiscal,
     AuditLog,
     CompanySettings,
     CuentaPUC,
@@ -2497,3 +2498,81 @@ def count_unclassified_retenciones(
         if end_date:
             q = q.filter(JournalEntryLine.fecha <= end_date)
     return int(q.scalar() or 0)
+
+
+# ---------------------------------------------------------------------------
+# AjusteFiscal helpers — F2516 auto-poblado
+# ---------------------------------------------------------------------------
+
+
+def list_ajustes_fiscales(
+    db: Session,
+    company_nit: str,
+    year: int,
+    seccion: Optional[str] = None,
+) -> list[AjusteFiscal]:
+    """Return all ajustes_fiscales rows for (nit, year), optionally filtered by seccion."""
+    q = db.query(AjusteFiscal).filter(
+        AjusteFiscal.company_nit == company_nit,
+        AjusteFiscal.year == year,
+    )
+    if seccion is not None:
+        q = q.filter(AjusteFiscal.seccion == seccion)
+    return q.order_by(AjusteFiscal.seccion.asc(), AjusteFiscal.concepto.asc()).all()
+
+
+def upsert_ajuste_fiscal(
+    db: Session,
+    *,
+    company_nit: str,
+    year: int,
+    seccion: str,
+    concepto: str,
+    valor_contable: Decimal,
+    valor_fiscal: Decimal,
+    tipo_diferencia: str,
+    descripcion: Optional[str] = None,
+) -> AjusteFiscal:
+    """Insert or update a single ajuste fiscal row keyed by (nit, year, seccion, concepto)."""
+    row = (
+        db.query(AjusteFiscal)
+        .filter(
+            AjusteFiscal.company_nit == company_nit,
+            AjusteFiscal.year == year,
+            AjusteFiscal.seccion == seccion,
+            AjusteFiscal.concepto == concepto,
+        )
+        .first()
+    )
+    if row is None:
+        row = AjusteFiscal(
+            id=str(uuid.uuid4()),
+            company_nit=company_nit,
+            year=year,
+            seccion=seccion,
+            concepto=concepto,
+            valor_contable=valor_contable,
+            valor_fiscal=valor_fiscal,
+            tipo_diferencia=tipo_diferencia,
+            descripcion=descripcion,
+        )
+        db.add(row)
+    else:
+        row.valor_contable = valor_contable
+        row.valor_fiscal = valor_fiscal
+        row.tipo_diferencia = tipo_diferencia
+        if descripcion is not None:
+            row.descripcion = descripcion
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_ajuste_fiscal(db: Session, ajuste_id: str) -> bool:
+    """Hard delete an ajuste fiscal row. Returns True if deleted, False if not found."""
+    row = db.query(AjusteFiscal).filter(AjusteFiscal.id == ajuste_id).first()
+    if row is None:
+        return False
+    db.delete(row)
+    db.commit()
+    return True

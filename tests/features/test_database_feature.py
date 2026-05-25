@@ -423,9 +423,9 @@ class TestAccountingBooks:
         total_debito = sum(line.debito for line in lines)
         total_credito = sum(line.credito for line in lines)
 
-        assert (
-            total_debito == total_credito
-        ), f"Partida doble violation: D={total_debito} != C={total_credito}"
+        assert total_debito == total_credito, (
+            f"Partida doble violation: D={total_debito} != C={total_credito}"
+        )
         assert total_debito == Decimal("1190000")
 
     def test_libro_diario(self, db, posted_with_entries):
