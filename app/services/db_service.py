@@ -30,6 +30,7 @@ from app.models.database import (
     PerdidaFiscalAcumulada,
     TarifaRenta,
     TaxBaseMinima,
+    TaxConcept,
     TaxDeclarationDraft,
     Tercero,
     TransactionPending,
@@ -288,6 +289,8 @@ def create_transaction_posted(
     agent_reasoning: Optional[Dict] = None,
     company_nit: Optional[str] = None,
     tipo_iva: Optional[str] = None,
+    concepto_retencion: Optional[str] = None,
+    tipo_persona_emisor: Optional[str] = None,
     commit: bool = True,
     created_by: str | None = None,
 ) -> TransactionPosted:
@@ -297,12 +300,23 @@ def create_transaction_posted(
     so the F300 builder can compute Art. 490 ET prorrateo. Allowed values
     live in ``app.services.tax_constants.TIPOS_IVA_VALIDOS``. ``None`` means
     "no clasificado" (the builder treats it conservatively).
+
+    ``concepto_retencion`` (optional) maps to ``tax_concepts.code`` and lets
+    the F350 builder discriminate retenciones by F350 renglón. ``None`` means
+    "sin clasificar" (the builder surfaces a warning).
+
+    ``tipo_persona_emisor`` (optional) is ``"PJ"`` or ``"PN"``. Used together
+    with concepto_retencion to populate the right F350 column.
     """
-    from app.services.tax_constants import is_valid_tipo_iva
+    from app.services.tax_constants import is_valid_tipo_iva, is_valid_tipo_persona
 
     if not is_valid_tipo_iva(tipo_iva):
         raise ValueError(
             f"Invalid tipo_iva: {tipo_iva!r}. Must be one of TIPOS_IVA_VALIDOS or None."
+        )
+    if not is_valid_tipo_persona(tipo_persona_emisor):
+        raise ValueError(
+            f"Invalid tipo_persona_emisor: {tipo_persona_emisor!r}. Must be 'PJ', 'PN', or None."
         )
 
     posted = TransactionPosted(
@@ -321,6 +335,8 @@ def create_transaction_posted(
         tax_references=tax_references,
         agent_reasoning=agent_reasoning,
         tipo_iva=tipo_iva,
+        concepto_retencion=concepto_retencion,
+        tipo_persona_emisor=tipo_persona_emisor,
         status=TransactionStatus.POSTED,
     )
     db.add(posted)
@@ -2306,3 +2322,178 @@ def upsert_tarifa_renta(
     db.commit()
     db.refresh(row)
     return row
+
+
+# ─── TaxConcept helpers (F350 — Res. DIAN 000031/2024) ─────────────────────
+
+
+def _tax_concept_to_dict(row: TaxConcept) -> dict:
+    return {
+        "code": row.code,
+        "label": row.label,
+        "renglon_350": row.renglon_350,
+        "aplica_a": row.aplica_a,
+        "tarifa_default": (
+            float(row.tarifa_default) if row.tarifa_default is not None else None
+        ),
+        "base_minima_uvt": (
+            float(row.base_minima_uvt) if row.base_minima_uvt is not None else None
+        ),
+        "categoria": row.categoria,
+        "art_referencia": row.art_referencia,
+        "activo": bool(row.activo),
+    }
+
+
+def list_tax_concepts(db: Session, activo: bool | None = True) -> list[dict]:
+    """List tax_concepts rows. Pass ``activo=None`` to include soft-deleted."""
+    q = db.query(TaxConcept)
+    if activo is not None:
+        q = q.filter(TaxConcept.activo == activo)
+    rows = q.order_by(TaxConcept.renglon_350, TaxConcept.code).all()
+    return [_tax_concept_to_dict(r) for r in rows]
+
+
+def get_tax_concept(db: Session, code: str) -> TaxConcept | None:
+    """Return the TaxConcept row keyed by code, or None."""
+    return db.query(TaxConcept).filter(TaxConcept.code == code).first()
+
+
+def upsert_tax_concept(
+    db: Session,
+    code: str,
+    label: str,
+    renglon_350: str,
+    aplica_a: str,
+    categoria: str,
+    tarifa_default: Decimal | None = None,
+    base_minima_uvt: Decimal | None = None,
+    art_referencia: str | None = None,
+    activo: bool = True,
+) -> TaxConcept:
+    """Insert or update a tax_concepts row keyed by code."""
+    from app.services.tax_constants import is_valid_aplica_a
+
+    if not is_valid_aplica_a(aplica_a):
+        raise ValueError(
+            f"Invalid aplica_a: {aplica_a!r}. Must be 'PJ', 'PN', or 'AMB'."
+        )
+
+    row = db.query(TaxConcept).filter(TaxConcept.code == code).first()
+    if row is None:
+        row = TaxConcept(
+            code=code,
+            label=label,
+            renglon_350=renglon_350,
+            aplica_a=aplica_a,
+            categoria=categoria,
+            tarifa_default=tarifa_default,
+            base_minima_uvt=base_minima_uvt,
+            art_referencia=art_referencia,
+            activo=activo,
+        )
+        db.add(row)
+    else:
+        row.label = label
+        row.renglon_350 = renglon_350
+        row.aplica_a = aplica_a
+        row.categoria = categoria
+        row.tarifa_default = tarifa_default
+        row.base_minima_uvt = base_minima_uvt
+        row.art_referencia = art_referencia
+        row.activo = activo
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def soft_delete_tax_concept(db: Session, code: str) -> TaxConcept | None:
+    """Mark a tax_concepts row as inactive. Returns the row, or None if missing."""
+    row = db.query(TaxConcept).filter(TaxConcept.code == code).first()
+    if row is None:
+        return None
+    row.activo = False
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def sum_retencion_by_concepto(
+    db: Session,
+    concepto_code: str,
+    *,
+    company_nit: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> Decimal:
+    """Sum credits on retención liability accounts for a concepto.
+
+    Resolution per categoría:
+      * salarios → SUM(credito) WHERE cuenta_puc LIKE '2365%' OR '2367%'
+        (no concepto filter — salarios live outside concepto_retencion).
+      * ica      → SUM(credito) WHERE cuenta_puc LIKE '2368%'
+      * default  → SUM(credito) WHERE cuenta_puc LIKE '2365%'
+        AND transactions_posted.concepto_retencion = concepto_code.
+    """
+    concept = get_tax_concept(db, concepto_code)
+    if concept is None:
+        return Decimal("0")
+
+    q = (
+        db.query(func.coalesce(func.sum(JournalEntryLine.credito), 0))
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+    )
+
+    if concept.categoria == "salarios":
+        q = q.filter(
+            or_(
+                JournalEntryLine.cuenta_puc.startswith("2365"),
+                JournalEntryLine.cuenta_puc.startswith("2367"),
+            )
+        )
+    elif concept.categoria == "ica":
+        q = q.filter(JournalEntryLine.cuenta_puc.startswith("2368"))
+    else:
+        q = q.filter(JournalEntryLine.cuenta_puc.startswith("2365"))
+        q = q.filter(TransactionPosted.concepto_retencion == concepto_code)
+
+    if company_nit:
+        q = q.filter(JournalEntryLine.company_nit == company_nit)
+    if start_date:
+        q = q.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        q = q.filter(JournalEntryLine.fecha <= end_date)
+
+    total = q.scalar() or 0
+    return Decimal(str(total))
+
+
+def count_unclassified_retenciones(
+    db: Session,
+    *,
+    company_nit: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> int:
+    """Count POSTED transactions with retefuente > 0 but no concepto_retencion."""
+    q = db.query(func.count(TransactionPosted.id)).filter(
+        TransactionPosted.status == TransactionStatus.POSTED,
+        TransactionPosted.retefuente > 0,
+        TransactionPosted.concepto_retencion.is_(None),
+    )
+    if company_nit:
+        q = q.filter(TransactionPosted.company_nit == company_nit)
+    if start_date or end_date:
+        q = q.join(
+            JournalEntryLine,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        if start_date:
+            q = q.filter(JournalEntryLine.fecha >= start_date)
+        if end_date:
+            q = q.filter(JournalEntryLine.fecha <= end_date)
+    return int(q.scalar() or 0)

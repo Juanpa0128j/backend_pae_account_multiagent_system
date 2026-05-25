@@ -29,6 +29,8 @@ from app.models.schemas import (
     ReopenDraftRequest,
     TarifaRentaResponse,
     TarifaRentaUpsertRequest,
+    TaxConceptResponse,
+    TaxConceptUpsertRequest,
     TaxConstantsResponse,
     UvtUpsertRequest,
     VALID_CONCEPTO_VALUES,
@@ -1027,3 +1029,92 @@ async def delete_tarifa_renta(
         )
     db.delete(row)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# TaxConcept endpoints — F350 retención catalog (Res. DIAN 000031/2024)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/concepts",
+    response_model=list[TaxConceptResponse],
+    summary="Listar conceptos de retención F350",
+)
+async def list_tax_concepts_endpoint(
+    activo: Optional[bool] = Query(
+        True, description="True (default) = solo activos; null = todos"
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[TaxConceptResponse]:
+    """List all rows in tax_concepts. Defaults to activo=True."""
+    rows = db_service.list_tax_concepts(db, activo=activo)
+    return [TaxConceptResponse(**r) for r in rows]
+
+
+@router.put(
+    "/concepts",
+    response_model=TaxConceptResponse,
+    status_code=200,
+    summary="Crear o actualizar concepto de retención",
+)
+async def upsert_tax_concept_endpoint(
+    body: TaxConceptUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaxConceptResponse:
+    """Insert or update a tax_concepts row keyed by code."""
+    row = db_service.upsert_tax_concept(
+        db,
+        code=body.code,
+        label=body.label,
+        renglon_350=body.renglon_350,
+        aplica_a=body.aplica_a,
+        categoria=body.categoria,
+        tarifa_default=(
+            Decimal(str(body.tarifa_default))
+            if body.tarifa_default is not None
+            else None
+        ),
+        base_minima_uvt=(
+            Decimal(str(body.base_minima_uvt))
+            if body.base_minima_uvt is not None
+            else None
+        ),
+        art_referencia=body.art_referencia,
+        activo=body.activo,
+    )
+    return TaxConceptResponse(
+        code=row.code,
+        label=row.label,
+        renglon_350=row.renglon_350,
+        aplica_a=row.aplica_a,
+        tarifa_default=(
+            float(row.tarifa_default) if row.tarifa_default is not None else None
+        ),
+        base_minima_uvt=(
+            float(row.base_minima_uvt) if row.base_minima_uvt is not None else None
+        ),
+        categoria=row.categoria,
+        art_referencia=row.art_referencia,
+        activo=bool(row.activo),
+    )
+
+
+@router.delete(
+    "/concepts/{code}",
+    status_code=204,
+    summary="Soft delete (activo=False) concepto de retención",
+)
+async def delete_tax_concept_endpoint(
+    code: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Soft delete: marks activo=False so historical data stays queryable."""
+    row = db_service.soft_delete_tax_concept(db, code)
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"Concepto de retención '{code}' no encontrado"
+        )

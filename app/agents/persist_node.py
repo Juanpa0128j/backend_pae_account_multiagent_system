@@ -910,11 +910,28 @@ def _run_persist(state: AgentState) -> AgentState:
                 posted_ids.append(existing_posted_id)
                 continue
 
-            from app.services.tax_constants import infer_tipo_iva_from_journal
+            from app.services.tax_constants import (
+                infer_concepto_retencion,
+                infer_tipo_iva_from_journal,
+                infer_tipo_persona_from_nit,
+            )
 
             tipo_iva_inferred = infer_tipo_iva_from_journal(
                 journal_json, descripcion=descripcion
             )
+            tipo_persona_inferred = infer_tipo_persona_from_nit(nit_emisor)
+            concepto_inferred = infer_concepto_retencion(
+                cuenta_puc,
+                tipo_persona_inferred,
+                descripcion=descripcion,
+            )
+            if tipo_persona_inferred is None:
+                logger.warning(
+                    "db_persist: tipo_persona_emisor no inferido para nit_emisor=%r — "
+                    "asumiendo PJ por defecto",
+                    nit_emisor,
+                )
+                tipo_persona_inferred = "PJ"
 
             txn_posted = db_service.create_transaction_posted(
                 db,
@@ -932,6 +949,8 @@ def _run_persist(state: AgentState) -> AgentState:
                 tax_references=tax_references,
                 agent_reasoning=agent_reasoning,
                 tipo_iva=tipo_iva_inferred,
+                concepto_retencion=concepto_inferred,
+                tipo_persona_emisor=tipo_persona_inferred,
             )
             posted_ids.append(as_str(getattr(txn_posted, "id", ""), ""))
             logger.info("db_persist: Created TransactionPosted %s", txn_posted.id)

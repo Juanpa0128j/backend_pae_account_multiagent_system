@@ -123,3 +123,131 @@ def infer_tipo_iva_from_journal(
     # Class-4 credit con cero IVA generado: ambiguo (exento vs excluido vs
     # no_gravado). Dejar NULL para revisión humana.
     return None
+
+
+# ---------------------------------------------------------------------------
+# F350 retención — concepto + tipo_persona inference
+# ---------------------------------------------------------------------------
+
+TIPO_PERSONA_PJ: Final[str] = "PJ"
+TIPO_PERSONA_PN: Final[str] = "PN"
+APLICA_AMBOS: Final[str] = "AMB"
+
+TIPOS_PERSONA_VALIDOS: Final[frozenset[str]] = frozenset(
+    {TIPO_PERSONA_PJ, TIPO_PERSONA_PN}
+)
+APLICA_A_VALIDOS: Final[frozenset[str]] = frozenset(
+    {TIPO_PERSONA_PJ, TIPO_PERSONA_PN, APLICA_AMBOS}
+)
+
+
+# PUC-prefix → categoria del concepto retención. Used as primary signal
+# when the contador already classified the expense correctly.
+_PUC_PREFIX_TO_CATEGORIA: Final[dict[str, str]] = {
+    "5135": "arrendamiento",  # gastos de arrendamiento
+    "5140": "arrendamiento",
+    "511525": "servicios",  # servicios técnicos
+    "511505": "honorarios",  # honorarios / asesoría
+    "511510": "honorarios",  # comisiones
+    "5110": "honorarios",
+    "5111": "honorarios",
+    "5115": "servicios",
+    "143": "compras",  # inventarios — compras de bienes
+    "6135": "compras",  # costo de mercancías
+    "6205": "compras",  # costo de ventas
+    "5145": "servicios",  # servicios públicos
+    "5160": "servicios",
+}
+
+
+def is_valid_tipo_persona(value: str | None) -> bool:
+    """True when value is PJ, PN, or None."""
+    return value is None or value in TIPOS_PERSONA_VALIDOS
+
+
+def is_valid_aplica_a(value: str | None) -> bool:
+    """True when value is PJ, PN, AMB, or None."""
+    return value is None or value in APLICA_A_VALIDOS
+
+
+def infer_tipo_persona_from_nit(nit: str | None) -> str | None:
+    """Heuristic tipo_persona from a Colombian NIT.
+
+    Empresa NITs (personas jurídicas) typically start with 8 or 9 and have
+    9–10 base digits before the verification digit. Cédulas (personas
+    naturales) are 6–10 digits without the empresarial prefix.
+
+    Returns ``None`` when the NIT is empty / non-numeric so the caller can
+    fall back to a safe default + warning.
+    """
+    if not nit:
+        return None
+    cleaned = "".join(ch for ch in nit if ch.isdigit())
+    if not cleaned:
+        return None
+    # Strip a trailing dígito de verificación if length suggests it.
+    base = cleaned[:-1] if len(cleaned) in (10, 11) else cleaned
+    if not base:
+        return None
+    if base.startswith(("8", "9")) and len(base) >= 8:
+        return TIPO_PERSONA_PJ
+    return TIPO_PERSONA_PN
+
+
+def infer_concepto_retencion(
+    cuenta_puc: str | None,
+    tipo_persona: str | None,
+    *,
+    descripcion: str | None = None,
+) -> str | None:
+    """Infer ``concepto_retencion`` (tax_concepts.code) from PUC + tipo_persona.
+
+    Resolution order:
+      1. PUC prefix → categoria.
+      2. categoria + tipo_persona → concept code.
+
+    Returns ``None`` when no rule matches — F350 builder will emit a warning.
+    """
+    if not cuenta_puc:
+        return None
+    cuenta_puc = str(cuenta_puc)
+    categoria: str | None = None
+    # Longest-prefix wins.
+    for prefix in sorted(_PUC_PREFIX_TO_CATEGORIA.keys(), key=len, reverse=True):
+        if cuenta_puc.startswith(prefix):
+            categoria = _PUC_PREFIX_TO_CATEGORIA[prefix]
+            break
+
+    desc_lower = (descripcion or "").lower()
+    if categoria is None:
+        if (
+            "hidrocarbur" in desc_lower
+            or "petróle" in desc_lower
+            or "petrole" in desc_lower
+        ):
+            return "hidrocarburos"
+        if "carbón" in desc_lower or "carbon" in desc_lower:
+            return "carbon"
+        if "minera" in desc_lower:
+            return "minerales"
+        if "publicidad" in desc_lower and (
+            "online" in desc_lower or "digital" in desc_lower
+        ):
+            return "pes_publicidad_online"
+        if "servicio digital" in desc_lower or "plataforma digital" in desc_lower:
+            return "pes_servicios_digitales"
+        return None
+
+    # Map (categoria, tipo_persona) → concept code.
+    persona = tipo_persona or TIPO_PERSONA_PJ
+    mapping: dict[tuple[str, str], str] = {
+        ("compras", TIPO_PERSONA_PJ): "compras_pj",
+        ("compras", TIPO_PERSONA_PN): "compras_pn",
+        ("servicios", TIPO_PERSONA_PJ): "servicios_pj",
+        ("servicios", TIPO_PERSONA_PN): "servicios_pn_decl",
+        ("honorarios", TIPO_PERSONA_PJ): "honorarios_pj",
+        ("honorarios", TIPO_PERSONA_PN): "honorarios_pn",
+        ("arrendamiento", TIPO_PERSONA_PJ): "arrendamiento_pj",
+        ("arrendamiento", TIPO_PERSONA_PN): "arrendamiento_pn",
+    }
+    return mapping.get((categoria, persona))

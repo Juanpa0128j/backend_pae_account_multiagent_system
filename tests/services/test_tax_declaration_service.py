@@ -283,41 +283,104 @@ class TestF300Draft:
 # ---------------------------------------------------------------------------
 
 
+_F350_DB_PATCHES = [
+    patch(
+        "app.services.tax_declaration_service.db_service.list_tax_concepts",
+        return_value=[
+            {
+                "code": "compras_pj",
+                "label": "Compras PJ",
+                "renglon_350": "25",
+                "aplica_a": "PJ",
+                "categoria": "compras",
+                "tarifa_default": 0.025,
+                "base_minima_uvt": 27.0,
+                "art_referencia": "Art. 392 ET",
+                "activo": True,
+            },
+            {
+                "code": "reteica",
+                "label": "ReteICA",
+                "renglon_350": "76",
+                "aplica_a": "AMB",
+                "categoria": "ica",
+                "tarifa_default": None,
+                "base_minima_uvt": None,
+                "art_referencia": "Ley 14/1983",
+                "activo": True,
+            },
+        ],
+    ),
+    patch(
+        "app.services.tax_declaration_service.db_service.sum_retencion_by_concepto",
+        side_effect=lambda db, concepto_code, **kw: {
+            "compras_pj": Decimal("60000"),
+            "reteica": Decimal("9660"),
+        }.get(concepto_code, Decimal("0")),
+    ),
+    patch(
+        "app.services.tax_declaration_service.db_service.count_unclassified_retenciones",
+        return_value=0,
+    ),
+]
+
+
+def _apply_f350_patches(fn):
+    for p in reversed(_F350_DB_PATCHES):
+        fn = p(fn)
+    return fn
+
+
 class TestF350Draft:
+    @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_retefuente_from_cuenta_2365(self, mock_ledger):
+    def test_retefuente_from_cuenta_2365(self, mock_ledger, *_):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
-            _mock_db(settings), "900123456", "F350", date(2026, 1, 1), date(2026, 1, 31)
+            _mock_db(settings),
+            "900123456",
+            "F350",
+            date(2026, 1, 1),
+            date(2026, 1, 31),
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
         assert fields["25"]["value"] == pytest.approx(60_000.0)
-        assert fields["25"]["source"] == "cuenta_2365"
+        assert fields["25"]["source"] == "concepto_compras_pj"
 
+    @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_salarios_requires_review(self, mock_ledger):
+    def test_salarios_requires_review(self, mock_ledger, *_):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
-            _mock_db(settings), "900123456", "F350", date(2026, 1, 1), date(2026, 1, 31)
+            _mock_db(settings),
+            "900123456",
+            "F350",
+            date(2026, 1, 1),
+            date(2026, 1, 31),
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
         assert fields["50"]["requires_review"] is True
 
+    @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_reteica_from_cuenta_2368(self, mock_ledger):
+    def test_reteica_from_cuenta_2368(self, mock_ledger, *_):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
-            _mock_db(settings), "900123456", "F350", date(2026, 1, 1), date(2026, 1, 31)
+            _mock_db(settings),
+            "900123456",
+            "F350",
+            date(2026, 1, 1),
+            date(2026, 1, 31),
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["35"]["value"] == pytest.approx(9_660.0)
-        assert fields["35"]["source"] == "cuenta_2368"
+        assert fields["76"]["value"] == pytest.approx(9_660.0)
+        assert fields["76"]["source"] == "concepto_reteica"
 
 
 # ---------------------------------------------------------------------------

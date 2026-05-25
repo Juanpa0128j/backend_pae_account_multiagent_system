@@ -492,3 +492,71 @@ class PreflightResponse(BaseModel):
     checks: List[PreflightCheck]
     blockers: int
     warnings: int
+
+
+# ---------------------------------------------------------------------------
+# TaxConcept schemas (F350 — Res. DIAN 000031/2024)
+# ---------------------------------------------------------------------------
+
+_VALID_APLICA_A = frozenset({"PJ", "PN", "AMB"})
+_VALID_CONCEPT_CATEGORIA = frozenset(
+    {
+        "compras",
+        "servicios",
+        "honorarios",
+        "arrendamiento",
+        "hidrocarburos",
+        "minerales",
+        "pes",
+        "salarios",
+        "ica",
+        "iva",
+        "otros",
+    }
+)
+
+
+class TaxConceptResponse(BaseModel):
+    """Single tax_concepts row returned by the API."""
+
+    code: str
+    label: str
+    renglon_350: str
+    aplica_a: str
+    tarifa_default: Optional[float] = None
+    base_minima_uvt: Optional[float] = None
+    categoria: str
+    art_referencia: Optional[str] = None
+    activo: bool = True
+
+    model_config = {"from_attributes": True}
+
+
+class TaxConceptUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/concepts."""
+
+    code: str = Field(..., min_length=1, max_length=16)
+    label: str = Field(..., min_length=1, max_length=255)
+    renglon_350: str = Field(..., min_length=1, max_length=8)
+    aplica_a: str = Field(..., description="PJ | PN | AMB")
+    categoria: str = Field(..., description="compras | servicios | ...")
+    tarifa_default: Optional[float] = Field(default=None, ge=0, le=1)
+    base_minima_uvt: Optional[float] = Field(default=None, ge=0)
+    art_referencia: Optional[str] = Field(default=None, max_length=64)
+    activo: bool = True
+
+    @field_validator("aplica_a")
+    @classmethod
+    def _check_aplica_a(cls, v: str) -> str:
+        if v not in _VALID_APLICA_A:
+            raise ValueError(f"aplica_a must be one of {sorted(_VALID_APLICA_A)}")
+        return v
+
+    @field_validator("categoria")
+    @classmethod
+    def _check_categoria(cls, v: str) -> str:
+        if v not in _VALID_CONCEPT_CATEGORIA:
+            raise ValueError(
+                f"categoria must be one of {sorted(_VALID_CONCEPT_CATEGORIA)}"
+            )
+        return v

@@ -517,6 +517,13 @@ class TransactionPosted(Base):
     # safety (prorateo fallback) but emits a warning.
     tipo_iva = Column(String(20), nullable=True, index=True)
 
+    # F350 retención discrimination (Res. DIAN 000031/2024). Logical FK to
+    # tax_concepts.code. NULL → "sin clasificar" (warning in F350 builder).
+    concepto_retencion = Column(String(16), nullable=True, index=True)
+    # PJ = persona jurídica, PN = persona natural. NULL allowed but defaults
+    # to PJ for safety in F350 builder.
+    tipo_persona_emisor = Column(String(2), nullable=True, index=True)
+
     # Journal entries as JSONB (denormalized for quick reads)
     journal_entries_json = Column(JSONB, nullable=True)
 
@@ -961,6 +968,73 @@ class TaxBaseMinima(Base):
         return (
             f"<TaxBaseMinima(concepto={self.concepto}, year={self.year}, "
             f"uvt_units={self.uvt_units})>"
+        )
+
+
+class TaxConcept(Base):
+    """
+    Catálogo de conceptos de retención en la fuente (F350 — Res. DIAN 000031/2024).
+
+    Each row maps a retention concept to its F350 renglón, target beneficiary
+    type (PJ / PN / AMB), default tarifa, base mínima UVT, and the underlying
+    statute reference (Art. 392 ET, Art. 20-3 ET PES, etc.).
+
+    A contador updates rows directly; no redeploy required when DIAN amends
+    tarifas or adds new conceptos (e.g. Presencia Económica Significativa).
+    """
+
+    __tablename__ = "tax_concepts"
+
+    code = Column(
+        String(16),
+        primary_key=True,
+        comment="Stable identifier, e.g. 'compras_pj', 'pes_servicios_digitales'",
+    )
+    label = Column(String(255), nullable=False)
+    renglon_350 = Column(
+        String(8),
+        nullable=False,
+        comment="F350 renglón number (DIAN form 350)",
+    )
+    aplica_a = Column(
+        String(4),
+        nullable=False,
+        comment="PJ = persona jurídica | PN = persona natural | AMB = ambos",
+    )
+    tarifa_default = Column(
+        Numeric(6, 4),
+        nullable=True,
+        comment="Default retention rate as decimal fraction, e.g. 0.0250",
+    )
+    base_minima_uvt = Column(
+        Numeric(8, 2),
+        nullable=True,
+        comment="Threshold in UVT below which retention does not apply",
+    )
+    categoria = Column(
+        String(32),
+        nullable=False,
+        comment=(
+            "compras | servicios | honorarios | arrendamiento | hidrocarburos | "
+            "minerales | pes | salarios | ica | iva | otros"
+        ),
+    )
+    art_referencia = Column(String(64), nullable=True)
+    activo = Column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self):
+        return (
+            f"<TaxConcept(code={self.code}, renglon_350={self.renglon_350}, "
+            f"aplica_a={self.aplica_a}, categoria={self.categoria})>"
         )
 
 

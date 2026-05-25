@@ -420,10 +420,18 @@ def _build_f300(
 def _build_f350(
     ledger: List[Dict[str, Any]],
     settings: CompanySettings,
+    *,
+    db: Optional[Any] = None,
+    company_nit: Optional[str] = None,
+    period_start: Optional[datetime] = None,
+    period_end: Optional[datetime] = None,
 ) -> tuple[List[DraftField], List[DraftWarning]]:
-    """
-    F350 Retefuente draft — pulled from cuenta 2365 (Retefuente por pagar).
-    cuenta 2368 used for ReteICA practicada.
+    """F350 Retefuente draft — Res. DIAN 000031/2024 discriminated.
+
+    Produces one renglón per active tax_concepts row with monto > 0. The
+    cuenta-2365 total still appears as a sanity sub-total. ReteICA stays on
+    its dedicated renglón. Renglón 50 (salarios Art. 383 ET) needs nómina
+    data we do not have here, so it is left as manual review.
     """
     fields: List[DraftField] = []
     warnings: List[DraftWarning] = []
@@ -431,26 +439,122 @@ def _build_f350(
     retefuente_total = _exact_credit(ledger, "2365")
     reteica_practicada = _exact_credit(ledger, "2368")
 
-    fields.append(
-        DraftField(
-            "25",
-            "Retenciones practicadas — Compras y Servicios",
-            round(retefuente_total, 2),
-            "cuenta_2365",
-            "high",
-            False,
+    # ── 1. Concepto-discriminated renglones ─────────────────────────────────
+    concepto_rows: List[Dict[str, Any]] = []
+    if db is not None:
+        try:
+            concepto_rows = db_service.list_tax_concepts(db, activo=True)
+        except Exception as err:  # pragma: no cover — defensive
+            warnings.append(
+                DraftWarning(
+                    "general",
+                    f"No se pudo cargar tax_concepts: {err}. Usando F350 legacy.",
+                )
+            )
+
+    emitted_renglones: set[str] = set()
+    emitted_codes: set[str] = set()
+    total_discriminated = 0.0
+    for concept in concepto_rows:
+        code = concept["code"]
+        categoria = concept["categoria"]
+        renglon = concept["renglon_350"]
+        aplica_a = concept["aplica_a"]
+        label = concept["label"]
+        try:
+            monto = float(
+                db_service.sum_retencion_by_concepto(
+                    db,
+                    concepto_code=code,
+                    company_nit=company_nit,
+                    start_date=period_start,
+                    end_date=period_end,
+                )
+            )
+        except Exception as err:  # pragma: no cover — defensive
+            warnings.append(
+                DraftWarning(
+                    renglon,
+                    f"Error sumando retención para {code}: {err}",
+                )
+            )
+            continue
+
+        if monto <= 0:
+            continue
+
+        if categoria not in {"salarios", "ica"}:
+            total_discriminated += monto
+
+        suffix = ""
+        if aplica_a in {"PJ", "PN"}:
+            suffix = f" ({aplica_a})"
+        fields.append(
+            DraftField(
+                renglon,
+                f"{label}{suffix}",
+                round(monto, 2),
+                f"concepto_{code}",
+                "high",
+                False,
+            )
         )
+        emitted_renglones.add(renglon)
+        emitted_codes.add(code)
+
+    # ── 2. Unclassified retenciones warning ─────────────────────────────────
+    if db is not None:
+        try:
+            unclassified = db_service.count_unclassified_retenciones(
+                db,
+                company_nit=company_nit,
+                start_date=period_start,
+                end_date=period_end,
+            )
+        except Exception:
+            unclassified = 0
+        gap = round(retefuente_total - total_discriminated, 2)
+        if unclassified > 0 or gap > 0.01:
+            fields.append(
+                DraftField(
+                    "_sin_clasificar",
+                    "Retenciones sin clasificar por concepto",
+                    max(gap, 0.0),
+                    "transactions_posted",
+                    "low",
+                    True,
+                )
+            )
+            warnings.append(
+                DraftWarning(
+                    "_sin_clasificar",
+                    (
+                        f"{unclassified} transacción(es) con retefuente sin "
+                        "concepto_retencion. Clasifíquelas para que se reflejen "
+                        "en su renglón F350 correcto."
+                    ),
+                )
+            )
+
+    # ── 3. ReteICA fallback renglón if no concepto reteica emitted ──────────
+    ica_concept_emitted = any(
+        c.get("categoria") == "ica" and c["code"] in emitted_codes
+        for c in concepto_rows
     )
-    fields.append(
-        DraftField(
-            "35",
-            "Retenciones ICA practicadas",
-            round(reteica_practicada, 2),
-            "cuenta_2368",
-            "high",
-            False,
+    if reteica_practicada > 0 and not ica_concept_emitted:
+        # Default renglón "76" used by Res. 000031/2024.
+        fields.append(
+            DraftField(
+                "76",
+                "Retenciones ICA practicadas",
+                round(reteica_practicada, 2),
+                "cuenta_2368",
+                "high",
+                False,
+            )
         )
-    )
+
+    # ── 4. Manual / sanciones renglones (kept for accountant review) ────────
     fields.append(
         DraftField(
             "50",
@@ -473,6 +577,23 @@ def _build_f350(
     )
     fields.append(
         DraftField("97", "Sanciones (si aplica)", 0.0, "input_manual", "low", True)
+    )
+
+    # ── 5. Total auto-calc ──────────────────────────────────────────────────
+    total = sum(
+        f.value
+        for f in fields
+        if f.renglon not in {"50", "75", "97", "_sin_clasificar"}
+    )
+    fields.append(
+        DraftField(
+            "_total_retenciones",
+            "Total retenciones practicadas (auto)",
+            round(total, 2),
+            "auto_calc",
+            "high",
+            False,
+        )
     )
 
     warnings.append(
@@ -1200,6 +1321,15 @@ def generate_declaration_draft(
     if form_type == "F110":
         draft_fields, draft_warnings = _build_f110(
             ledger, settings, db=db, year=period_end.year, company_nit=company_nit
+        )
+    elif form_type == "F350":
+        draft_fields, draft_warnings = _build_f350(
+            ledger,
+            settings,
+            db=db,
+            company_nit=company_nit,
+            period_start=start_dt,
+            period_end=end_dt,
         )
     elif form_type == "F300":
         try:
