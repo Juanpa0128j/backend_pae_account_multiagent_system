@@ -307,6 +307,36 @@ def _run_persist(state: AgentState) -> AgentState:
     contador_output: dict = {}
     company_nit: Optional[str] = None
 
+    # Cooperative cancellation: if the user cancelled this process job while the
+    # pipeline thread was running, skip persistence entirely. This narrows the
+    # partial-persist window — without it, a cancel landing just before this
+    # commit would still write journal entries.
+    # NOTE: there remains a small race where cancel lands AFTER this check but
+    # BEFORE the commit; in that edge case rows are written and only the
+    # COMPLETED status flip is suppressed by the guard in app/services/jobs.py.
+    if mode == "process":
+        process_id = as_str(state.get("process_id"), "")
+        if process_id:
+            cancelled = False
+            db_check = SessionLocal()
+            try:
+                job = db_service.get_process_job(db_check, process_id)
+                cancelled = (
+                    job is not None
+                    and getattr(job, "status", None) == ProcessStatus.CANCELLED
+                )
+            except Exception:  # pragma: no cover - best-effort guard
+                cancelled = False
+            finally:
+                db_check.close()
+            if cancelled:
+                logger.info(
+                    "db_persist: process %s cancelled — skipping persistence",
+                    process_id,
+                )
+                append_log(state, "db_persist", "cancelled", {})
+                return state
+
     # --- Vía B: persist existing financial statement directly ---
     if mode == "ingest" and pathway == "work_with_existing":
         _persist_financial_statement(state)

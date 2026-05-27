@@ -78,6 +78,14 @@ class ProcessResponse(BaseModel):
     status: str
 
 
+class ProcessCancelResponse(BaseModel):
+    """Response for POST /process/{process_id}/cancel"""
+
+    process_id: str
+    status: str
+    message: str
+
+
 class ProcessStatusResponse(BaseModel):
     """Response for GET /process/status/{process_id}"""
 
