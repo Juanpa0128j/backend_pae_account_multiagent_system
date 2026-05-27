@@ -1034,26 +1034,44 @@ def build_structured_transactions(
         ]
 
     # --- Generic fallback mapping ---
-    raw_total = (
-        # Invoice-like schemas — total_factura is the canonical
-        # IVA-inclusive total emitted by FacturaContent / BillContent.
-        totales.get("total_factura")
-        or totales.get("total_a_pagar")
-        or totales.get("total")
-        # Voucher-like schemas
-        or interpreted.get("valor_neto")
-        or interpreted.get("valor_bruto")
-        # Generic fallbacks
-        or interpreted.get("total")
-        or interpreted.get("valor_total")
-        or interpreted.get("valor")
-        or interpreted.get("monto")
-    )
-    parsed_total = safe_decimal(raw_total)
-    if parsed_total is None or parsed_total == Decimal("0"):
-        inferred_total = infer_total_from_items(items_payload)
-        if inferred_total is not None and inferred_total > Decimal("0"):
-            parsed_total = inferred_total
+    # Pre-armed asientos take precedence over voucher-level scalars. CE/RC/
+    # nómina print a CODIGO CUENTA + DEBITO + CREDITO table where the real
+    # document total = sum(debitos) = sum(creditos). Voucher fields like
+    # `valor_neto` only reflect the net cash leg (e.g. bank payment after
+    # retentions and provisions), which is wrong for multi-credit CEs.
+    asientos_raw = interpreted.get("asientos_documento") or []
+    sum_debitos = Decimal("0")
+    if isinstance(asientos_raw, list):
+        for asiento in asientos_raw:
+            if not isinstance(asiento, dict):
+                continue
+            debit_val = safe_decimal(asiento.get("debito"))
+            if debit_val is not None:
+                sum_debitos += debit_val
+
+    if sum_debitos > Decimal("0"):
+        parsed_total = sum_debitos
+    else:
+        raw_total = (
+            # Invoice-like schemas — total_factura is the canonical
+            # IVA-inclusive total emitted by FacturaContent / BillContent.
+            totales.get("total_factura")
+            or totales.get("total_a_pagar")
+            or totales.get("total")
+            # Voucher-like schemas
+            or interpreted.get("valor_neto")
+            or interpreted.get("valor_bruto")
+            # Generic fallbacks
+            or interpreted.get("total")
+            or interpreted.get("valor_total")
+            or interpreted.get("valor")
+            or interpreted.get("monto")
+        )
+        parsed_total = safe_decimal(raw_total)
+        if parsed_total is None or parsed_total == Decimal("0"):
+            inferred_total = infer_total_from_items(items_payload)
+            if inferred_total is not None and inferred_total > Decimal("0"):
+                parsed_total = inferred_total
 
     # Derive a meaningful descripcion. Order: explicit fields → notas →
     # concat of first item descriptions → consecutivo-based fallback. Without

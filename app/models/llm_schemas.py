@@ -557,6 +557,8 @@ REGLAS PRIORIDAD 1 — TÍTULO O ENCABEZADO EXPLÍCITO (buscar en las primeras l
 - Título contiene "CONCILIACIÓN BANCARIA" → conciliacion_bancaria
 - Título contiene "EXTRACTO BANCARIO" o "ESTADO DE CUENTA" bancario → extracto_bancario
 - Título contiene "RECIBO OFICIAL DE PAGO IMPUESTOS NACIONALES" o "RECIBO OFICIAL DE PAGO" o "Formulario 490" → recibo_pago_impuesto
+- Título contiene "NOTA CRÉDITO", "NOTA CREDITO", "NOTA DE CRÉDITO" o "NOTA DE CREDITO" (incluyendo el encabezado DIAN "Nota Crédito de la Factura Electrónica de Venta") → nota_credito. CRÍTICO: tiene prioridad ABSOLUTA sobre factura_venta/factura_compra aunque el doc contenga CUFE/CUDE o el texto "Factura Electrónica de Venta" (la NC referencia la factura original — eso NO la convierte en factura).
+- Título contiene "NOTA DÉBITO", "NOTA DEBITO", "NOTA DE DÉBITO" o "NOTA DE DEBITO" → nota_debito. Misma prioridad absoluta sobre facturas.
 
 REGLAS PRIORIDAD 2 — PREFIJOS Y SEÑALES ESTRUCTURALES
 - Tiene CUFE o resolución DIAN → clasifica como factura_venta o factura_compra aplicando la REGLA DIRECCIÓN abajo (NUNCA uses el valor genérico "factura")
