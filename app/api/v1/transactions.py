@@ -5,15 +5,18 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
+from app.core.logger import get_logger
 from app.services import db_service
 from app.services.document_mappers import safe_datetime
-from app.services.nit_utils import normalize_optional_nit
+from app.services.nit_utils import normalize_nit, normalize_optional_nit
 from app.services.parse_utils import safe_float
 from app.models.database import (
     FinancialStatement,
     TransactionPending,
     TransactionStatus,
 )
+
+logger = get_logger("app.api.transactions")
 
 router = APIRouter()
 
@@ -292,8 +295,14 @@ async def get_transaction(
     }
 
 
-def _delete_transaction_cascade(db: Session, txn_id: str) -> None:
-    """Delete a TransactionPending and all its child records (posted + journal lines)."""
+def _delete_transaction_cascade(db: Session, txn_id: str) -> Optional[str]:
+    """Delete a TransactionPending and all its child records (posted + journal lines).
+
+    Returns the normalized owning company NIT (if resolvable) so callers can
+    re-sync the derived financial statements after the cascade. The NIT is read
+    BEFORE the rows are removed: prefer the pending's own ``company_nit``, then
+    fall back to the posted row's ``company_nit``.
+    """
     from app.models.database import (
         JournalEntryLine,
         TransactionPending,
@@ -312,6 +321,14 @@ def _delete_transaction_cascade(db: Session, txn_id: str) -> None:
         .filter(TransactionPosted.transaction_pending_id == txn_id)
         .all()
     )
+
+    # Capture the owning company NIT before deleting (pending preferred, posted
+    # as fallback). Normalize so the value matches what reports/derivation use.
+    raw_nit = getattr(txn, "company_nit", None) or next(
+        (getattr(p, "company_nit", None) for p in posted_rows if p.company_nit), None
+    )
+    company_nit = normalize_nit(raw_nit) if raw_nit else None
+
     for posted in posted_rows:
         db.query(JournalEntryLine).filter(
             JournalEntryLine.transaction_posted_id == posted.id
@@ -319,6 +336,51 @@ def _delete_transaction_cascade(db: Session, txn_id: str) -> None:
         db.delete(posted)
 
     db.delete(txn)
+    return company_nit
+
+
+def _resync_derived_statements(db: Session, company_nit: Optional[str]) -> None:
+    """Refresh (or clear) journal-derived FinancialStatement rows after a delete.
+
+    - If journal entries remain for the company: re-derive via the same path
+      ``_auto_derive_statements`` uses. The derivation is idempotent (replaces
+      the prior ``derived_from_journal`` rows for the same period span).
+    - If NO journal entries remain: delete every ``derived_from_journal``
+      FinancialStatement (BG + ER) for that NIT so the Reports tab shows empty
+      instead of a stale pre-delete snapshot. Vía B uploads / user-provided
+      statements (source_mode ``direct`` / ``derived``) are left untouched.
+
+    Non-fatal: logs a warning and never raises. Transaction deletion must
+    succeed even if the resync fails.
+    """
+    if not company_nit:
+        return
+
+    from app.models.database import JournalEntryLine
+
+    try:
+        remaining = (
+            db.query(JournalEntryLine.id)
+            .filter(JournalEntryLine.company_nit == company_nit)
+            .first()
+        )
+        if remaining is not None:
+            # Journal entries still exist — re-derive (idempotent replace).
+            from app.agents.persist_node import _auto_derive_statements
+
+            _auto_derive_statements(db, company_nit, ingest_id="")
+        else:
+            # No journal left — purge derived statements so reports go empty.
+            db.query(FinancialStatement).filter(
+                FinancialStatement.entity_nit == company_nit,
+                FinancialStatement.source_mode == "derived_from_journal",
+            ).delete(synchronize_session=False)
+    except Exception as exc:  # pragma: no cover - non-fatal guard
+        logger.warning(
+            "transactions: derived-statement resync failed for %s (non-fatal): %s",
+            company_nit,
+            exc,
+        )
 
 
 class SetFechaPayload(BaseModel):
@@ -389,7 +451,8 @@ async def delete_transaction(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Delete a single transaction and all its associated records."""
-    _delete_transaction_cascade(db, id)
+    company_nit = _delete_transaction_cascade(db, id)
+    _resync_derived_statements(db, company_nit)
     db.commit()
 
 
@@ -413,8 +476,16 @@ async def delete_transactions_by_ingest(
             status_code=404, detail=f"No transactions found for ingest {ingest_id}"
         )
 
+    affected_nits: set[str] = set()
     for txn_id in txn_ids:
-        _delete_transaction_cascade(db, txn_id)
+        company_nit = _delete_transaction_cascade(db, txn_id)
+        if company_nit:
+            affected_nits.add(company_nit)
+
+    # Resync each affected company once (not per-transaction) so the derived
+    # statements reflect the post-delete journal state.
+    for company_nit in affected_nits:
+        _resync_derived_statements(db, company_nit)
 
     db.commit()
     return {"deleted": len(txn_ids)}
