@@ -266,6 +266,75 @@ class TestDeriveAndPersistStatements:
         )
         assert count == 2
 
+    def test_redrive_replaces_prior_journal_derived_rows(
+        self, orchestrator, db_session
+    ):
+        """Re-deriving the same period must not duplicate BG/ER rows.
+
+        Each processed document re-derives the whole period from the
+        cumulative journal; the latest derivation replaces the prior one.
+        """
+        entries = [
+            {
+                "fecha": "2026-03-15",
+                "cuenta": "110505",
+                "descripcion": "Caja",
+                "tercero_nit": "900123456",
+                "detalle": "Efectivo",
+                "debito": "1000000",
+                "credito": "0",
+            },
+            {
+                "fecha": "2026-03-15",
+                "cuenta": "311505",
+                "descripcion": "Capital",
+                "tercero_nit": "900123456",
+                "detalle": "Aporte",
+                "debito": "0",
+                "credito": "1000000",
+            },
+        ]
+        period_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        period_end = datetime(2026, 3, 31, tzinfo=timezone.utc)
+
+        # First document
+        orchestrator.derive_and_persist_statements(
+            entries,
+            ingest_id="ing_a",
+            company_nit="900123456",
+            period_start=period_start,
+            period_end=period_end,
+        )
+        # Second document — re-derives the same period
+        orchestrator.derive_and_persist_statements(
+            entries,
+            ingest_id="ing_b",
+            company_nit="900123456",
+            period_start=period_start,
+            period_end=period_end,
+        )
+
+        bg_count = (
+            db_session.query(FinancialStatement)
+            .filter_by(
+                entity_nit="900123456",
+                statement_type="balance_general",
+                source_mode="derived_from_journal",
+            )
+            .count()
+        )
+        er_count = (
+            db_session.query(FinancialStatement)
+            .filter_by(
+                entity_nit="900123456",
+                statement_type="estado_resultados",
+                source_mode="derived_from_journal",
+            )
+            .count()
+        )
+        assert bg_count == 1
+        assert er_count == 1
+
     def test_empty_entries_creates_zero_statements(self, orchestrator, db_session):
         period_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         period_end = datetime(2026, 3, 31, tzinfo=timezone.utc)
