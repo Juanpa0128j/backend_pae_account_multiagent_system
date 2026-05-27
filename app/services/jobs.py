@@ -389,6 +389,24 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
             timeout=MAX_PROCESS_SECONDS,
         )
 
+        # Cooperative cancellation guard: the user may have hit the cancel
+        # endpoint while this pipeline thread was running. Re-fetch the job
+        # status and, if it was flipped to CANCELLED, do NOT overwrite it with
+        # a terminal COMPLETED/FAILED/PENDING_AUDIT_REVIEW status.
+        #
+        # NOTE: journal-entry persistence happens INSIDE the pipeline thread
+        # (app/agents/persist_node.db_persist_node, committed before this point),
+        # so this guard can only prevent the status flip — it cannot roll back
+        # rows already written. persist_node has its own status check that skips
+        # the commit when the job is already CANCELLED to minimise that window.
+        current = db_service.get_process_job(db, process_id)
+        if current is not None and current.status == ProcessStatus.CANCELLED:
+            logger.info(
+                "Process %s was cancelled during execution; skipping result persist",
+                process_id,
+            )
+            return
+
         result_status = result.get("status") or (result.get("result") or {}).get(
             "status"
         )

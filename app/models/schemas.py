@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class IngestResponse(BaseModel):
@@ -76,6 +76,14 @@ class ProcessResponse(BaseModel):
     message: str
     process_id: str
     status: str
+
+
+class ProcessCancelResponse(BaseModel):
+    """Response for POST /process/{process_id}/cancel"""
+
+    process_id: str
+    status: str
+    message: str
 
 
 class ProcessStatusResponse(BaseModel):
@@ -270,3 +278,361 @@ class RentaProvisionOutput(BaseModel):
     cuenta_gasto_puc: str = "540502"
     cuenta_pasivo_puc: str = "240405"
     referencias: List[str]
+
+
+# ─── Tax constants (UVT + base mínima) admin schemas ─────────────
+
+VALID_CONCEPTO_VALUES = frozenset(
+    {
+        "retefuente_servicios",
+        "retefuente_bienes",
+        "retefuente_arrendamiento",
+        "reteica",
+    }
+)
+
+
+class UvtUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/constants/uvt."""
+
+    year: int = Field(..., ge=2000, le=2100)
+    value: float = Field(..., gt=0, description="UVT value in COP pesos")
+    referencia_normativa: Optional[str] = Field(None, max_length=64)
+
+
+class BaseMinimaUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/constants/base-minima."""
+
+    concepto: str = Field(
+        ...,
+        description=(
+            "One of: retefuente_servicios, retefuente_bienes, "
+            "retefuente_arrendamiento, reteica"
+        ),
+    )
+    uvt_units: float = Field(..., gt=0, description="Threshold in UVT units")
+    year: int = Field(..., ge=2000, le=2100)
+
+
+class UvtResponse(BaseModel):
+    """Single UVT row."""
+
+    year: int
+    value: str
+    referencia_normativa: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class BaseMinimaItem(BaseModel):
+    """Single base mínima row."""
+
+    concepto: str
+    uvt_units: str
+    year: int
+
+    model_config = {"from_attributes": True}
+
+
+class TaxConstantsResponse(BaseModel):
+    """Response for GET /api/v1/tax/constants?year=YYYY."""
+
+    uvt: Optional[UvtResponse] = None
+    base_minima: List[BaseMinimaItem] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Pérdidas fiscales acumuladas schemas
+# ---------------------------------------------------------------------------
+
+
+class PerdidaFiscalResponse(BaseModel):
+    """Single fiscal loss row returned by the API."""
+
+    id: int
+    company_nit: str
+    year: int
+    monto_perdida: str
+    monto_compensado: str
+    monto_pendiente: str
+    decreto: Optional[str] = None
+    notas: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class PerdidaFiscalUpsertRequest(BaseModel):
+    """Request body for POST /api/v1/tax/perdidas-acumuladas."""
+
+    company_nit: str = Field(..., min_length=1, max_length=20)
+    year: int = Field(..., ge=1990, le=2100)
+    monto_perdida: float = Field(
+        ..., gt=0, description="Total fiscal loss in COP pesos"
+    )
+    decreto: Optional[str] = Field(None, max_length=100)
+    notas: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# TarifaRenta schemas
+# ---------------------------------------------------------------------------
+
+_VALID_REGIMEN = frozenset({"ordinario", "esal", "zona_franca", "rst"})
+_VALID_ACTIVIDAD = frozenset({"general", "financiero", "hidroelectrico", "otro"})
+
+
+class TarifaRentaResponse(BaseModel):
+    """Single tarifa_renta row returned by the API."""
+
+    id: int
+    regimen: str
+    actividad: Optional[str] = None
+    tarifa_base: float
+    sobretasa: float
+    tarifa_efectiva: float
+    year_from: int
+    year_to: Optional[int] = None
+    base_legal: Optional[str] = None
+    notas: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Tax declaration workflow schemas
+# ---------------------------------------------------------------------------
+
+
+class TaxDeclarationDraftResponse(BaseModel):
+    """Full draft response including workflow audit fields."""
+
+    draft_id: str
+    company_nit: str
+    form_type: str
+    period_start: str
+    period_end: str
+    year: int
+    status: str
+    fields: List[Any]
+    warnings: List[Any]
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    # Workflow fields
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    filed_by: Optional[str] = None
+    filed_at: Optional[datetime] = None
+    dian_acknowledgment: Optional[str] = None
+    reopened_by: Optional[str] = None
+    reopened_at: Optional[datetime] = None
+    reopen_reason: Optional[str] = None
+
+
+class FileDraftRequest(BaseModel):
+    """Request body for POST /declarations/{draft_id}/file."""
+
+    dian_acknowledgment: Optional[str] = Field(None, max_length=64)
+
+
+class ReopenDraftRequest(BaseModel):
+    """Request body for POST /declarations/{draft_id}/reopen."""
+
+    reason: str = Field(..., min_length=5)
+
+
+class TarifaRentaUpsertRequest(BaseModel):
+    """Request body for POST /api/v1/tax/tarifas-renta."""
+
+    regimen: str = Field(..., description="ordinario | esal | zona_franca | rst")
+    actividad: Optional[str] = Field(
+        None,
+        description="general | financiero | hidroelectrico | otro | null (any)",
+    )
+    tarifa_base: float = Field(
+        ..., gt=0, le=1, description="Base rate as decimal fraction, e.g. 0.35"
+    )
+    sobretasa: float = Field(
+        0.0, ge=0, le=1, description="Surcharge decimal fraction, e.g. 0.05"
+    )
+    year_from: int = Field(..., ge=2000, le=2100)
+    year_to: Optional[int] = Field(None, ge=2000, le=2100)
+    base_legal: Optional[str] = Field(None, max_length=128)
+    notas: Optional[str] = None
+
+    @field_validator("regimen")
+    @classmethod
+    def validate_regimen(cls, v: str) -> str:
+        if v not in _VALID_REGIMEN:
+            raise ValueError(f"regimen must be one of {sorted(_VALID_REGIMEN)}")
+        return v
+
+    @field_validator("actividad")
+    @classmethod
+    def validate_actividad(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_ACTIVIDAD:
+            raise ValueError(
+                f"actividad must be one of {sorted(_VALID_ACTIVIDAD)} or null"
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Preflight validation schemas
+# ---------------------------------------------------------------------------
+
+
+class PreflightCheck(BaseModel):
+    """Single preflight check result."""
+
+    code: str
+    severity: Literal["blocker", "warning", "info"]
+    passed: bool
+    message: str
+    cta_path: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class PreflightResponse(BaseModel):
+    """Aggregated preflight validation report."""
+
+    ready: bool
+    form_type: str
+    period_start: str
+    period_end: str
+    checks: List[PreflightCheck]
+    blockers: int
+    warnings: int
+
+
+# ---------------------------------------------------------------------------
+# TaxConcept schemas (F350 — Res. DIAN 000031/2024)
+# ---------------------------------------------------------------------------
+
+_VALID_APLICA_A = frozenset({"PJ", "PN", "AMB"})
+_VALID_CONCEPT_CATEGORIA = frozenset(
+    {
+        "compras",
+        "servicios",
+        "honorarios",
+        "arrendamiento",
+        "hidrocarburos",
+        "minerales",
+        "pes",
+        "salarios",
+        "ica",
+        "iva",
+        "otros",
+    }
+)
+
+
+class TaxConceptResponse(BaseModel):
+    """Single tax_concepts row returned by the API."""
+
+    code: str
+    label: str
+    renglon_350: str
+    aplica_a: str
+    tarifa_default: Optional[float] = None
+    base_minima_uvt: Optional[float] = None
+    categoria: str
+    art_referencia: Optional[str] = None
+    activo: bool = True
+
+    model_config = {"from_attributes": True}
+
+
+class TaxConceptUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/concepts."""
+
+    code: str = Field(..., min_length=1, max_length=16)
+    label: str = Field(..., min_length=1, max_length=255)
+    renglon_350: str = Field(..., min_length=1, max_length=8)
+    aplica_a: str = Field(..., description="PJ | PN | AMB")
+    categoria: str = Field(..., description="compras | servicios | ...")
+    tarifa_default: Optional[float] = Field(default=None, ge=0, le=1)
+    base_minima_uvt: Optional[float] = Field(default=None, ge=0)
+    art_referencia: Optional[str] = Field(default=None, max_length=64)
+    activo: bool = True
+
+    @field_validator("aplica_a")
+    @classmethod
+    def _check_aplica_a(cls, v: str) -> str:
+        if v not in _VALID_APLICA_A:
+            raise ValueError(f"aplica_a must be one of {sorted(_VALID_APLICA_A)}")
+        return v
+
+    @field_validator("categoria")
+    @classmethod
+    def _check_categoria(cls, v: str) -> str:
+        if v not in _VALID_CONCEPT_CATEGORIA:
+            raise ValueError(
+                f"categoria must be one of {sorted(_VALID_CONCEPT_CATEGORIA)}"
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
+# AjusteFiscal schemas (F2516 reconciliation rows)
+# ---------------------------------------------------------------------------
+
+_VALID_AJUSTE_SECCIONES = frozenset(
+    {
+        "ESF_ACTIVO",
+        "ESF_PASIVO",
+        "ESF_PATRIMONIO",
+        "ERI_INGRESO",
+        "ERI_COSTO",
+        "ERI_GASTO",
+    }
+)
+
+_VALID_AJUSTE_TIPO_DIFERENCIA = frozenset(
+    {"permanente", "temporaria_imponible", "temporaria_deducible"}
+)
+
+
+class AjusteFiscalResponse(BaseModel):
+    """Single ajuste_fiscal row returned by the API."""
+
+    id: str
+    company_nit: str
+    year: int
+    seccion: str
+    concepto: str
+    valor_contable: float
+    valor_fiscal: float
+    tipo_diferencia: str
+    descripcion: Optional[str] = None
+
+
+class AjusteFiscalUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/ajustes-fiscales."""
+
+    company_nit: str = Field(..., min_length=1, max_length=20)
+    year: int = Field(..., ge=1990, le=2100)
+    seccion: str = Field(..., description="ESF_* | ERI_*")
+    concepto: str = Field(..., min_length=1, max_length=64)
+    valor_contable: float = Field(default=0.0)
+    valor_fiscal: float = Field(default=0.0)
+    tipo_diferencia: str = Field(
+        ...,
+        description="permanente | temporaria_imponible | temporaria_deducible",
+    )
+    descripcion: Optional[str] = None
+
+    @field_validator("seccion")
+    @classmethod
+    def _check_seccion(cls, v: str) -> str:
+        if v not in _VALID_AJUSTE_SECCIONES:
+            raise ValueError(
+                f"seccion must be one of {sorted(_VALID_AJUSTE_SECCIONES)}"
+            )
+        return v
+
+    @field_validator("tipo_diferencia")
+    @classmethod
+    def _check_tipo_diferencia(cls, v: str) -> str:
+        if v not in _VALID_AJUSTE_TIPO_DIFERENCIA:
+            raise ValueError(
+                f"tipo_diferencia must be one of {sorted(_VALID_AJUSTE_TIPO_DIFERENCIA)}"
+            )
+        return v

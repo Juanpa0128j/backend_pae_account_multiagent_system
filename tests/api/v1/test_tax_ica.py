@@ -36,11 +36,14 @@ def test_ica_declaration_sql_uses_company_nit(client):
     """The ICA declaration must join on tp.company_nit, not tp.nit_receptor."""
     test_client, executed_sql = client
 
+    today = date.today()
+    first_day = today.replace(day=1)
     with patch("app.api.v1.tax.db_service.get_company_settings", return_value=None):
         rsp = test_client.get(
             "/api/v1/tax/ica",
             params={
-                "end_date": date.today().isoformat(),
+                "period_start": first_day.isoformat(),
+                "period_end": today.isoformat(),
                 "company_nit": "900123456",
             },
         )
@@ -48,6 +51,6 @@ def test_ica_declaration_sql_uses_company_nit(client):
     assert rsp.status_code == 200
     sql = executed_sql["text"]
     assert "tp.company_nit" in sql, f"SQL should join on tp.company_nit, got: {sql}"
-    assert (
-        "tp.nit_receptor" not in sql
-    ), f"SQL should not reference tp.nit_receptor, got: {sql}"
+    assert "tp.nit_receptor" not in sql, (
+        f"SQL should not reference tp.nit_receptor, got: {sql}"
+    )
