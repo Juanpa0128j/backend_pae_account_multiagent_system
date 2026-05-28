@@ -307,6 +307,36 @@ def _run_persist(state: AgentState) -> AgentState:
     contador_output: dict = {}
     company_nit: Optional[str] = None
 
+    # Cooperative cancellation: if the user cancelled this process job while the
+    # pipeline thread was running, skip persistence entirely. This narrows the
+    # partial-persist window — without it, a cancel landing just before this
+    # commit would still write journal entries.
+    # NOTE: there remains a small race where cancel lands AFTER this check but
+    # BEFORE the commit; in that edge case rows are written and only the
+    # COMPLETED status flip is suppressed by the guard in app/services/jobs.py.
+    if mode == "process":
+        process_id = as_str(state.get("process_id"), "")
+        if process_id:
+            cancelled = False
+            db_check = SessionLocal()
+            try:
+                job = db_service.get_process_job(db_check, process_id)
+                cancelled = (
+                    job is not None
+                    and getattr(job, "status", None) == ProcessStatus.CANCELLED
+                )
+            except Exception:  # pragma: no cover - best-effort guard
+                cancelled = False
+            finally:
+                db_check.close()
+            if cancelled:
+                logger.info(
+                    "db_persist: process %s cancelled — skipping persistence",
+                    process_id,
+                )
+                append_log(state, "db_persist", "cancelled", {})
+                return state
+
     # --- Vía B: persist existing financial statement directly ---
     if mode == "ingest" and pathway == "work_with_existing":
         _persist_financial_statement(state)
@@ -874,6 +904,65 @@ def _run_persist(state: AgentState) -> AgentState:
                     raw_reasoning if isinstance(raw_reasoning, dict) else {}
                 )
 
+            # ── Duplicate-posted guard ────────────────────────────────────────
+            # Same source document re-uploaded creates new IngestJob + new
+            # TransactionPending but must NOT create a duplicate TransactionPosted.
+            # Natural key: (company_nit, nit_emisor, fecha::date, total).
+            _existing_posted = None
+            if company_nit and nit_emisor and fecha and total:
+                try:
+                    _existing_posted = db_service.find_duplicate_posted(
+                        db,
+                        company_nit=company_nit,
+                        nit_emisor=nit_emisor,
+                        fecha=fecha,
+                        total=total,
+                    )
+                except Exception as _dup_err:
+                    logger.warning(
+                        "db_persist: duplicate-posted check failed (%s) — proceeding",
+                        _dup_err,
+                    )
+
+            if _existing_posted is not None:
+                existing_posted_id = as_str(getattr(_existing_posted, "id", ""), "")
+                logger.warning(
+                    "db_persist: duplicate_skipped — TransactionPosted %s already exists "
+                    "for company_nit=%s nit_emisor=%s total=%s fecha=%s; "
+                    "skipping re-post of re-uploaded document",
+                    existing_posted_id,
+                    company_nit,
+                    nit_emisor,
+                    total,
+                    fecha,
+                )
+                state["duplicate_skipped"] = True
+                posted_ids.append(existing_posted_id)
+                continue
+
+            from app.services.tax_constants import (
+                infer_concepto_retencion,
+                infer_tipo_iva_from_journal,
+                infer_tipo_persona_from_nit,
+            )
+
+            tipo_iva_inferred = infer_tipo_iva_from_journal(
+                journal_json, descripcion=descripcion
+            )
+            tipo_persona_inferred = infer_tipo_persona_from_nit(nit_emisor)
+            concepto_inferred = infer_concepto_retencion(
+                cuenta_puc,
+                tipo_persona_inferred,
+                descripcion=descripcion,
+            )
+            if tipo_persona_inferred is None:
+                logger.warning(
+                    "db_persist: tipo_persona_emisor no inferido para nit_emisor=%r — "
+                    "asumiendo PJ por defecto",
+                    nit_emisor,
+                )
+                tipo_persona_inferred = "PJ"
+
             txn_posted = db_service.create_transaction_posted(
                 db,
                 transaction_pending_id=as_str(getattr(txn_pending, "id", "")),
@@ -889,6 +978,9 @@ def _run_persist(state: AgentState) -> AgentState:
                 journal_entries_json=journal_json,
                 tax_references=tax_references,
                 agent_reasoning=agent_reasoning,
+                tipo_iva=tipo_iva_inferred,
+                concepto_retencion=concepto_inferred,
+                tipo_persona_emisor=tipo_persona_inferred,
             )
             posted_ids.append(as_str(getattr(txn_posted, "id", ""), ""))
             logger.info("db_persist: Created TransactionPosted %s", txn_posted.id)

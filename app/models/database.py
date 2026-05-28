@@ -14,6 +14,7 @@ Tables:
 - ChatSession: Persistent chat conversation sessions
 - ChatMessage: Individual messages within a chat session
 - TaxDeclarationDraft: Pre-filled DIAN declaration drafts (F300, F350, F110, ICA)
+- PerdidaFiscalAcumulada: Multi-year fiscal loss carry-forward history (Art. 147 ET)
 """
 
 import enum
@@ -30,7 +31,9 @@ from sqlalchemy import (
     Integer,
     Boolean,
     ForeignKey,
+    Index,
     PrimaryKeyConstraint,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.types import JSON
@@ -160,6 +163,22 @@ class CompanySettings(Base):
         comment="PUC account for ICA liability (ReteICA por pagar). Default 2368; override if company uses a different account.",
     )
 
+    # ── Tax regime columns (added migration u1v2w3x4y5z6) ──────────────────
+    regimen_tributario = Column(
+        String(32),
+        nullable=False,
+        default="ordinario",
+        server_default="ordinario",
+        comment="Tax regime: ordinario | esal | zona_franca | rst",
+    )
+    actividad_economica = Column(
+        String(32),
+        nullable=False,
+        default="general",
+        server_default="general",
+        comment="Economic activity type: general | financiero | hidroelectrico | otro",
+    )
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -167,6 +186,81 @@ class CompanySettings(Base):
 
     def __repr__(self):
         return f"<CompanySettings(nit={self.nit}, ciudad={self.ciudad})>"
+
+
+class TarifaRenta(Base):
+    """
+    Regulatory income-tax rate table for Colombian Renta PJ regimes.
+
+    One row per (regimen, actividad, year_from) combination. Supports
+    permanent surcharges (sobretasa) and temporary emergency surcharges.
+
+    Lookup precedence (see db_service.get_tarifa_renta):
+      1. Exact (regimen, actividad, year_from <= target_year <= year_to or NULL)
+      2. Fallback (regimen, actividad=NULL, year matches)
+      3. company_settings.tasa_renta fallback (0.35 default)
+
+    A contador updates rows directly; no redeploy required for DIAN reform.
+    """
+
+    __tablename__ = "tarifas_renta"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    regimen = Column(
+        String(32),
+        nullable=False,
+        comment="ordinario | esal | zona_franca | rst",
+    )
+    actividad = Column(
+        String(32),
+        nullable=True,
+        comment="general | financiero | hidroelectrico | otro — NULL means any actividad",
+    )
+    tarifa_base = Column(
+        Numeric(5, 4),
+        nullable=False,
+        comment="Base rate as decimal fraction, e.g. 0.3500",
+    )
+    sobretasa = Column(
+        Numeric(5, 4),
+        nullable=False,
+        default=Decimal("0"),
+        server_default="0",
+        comment="Surcharge decimal fraction, e.g. 0.0500 for financial sector",
+    )
+    year_from = Column(
+        Integer,
+        nullable=False,
+        comment="First tax year this row applies",
+    )
+    year_to = Column(
+        Integer,
+        nullable=True,
+        comment="Last tax year (inclusive); NULL = open-ended / currently valid",
+    )
+    base_legal = Column(
+        String(128),
+        nullable=True,
+        comment="Legal authority, e.g. 'Art. 240 ET (Ley 2277/2022)'",
+    )
+    notas = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "regimen", "actividad", "year_from", name="uq_tarifas_renta_key"
+        ),
+        Index("idx_tarifas_renta_year", "year_from", "year_to"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<TarifaRenta(regimen={self.regimen}, actividad={self.actividad}, "
+            f"year_from={self.year_from}, tarifa_base={self.tarifa_base}, sobretasa={self.sobretasa})>"
+        )
 
 
 class ReteicaTarifa(Base):
@@ -206,6 +300,16 @@ class ReteicaTarifa(Base):
         String(255),
         nullable=True,
         comment="Legal source, e.g. 'Acuerdo 065 Bogotá 2016'",
+    )
+    base_minima_uvt = Column(
+        Numeric(8, 2),
+        nullable=True,
+        server_default="4",
+        comment=(
+            "Municipal ReteICA base mínima in UVT units. "
+            "Bogotá=4, Medellín=15, Cali=3. Default 4 UVT (Bogotá reference). "
+            "Decreto 572 does NOT apply to ReteICA — each municipio sets its own base."
+        ),
     )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -406,6 +510,19 @@ class TransactionPosted(Base):
     ica = Column(Numeric(15, 2), default=0)
     provision_renta = Column(Numeric(15, 2), default=0)
     neto_a_pagar = Column(Numeric(15, 2), default=0)
+
+    # IVA classification for Art. 490 ET prorrateo. See
+    # app/services/tax_constants.py::TIPOS_IVA_VALIDOS for the vocabulary.
+    # NULL means "no clasificado" — F300 builder treats it as gravado for
+    # safety (prorateo fallback) but emits a warning.
+    tipo_iva = Column(String(20), nullable=True, index=True)
+
+    # F350 retención discrimination (Res. DIAN 000031/2024). Logical FK to
+    # tax_concepts.code. NULL → "sin clasificar" (warning in F350 builder).
+    concepto_retencion = Column(String(16), nullable=True, index=True)
+    # PJ = persona jurídica, PN = persona natural. NULL allowed but defaults
+    # to PJ for safety in F350 builder.
+    tipo_persona_emisor = Column(String(2), nullable=True, index=True)
 
     # Journal entries as JSONB (denormalized for quick reads)
     journal_entries_json = Column(JSONB, nullable=True)
@@ -744,6 +861,20 @@ class TaxDeclarationDraft(Base):
         default=list,
         comment="List of {field, message} for fields that need accountant review",
     )
+    # Workflow audit fields (draft → reviewed → filed)
+    reviewed_by = Column(String(128), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    filed_by = Column(String(128), nullable=True)
+    filed_at = Column(DateTime(timezone=True), nullable=True)
+    dian_acknowledgment = Column(
+        String(64),
+        nullable=True,
+        comment="Número de radicado MUISCA — set when status=filed",
+    )
+    reopened_at = Column(DateTime(timezone=True), nullable=True)
+    reopened_by = Column(String(128), nullable=True)
+    reopen_reason = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -753,6 +884,295 @@ class TaxDeclarationDraft(Base):
 
     def __repr__(self):
         return f"<TaxDeclarationDraft(id={self.id}, form={self.form_type}, nit={self.company_nit}, period={self.period_end})>"
+
+
+class UvtValue(Base):
+    """Yearly UVT (Unidad de Valor Tributario) published by DIAN.
+
+    Used by tributario_agent to compute base mínima thresholds in pesos.
+    Falls back to UVT_FALLBACK constant when no row exists for the year.
+    """
+
+    __tablename__ = "uvt_values"
+
+    year = Column(Integer, primary_key=True, comment="Fiscal year, e.g. 2026")
+    value = Column(
+        Numeric(12, 2),
+        nullable=False,
+        comment="UVT value in COP pesos, e.g. 52374.00",
+    )
+    referencia_normativa = Column(
+        String(64),
+        nullable=True,
+        comment=(
+            "DIAN regulatory reference that published this UVT, "
+            "e.g. 'Resolución 000238 de 2025'"
+        ),
+    )
+    effective_from = Column(
+        DateTime(timezone=False), nullable=True, comment="Start of validity period"
+    )
+    effective_to = Column(
+        DateTime(timezone=False), nullable=True, comment="End of validity period"
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self):
+        return (
+            f"<UvtValue(year={self.year}, value={self.value}, "
+            f"referencia_normativa={self.referencia_normativa})>"
+        )
+
+
+class TaxBaseMinima(Base):
+    """Base mínima (in UVT units) per concepto per year for retención thresholds.
+
+    Conceptos: retefuente_servicios, retefuente_bienes, retefuente_arrendamiento, reteica.
+    Falls back to BASE_MINIMA_RETEFUENTE_UVT / BASE_MINIMA_RETEICA_UVT constants when
+    no DB row exists.
+    """
+
+    __tablename__ = "tax_base_minima"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    concepto = Column(
+        String(64),
+        nullable=False,
+        index=True,
+        comment=(
+            "One of: retefuente_servicios, retefuente_bienes, "
+            "retefuente_arrendamiento, reteica"
+        ),
+    )
+    uvt_units = Column(
+        Numeric(8, 2),
+        nullable=False,
+        comment="Threshold in UVT units, e.g. 4.00 for 4 UVT",
+    )
+    year = Column(Integer, nullable=False, index=True, comment="Fiscal year")
+    effective_from = Column(
+        DateTime(timezone=False), nullable=True, comment="Start of validity period"
+    )
+    effective_to = Column(
+        DateTime(timezone=False), nullable=True, comment="End of validity period"
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self):
+        return (
+            f"<TaxBaseMinima(concepto={self.concepto}, year={self.year}, "
+            f"uvt_units={self.uvt_units})>"
+        )
+
+
+class TaxConcept(Base):
+    """
+    Catálogo de conceptos de retención en la fuente (F350 — Res. DIAN 000031/2024).
+
+    Each row maps a retention concept to its F350 renglón, target beneficiary
+    type (PJ / PN / AMB), default tarifa, base mínima UVT, and the underlying
+    statute reference (Art. 392 ET, Art. 20-3 ET PES, etc.).
+
+    A contador updates rows directly; no redeploy required when DIAN amends
+    tarifas or adds new conceptos (e.g. Presencia Económica Significativa).
+    """
+
+    __tablename__ = "tax_concepts"
+
+    code = Column(
+        String(16),
+        primary_key=True,
+        comment="Stable identifier, e.g. 'compras_pj', 'pes_servicios_digitales'",
+    )
+    label = Column(String(255), nullable=False)
+    renglon_350 = Column(
+        String(8),
+        nullable=False,
+        comment="F350 renglón number (DIAN form 350)",
+    )
+    aplica_a = Column(
+        String(4),
+        nullable=False,
+        comment="PJ = persona jurídica | PN = persona natural | AMB = ambos",
+    )
+    tarifa_default = Column(
+        Numeric(6, 4),
+        nullable=True,
+        comment="Default retention rate as decimal fraction, e.g. 0.0250",
+    )
+    base_minima_uvt = Column(
+        Numeric(8, 2),
+        nullable=True,
+        comment="Threshold in UVT below which retention does not apply",
+    )
+    categoria = Column(
+        String(32),
+        nullable=False,
+        comment=(
+            "compras | servicios | honorarios | arrendamiento | hidrocarburos | "
+            "minerales | pes | salarios | ica | iva | otros"
+        ),
+    )
+    art_referencia = Column(String(64), nullable=True)
+    activo = Column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self):
+        return (
+            f"<TaxConcept(code={self.code}, renglon_350={self.renglon_350}, "
+            f"aplica_a={self.aplica_a}, categoria={self.categoria})>"
+        )
+
+
+class PerdidaFiscalAcumulada(Base):
+    """
+    Accumulated fiscal losses per company per year (Art. 147 ET).
+
+    Tracks multi-year loss carry-forward history (12-year limit per Art. 147 ET).
+    Compensation is FIFO by year. monto_pendiente is a generated column in Postgres
+    but stored as a regular column here; update via register_compensacion helper.
+    """
+
+    __tablename__ = "perdidas_fiscales_acumuladas"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    company_nit = Column(
+        String(20),
+        ForeignKey("company_settings.nit", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Owning company NIT (tenant)",
+    )
+    year = Column(Integer, nullable=False, comment="Year the loss was incurred")
+    monto_perdida = Column(
+        Numeric(18, 2), nullable=False, comment="Total fiscal loss for the year"
+    )
+    monto_compensado = Column(
+        Numeric(18, 2),
+        nullable=False,
+        default=Decimal("0"),
+        comment="Amount already compensated in subsequent years",
+    )
+    monto_pendiente = Column(
+        Numeric(18, 2),
+        nullable=False,
+        default=Decimal("0"),
+        comment="Pending amount = monto_perdida - monto_compensado (maintained by app)",
+    )
+    decreto = Column(
+        String(100),
+        nullable=True,
+        comment="Regulatory reference, e.g. 'Art. 147 ET'",
+    )
+    notas = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    company = relationship("CompanySettings")
+
+    def __repr__(self):
+        return (
+            f"<PerdidaFiscalAcumulada(nit={self.company_nit}, year={self.year}, "
+            f"pendiente={self.monto_pendiente})>"
+        )
+
+
+VALID_AJUSTE_SECCIONES = (
+    "ESF_ACTIVO",
+    "ESF_PASIVO",
+    "ESF_PATRIMONIO",
+    "ERI_INGRESO",
+    "ERI_COSTO",
+    "ERI_GASTO",
+)
+
+VALID_AJUSTE_TIPO_DIFERENCIA = (
+    "permanente",
+    "temporaria_imponible",
+    "temporaria_deducible",
+)
+
+
+class AjusteFiscal(Base):
+    """
+    Per-company, per-year fiscal adjustments used to auto-populate F2516.
+
+    Each row stores one concepto (e.g. 'provisiones_no_deducibles') within one
+    section of the Conciliación Fiscal (Art. 772-1 ET, Res. DIAN 000049/2019).
+    valor_contable is the NIIF/accounting figure; valor_fiscal is the
+    tax-recognised figure. The delta drives diferencias permanentes /
+    temporarias (Art. 287 ET).
+    """
+
+    __tablename__ = "ajustes_fiscales"
+
+    id = Column(
+        String(36),
+        primary_key=True,
+        comment="UUID generated by Postgres gen_random_uuid()",
+    )
+    company_nit = Column(
+        String(20),
+        ForeignKey("company_settings.nit", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    year = Column(Integer, nullable=False)
+    seccion = Column(
+        String(32),
+        nullable=False,
+        comment=(
+            "ESF_ACTIVO | ESF_PASIVO | ESF_PATRIMONIO | "
+            "ERI_INGRESO | ERI_COSTO | ERI_GASTO"
+        ),
+    )
+    concepto = Column(String(64), nullable=False)
+    valor_contable = Column(Numeric(18, 2), nullable=False, default=Decimal("0"))
+    valor_fiscal = Column(Numeric(18, 2), nullable=False, default=Decimal("0"))
+    tipo_diferencia = Column(
+        String(32),
+        nullable=False,
+        comment="permanente | temporaria_imponible | temporaria_deducible",
+    )
+    descripcion = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "company_nit",
+            "year",
+            "seccion",
+            "concepto",
+            name="ajustes_fiscales_nit_year_seccion_concepto_key",
+        ),
+    )
+
+    company = relationship("CompanySettings")
+
+    def __repr__(self):
+        return (
+            f"<AjusteFiscal(nit={self.company_nit}, year={self.year}, "
+            f"seccion={self.seccion}, concepto={self.concepto})>"
+        )
 
 
 class UserCompany(Base):
