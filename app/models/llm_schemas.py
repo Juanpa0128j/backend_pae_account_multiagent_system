@@ -416,6 +416,21 @@ class ChatIntentClassification(BaseModel):
         None,
         description="If RAG normative search would help, the Spanish query to use",
     )
+    period_start: Optional[str] = Field(
+        None,
+        description=(
+            "If the user names a period (e.g. 'enero', 'diciembre 2025', "
+            "'primer trimestre'), the start date as ISO YYYY-MM-DD. Null if "
+            "no period is mentioned."
+        ),
+    )
+    period_end: Optional[str] = Field(
+        None,
+        description=(
+            "If the user names a period, the end date as ISO YYYY-MM-DD (last "
+            "day of the named month/quarter/year). Null if no period mentioned."
+        ),
+    )
     explanation: str = Field(description="Brief reason for this classification")
 
 

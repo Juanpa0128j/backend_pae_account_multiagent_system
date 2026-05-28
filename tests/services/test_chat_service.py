@@ -113,6 +113,290 @@ class TestGatherFinancialData:
         assert cards == []
 
 
+class TestGatherFinancialDataViaB:
+    """Pathway branching: Vía B companies must read from ``via_b_service``."""
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.services.db_service.get_company_locked_pathway",
+        return_value="work_with_existing",
+    )
+    @patch("app.services.via_b_service.get_balance")
+    @patch("app.agents.reportero_agent._build_balance")
+    def test_balance_intent_uses_via_b_service_not_reportero(
+        self,
+        mock_via_a_balance,
+        mock_via_b_balance,
+        mock_get_pathway,
+        mock_session_cls,
+    ):
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+        mock_via_b_balance.return_value = {
+            "report_type": "balance_sheet",
+            "source": "via_b",
+            "activos": 1_000_000,
+            "pasivos": 300_000,
+            "patrimonio": 700_000,
+            "patrimonio_total": 700_000,
+            "utilidad_neta": 0,
+            "cuadre": True,
+        }
+
+        request = _make_request()
+        data, cards = gather_financial_data(_MOCK_INTENT_BALANCE, request)
+
+        assert data is not None
+        assert data["pathway"] == "work_with_existing"
+        assert data["source"] == "via_b"
+        assert len(cards) == 1
+        assert cards[0].card_type == "balance"
+        assert "Vía B" in cards[0].title
+        # Crucially, the Vía A builder must NOT have been called.
+        mock_via_a_balance.assert_not_called()
+        mock_via_b_balance.assert_called_once()
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.services.db_service.get_company_locked_pathway",
+        return_value="work_with_existing",
+    )
+    def test_iva_intent_returns_not_applicable_card_for_via_b(
+        self, mock_get_pathway, mock_session_cls
+    ):
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+
+        intent = {
+            "intent": "iva",
+            "needs_data": True,
+            "rag_query": None,
+            "explanation": "",
+        }
+        request = _make_request(message="¿Cuánto IVA pagué este mes?")
+        data, cards = gather_financial_data(intent, request)
+
+        assert len(cards) == 1
+        assert cards[0].card_type == "not_applicable"
+        assert data["reason"] == "via_b"
+        assert data["intent"] == "iva"
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.services.db_service.get_company_locked_pathway",
+        return_value="work_with_existing",
+    )
+    @patch("app.services.via_b_service.get_balance", return_value=None)
+    def test_balance_intent_surfaces_empty_via_b_card_when_no_statement(
+        self, mock_balance, mock_get_pathway, mock_session_cls
+    ):
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+
+        request = _make_request()
+        data, cards = gather_financial_data(_MOCK_INTENT_BALANCE, request)
+
+        assert len(cards) == 1
+        assert cards[0].card_type == "empty_via_b"
+        assert data["reason"] == "via_b_no_statement"
+
+
+class TestViaBPeriodSelection:
+    """The extracted period must flow through to via_b_service, and a missing
+    period must yield a `period_not_found` card (not a silent latest fallback)."""
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.services.db_service.get_company_locked_pathway",
+        return_value="work_with_existing",
+    )
+    @patch("app.services.via_b_service.get_balance")
+    def test_extracted_period_passed_to_via_b_service(
+        self, mock_get_balance, mock_get_pathway, mock_session_cls
+    ):
+        from datetime import date
+
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+        mock_get_balance.return_value = {
+            "report_type": "balance_sheet",
+            "source": "via_b",
+            "activos": 500_000,
+            "period_end": "2025-12-31",
+        }
+
+        intent = {
+            "intent": "balance",
+            "needs_data": True,
+            "rag_query": None,
+            "period_start": "2025-12-01",
+            "period_end": "2025-12-31",
+            "explanation": "",
+        }
+        request = _make_request(message="balance de diciembre 2025")
+        data, cards = gather_financial_data(intent, request)
+
+        # The period_end date must have been forwarded to the reader.
+        _, kwargs = mock_get_balance.call_args
+        args = mock_get_balance.call_args.args
+        assert date(2025, 12, 31) in args or kwargs.get("period_end") == date(
+            2025, 12, 31
+        )
+        assert data["period_end"] == "2025-12-31"
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.services.db_service.get_company_locked_pathway",
+        return_value="work_with_existing",
+    )
+    @patch("app.services.via_b_service.list_periods", return_value=["2026-01-31"])
+    @patch("app.services.via_b_service.get_balance", return_value=None)
+    def test_missing_period_returns_period_not_found_card(
+        self, mock_get_balance, mock_list_periods, mock_get_pathway, mock_session_cls
+    ):
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+
+        intent = {
+            "intent": "balance",
+            "needs_data": True,
+            "rag_query": None,
+            "period_start": "2025-11-01",
+            "period_end": "2025-11-30",
+            "explanation": "",
+        }
+        request = _make_request(message="balance de noviembre 2025")
+        data, cards = gather_financial_data(intent, request)
+
+        assert len(cards) == 1
+        assert cards[0].card_type == "period_not_found"
+        assert data["requested_period"] == "2025-11-30"
+        assert data["available_periods"] == ["2026-01-31"]
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.services.db_service.get_company_locked_pathway",
+        return_value="work_with_existing",
+    )
+    @patch("app.services.via_b_service.get_top_accounts")
+    def test_top_accounts_passes_period_end_to_via_b_service(
+        self, mock_top_accounts, mock_get_pathway, mock_session_cls
+    ):
+        """Without this wiring the chat reads the latest libro auxiliar
+        regardless of the requested month — Copilot review #69 flagged it."""
+        from datetime import date
+
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+        mock_top_accounts.return_value = {"top_debit": [], "top_credit": []}
+
+        intent = {
+            "intent": "top_accounts",
+            "needs_data": True,
+            "rag_query": None,
+            "period_start": "2025-12-01",
+            "period_end": "2025-12-31",
+            "explanation": "",
+        }
+        request = _make_request(message="top de cuentas en diciembre 2025")
+        gather_financial_data(intent, request)
+
+        kwargs = mock_top_accounts.call_args.kwargs
+        args = mock_top_accounts.call_args.args
+        assert date(2025, 12, 31) in args or kwargs.get("period_end") == date(
+            2025, 12, 31
+        )
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.services.db_service.get_company_locked_pathway",
+        return_value="work_with_existing",
+    )
+    @patch("app.services.via_b_service.list_periods", return_value=["2026-01-31"])
+    @patch("app.services.via_b_service.get_dashboard_overrides")
+    @patch("app.services.via_b_service.get_balance", return_value=None)
+    @patch("app.services.via_b_service.get_pnl", return_value=None)
+    def test_dashboard_with_missing_period_surfaces_period_not_found(
+        self,
+        mock_pnl,
+        mock_balance,
+        mock_overrides,
+        mock_list_periods,
+        mock_get_pathway,
+        mock_session_cls,
+    ):
+        """Dashboard/analysis intents previously merged the latest-period
+        overrides with the requested-period balance/pnl, masking missing data
+        as January figures labeled with November. Copilot review #69 case."""
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+
+        intent = {
+            "intent": "dashboard",
+            "needs_data": True,
+            "rag_query": None,
+            "period_start": "2025-11-01",
+            "period_end": "2025-11-30",
+            "explanation": "",
+        }
+        request = _make_request(message="resumen de noviembre 2025")
+        data, cards = gather_financial_data(intent, request)
+
+        assert len(cards) == 1
+        assert cards[0].card_type == "period_not_found"
+        assert data["requested_period"] == "2025-11-30"
+        assert data["available_periods"] == ["2026-01-31"]
+        # Overrides must NOT have been pulled — they would have leaked
+        # January totals into the response.
+        mock_overrides.assert_not_called()
+
+
+class TestComputeRatiosViaB:
+    """Card shape must match the Vía A ``_compute_ratios``: ``margen_neto``
+    and ``roa`` are pre-formatted percentages (39.7 means 39.7 %), and the
+    endeudamiento key is ``razon_endeudamiento`` — anything else makes the FE
+    show ``—`` while the LLM, computing from balance context, says otherwise.
+    """
+
+    def test_percentages_and_keys_match_via_a_shape(self):
+        from app.services.chat_service import _compute_ratios_via_b
+
+        balance = {
+            "activos": 659_814_708,
+            "pasivos": 169_098_236,
+            "patrimonio_total": 490_716_472,
+        }
+        pnl = {"total_ingresos": 22_625_936, "utilidad_neta": 8_983_445}
+
+        ratios = _compute_ratios_via_b(balance, pnl)
+
+        # Pre-formatted percentages, not raw ratios.
+        assert ratios["margen_neto"] == 39.7
+        assert ratios["roa"] == 1.36
+        # Ratio-style (not pct).
+        assert ratios["razon_endeudamiento"] == 0.2563
+        assert "deuda_patrimonio" in ratios
+        assert "rotacion_activos" in ratios
+        # Liquidity unsupported in Vía B.
+        assert ratios["razon_corriente"] is None
+        assert ratios["prueba_acida"] is None
+
+    def test_zero_denominators_return_none_not_zero(self):
+        from app.services.chat_service import _compute_ratios_via_b
+
+        ratios = _compute_ratios_via_b({}, {})
+        assert ratios["margen_neto"] is None
+        assert ratios["roa"] is None
+        assert ratios["razon_endeudamiento"] is None
+
+
 class TestHandleChatMessage:
     """Tests for the non-streaming chat handler."""
 

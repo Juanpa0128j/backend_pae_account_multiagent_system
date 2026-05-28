@@ -640,9 +640,24 @@ class IVAOutput(BaseModel):
     iva_a_pagar: float = Field(
         ..., description="Net IVA payable: generated - deductible"
     )
+    iva_status: Optional[str] = Field(
+        None,
+        description=(
+            "Sign of iva_a_pagar: 'saldo_a_pagar' | 'saldo_a_favor' | "
+            "'saldo_cero'. Populated by the Vía B derivation; Vía A leaves it null."
+        ),
+    )
     referencias: List[str] = Field(
         default_factory=lambda: ["Art. 477 ET", "Art. 24 ET"],
         description="Applicable legal references",
+    )
+    source: Optional[str] = Field(
+        None,
+        description=(
+            "Provenance of the figures: 'via_a' (derived from journal entries) "
+            "or 'via_b' (derived from uploaded balance saldos). Frontend uses "
+            "this to render a Vía B context badge."
+        ),
     )
     analysis: Optional[Dict[str, Any]] = Field(
         None,
@@ -674,6 +689,12 @@ class WithholdingsOutput(BaseModel):
     referencias: List[str] = Field(
         default_factory=lambda: ["Art. 383 ET", "Decreto 2048/1992"],
         description="Applicable legal references",
+    )
+    source: Optional[str] = Field(
+        None,
+        description=(
+            "Provenance: 'via_a' (journal entries) or 'via_b' (balance saldos)."
+        ),
     )
     analysis: Optional[Dict[str, Any]] = Field(
         None,
