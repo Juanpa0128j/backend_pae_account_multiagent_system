@@ -208,6 +208,14 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
                 elif code.startswith("3"):
                     patrimonio_detalle.append(row)
 
+        # ``utilidad_neta`` lives in different places depending on the
+        # extractor: top-level field, nested under ``patrimonio``, or only as
+        # a row in ``accounts`` (PUC ``3605*``). Use the shared resolver so
+        # the report widget shows the same figure as the chat and dashboard.
+        from app.services.via_b_service import resolve_utilidad_neta
+
+        utilidad_neta_value = resolve_utilidad_neta(data)
+
         # patrimonio (sin utilidad) is the clase-3 baseline that does NOT
         # include net profit. Exporters add `utilidad_neta` on top to get the
         # final patrimonio total. We must NOT fall back to `total_patrimonio`
@@ -217,8 +225,7 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
         patrimonio_sin_utilidad_raw = data.get("patrimonio_sin_utilidad")
         if patrimonio_sin_utilidad_raw is None:
             total_patrimonio_raw = _to_float(data.get("total_patrimonio"))
-            utilidad_neta_raw = _to_float(data.get("utilidad_neta"))
-            patrimonio_value = total_patrimonio_raw - utilidad_neta_raw
+            patrimonio_value = total_patrimonio_raw - utilidad_neta_value
         else:
             patrimonio_value = _to_float(patrimonio_sin_utilidad_raw)
 
@@ -228,7 +235,7 @@ def _normalize_stored_statement(report_type: str, data: dict) -> dict:
             "activos": _to_float(data.get("total_activos")),
             "pasivos": _to_float(data.get("total_pasivos")),
             "patrimonio": patrimonio_value,
-            "utilidad_neta": _to_float(data.get("utilidad_neta")),
+            "utilidad_neta": utilidad_neta_value,
             "patrimonio_total": _to_float(data.get("total_patrimonio")),
             "cuadre": bool(data.get("cuadre", False)),
             "mensaje_cuadre": "Balance derivado desde asientos contables.",

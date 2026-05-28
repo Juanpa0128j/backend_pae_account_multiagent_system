@@ -5,8 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
-from app.models.database import FinancialStatement
-from app.services import db_service
+from app.services import db_service, via_b_service
 from app.services.nit_utils import normalize_nit
 from app.services.parse_utils import safe_float
 
@@ -21,82 +20,6 @@ def _parse_date(date_str: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(date_str)
     except ValueError:
         return None
-
-
-def _via_b_libro_auxiliar(db: Session, company_nit: str) -> list[dict]:
-    """Return libro_auxiliar lines as book rows for Vía B-locked companies."""
-    stmt = (
-        db.query(FinancialStatement)
-        .filter(
-            FinancialStatement.entity_nit == company_nit,
-            FinancialStatement.statement_type == "libro_auxiliar",
-        )
-        .order_by(FinancialStatement.period_end.desc())
-        .first()
-    )
-    if stmt is None or not isinstance(stmt.data, dict):
-        return []
-    lines = stmt.data.get("lines") or stmt.data.get("accounts") or []
-    if not isinstance(lines, list):
-        return []
-    out = []
-    for line in lines:
-        if not isinstance(line, dict):
-            continue
-        out.append(
-            {
-                "fecha": str(line.get("fecha") or ""),
-                "comprobante": str(line.get("comprobante") or ""),
-                "cuenta": str(line.get("cuenta_puc") or ""),
-                "tercero_nit": str(line.get("tercero_nit") or ""),
-                "descripcion": str(
-                    line.get("detalle") or line.get("cuenta_nombre") or ""
-                ),
-                "debito": safe_float(line.get("debito")),
-                "credito": safe_float(line.get("credito")),
-                "saldo": safe_float(line.get("saldo")),
-            }
-        )
-    return out
-
-
-def _via_b_balance(db: Session, company_nit: str) -> list[dict]:
-    """Return balance_general accounts as book rows for Vía B.
-
-    Reads the most recent uploaded balance_general FinancialStatement and
-    flattens its `accounts` array into the same row shape BookTable expects
-    for tipo=balance (cuenta + nombre + saldo).
-    """
-    stmt = (
-        db.query(FinancialStatement)
-        .filter(
-            FinancialStatement.entity_nit == company_nit,
-            FinancialStatement.statement_type == "balance_general",
-        )
-        .order_by(FinancialStatement.period_end.desc())
-        .first()
-    )
-    if stmt is None or not isinstance(stmt.data, dict):
-        return []
-    accounts = stmt.data.get("accounts") or []
-    if not isinstance(accounts, list):
-        return []
-    period_end_str = stmt.period_end.date().isoformat() if stmt.period_end else ""
-    out = []
-    for acc in accounts:
-        if not isinstance(acc, dict):
-            continue
-        out.append(
-            {
-                "fecha": period_end_str,
-                "cuenta": str(acc.get("cuenta_puc") or ""),
-                "descripcion": str(acc.get("nombre") or ""),
-                "debito": 0.0,
-                "credito": 0.0,
-                "saldo": safe_float(acc.get("saldo")),
-            }
-        )
-    return out
 
 
 def _via_a_balance_per_account(
@@ -216,9 +139,9 @@ async def get_books(
             locked = None
         if locked == "work_with_existing":
             if tipo == "auxiliar":
-                return _via_b_libro_auxiliar(db, normalized_company_nit)
+                return via_b_service.get_libro_auxiliar(db, normalized_company_nit)
             if tipo == "balance":
-                return _via_b_balance(db, normalized_company_nit)
+                return via_b_service.get_balance_rows(db, normalized_company_nit)
             # diario / mayor — only meaningful for Vía A.
             return {
                 "available": False,

@@ -16,14 +16,12 @@ from typing import Any, Dict, List, Optional
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.database import (
-    FinancialStatement,
     TransactionPending,
     TransactionPosted,
     TransactionStatus,
 )
-from app.services import db_service
+from app.services import db_service, via_b_service
 from app.services.nit_utils import normalize_nit
-from app.services.parse_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -61,80 +59,12 @@ class DashboardStatsResponse(BaseModel):
     via_b_statements_count: int = 0
     latest_via_b_period: Optional[str] = None
     derivation_ready: bool = False
-
-
-def _via_b_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
-    """Compute Vía B financial totals from FinancialStatement rows.
-
-    Returns a dict with the same keys the Vía A flow computes from journal
-    entries (total_activos, total_pasivos, etc.) plus Vía B metadata
-    (statements_count, latest_period, derivation_ready).
-    """
-    rows = (
-        db.query(FinancialStatement)
-        .filter(FinancialStatement.entity_nit == company_nit)
-        .order_by(FinancialStatement.period_end.desc())
-        .all()
-    )
-    bg = next((r for r in rows if r.statement_type == "balance_general"), None)
-    er = next((r for r in rows if r.statement_type == "estado_resultados"), None)
-    la = next((r for r in rows if r.statement_type == "libro_auxiliar"), None)
-
-    def _f(d: Optional[dict], key: str) -> float:
-        if not isinstance(d, dict):
-            return 0.0
-        try:
-            return float(d.get(key) or 0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    bg_data = bg.data if bg and isinstance(bg.data, dict) else {}
-    er_data = er.data if er and isinstance(er.data, dict) else {}
-
-    total_activos = _f(bg_data, "total_activos")
-    total_pasivos = _f(bg_data, "total_pasivos")
-    utilidad_neta = _f(er_data, "utilidad_neta")
-
-    # Efectivo from libro_auxiliar lines on PUC class 11 if available.
-    efectivo = 0.0
-    if la and isinstance(la.data, dict):
-        lines = la.data.get("lines") or la.data.get("accounts") or []
-        if isinstance(lines, list):
-            for line in lines:
-                if not isinstance(line, dict):
-                    continue
-                code = str(line.get("cuenta_puc") or line.get("codigo") or "")
-                if code.startswith("11"):
-                    efectivo += safe_float(line.get("debito")) - safe_float(
-                        line.get("credito")
-                    )
-
-    # `derivation_ready` matches the logic in /reports/derivation/status: all 3
-    # source statement types must share at least one common period_end (a single
-    # statement of each type isn't enough if the periods don't line up).
-    direct = [r for r in rows if r.source_mode == "direct"]
-    required_types = ("balance_general", "estado_resultados", "libro_auxiliar")
-    period_ends_by_type: Dict[str, set] = {t: set() for t in required_types}
-    for r in direct:
-        if r.statement_type in period_ends_by_type and r.period_end is not None:
-            period_ends_by_type[r.statement_type].add(r.period_end)
-    common_period_ends = (
-        set.intersection(*period_ends_by_type.values())
-        if all(period_ends_by_type[t] for t in required_types)
-        else set()
-    )
-    derivation_ready = bool(common_period_ends)
-    latest = max((r.period_end for r in direct if r.period_end), default=None)
-
-    return {
-        "total_activos": total_activos,
-        "total_pasivos": total_pasivos,
-        "utilidad_neta": utilidad_neta,
-        "efectivo": efectivo,
-        "statements_count": len(direct),
-        "latest_period": latest.isoformat() if latest else None,
-        "derivation_ready": derivation_ready,
-    }
+    # The period the KPIs reflect. For Vía B this is the most recent date
+    # shared by balance + E.R. + libro_aux when ``period_resolution="common"``;
+    # ``"partial"`` means each KPI may come from a different period. The
+    # frontend should surface this so users know what they're looking at.
+    period_end: Optional[str] = None
+    period_resolution: Optional[str] = None  # 'common' | 'partial' | None
 
 
 SPANISH_MONTHS = {
@@ -151,6 +81,14 @@ SPANISH_MONTHS = {
     11: "Nov",
     12: "Dic",
 }
+
+
+def _label_ym(ym: str) -> str:
+    try:
+        _, month = ym.split("-")
+        return SPANISH_MONTHS.get(int(month), ym)
+    except (ValueError, AttributeError):
+        return ym
 
 
 class MonthlyTrendPoint(BaseModel):
@@ -205,7 +143,7 @@ async def get_dashboard_stats(
     # Source financial figures from FinancialStatement rows; transaction
     # counters stay 0 because Vía B doesn't produce TransactionPending rows.
     if pathway == "work_with_existing" and company_nit:
-        vb = _via_b_dashboard_overrides(db, company_nit)
+        vb = via_b_service.get_dashboard_overrides(db, company_nit)
         return DashboardStatsResponse(
             documentos_pendientes=0,
             transacciones_procesadas_mes=0,
@@ -221,6 +159,8 @@ async def get_dashboard_stats(
             via_b_statements_count=vb["statements_count"],
             latest_via_b_period=vb["latest_period"],
             derivation_ready=vb["derivation_ready"],
+            period_end=vb.get("period_end"),
+            period_resolution=vb.get("period_resolution"),
         )
 
     # Pending documents
@@ -424,12 +364,35 @@ async def get_monthly_trend(
     """
     Returns monthly ingresos vs gastos for the last N months.
     Used to power the Tendencia bar chart on the dashboard.
+
+    Vía B companies aggregate over uploaded estado_resultados periods instead
+    of journal_entry_lines; an empty series is returned when fewer than two
+    P&L statements are on file (a trend needs at least two points).
     """
     if company_nit:
         try:
             company_nit = normalize_nit(company_nit)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+        try:
+            pathway = db_service.get_company_locked_pathway(db, company_nit)
+        except Exception:
+            pathway = None
+        if pathway == "work_with_existing":
+            via_b_trend = via_b_service.get_monthly_trend(db, company_nit, months)
+            if via_b_trend is None:
+                return MonthlyTrendResponse(data=[])
+            return MonthlyTrendResponse(
+                data=[
+                    MonthlyTrendPoint(
+                        month=_label_ym(point["month"]),
+                        ingresos=point["ingresos"],
+                        gastos=point["gastos"],
+                    )
+                    for point in via_b_trend["data"]
+                ]
+            )
 
     totals = db_service.get_monthly_totals_by_class(
         db, months=months, company_nit=company_nit
@@ -446,16 +409,9 @@ async def get_monthly_trend(
 
     all_months = sorted(set(ingresos_by_month) | set(gastos_by_month))
 
-    def _label(ym: str) -> str:
-        try:
-            year, month = ym.split("-")
-            return SPANISH_MONTHS.get(int(month), ym)
-        except (ValueError, AttributeError):
-            return ym
-
     data = [
         MonthlyTrendPoint(
-            month=_label(ym),
+            month=_label_ym(ym),
             ingresos=ingresos_by_month.get(ym, 0.0),
             gastos=gastos_by_month.get(ym, 0.0),
         )
