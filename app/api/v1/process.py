@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 import inngest
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -8,11 +9,17 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models.database import IngestJob, ProcessJob, ProcessStatus
+from app.models.database import (
+    IngestJob,
+    ProcessJob,
+    ProcessStatus,
+    TransactionStatus,
+)
 from app.models.schemas import (
     ProcessResponse,
     ProcessStatusResponse,
     ProcessResultResponse,
+    ProcessCancelResponse,
 )
 from app.models.trace import PipelineTrace
 from app.services import db_service
@@ -380,6 +387,72 @@ async def confirm_audit_review(
         "message": "Revisión confirmada. Reintentando persistencia.",
         "process_id": process_id,
     }
+
+
+@router.post("/{process_id}/cancel", response_model=ProcessCancelResponse)
+async def cancel_process(
+    process_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Cooperatively cancel a process job that is queued, running or pending review.
+
+    Marks the job CANCELLED in the DB. Because the pipeline runs in a thread that
+    cannot be force-killed, the running thread checks the status before persisting
+    results (see app/services/jobs.py and app/agents/persist_node.py).
+    """
+    from app.services.jobs import (
+        _mark_pending_failed_safe,
+        _mark_processing_transactions_failed_safe,
+    )
+
+    process_job = db_service.get_process_job(db, process_id)
+    if not process_job:
+        raise HTTPException(
+            status_code=404, detail=f"Process job {process_id} not found"
+        )
+
+    status = process_job.status
+    if status == ProcessStatus.CANCELLED:
+        raise HTTPException(status_code=409, detail="El proceso ya fue cancelado")
+    if status in (ProcessStatus.COMPLETED, ProcessStatus.FAILED):
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede cancelar un proceso que ya terminó",
+        )
+
+    db_service.update_process_job(
+        db,
+        process_id=process_id,
+        status=ProcessStatus.CANCELLED,
+        current_stage="cancelled",
+        agent_log_entry={
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agent": "supervisor",
+            "stage": "cancelled",
+            "event": "cancelled",
+            "message": "Proceso cancelado manualmente por el usuario",
+        },
+    )
+
+    # Best-effort: mark related pending/processing transactions as failed so they
+    # don't stay stuck. Never let these break the cancel response.
+    ingest_id = str(process_job.ingest_id) if process_job.ingest_id else ""
+    if ingest_id:
+        _mark_processing_transactions_failed_safe(ingest_id)
+        try:
+            staged = db_service.get_transactions_by_ingest(db, ingest_id)
+            for tx in staged:
+                if tx.status == TransactionStatus.PENDING:
+                    _mark_pending_failed_safe(str(tx.id))
+        except Exception:  # pragma: no cover - best-effort cleanup
+            pass
+
+    return ProcessCancelResponse(
+        process_id=process_id,
+        status=ProcessStatus.CANCELLED.value,
+        message="Proceso cancelado correctamente",
+    )
 
 
 @router.get("/{process_id}/trace", response_model=PipelineTrace)

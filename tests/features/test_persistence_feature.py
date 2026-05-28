@@ -125,6 +125,7 @@ def _build_ingest_state_missing_receptor() -> dict:
 @patch("app.agents.persist_node.db_service.create_journal_entry_lines")
 @patch("app.agents.persist_node.db_service.create_transaction_posted")
 @patch("app.agents.persist_node.db_service.validate_puc_exists")
+@patch("app.agents.persist_node.db_service.find_duplicate_posted", return_value=None)
 @patch("app.agents.persist_node.db_service.check_duplicates", return_value=[])
 @patch("app.agents.persist_node.db_service.update_ingest_job")
 @patch("app.agents.persist_node.db_service.get_ingest_job")
@@ -136,6 +137,7 @@ def test_db_persist_maps_tributario_taxes_to_posted_transaction(
     mock_get_ingest_job,
     mock_update_ingest,
     mock_check_duplicates,
+    mock_find_duplicate,
     mock_validate_puc,
     mock_create_posted,
     mock_create_journal,
@@ -146,6 +148,7 @@ def test_db_persist_maps_tributario_taxes_to_posted_transaction(
         mock_auto_derive,
         mock_update_ingest,
         mock_check_duplicates,
+        mock_find_duplicate,
         mock_create_journal,
         mock_update_process,
     )

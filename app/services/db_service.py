@@ -7,15 +7,16 @@ All DB operations used by agents, APIs, and the seed script go through here.
 # SQLAlchemy Column assignments are safe at runtime; Pylance flags them incorrectly.
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import distinct, extract, func
+from sqlalchemy import distinct, extract, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
 from app.models.database import (
+    AjusteFiscal,
     AuditLog,
     CompanySettings,
     CuentaPUC,
@@ -27,11 +28,17 @@ from app.models.database import (
     ProcessJob,
     ProcessStatus,
     ReteicaTarifa,
+    PerdidaFiscalAcumulada,
+    TarifaRenta,
+    TaxBaseMinima,
+    TaxConcept,
+    TaxDeclarationDraft,
     Tercero,
     TransactionPending,
     TransactionPosted,
     TransactionStatus,
     UserCompany,
+    UvtValue,
 )
 
 logger = get_logger(__name__)
@@ -282,10 +289,37 @@ def create_transaction_posted(
     tax_references: Optional[List[str]] = None,
     agent_reasoning: Optional[Dict] = None,
     company_nit: Optional[str] = None,
+    tipo_iva: Optional[str] = None,
+    concepto_retencion: Optional[str] = None,
+    tipo_persona_emisor: Optional[str] = None,
     commit: bool = True,
     created_by: str | None = None,
 ) -> TransactionPosted:
-    """Create a fully processed posted transaction."""
+    """Create a fully processed posted transaction.
+
+    ``tipo_iva`` (optional) classifies the operation under DIAN's IVA regime
+    so the F300 builder can compute Art. 490 ET prorrateo. Allowed values
+    live in ``app.services.tax_constants.TIPOS_IVA_VALIDOS``. ``None`` means
+    "no clasificado" (the builder treats it conservatively).
+
+    ``concepto_retencion`` (optional) maps to ``tax_concepts.code`` and lets
+    the F350 builder discriminate retenciones by F350 renglón. ``None`` means
+    "sin clasificar" (the builder surfaces a warning).
+
+    ``tipo_persona_emisor`` (optional) is ``"PJ"`` or ``"PN"``. Used together
+    with concepto_retencion to populate the right F350 column.
+    """
+    from app.services.tax_constants import is_valid_tipo_iva, is_valid_tipo_persona
+
+    if not is_valid_tipo_iva(tipo_iva):
+        raise ValueError(
+            f"Invalid tipo_iva: {tipo_iva!r}. Must be one of TIPOS_IVA_VALIDOS or None."
+        )
+    if not is_valid_tipo_persona(tipo_persona_emisor):
+        raise ValueError(
+            f"Invalid tipo_persona_emisor: {tipo_persona_emisor!r}. Must be 'PJ', 'PN', or None."
+        )
+
     posted = TransactionPosted(
         id=_generate_id("posted_"),
         transaction_pending_id=transaction_pending_id,
@@ -301,6 +335,9 @@ def create_transaction_posted(
         journal_entries_json=journal_entries_json,
         tax_references=tax_references,
         agent_reasoning=agent_reasoning,
+        tipo_iva=tipo_iva,
+        concepto_retencion=concepto_retencion,
+        tipo_persona_emisor=tipo_persona_emisor,
         status=TransactionStatus.POSTED,
     )
     db.add(posted)
@@ -478,6 +515,49 @@ def get_general_ledger(
         }
         for r in results
     ]
+
+
+def get_revenue_by_tipo_iva(
+    db: Session,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    company_nit: Optional[str] = None,
+    account_prefix: str = "4",
+) -> Dict[str, float]:
+    """Sum class-4 (or other prefix) credits grouped by transaction `tipo_iva`.
+
+    Used by the F300 builder to discriminate operaciones gravadas / exentas /
+    excluidas / exportaciones for Art. 490 ET prorrateo and renglones 26-30.
+
+    Returns a dict mapping ``tipo_iva`` (or ``"sin_clasificar"`` for NULL) to
+    total credits in COP for matching journal lines in the period.
+    """
+    rows = (
+        db.query(
+            TransactionPosted.tipo_iva,
+            func.sum(JournalEntryLine.credito).label("total_credit"),
+        )
+        .join(
+            JournalEntryLine,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+        .filter(JournalEntryLine.cuenta_puc.startswith(account_prefix))
+    )
+    if start_date:
+        rows = rows.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        rows = rows.filter(JournalEntryLine.fecha <= end_date)
+    if company_nit:
+        rows = rows.filter(JournalEntryLine.company_nit == company_nit)
+
+    rows = rows.group_by(TransactionPosted.tipo_iva).all()
+
+    result: Dict[str, float] = {}
+    for tipo, total in rows:
+        key = tipo if tipo else "sin_clasificar"
+        result[key] = float(total or 0)
+    return result
 
 
 def get_subsidiary_journal(
@@ -678,6 +758,37 @@ def check_duplicates(
             TransactionPending.fecha <= end_date,
         )
         .all()
+    )
+
+
+def find_duplicate_posted(
+    db: Session,
+    company_nit: str,
+    nit_emisor: str,
+    fecha: datetime,
+    total: Decimal,
+) -> Optional[TransactionPosted]:
+    """Return an existing TransactionPosted matching the natural key, or None.
+
+    Natural key: (company_nit, nit_emisor, fecha::date, total).
+    Used to skip duplicate postings on source-document re-upload.
+    """
+    day_start = fecha.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = fecha.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return (
+        db.query(TransactionPosted)
+        .join(
+            TransactionPending,
+            TransactionPosted.transaction_pending_id == TransactionPending.id,
+        )
+        .filter(
+            TransactionPosted.company_nit == company_nit,
+            TransactionPending.nit_emisor == nit_emisor,
+            TransactionPending.fecha >= day_start,
+            TransactionPending.fecha <= day_end,
+            TransactionPending.total == total,
+        )
+        .first()
     )
 
 
@@ -1269,6 +1380,66 @@ def get_reteica_tarifa(db: Session, ciudad: str, ciiu: str) -> Optional[float]:
     return None
 
 
+def get_reteica_base_minima_uvt(db: Session, ciudad: str, ciiu: str) -> Decimal | None:
+    """Return the municipal ReteICA base mínima in UVT units for a given city+CIIU.
+
+    Uses same 3-priority lookup as get_reteica_tarifa:
+      1. municipio + ciiu_seccion (exact)
+      2. municipio + 'general'   (city default)
+      3. 'general' + 'general'   (national fallback)
+
+    Returns Decimal(base_minima_uvt) or None if no row found / column null.
+    Falls back to BASE_MINIMA_RETEICA_UVT constant in tributario_agent when None.
+    """
+    municipio = _normalize_municipio(ciudad)
+    seccion = _ciiu_to_section(ciiu)
+
+    def _extract(r: ReteicaTarifa) -> Decimal | None:
+        if r is None or r.base_minima_uvt is None:
+            return None
+        return Decimal(str(r.base_minima_uvt))
+
+    if seccion != "general":
+        row = (
+            db.query(ReteicaTarifa)
+            .filter(
+                ReteicaTarifa.municipio == municipio,
+                ReteicaTarifa.ciiu_seccion == seccion,
+            )
+            .first()
+        )
+        if row:
+            val = _extract(row)
+            if val is not None:
+                return val
+
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == municipio,
+            ReteicaTarifa.ciiu_seccion == "general",
+        )
+        .first()
+    )
+    if row:
+        val = _extract(row)
+        if val is not None:
+            return val
+
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == "general",
+            ReteicaTarifa.ciiu_seccion == "general",
+        )
+        .first()
+    )
+    if row:
+        return _extract(row)
+
+    return None
+
+
 # ─── VectorDocument ───────────────────────────────────────────────────────────
 
 
@@ -1727,3 +1898,681 @@ def get_municipios(db: Session) -> list[str]:
         .all()
     )
     return [r.municipio for r in rows]
+
+
+# ─── UVT & Base Mínima ───────────────────────────────────────────
+
+
+def get_uvt(db: Session, year: int) -> Decimal | None:
+    """Return UVT value for given year, or None if not in DB."""
+    row = db.query(UvtValue).filter(UvtValue.year == year).first()
+    if row is None:
+        return None
+    return Decimal(str(row.value))
+
+
+def get_base_minima(
+    db: Session,
+    concepto: str,
+    year: int,
+    as_of_date: date | None = None,
+) -> Decimal | None:
+    """Return UVT units for given concepto+year (or as_of_date), or None.
+
+    If as_of_date is provided, filters rows where:
+        effective_from <= as_of_date AND (effective_to IS NULL OR effective_to >= as_of_date)
+    This enables temporal lookup for regulatory windows (e.g. Decreto 572 suspension
+    by Consejo de Estado on May 7 2026 → documents dated before/after use different bases).
+
+    If as_of_date is None, falls back to year-based lookup (most recently inserted row
+    matching the year), preserving backward compatibility.
+    """
+    if as_of_date is not None:
+        row = (
+            db.query(TaxBaseMinima)
+            .filter(
+                TaxBaseMinima.concepto == concepto,
+                TaxBaseMinima.year == year,
+                TaxBaseMinima.effective_from <= as_of_date,
+                or_(
+                    TaxBaseMinima.effective_to.is_(None),
+                    TaxBaseMinima.effective_to >= as_of_date,
+                ),
+            )
+            .first()
+        )
+    else:
+        row = (
+            db.query(TaxBaseMinima)
+            .filter(TaxBaseMinima.concepto == concepto, TaxBaseMinima.year == year)
+            .first()
+        )
+    if row is None:
+        return None
+    return Decimal(str(row.uvt_units))
+
+
+def list_tax_constants(db: Session, year: int) -> dict:
+    """Return UVT and base_minima constants for given year.
+
+    Shape:
+        {
+            "uvt": {"year": int, "value": str, "referencia_normativa": str | None},
+            "base_minima": [{"concepto": str, "uvt_units": str, "year": int}, ...]
+        }
+    """
+    uvt_row = db.query(UvtValue).filter(UvtValue.year == year).first()
+    bm_rows = (
+        db.query(TaxBaseMinima)
+        .filter(TaxBaseMinima.year == year)
+        .order_by(TaxBaseMinima.concepto)
+        .all()
+    )
+    return {
+        "uvt": (
+            {
+                "year": uvt_row.year,
+                "value": str(uvt_row.value),
+                "referencia_normativa": uvt_row.referencia_normativa,
+            }
+            if uvt_row
+            else None
+        ),
+        "base_minima": [
+            {
+                "concepto": r.concepto,
+                "uvt_units": str(r.uvt_units),
+                "year": r.year,
+            }
+            for r in bm_rows
+        ],
+    }
+
+
+def upsert_uvt(
+    db: Session,
+    year: int,
+    value: Decimal,
+    referencia_normativa: str | None = None,
+) -> UvtValue:
+    """Insert or update UVT value for given year."""
+    row = db.query(UvtValue).filter(UvtValue.year == year).first()
+    if row is None:
+        row = UvtValue(
+            year=year, value=value, referencia_normativa=referencia_normativa
+        )
+        db.add(row)
+    else:
+        row.value = value
+        row.referencia_normativa = referencia_normativa
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def upsert_base_minima(
+    db: Session,
+    concepto: str,
+    uvt_units: Decimal,
+    year: int,
+) -> TaxBaseMinima:
+    """Insert or update base mínima for given concepto+year."""
+    row = (
+        db.query(TaxBaseMinima)
+        .filter(TaxBaseMinima.concepto == concepto, TaxBaseMinima.year == year)
+        .first()
+    )
+    if row is None:
+        row = TaxBaseMinima(concepto=concepto, uvt_units=uvt_units, year=year)
+        db.add(row)
+    else:
+        row.uvt_units = uvt_units
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+# ---------------------------------------------------------------------------
+# Pérdidas fiscales acumuladas (Art. 147 ET — 12-year carry-forward)
+# ---------------------------------------------------------------------------
+
+
+def get_perdidas_disponibles(
+    db: Session, company_nit: str, current_year: int
+) -> list[PerdidaFiscalAcumulada]:
+    """
+    Return rows with monto_pendiente > 0 from years prior to current_year.
+    Ordered ASC by year for FIFO compensation per Art. 147 ET.
+    """
+    return (
+        db.query(PerdidaFiscalAcumulada)
+        .filter(
+            PerdidaFiscalAcumulada.company_nit == company_nit,
+            PerdidaFiscalAcumulada.year < current_year,
+            PerdidaFiscalAcumulada.monto_pendiente > 0,
+        )
+        .order_by(PerdidaFiscalAcumulada.year.asc())
+        .all()
+    )
+
+
+def sum_perdidas_disponibles(
+    db: Session, company_nit: str, current_year: int
+) -> Decimal:
+    """Sum of all available (pending) fiscal losses prior to current_year."""
+    rows = get_perdidas_disponibles(db, company_nit, current_year)
+    return sum((r.monto_pendiente for r in rows), Decimal("0"))
+
+
+def upsert_perdida(
+    db: Session,
+    company_nit: str,
+    year: int,
+    monto_perdida: Decimal,
+    decreto: str | None = None,
+    notas: str | None = None,
+) -> PerdidaFiscalAcumulada:
+    """Insert or update a fiscal loss record for the given company and year."""
+    row = (
+        db.query(PerdidaFiscalAcumulada)
+        .filter(
+            PerdidaFiscalAcumulada.company_nit == company_nit,
+            PerdidaFiscalAcumulada.year == year,
+        )
+        .first()
+    )
+    if row is None:
+        row = PerdidaFiscalAcumulada(
+            company_nit=company_nit,
+            year=year,
+            monto_perdida=monto_perdida,
+            monto_compensado=Decimal("0"),
+            monto_pendiente=monto_perdida,
+            decreto=decreto,
+            notas=notas,
+        )
+        db.add(row)
+    else:
+        row.monto_perdida = monto_perdida
+        # Recalculate pending after updating total
+        row.monto_pendiente = monto_perdida - row.monto_compensado
+        if decreto is not None:
+            row.decreto = decreto
+        if notas is not None:
+            row.notas = notas
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def register_compensacion(
+    db: Session,
+    company_nit: str,
+    year: int,
+    monto_compensado_delta: Decimal,
+) -> PerdidaFiscalAcumulada:
+    """
+    Increment monto_compensado for the given year's loss record.
+    Raises ValueError if delta would exceed monto_perdida.
+    """
+    row = (
+        db.query(PerdidaFiscalAcumulada)
+        .filter(
+            PerdidaFiscalAcumulada.company_nit == company_nit,
+            PerdidaFiscalAcumulada.year == year,
+        )
+        .first()
+    )
+    if row is None:
+        raise ValueError(
+            f"No fiscal loss record found for NIT {company_nit}, year {year}"
+        )
+    new_compensado = row.monto_compensado + monto_compensado_delta
+    if new_compensado > row.monto_perdida:
+        raise ValueError(
+            f"Compensación de {monto_compensado_delta} excedería la pérdida total "
+            f"de {row.monto_perdida} para año {year}. "
+            f"Ya compensado: {row.monto_compensado}."
+        )
+    row.monto_compensado = new_compensado
+    row.monto_pendiente = row.monto_perdida - new_compensado
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def sum_retenciones_anio(db: Session, company_nit: str, year: int) -> Decimal:
+    """
+    Sum of retenciones a favor for the given year.
+    Sources: PUC 135515 + 135518 debit balances from journal_entry_lines (Jan 1 – Dec 31).
+    """
+    start_dt = datetime(year, 1, 1, 0, 0, 0)
+    end_dt = datetime(year, 12, 31, 23, 59, 59)
+
+    result = (
+        db.query(func.sum(JournalEntryLine.debito))
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(
+            TransactionPosted.status == TransactionStatus.POSTED,
+            JournalEntryLine.company_nit == company_nit,
+            JournalEntryLine.cuenta_puc.in_(["135515", "135518"]),
+            JournalEntryLine.fecha >= start_dt,
+            JournalEntryLine.fecha <= end_dt,
+        )
+        .scalar()
+    )
+    return Decimal(str(result or 0))
+
+
+def get_latest_f2516_reviewed(
+    db: Session, company_nit: str, year: int
+) -> "TaxDeclarationDraft | None":
+    """Return the latest F2516 draft with status='reviewed' for the given year, or None."""
+    return (
+        db.query(TaxDeclarationDraft)
+        .filter(
+            TaxDeclarationDraft.company_nit == company_nit,
+            TaxDeclarationDraft.form_type == "F2516",
+            TaxDeclarationDraft.year == year,
+            TaxDeclarationDraft.status == "reviewed",
+        )
+        .order_by(TaxDeclarationDraft.created_at.desc())
+        .first()
+    )
+
+
+# ---------------------------------------------------------------------------
+# TarifaRenta helpers — Colombian Renta PJ regulatory rate table
+# ---------------------------------------------------------------------------
+
+
+def get_tarifa_renta(
+    db: Session, regimen: str, actividad: str, year: int
+) -> dict | None:
+    """Return {tarifa_base, sobretasa, tarifa_efectiva, base_legal} or None.
+
+    Lookup precedence:
+    1. Exact (regimen, actividad, year in [year_from, year_to or inf])
+       When multiple rows match (e.g. emergency surcharge with higher year_from),
+       return the most specific — highest year_from <= year.
+    2. Fallback (regimen, actividad=NULL, year matches)
+    3. None — caller should fall back to company_settings.tasa_renta
+    """
+
+    def _row_to_dict(row: TarifaRenta) -> dict:
+        tarifa_base = Decimal(str(row.tarifa_base))
+        sobretasa = Decimal(str(row.sobretasa))
+        return {
+            "tarifa_base": float(tarifa_base),
+            "sobretasa": float(sobretasa),
+            "tarifa_efectiva": float(tarifa_base + sobretasa),
+            "base_legal": row.base_legal,
+        }
+
+    def _year_filter(q):
+        return q.filter(
+            TarifaRenta.year_from <= year,
+            (TarifaRenta.year_to == None) | (TarifaRenta.year_to >= year),  # noqa: E711
+        )
+
+    # 1. Exact match (regimen + actividad)
+    row = (
+        _year_filter(
+            db.query(TarifaRenta).filter(
+                TarifaRenta.regimen == regimen,
+                TarifaRenta.actividad == actividad,
+            )
+        )
+        .order_by(TarifaRenta.year_from.desc())
+        .first()
+    )
+    if row:
+        return _row_to_dict(row)
+
+    # 2. Fallback — actividad=NULL (covers any actividad for this regimen)
+    row = (
+        _year_filter(
+            db.query(TarifaRenta).filter(
+                TarifaRenta.regimen == regimen,
+                TarifaRenta.actividad == None,  # noqa: E711
+            )
+        )
+        .order_by(TarifaRenta.year_from.desc())
+        .first()
+    )
+    if row:
+        return _row_to_dict(row)
+
+    return None
+
+
+def list_tarifas_renta(db: Session, year: int | None = None) -> list[dict]:
+    """List all tarifas_renta rows, optionally filtered to those applicable for a year."""
+    q = db.query(TarifaRenta)
+    if year is not None:
+        q = q.filter(
+            TarifaRenta.year_from <= year,
+            (TarifaRenta.year_to == None) | (TarifaRenta.year_to >= year),  # noqa: E711
+        )
+    rows = q.order_by(
+        TarifaRenta.regimen, TarifaRenta.actividad, TarifaRenta.year_from
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "regimen": r.regimen,
+            "actividad": r.actividad,
+            "tarifa_base": float(r.tarifa_base),
+            "sobretasa": float(r.sobretasa),
+            "tarifa_efectiva": float(
+                Decimal(str(r.tarifa_base)) + Decimal(str(r.sobretasa))
+            ),
+            "year_from": r.year_from,
+            "year_to": r.year_to,
+            "base_legal": r.base_legal,
+            "notas": r.notas,
+        }
+        for r in rows
+    ]
+
+
+def upsert_tarifa_renta(
+    db: Session,
+    regimen: str,
+    actividad: str | None,
+    tarifa_base: Decimal,
+    year_from: int,
+    sobretasa: Decimal = Decimal("0"),
+    year_to: int | None = None,
+    base_legal: str | None = None,
+    notas: str | None = None,
+) -> TarifaRenta:
+    """Insert or update a tarifa_renta row keyed by (regimen, actividad, year_from)."""
+    row = (
+        db.query(TarifaRenta)
+        .filter(
+            TarifaRenta.regimen == regimen,
+            TarifaRenta.actividad == actividad,
+            TarifaRenta.year_from == year_from,
+        )
+        .first()
+    )
+    if row is None:
+        row = TarifaRenta(
+            regimen=regimen,
+            actividad=actividad,
+            tarifa_base=tarifa_base,
+            sobretasa=sobretasa,
+            year_from=year_from,
+            year_to=year_to,
+            base_legal=base_legal,
+            notas=notas,
+        )
+        db.add(row)
+    else:
+        row.tarifa_base = tarifa_base
+        row.sobretasa = sobretasa
+        row.year_to = year_to
+        if base_legal is not None:
+            row.base_legal = base_legal
+        if notas is not None:
+            row.notas = notas
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+# ─── TaxConcept helpers (F350 — Res. DIAN 000031/2024) ─────────────────────
+
+
+def _tax_concept_to_dict(row: TaxConcept) -> dict:
+    return {
+        "code": row.code,
+        "label": row.label,
+        "renglon_350": row.renglon_350,
+        "aplica_a": row.aplica_a,
+        "tarifa_default": (
+            float(row.tarifa_default) if row.tarifa_default is not None else None
+        ),
+        "base_minima_uvt": (
+            float(row.base_minima_uvt) if row.base_minima_uvt is not None else None
+        ),
+        "categoria": row.categoria,
+        "art_referencia": row.art_referencia,
+        "activo": bool(row.activo),
+    }
+
+
+def list_tax_concepts(db: Session, activo: bool | None = True) -> list[dict]:
+    """List tax_concepts rows. Pass ``activo=None`` to include soft-deleted."""
+    q = db.query(TaxConcept)
+    if activo is not None:
+        q = q.filter(TaxConcept.activo == activo)
+    rows = q.order_by(TaxConcept.renglon_350, TaxConcept.code).all()
+    return [_tax_concept_to_dict(r) for r in rows]
+
+
+def get_tax_concept(db: Session, code: str) -> TaxConcept | None:
+    """Return the TaxConcept row keyed by code, or None."""
+    return db.query(TaxConcept).filter(TaxConcept.code == code).first()
+
+
+def upsert_tax_concept(
+    db: Session,
+    code: str,
+    label: str,
+    renglon_350: str,
+    aplica_a: str,
+    categoria: str,
+    tarifa_default: Decimal | None = None,
+    base_minima_uvt: Decimal | None = None,
+    art_referencia: str | None = None,
+    activo: bool = True,
+) -> TaxConcept:
+    """Insert or update a tax_concepts row keyed by code."""
+    from app.services.tax_constants import is_valid_aplica_a
+
+    if not is_valid_aplica_a(aplica_a):
+        raise ValueError(
+            f"Invalid aplica_a: {aplica_a!r}. Must be 'PJ', 'PN', or 'AMB'."
+        )
+
+    row = db.query(TaxConcept).filter(TaxConcept.code == code).first()
+    if row is None:
+        row = TaxConcept(
+            code=code,
+            label=label,
+            renglon_350=renglon_350,
+            aplica_a=aplica_a,
+            categoria=categoria,
+            tarifa_default=tarifa_default,
+            base_minima_uvt=base_minima_uvt,
+            art_referencia=art_referencia,
+            activo=activo,
+        )
+        db.add(row)
+    else:
+        row.label = label
+        row.renglon_350 = renglon_350
+        row.aplica_a = aplica_a
+        row.categoria = categoria
+        row.tarifa_default = tarifa_default
+        row.base_minima_uvt = base_minima_uvt
+        row.art_referencia = art_referencia
+        row.activo = activo
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def soft_delete_tax_concept(db: Session, code: str) -> TaxConcept | None:
+    """Mark a tax_concepts row as inactive. Returns the row, or None if missing."""
+    row = db.query(TaxConcept).filter(TaxConcept.code == code).first()
+    if row is None:
+        return None
+    row.activo = False
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def sum_retencion_by_concepto(
+    db: Session,
+    concepto_code: str,
+    *,
+    company_nit: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> Decimal:
+    """Sum credits on retención liability accounts for a concepto.
+
+    Resolution per categoría:
+      * salarios → SUM(credito) WHERE cuenta_puc LIKE '2365%' OR '2367%'
+        (no concepto filter — salarios live outside concepto_retencion).
+      * ica      → SUM(credito) WHERE cuenta_puc LIKE '2368%'
+      * default  → SUM(credito) WHERE cuenta_puc LIKE '2365%'
+        AND transactions_posted.concepto_retencion = concepto_code.
+    """
+    concept = get_tax_concept(db, concepto_code)
+    if concept is None:
+        return Decimal("0")
+
+    q = (
+        db.query(func.coalesce(func.sum(JournalEntryLine.credito), 0))
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(TransactionPosted.status == TransactionStatus.POSTED)
+    )
+
+    if concept.categoria == "salarios":
+        q = q.filter(
+            or_(
+                JournalEntryLine.cuenta_puc.startswith("2365"),
+                JournalEntryLine.cuenta_puc.startswith("2367"),
+            )
+        )
+    elif concept.categoria == "ica":
+        q = q.filter(JournalEntryLine.cuenta_puc.startswith("2368"))
+    else:
+        q = q.filter(JournalEntryLine.cuenta_puc.startswith("2365"))
+        q = q.filter(TransactionPosted.concepto_retencion == concepto_code)
+
+    if company_nit:
+        q = q.filter(JournalEntryLine.company_nit == company_nit)
+    if start_date:
+        q = q.filter(JournalEntryLine.fecha >= start_date)
+    if end_date:
+        q = q.filter(JournalEntryLine.fecha <= end_date)
+
+    total = q.scalar() or 0
+    return Decimal(str(total))
+
+
+def count_unclassified_retenciones(
+    db: Session,
+    *,
+    company_nit: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> int:
+    """Count POSTED transactions with retefuente > 0 but no concepto_retencion."""
+    q = db.query(func.count(TransactionPosted.id)).filter(
+        TransactionPosted.status == TransactionStatus.POSTED,
+        TransactionPosted.retefuente > 0,
+        TransactionPosted.concepto_retencion.is_(None),
+    )
+    if company_nit:
+        q = q.filter(TransactionPosted.company_nit == company_nit)
+    if start_date or end_date:
+        q = q.join(
+            JournalEntryLine,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        if start_date:
+            q = q.filter(JournalEntryLine.fecha >= start_date)
+        if end_date:
+            q = q.filter(JournalEntryLine.fecha <= end_date)
+    return int(q.scalar() or 0)
+
+
+# ---------------------------------------------------------------------------
+# AjusteFiscal helpers — F2516 auto-poblado
+# ---------------------------------------------------------------------------
+
+
+def list_ajustes_fiscales(
+    db: Session,
+    company_nit: str,
+    year: int,
+    seccion: Optional[str] = None,
+) -> list[AjusteFiscal]:
+    """Return all ajustes_fiscales rows for (nit, year), optionally filtered by seccion."""
+    q = db.query(AjusteFiscal).filter(
+        AjusteFiscal.company_nit == company_nit,
+        AjusteFiscal.year == year,
+    )
+    if seccion is not None:
+        q = q.filter(AjusteFiscal.seccion == seccion)
+    return q.order_by(AjusteFiscal.seccion.asc(), AjusteFiscal.concepto.asc()).all()
+
+
+def upsert_ajuste_fiscal(
+    db: Session,
+    *,
+    company_nit: str,
+    year: int,
+    seccion: str,
+    concepto: str,
+    valor_contable: Decimal,
+    valor_fiscal: Decimal,
+    tipo_diferencia: str,
+    descripcion: Optional[str] = None,
+) -> AjusteFiscal:
+    """Insert or update a single ajuste fiscal row keyed by (nit, year, seccion, concepto)."""
+    row = (
+        db.query(AjusteFiscal)
+        .filter(
+            AjusteFiscal.company_nit == company_nit,
+            AjusteFiscal.year == year,
+            AjusteFiscal.seccion == seccion,
+            AjusteFiscal.concepto == concepto,
+        )
+        .first()
+    )
+    if row is None:
+        row = AjusteFiscal(
+            id=str(uuid.uuid4()),
+            company_nit=company_nit,
+            year=year,
+            seccion=seccion,
+            concepto=concepto,
+            valor_contable=valor_contable,
+            valor_fiscal=valor_fiscal,
+            tipo_diferencia=tipo_diferencia,
+            descripcion=descripcion,
+        )
+        db.add(row)
+    else:
+        row.valor_contable = valor_contable
+        row.valor_fiscal = valor_fiscal
+        row.tipo_diferencia = tipo_diferencia
+        if descripcion is not None:
+            row.descripcion = descripcion
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_ajuste_fiscal(db: Session, ajuste_id: str) -> bool:
+    """Hard delete an ajuste fiscal row. Returns True if deleted, False if not found."""
+    row = db.query(AjusteFiscal).filter(AjusteFiscal.id == ajuste_id).first()
+    if row is None:
+        return False
+    db.delete(row)
+    db.commit()
+    return True

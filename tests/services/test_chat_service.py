@@ -278,6 +278,85 @@ class TestViaBPeriodSelection:
         assert data["requested_period"] == "2025-11-30"
         assert data["available_periods"] == ["2026-01-31"]
 
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.services.db_service.get_company_locked_pathway",
+        return_value="work_with_existing",
+    )
+    @patch("app.services.via_b_service.get_top_accounts")
+    def test_top_accounts_passes_period_end_to_via_b_service(
+        self, mock_top_accounts, mock_get_pathway, mock_session_cls
+    ):
+        """Without this wiring the chat reads the latest libro auxiliar
+        regardless of the requested month — Copilot review #69 flagged it."""
+        from datetime import date
+
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+        mock_top_accounts.return_value = {"top_debit": [], "top_credit": []}
+
+        intent = {
+            "intent": "top_accounts",
+            "needs_data": True,
+            "rag_query": None,
+            "period_start": "2025-12-01",
+            "period_end": "2025-12-31",
+            "explanation": "",
+        }
+        request = _make_request(message="top de cuentas en diciembre 2025")
+        gather_financial_data(intent, request)
+
+        kwargs = mock_top_accounts.call_args.kwargs
+        args = mock_top_accounts.call_args.args
+        assert date(2025, 12, 31) in args or kwargs.get("period_end") == date(
+            2025, 12, 31
+        )
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.services.db_service.get_company_locked_pathway",
+        return_value="work_with_existing",
+    )
+    @patch("app.services.via_b_service.list_periods", return_value=["2026-01-31"])
+    @patch("app.services.via_b_service.get_dashboard_overrides")
+    @patch("app.services.via_b_service.get_balance", return_value=None)
+    @patch("app.services.via_b_service.get_pnl", return_value=None)
+    def test_dashboard_with_missing_period_surfaces_period_not_found(
+        self,
+        mock_pnl,
+        mock_balance,
+        mock_overrides,
+        mock_list_periods,
+        mock_get_pathway,
+        mock_session_cls,
+    ):
+        """Dashboard/analysis intents previously merged the latest-period
+        overrides with the requested-period balance/pnl, masking missing data
+        as January figures labeled with November. Copilot review #69 case."""
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+
+        intent = {
+            "intent": "dashboard",
+            "needs_data": True,
+            "rag_query": None,
+            "period_start": "2025-11-01",
+            "period_end": "2025-11-30",
+            "explanation": "",
+        }
+        request = _make_request(message="resumen de noviembre 2025")
+        data, cards = gather_financial_data(intent, request)
+
+        assert len(cards) == 1
+        assert cards[0].card_type == "period_not_found"
+        assert data["requested_period"] == "2025-11-30"
+        assert data["available_periods"] == ["2026-01-31"]
+        # Overrides must NOT have been pulled — they would have leaked
+        # January totals into the response.
+        mock_overrides.assert_not_called()
+
 
 class TestComputeRatiosViaB:
     """Card shape must match the Vía A ``_compute_ratios``: ``margen_neto``

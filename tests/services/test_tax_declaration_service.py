@@ -42,7 +42,7 @@ def _make_settings(**overrides):
 def _make_ledger():
     return [
         {
-            "account": "240808",
+            "account": "240805",
             "name": "IVA Generado",
             "total_debit": 0.0,
             "total_credit": 1_900_000.0,
@@ -136,9 +136,7 @@ def _mock_db(settings):
     # check; provide a reviewed F2516 by default so generic tests don't fail.
     f2516 = MagicMock()
     f2516.status = "reviewed"
-    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
-        f2516
-    )
+    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = f2516
     return db
 
 
@@ -160,15 +158,14 @@ class TestF300Draft:
         assert fields["42"]["value"] == pytest.approx(1_900_000.0)
         assert fields["42"]["requires_review"] is False
 
+    @patch("app.services.tax_declaration_service.db_service.get_revenue_by_tipo_iva")
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_prorrateo_operaciones_mixtas(self, mock_ledger):
-        """Test mixed operations (excluded/exempt sales) trigger prorrateo."""
+    def test_prorrateo_operaciones_mixtas(self, mock_ledger, mock_revenue):
+        """Mixed operations (Art. 490 ET) prorate descontable on renglon 67."""
         settings = _make_settings()
-        # Ledger: IVA generado 1M (19% rate) → base_gravada = 1M/0.19 ≈ 5.26M
-        # Total ingresos 10M → ingresos_no_gravados ≈ 4.74M → operaciones_mixtas=True
         ledger = [
             {
-                "account": "240808",
+                "account": "240805",
                 "name": "IVA Generado",
                 "total_debit": 0.0,
                 "total_credit": 1_000_000.0,
@@ -190,24 +187,19 @@ class TestF300Draft:
             },
         ]
         mock_ledger.return_value = ledger
+        # 60% gravado / 40% excluido -> factor 0.6
+        mock_revenue.return_value = {"gravado_19": 6_000_000.0, "excluido": 4_000_000.0}
         draft = generate_declaration_draft(
             _mock_db(settings), "900123456", "F300", date(2026, 1, 1), date(2026, 2, 28)
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # Field 66 should be marked requires_review=True when prorated
-        assert fields["66"]["requires_review"] is True
-        # Field 66_base (total before prorrateo) should exist
-        assert "66_base" in fields
-        assert fields["66_base"]["value"] == pytest.approx(500_000.0)
-        assert fields["66_base"]["requires_review"] is True
-        # Prorated value should be less than original
-        expected_factor = (1_000_000.0 / 0.19) / 10_000_000.0
-        expected_prorated = round(500_000.0 * expected_factor, 2)
-        assert fields["66"]["value"] == pytest.approx(expected_prorated)
-        # Warning should be emitted for field 66
+        # 66 = descontable bruto, 67 = prorateado con requires_review
+        assert fields["66"]["value"] == pytest.approx(500_000.0)
+        assert fields["67"]["requires_review"] is True
+        assert fields["67"]["value"] == pytest.approx(300_000.0)
         warning_fields = {w["field"] for w in draft.warnings_json}
-        assert "66" in warning_fields
+        assert "67" in warning_fields
 
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
     def test_non_iva_responsable_skips_prorrateo(self, mock_ledger):
@@ -215,7 +207,7 @@ class TestF300Draft:
         settings = _make_settings(iva_responsable=False)
         ledger = [
             {
-                "account": "240808",
+                "account": "240805",
                 "name": "IVA Generado",
                 "total_debit": 0.0,
                 "total_credit": 1_000_000.0,
@@ -291,41 +283,104 @@ class TestF300Draft:
 # ---------------------------------------------------------------------------
 
 
+_F350_DB_PATCHES = [
+    patch(
+        "app.services.tax_declaration_service.db_service.list_tax_concepts",
+        return_value=[
+            {
+                "code": "compras_pj",
+                "label": "Compras PJ",
+                "renglon_350": "25",
+                "aplica_a": "PJ",
+                "categoria": "compras",
+                "tarifa_default": 0.025,
+                "base_minima_uvt": 27.0,
+                "art_referencia": "Art. 392 ET",
+                "activo": True,
+            },
+            {
+                "code": "reteica",
+                "label": "ReteICA",
+                "renglon_350": "76",
+                "aplica_a": "AMB",
+                "categoria": "ica",
+                "tarifa_default": None,
+                "base_minima_uvt": None,
+                "art_referencia": "Ley 14/1983",
+                "activo": True,
+            },
+        ],
+    ),
+    patch(
+        "app.services.tax_declaration_service.db_service.sum_retencion_by_concepto",
+        side_effect=lambda db, concepto_code, **kw: {
+            "compras_pj": Decimal("60000"),
+            "reteica": Decimal("9660"),
+        }.get(concepto_code, Decimal("0")),
+    ),
+    patch(
+        "app.services.tax_declaration_service.db_service.count_unclassified_retenciones",
+        return_value=0,
+    ),
+]
+
+
+def _apply_f350_patches(fn):
+    for p in reversed(_F350_DB_PATCHES):
+        fn = p(fn)
+    return fn
+
+
 class TestF350Draft:
+    @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_retefuente_from_cuenta_2365(self, mock_ledger):
+    def test_retefuente_from_cuenta_2365(self, mock_ledger, *_):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
-            _mock_db(settings), "900123456", "F350", date(2026, 1, 1), date(2026, 1, 31)
+            _mock_db(settings),
+            "900123456",
+            "F350",
+            date(2026, 1, 1),
+            date(2026, 1, 31),
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
         assert fields["25"]["value"] == pytest.approx(60_000.0)
-        assert fields["25"]["source"] == "cuenta_2365"
+        assert fields["25"]["source"] == "concepto_compras_pj"
 
+    @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_salarios_requires_review(self, mock_ledger):
+    def test_salarios_requires_review(self, mock_ledger, *_):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
-            _mock_db(settings), "900123456", "F350", date(2026, 1, 1), date(2026, 1, 31)
+            _mock_db(settings),
+            "900123456",
+            "F350",
+            date(2026, 1, 1),
+            date(2026, 1, 31),
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
         assert fields["50"]["requires_review"] is True
 
+    @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_reteica_from_cuenta_2368(self, mock_ledger):
+    def test_reteica_from_cuenta_2368(self, mock_ledger, *_):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
-            _mock_db(settings), "900123456", "F350", date(2026, 1, 1), date(2026, 1, 31)
+            _mock_db(settings),
+            "900123456",
+            "F350",
+            date(2026, 1, 1),
+            date(2026, 1, 31),
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["35"]["value"] == pytest.approx(9_660.0)
-        assert fields["35"]["source"] == "cuenta_2368"
+        assert fields["76"]["value"] == pytest.approx(9_660.0)
+        assert fields["76"]["source"] == "concepto_reteica"
 
 
 # ---------------------------------------------------------------------------
@@ -333,9 +388,32 @@ class TestF350Draft:
 # ---------------------------------------------------------------------------
 
 
+_F110_DB_PATCHES = [
+    patch("app.services.db_service.get_latest_f2516_reviewed", return_value=None),
+    patch(
+        "app.services.db_service.sum_perdidas_disponibles", return_value=Decimal("0")
+    ),
+    patch(
+        "app.services.db_service.sum_retenciones_anio", return_value=Decimal("40000")
+    ),
+    patch(
+        "app.services.tax_declaration_service.db_service.get_uvt",
+        return_value=Decimal("52374"),
+    ),
+]
+
+
+def _apply_f110_patches(fn):
+    """Decorator that applies db_service patches needed by refactored _build_f110."""
+    for p in reversed(_F110_DB_PATCHES):
+        fn = p(fn)
+    return fn
+
+
 class TestF110Draft:
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_activos_from_clase_1(self, mock_ledger):
+    def test_activos_from_clase_1(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -351,8 +429,9 @@ class TestF110Draft:
             840_000.0
         )  # 1105(800k) + 135518(40k)
 
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_ica_deducible_from_511505_521505(self, mock_ledger):
+    def test_ica_deducible_from_511505_521505(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -366,8 +445,9 @@ class TestF110Draft:
         fields = {f["renglon"]: f for f in draft.fields_json}
         assert fields["63"]["value"] == pytest.approx(14_490.0)
 
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_retenciones_favor_from_135518(self, mock_ledger):
+    def test_retenciones_favor_from_135518(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -379,10 +459,12 @@ class TestF110Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
+        # renglon "92" = retenciones from DB (patched to 40_000)
         assert fields["92"]["value"] == pytest.approx(40_000.0)
 
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_anticipo_requires_review(self, mock_ledger):
+    def test_anticipo_requires_review(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -478,8 +560,9 @@ class TestGenerateDraftErrors:
 
 
 class TestDisclaimer:
+    @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_disclaimer_always_present(self, mock_ledger):
+    def test_disclaimer_always_present(self, mock_ledger, *_patches):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
 
@@ -596,7 +679,7 @@ class TestSaldoAFavor:
         """Ledger where IVA descontable > IVA generado → saldo a favor."""
         return [
             {
-                "account": "240808",
+                "account": "240805",
                 "name": "IVA Generado",
                 "total_debit": 0.0,
                 "total_credit": 500_000.0,

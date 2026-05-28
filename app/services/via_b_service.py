@@ -418,10 +418,18 @@ def get_cashflow(
 
 
 def get_top_accounts(
-    db: Session, company_nit: str, limit: int = 5
+    db: Session,
+    company_nit: str,
+    limit: int = 5,
+    period_end: Optional[date] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Top movimientos derivados del libro auxiliar (debe/haber)."""
-    stmt = _latest_statement(db, company_nit, "libro_auxiliar")
+    """Top movimientos derivados del libro auxiliar (debe/haber).
+
+    ``period_end`` selects a specific month; ``None`` uses the most recent
+    libro auxiliar. Without this filter the chat could label whatever month
+    the latest upload covers as the user's requested period.
+    """
+    stmt = _latest_statement(db, company_nit, "libro_auxiliar", period_end)
     if stmt is None:
         return None
     totals: Dict[str, Dict[str, Any]] = {}

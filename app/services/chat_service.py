@@ -565,12 +565,18 @@ def _not_applicable_card(intent_name: str) -> FinancialDataCard:
 
 
 # Vía B intents backed by a single statement type — used to look up which
-# periods are available when the requested one isn't found.
+# periods are available when the requested one isn't found. Multi-statement
+# intents (dashboard / analysis / ratios) point to balance_general because
+# that's the most common upload and gives the user a useful "did you mean
+# this period?" hint.
 _VIA_B_INTENT_STATEMENT_TYPE = {
     "balance": "balance_general",
     "pnl": "estado_resultados",
     "cashflow": "libro_auxiliar",
     "top_accounts": "libro_auxiliar",
+    "ratios": "balance_general",
+    "dashboard": "balance_general",
+    "analysis": "balance_general",
 }
 
 
@@ -658,7 +664,9 @@ def _gather_via_b(
         title = "Flujo de Caja (Vía B)"
 
     elif intent_name == "top_accounts":
-        data = via_b_service.get_top_accounts(db, company_nit, limit=5)
+        data = via_b_service.get_top_accounts(
+            db, company_nit, limit=5, period_end=period_end
+        )
         title = "Cuentas con Mayor Movimiento (Vía B)"
 
     elif intent_name == "ratios":
@@ -669,14 +677,22 @@ def _gather_via_b(
             title = "Ratios Financieros (Vía B)"
 
     elif intent_name in ("dashboard", "analysis"):
-        overrides = via_b_service.get_dashboard_overrides(db, company_nit)
+        # When a specific period is requested, the per-statement readers
+        # already enforce exact-month match — fall through to `period_not_found`
+        # if either core statement is missing for that month. Without this
+        # check the latest-period overrides would mask the gap and the chat
+        # would label e.g. January figures as the user's requested November.
         balance = via_b_service.get_balance(db, company_nit, period_end)
         pnl = via_b_service.get_pnl(db, company_nit, period_end)
-        data = {
-            **overrides,
-            "balance": balance,
-            "estado_resultados": pnl,
-        }
+        if period_end is not None and balance is None and pnl is None:
+            data = None
+        else:
+            overrides = via_b_service.get_dashboard_overrides(db, company_nit)
+            data = {
+                **overrides,
+                "balance": balance,
+                "estado_resultados": pnl,
+            }
         title = (
             "Resumen General (Vía B)"
             if intent_name == "dashboard"

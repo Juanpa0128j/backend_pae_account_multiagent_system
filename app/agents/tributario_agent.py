@@ -48,8 +48,11 @@ TASA_RETEFUENTE: dict[str, Decimal] = {
 }
 TASA_RETEICA_DEFAULT = Decimal("0.0069")  # Tarifa Cali / default municipal
 
-# UVT 2026 (DIAN). Base mínima sujeta a retención por tipo de transacción.
-UVT_2026 = Decimal("52374")
+# UVT fallback constants — used when DB has no row for the current year.
+# Update every January when DIAN publishes the new UVT via Resolución.
+UVT_FALLBACK = Decimal("52374")  # UVT 2026 — Resolución 000238 de 2025
+# Keep legacy alias so any external references (tests, scripts) remain valid.
+UVT_2026 = UVT_FALLBACK
 BASE_MINIMA_RETEFUENTE_UVT: dict[str, Decimal] = {
     "servicios": Decimal("4"),  # 4 UVT/mes — Art. 392 ET servicios generales
     "bienes": Decimal("27"),  # 27 UVT/mes — Art. 401 ET compras
@@ -739,6 +742,8 @@ def tributario_node(state: AgentState) -> AgentState:
                                     )
                                     else None
                                 ),
+                                "ciudad": getattr(row, "ciudad", None),
+                                "codigo_ciiu": getattr(row, "codigo_ciiu", None),
                             }
                             logger.info(
                                 f"Tributario: loaded company settings for NIT {company_nit}"
@@ -815,11 +820,122 @@ def tributario_node(state: AgentState) -> AgentState:
                 else TASA_RETEFUENTE["arrendamiento"]
             ),
         }
+        # ReteICA: attempt municipal tarifa + base_minima_uvt DB lookup
+        # base_minima_uvt is per-municipio (Fix 4: Decreto 572 does NOT apply to ReteICA).
+        _reteica_db_rate = None
+        _reteica_db_base_minima_uvt: "Decimal | None" = None
+        if company_config:
+            _ciudad = company_config.get("ciudad")
+            _ciiu = company_config.get("codigo_ciiu")
+            if _ciudad and _ciiu:
+                try:
+                    _db2 = SessionLocal()
+                    try:
+                        _reteica_db_rate = _db_svc.get_reteica_tarifa(
+                            _db2, _ciudad, _ciiu
+                        )
+                        _reteica_db_base_minima_uvt = (
+                            _db_svc.get_reteica_base_minima_uvt(_db2, _ciudad, _ciiu)
+                        )
+                        if _reteica_db_rate is not None:
+                            logger.debug(
+                                "Tributario: ReteICA tarifa from DB for ciudad=%s ciiu=%s → %.4f "
+                                "(base_minima_uvt=%s)",
+                                _ciudad,
+                                _ciiu,
+                                _reteica_db_rate,
+                                _reteica_db_base_minima_uvt,
+                            )
+                    finally:
+                        _db2.close()
+                except Exception as _reteica_err:
+                    logger.warning(
+                        "Tributario: ReteICA DB lookup failed (%s), falling back to config",
+                        _reteica_err,
+                    )
         tasa_reteica_efectiva = (
-            Decimal(str(company_config["tasa_reteica"]))
-            if company_config
-            else TASA_RETEICA_DEFAULT
+            Decimal(str(_reteica_db_rate))
+            if _reteica_db_rate is not None
+            else (
+                Decimal(str(company_config["tasa_reteica"]))
+                if company_config
+                else TASA_RETEICA_DEFAULT
+            )
         )
+        # ------------------------------------------------------------------
+        # UVT and base mínima — DB lookup with hardcoded fallback
+        # ------------------------------------------------------------------
+        # Derive fiscal year and as_of_date from period_start state field or today.
+        # as_of_date is passed to get_base_minima for temporal base mínima lookup
+        # (Fix 3: Decreto 572 suspended May 7 2026 → date-specific rows apply).
+        _period_start_raw = state.get("period_start")
+        _as_of_date: "date | None" = None
+        if _period_start_raw and isinstance(_period_start_raw, date):
+            _fiscal_year = _period_start_raw.year
+            _as_of_date = _period_start_raw
+        elif _period_start_raw and isinstance(_period_start_raw, str):
+            try:
+                from datetime import datetime as _dt
+
+                _parsed = _dt.fromisoformat(_period_start_raw[:10]).date()
+                _fiscal_year = _parsed.year
+                _as_of_date = _parsed
+            except (ValueError, TypeError):
+                _fiscal_year = date.today().year
+        else:
+            _fiscal_year = date.today().year
+
+        _uvt_value: Decimal = UVT_FALLBACK
+        _base_minima_retefuente: dict[str, Decimal] = dict(BASE_MINIMA_RETEFUENTE_UVT)
+        _base_minima_reteica: Decimal = BASE_MINIMA_RETEICA_UVT
+
+        try:
+            _db3 = SessionLocal()
+            try:
+                _uvt_db = _db_svc.get_uvt(_db3, _fiscal_year)
+                if _uvt_db is not None:
+                    _uvt_value = _uvt_db
+                    logger.debug(
+                        "Tributario: UVT %d from DB = %s", _fiscal_year, _uvt_value
+                    )
+                else:
+                    logger.debug(
+                        "Tributario: UVT %d not in DB, using fallback %s",
+                        _fiscal_year,
+                        _uvt_value,
+                    )
+                for _concepto_key in ("servicios", "bienes", "arrendamiento"):
+                    _bm_db = _db_svc.get_base_minima(
+                        _db3,
+                        f"retefuente_{_concepto_key}",
+                        _fiscal_year,
+                        as_of_date=_as_of_date,
+                    )
+                    if _bm_db is not None:
+                        _base_minima_retefuente[_concepto_key] = _bm_db
+                _bm_reteica_db = _db_svc.get_base_minima(
+                    _db3, "reteica", _fiscal_year, as_of_date=_as_of_date
+                )
+                if _bm_reteica_db is not None:
+                    _base_minima_reteica = _bm_reteica_db
+            finally:
+                _db3.close()
+        except Exception as _uvt_err:
+            logger.warning(
+                "Tributario: UVT/base_minima DB lookup failed (%s), using fallback constants",
+                _uvt_err,
+            )
+
+        # Fix 4: Override reteica base mínima with municipal value when available.
+        # ReteICA is municipal — Decreto 572 does NOT apply. Each municipio sets own base.
+        # _reteica_db_base_minima_uvt comes from reteica_tarifas.base_minima_uvt column.
+        if _reteica_db_base_minima_uvt is not None:
+            _base_minima_reteica = _reteica_db_base_minima_uvt
+            logger.debug(
+                "Tributario: ReteICA base mínima from municipal table = %s UVT",
+                _base_minima_reteica,
+            )
+
         tasa_iva_efectiva = (
             Decimal(str(company_config["tasa_iva_general"]))
             if company_config
@@ -887,9 +1003,9 @@ def tributario_node(state: AgentState) -> AgentState:
                 source_taxes.get("motivo_no_retencion") or "sin motivo",
             )
         else:
-            base_min_uvt = BASE_MINIMA_RETEFUENTE_UVT.get(tipo_transaccion)
+            base_min_uvt = _base_minima_retefuente.get(tipo_transaccion)
             base_minima_pesos = (
-                (base_min_uvt * UVT_2026) if base_min_uvt is not None else None
+                (base_min_uvt * _uvt_value) if base_min_uvt is not None else None
             )
             if base_minima_pesos is not None and base_gravable < base_minima_pesos:
                 retefuente_val = Decimal("0.00")
@@ -928,13 +1044,13 @@ def tributario_node(state: AgentState) -> AgentState:
             reteica_val = Decimal("0.00")
             logger.info("Tributario: reteICA=0 (source doc aplicar_retencion=false)")
         else:
-            base_minima_reteica = BASE_MINIMA_RETEICA_UVT * UVT_2026
+            base_minima_reteica = _base_minima_reteica * _uvt_value
             if base_gravable < base_minima_reteica:
                 reteica_val = Decimal("0.00")
                 logger.info(
                     "Tributario: reteICA=0 (base $%s < mínima %s UVT = $%s)",
                     base_gravable,
-                    BASE_MINIMA_RETEICA_UVT,
+                    _base_minima_reteica,
                     base_minima_reteica,
                 )
             else:

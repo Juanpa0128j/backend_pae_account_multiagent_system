@@ -79,7 +79,21 @@ class PersistOrchestrator:
         data: Dict[str, Any],
         source_mode: str = "derived_from_journal",
     ) -> FinancialStatement:
-        """Create a FinancialStatement record."""
+        """Create a FinancialStatement record.
+
+        Re-derivation is idempotent: each processed document re-derives the
+        whole period from the cumulative journal, so any prior
+        journal-derived row for the same (nit, type, period) is replaced
+        rather than duplicated.
+        """
+        self.db.query(FinancialStatement).filter(
+            FinancialStatement.entity_nit == company_nit,
+            FinancialStatement.statement_type == statement_type,
+            FinancialStatement.period_start == period_start,
+            FinancialStatement.period_end == period_end,
+            FinancialStatement.source_mode == source_mode,
+        ).delete(synchronize_session=False)
+
         stmt = FinancialStatement(
             id=str(uuid4()),
             ingest_id=ingest_id,

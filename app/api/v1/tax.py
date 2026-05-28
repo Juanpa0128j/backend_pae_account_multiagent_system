@@ -1,6 +1,7 @@
+import calendar
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -17,11 +18,52 @@ from app.agents.tributario_agent import (
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.models.agent_outputs import IVAOutput, WithholdingsOutput
-from app.models.schemas import ICADeclaracionOutput, RentaProvisionOutput
+from app.models.schemas import (
+    AjusteFiscalResponse,
+    AjusteFiscalUpsertRequest,
+    BaseMinimaUpsertRequest,
+    FileDraftRequest,
+    ICADeclaracionOutput,
+    PerdidaFiscalResponse,
+    PerdidaFiscalUpsertRequest,
+    PreflightResponse,
+    RentaProvisionOutput,
+    ReopenDraftRequest,
+    TarifaRentaResponse,
+    TarifaRentaUpsertRequest,
+    TaxConceptResponse,
+    TaxConceptUpsertRequest,
+    TaxConstantsResponse,
+    UvtUpsertRequest,
+    VALID_CONCEPTO_VALUES,
+)
 from app.services import db_service, via_b_service
 from app.services.nit_utils import normalize_nit
 
 router = APIRouter()
+
+
+def _resolve_period(
+    period_start: Optional[date],
+    period_end: Optional[date],
+) -> Tuple[date, date]:
+    """Return (start, end). Both None → current month. Partial → 400."""
+    if period_start is None and period_end is None:
+        today = date.today()
+        first_day = today.replace(day=1)
+        last_day = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+        return first_day, last_day
+    if period_start is None or period_end is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Debe enviar period_start y period_end juntos",
+        )
+    if period_end < period_start:
+        raise HTTPException(
+            status_code=400,
+            detail="period_end no puede ser anterior a period_start",
+        )
+    return period_start, period_end
 
 
 def _build_params(
@@ -188,9 +230,13 @@ def _empty_renta(end_date: date, available_periods: List[str]) -> dict:
 
 @router.get("/iva", response_model=IVAOutput)
 async def get_iva_report(
-    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(
-        None, description="End date YYYY-MM-DD (default: today)"
+    period_start: Optional[date] = Query(
+        None,
+        description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
+    ),
+    period_end: Optional[date] = Query(
+        None,
+        description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     db: Session = Depends(get_db),
@@ -206,24 +252,32 @@ async def get_iva_report(
     entries; the response carries ``source: "via_b"`` so the frontend can
     render a context badge.
     """
+    start, end = _resolve_period(period_start, period_end)
     nit = _normalize_or_422(company_nit)
-    cutoff = end_date or date.today()
     if _is_via_b(db, nit):
-        payload = via_b_service.get_iva_report(db, nit, period_end=end_date)
+        # Pass the user's raw period_end (may be None) so Vía B falls back to
+        # the latest balance when no explicit period was requested. Using the
+        # resolved ``end`` would force an exact-month match against today's
+        # month and miss the latest upload.
+        payload = via_b_service.get_iva_report(db, nit, period_end=period_end)
         if payload is not None:
             return payload
         available = (
             via_b_service.list_periods(db, nit, "balance_general") if nit else []
         )
-        return _empty_iva(nit, cutoff, available)
-    return _run_report("iva", _build_params(start_date, end_date), company_nit)
+        return _empty_iva(nit, end, available)
+    return _run_report("iva", _build_params(start, end), company_nit)
 
 
 @router.get("/withholdings", response_model=WithholdingsOutput)
 async def get_withholdings_report(
-    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(
-        None, description="End date YYYY-MM-DD (default: today)"
+    period_start: Optional[date] = Query(
+        None,
+        description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
+    ),
+    period_end: Optional[date] = Query(
+        None,
+        description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
     db: Session = Depends(get_db),
@@ -238,24 +292,28 @@ async def get_withholdings_report(
     For Vía B companies the figures are derived from the saldos of cuentas
     2365/2368 in the uploaded balance general.
     """
+    start, end = _resolve_period(period_start, period_end)
     nit = _normalize_or_422(company_nit)
-    cutoff = end_date or date.today()
     if _is_via_b(db, nit):
-        payload = via_b_service.get_withholdings_report(db, nit, period_end=end_date)
+        payload = via_b_service.get_withholdings_report(db, nit, period_end=period_end)
         if payload is not None:
             return payload
         available = (
             via_b_service.list_periods(db, nit, "balance_general") if nit else []
         )
-        return _empty_withholdings(nit, cutoff, available)
-    return _run_report("withholdings", _build_params(start_date, end_date), company_nit)
+        return _empty_withholdings(nit, end, available)
+    return _run_report("withholdings", _build_params(start, end), company_nit)
 
 
 @router.get("/ica", response_model=ICADeclaracionOutput)
 async def get_ica_declaration(
-    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(
-        None, description="End date YYYY-MM-DD (default: today)"
+    period_start: Optional[date] = Query(
+        None,
+        description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
+    ),
+    period_end: Optional[date] = Query(
+        None,
+        description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(
         None, description="Company NIT (nit_receptor) to filter by"
@@ -273,23 +331,23 @@ async def get_ica_declaration(
     For Vía B companies, ``ingresos_brutos`` comes from the uploaded estado de
     resultados instead of summing journal entries.
     """
-    period_end = end_date or date.today()
+    start, end = _resolve_period(period_start, period_end)
     nit = _normalize_or_422(company_nit)
 
     if _is_via_b(db, nit):
-        tasa_ica: Optional[Decimal] = None
+        tasa_ica_vb: Optional[Decimal] = None
         if nit:
             settings = db_service.get_company_settings(db, nit)
             if settings and settings.tasa_ica:
-                tasa_ica = Decimal(str(settings.tasa_ica))
+                tasa_ica_vb = Decimal(str(settings.tasa_ica))
         payload = via_b_service.get_ica_report(
-            db, nit, period_end=end_date, tasa_ica=tasa_ica
+            db, nit, period_end=period_end, tasa_ica=tasa_ica_vb
         )
         if payload is None:
             available = (
                 via_b_service.list_periods(db, nit, "estado_resultados") if nit else []
             )
-            return ICADeclaracionOutput(**_empty_ica(period_end, available))
+            return ICADeclaracionOutput(**_empty_ica(end, available))
         # Honor the per-company cuenta_pasivo override even on Vía B
         if nit:
             settings = db_service.get_company_settings(db, nit)
@@ -298,12 +356,10 @@ async def get_ica_declaration(
         return ICADeclaracionOutput(**payload)
 
     where_nit = "AND tp.company_nit = :nit" if company_nit else ""
-    where_start = "AND j.fecha >= :period_start" if start_date else ""
-    query_params: dict = {"period_end": period_end}
+    where_start = "AND j.fecha >= :period_start"
+    query_params: dict = {"period_end": end, "period_start": start}
     if company_nit:
         query_params["nit"] = company_nit
-    if start_date:
-        query_params["period_start"] = start_date
 
     row = db.execute(
         sql_text(f"""
@@ -331,8 +387,8 @@ async def get_ica_declaration(
     ica_a_pagar = _calc_ica(ingresos_brutos, tasa_ica)
 
     return ICADeclaracionOutput(
-        period_start=start_date.isoformat() if start_date else None,
-        period_end=period_end.isoformat(),
+        period_start=start.isoformat(),
+        period_end=end.isoformat(),
         generated_at=datetime.utcnow().isoformat(),
         ingresos_brutos=float(ingresos_brutos),
         tasa_ica=float(tasa_ica),
@@ -348,9 +404,13 @@ async def get_ica_declaration(
 
 @router.get("/renta-provision", response_model=RentaProvisionOutput)
 async def get_renta_provision(
-    start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
-    end_date: Optional[date] = Query(
-        None, description="End date YYYY-MM-DD (default: today)"
+    period_start: Optional[date] = Query(
+        None,
+        description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
+    ),
+    period_end: Optional[date] = Query(
+        None,
+        description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(None, description="Company NIT to filter by"),
     db: Session = Depends(get_db),
@@ -364,36 +424,46 @@ async def get_renta_provision(
     For Vía B companies, ``utilidad_antes_impuestos`` comes from the uploaded
     estado de resultados instead of summing journal entries.
     """
-    period_end = end_date or date.today()
+    start, end = _resolve_period(period_start, period_end)
+    year = end.year
     nit = _normalize_or_422(company_nit)
 
     if _is_via_b(db, nit):
         tasa_renta_vb: Optional[Decimal] = None
         if nit:
-            settings = db_service.get_company_settings(db, nit)
-            if settings and settings.tasa_renta:
-                tasa_renta_vb = Decimal(str(settings.tasa_renta))
+            settings_vb = db_service.get_company_settings(db, nit)
+            if settings_vb and settings_vb.tasa_renta:
+                tasa_renta_vb = Decimal(str(settings_vb.tasa_renta))
         payload = via_b_service.get_renta_provision_report(
-            db, nit, period_end=end_date, tasa_renta=tasa_renta_vb
+            db, nit, period_end=period_end, tasa_renta=tasa_renta_vb
         )
         if payload is None:
             available = (
                 via_b_service.list_periods(db, nit, "estado_resultados") if nit else []
             )
-            return RentaProvisionOutput(**_empty_renta(period_end, available))
+            return RentaProvisionOutput(**_empty_renta(end, available))
         return RentaProvisionOutput(**payload)
 
     tasa_renta = TASA_RENTA
+    settings = None
     if company_nit:
         settings = db_service.get_company_settings(db, company_nit)
         if settings and settings.tasa_renta:
             tasa_renta = Decimal(str(settings.tasa_renta))
 
+    # Try regulatory tarifa table first (supports regime / actividad / surcharges)
+    if settings is not None:
+        regimen = getattr(settings, "regimen_tributario", None) or "ordinario"
+        actividad = getattr(settings, "actividad_economica", None) or "general"
+        tarifa_info = db_service.get_tarifa_renta(db, regimen, actividad, year)
+        if tarifa_info is not None:
+            tasa_renta = Decimal(str(tarifa_info["tarifa_efectiva"]))
+
     result = calc_period_renta_provision(
         db_session=db,
         nit_receptor=company_nit or "",
-        period_start=start_date,
-        period_end=period_end,
+        period_start=start,
+        period_end=end,
         tasa_renta=tasa_renta,
     )
     return RentaProvisionOutput(**result)
@@ -434,6 +504,53 @@ class UpdateFieldRequest(BaseModel):
     value: float
 
 
+@router.get(
+    "/declarations/preflight",
+    response_model=PreflightResponse,
+    summary="Pre-flight validation before generating a DIAN declaration draft",
+)
+def api_declarations_preflight(
+    company_nit: str = Query(..., min_length=1),
+    form_type: str = Query(..., description="F300 | F350 | F110 | F2516 | ICA"),
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> PreflightResponse:
+    """
+    Validate that all prerequisites are in place to generate a declaration
+    draft for the given form_type and period. Returns a structured list of
+    checks (blockers / warnings / info) so the UI can guide the accountant
+    before they click "Generar borrador".
+    """
+    from app.services.preflight_service import run_preflight
+
+    if period_end < period_start:
+        raise HTTPException(
+            status_code=400,
+            detail="period_end no puede ser anterior a period_start",
+        )
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as nit_err:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {nit_err}")
+
+    try:
+        result = run_preflight(
+            db=db,
+            company_nit=normalized_nit,
+            form_type=form_type,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "INVALID_FORM_TYPE", "message": str(e)},
+        )
+    return PreflightResponse(**result)
+
+
 @router.post(
     "/declarations/generate", summary="Generate pre-filled DIAN declaration draft"
 )
@@ -459,7 +576,19 @@ def api_generate_draft(
             period_end=body.period_end,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        msg = str(e)
+        if "F2516" in msg or "requiere F2516" in msg or "Conciliación Fiscal" in msg:
+            error_code = "F2516_REQUIRED"
+        elif "CompanySettings not found" in msg:
+            error_code = "COMPANY_SETTINGS_MISSING"
+        elif "Unsupported form_type" in msg:
+            error_code = "UNSUPPORTED_FORM_TYPE"
+        else:
+            error_code = "GENERATION_FAILED"
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": error_code, "message": msg},
+        )
 
     return {
         "draft_id": draft.id,
@@ -514,6 +643,16 @@ def api_update_draft_field(
     Accountant updates a field value (requires_review=True fields).
     After update the field is marked requires_review=False.
     """
+    # Block edits on non-draft status
+    _draft_for_lock = get_draft(db, draft_id)
+    if _draft_for_lock and _draft_for_lock.status != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "DRAFT_LOCKED",
+                "message": f"El borrador está en estado {_draft_for_lock.status}. Use reopen para editarlo.",
+            },
+        )
     try:
         draft = update_draft_field(db, draft_id, body.renglon, body.value)
     except FieldNotFoundError as e:
@@ -530,6 +669,154 @@ def api_update_draft_field(
         "fields": draft.fields_json,
         "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
     }
+
+
+def _draft_to_dict(draft: Any) -> Dict[str, Any]:
+    """Convert a TaxDeclarationDraft ORM object to API response dict."""
+    return {
+        "draft_id": draft.id,
+        "company_nit": draft.company_nit,
+        "form_type": draft.form_type,
+        "period_start": draft.period_start,
+        "period_end": draft.period_end,
+        "year": draft.year,
+        "status": draft.status,
+        "fields": draft.fields_json,
+        "warnings": draft.warnings_json,
+        "created_at": draft.created_at.isoformat() if draft.created_at else None,
+        "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
+        "reviewed_by": draft.reviewed_by,
+        "reviewed_at": draft.reviewed_at.isoformat() if draft.reviewed_at else None,
+        "filed_by": draft.filed_by,
+        "filed_at": draft.filed_at.isoformat() if draft.filed_at else None,
+        "dian_acknowledgment": draft.dian_acknowledgment,
+        "reopened_by": draft.reopened_by,
+        "reopened_at": draft.reopened_at.isoformat() if draft.reopened_at else None,
+        "reopen_reason": draft.reopen_reason,
+    }
+
+
+@router.post(
+    "/declarations/{draft_id}/review",
+    summary="Mark declaration draft as reviewed",
+)
+def api_review_draft(
+    draft_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Transition draft → reviewed.
+
+    Requires all fields_json entries to have requires_review == False (or absent).
+    """
+    draft = get_draft(db, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+
+    if draft.status != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo borradores pueden marcarse como revisados",
+        )
+
+    fields = draft.fields_json or []
+    pending = [f for f in fields if f.get("requires_review") is True]
+    if pending:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "FIELDS_PENDING_REVIEW",
+                "message": f"Hay {len(pending)} campos que requieren revisión",
+                "count": len(pending),
+            },
+        )
+
+    draft.status = "reviewed"
+    draft.reviewed_by = current_user.email
+    draft.reviewed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(draft)
+    return _draft_to_dict(draft)
+
+
+@router.post(
+    "/declarations/{draft_id}/file",
+    summary="Mark reviewed declaration as filed with DIAN",
+)
+def api_file_draft(
+    draft_id: str,
+    body: FileDraftRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Transition reviewed → filed. Optionally stores the DIAN radicado (MUISCA)."""
+    draft = get_draft(db, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+
+    if draft.status != "reviewed":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo declaraciones revisadas pueden marcarse como presentadas",
+        )
+
+    draft.status = "filed"
+    draft.filed_by = current_user.email
+    draft.filed_at = datetime.utcnow()
+    if body.dian_acknowledgment is not None:
+        draft.dian_acknowledgment = body.dian_acknowledgment
+    db.commit()
+    db.refresh(draft)
+    return _draft_to_dict(draft)
+
+
+@router.post(
+    "/declarations/{draft_id}/reopen",
+    summary="Reopen a reviewed or filed declaration for editing",
+)
+def api_reopen_draft(
+    draft_id: str,
+    body: ReopenDraftRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Move declaration backward in the workflow:
+    - filed → reviewed (clears filed_* fields)
+    - reviewed → draft (clears reviewed_* fields)
+    - draft → 400 (already editable)
+
+    `reason` is required (min 5 chars).
+    """
+    draft = get_draft(db, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+
+    if draft.status == "draft":
+        raise HTTPException(
+            status_code=400,
+            detail="Borrador ya está en estado editable",
+        )
+
+    now = datetime.utcnow()
+    draft.reopened_at = now
+    draft.reopened_by = current_user.email
+    draft.reopen_reason = body.reason
+
+    if draft.status == "filed":
+        draft.status = "reviewed"
+        draft.filed_at = None
+        draft.filed_by = None
+        draft.dian_acknowledgment = None
+    else:  # reviewed
+        draft.status = "draft"
+        draft.reviewed_at = None
+        draft.reviewed_by = None
+
+    db.commit()
+    db.refresh(draft)
+    return _draft_to_dict(draft)
 
 
 @router.get("/calendar", summary="DIAN 2026 tax calendar with deadlines")
@@ -676,3 +963,453 @@ def api_exogena(
         "invalid_rows": invalid_count,
         "rows": rows,
     }
+
+
+# ─── Admin: UVT & Base Mínima constants ──────────────────────────
+
+
+@router.get("/constants", response_model=TaxConstantsResponse)
+async def get_tax_constants(
+    year: int = Query(..., ge=2000, le=2100, description="Fiscal year, e.g. 2026"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaxConstantsResponse:
+    """Return UVT value and base mínima thresholds stored in DB for a given year."""
+    data = db_service.list_tax_constants(db, year)
+    return TaxConstantsResponse(
+        uvt=data["uvt"],
+        base_minima=data["base_minima"],
+    )
+
+
+@router.put("/constants/uvt", response_model=dict)
+async def upsert_uvt_value(
+    body: UvtUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Insert or update UVT value for a given year. Requires authentication."""
+    row = db_service.upsert_uvt(
+        db,
+        year=body.year,
+        value=Decimal(str(body.value)),
+        referencia_normativa=body.referencia_normativa,
+    )
+    return {
+        "year": row.year,
+        "value": str(row.value),
+        "referencia_normativa": row.referencia_normativa,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.put("/constants/base-minima", response_model=dict)
+async def upsert_base_minima(
+    body: BaseMinimaUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Insert or update base mínima UVT units for a given concepto+year. Requires authentication."""
+    if body.concepto not in VALID_CONCEPTO_VALUES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"concepto '{body.concepto}' no válido. "
+                f"Valores permitidos: {sorted(VALID_CONCEPTO_VALUES)}"
+            ),
+        )
+    row = db_service.upsert_base_minima(
+        db,
+        concepto=body.concepto,
+        uvt_units=Decimal(str(body.uvt_units)),
+        year=body.year,
+    )
+    return {
+        "concepto": row.concepto,
+        "uvt_units": str(row.uvt_units),
+        "year": row.year,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Pérdidas fiscales acumuladas (Art. 147 ET)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/perdidas-acumuladas",
+    response_model=list[PerdidaFiscalResponse],
+    summary="Listar pérdidas fiscales acumuladas",
+)
+async def list_perdidas_acumuladas(
+    nit: str = Query(..., description="Company NIT"),
+    year: Optional[int] = Query(
+        None,
+        description="Si se envía, filtra pérdidas disponibles previas a este año",
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[PerdidaFiscalResponse]:
+    """
+    List all fiscal loss records for a company.
+    If `year` is provided, returns only losses with monto_pendiente > 0 from prior years.
+    """
+    from app.models.database import PerdidaFiscalAcumulada
+
+    try:
+        normalized_nit = normalize_nit(nit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+
+    if year is not None:
+        rows = db_service.get_perdidas_disponibles(db, normalized_nit, year)
+    else:
+        rows = (
+            db.query(PerdidaFiscalAcumulada)
+            .filter(PerdidaFiscalAcumulada.company_nit == normalized_nit)
+            .order_by(PerdidaFiscalAcumulada.year.asc())
+            .all()
+        )
+    return [
+        PerdidaFiscalResponse(
+            id=r.id,
+            company_nit=r.company_nit,
+            year=r.year,
+            monto_perdida=str(r.monto_perdida),
+            monto_compensado=str(r.monto_compensado),
+            monto_pendiente=str(r.monto_pendiente),
+            decreto=r.decreto,
+            notas=r.notas,
+        )
+        for r in rows
+    ]
+
+
+@router.post(
+    "/perdidas-acumuladas",
+    response_model=PerdidaFiscalResponse,
+    summary="Crear o actualizar pérdida fiscal acumulada",
+    status_code=201,
+)
+async def upsert_perdida_acumulada(
+    body: PerdidaFiscalUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PerdidaFiscalResponse:
+    """Insert or update a fiscal loss record for the given company and year."""
+    try:
+        normalized_nit = normalize_nit(body.company_nit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+
+    row = db_service.upsert_perdida(
+        db,
+        company_nit=normalized_nit,
+        year=body.year,
+        monto_perdida=Decimal(str(body.monto_perdida)),
+        decreto=body.decreto,
+        notas=body.notas,
+    )
+    return PerdidaFiscalResponse(
+        id=row.id,
+        company_nit=row.company_nit,
+        year=row.year,
+        monto_perdida=str(row.monto_perdida),
+        monto_compensado=str(row.monto_compensado),
+        monto_pendiente=str(row.monto_pendiente),
+        decreto=row.decreto,
+        notas=row.notas,
+    )
+
+
+@router.delete(
+    "/perdidas-acumuladas/{perdida_id}",
+    status_code=204,
+    summary="Eliminar pérdida fiscal acumulada",
+)
+async def delete_perdida_acumulada(
+    perdida_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Hard delete a fiscal loss record by ID."""
+    from app.models.database import PerdidaFiscalAcumulada
+
+    row = (
+        db.query(PerdidaFiscalAcumulada)
+        .filter(PerdidaFiscalAcumulada.id == perdida_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"Pérdida fiscal {perdida_id} no encontrada"
+        )
+    db.delete(row)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# TarifaRenta endpoints — regulatory income-tax rate table
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/tarifas-renta",
+    response_model=list[TarifaRentaResponse],
+    summary="Listar tarifas de renta PJ por régimen",
+)
+async def list_tarifas_renta(
+    year: Optional[int] = Query(
+        None,
+        description="Si se envía, filtra sólo las tarifas vigentes para ese año fiscal",
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[TarifaRentaResponse]:
+    """
+    List all rows in tarifas_renta. If `year` is provided, returns only rows where
+    year_from <= year <= year_to (or year_to IS NULL).
+    """
+    rows = db_service.list_tarifas_renta(db, year=year)
+    return [TarifaRentaResponse(**r) for r in rows]
+
+
+@router.post(
+    "/tarifas-renta",
+    response_model=TarifaRentaResponse,
+    status_code=201,
+    summary="Crear o actualizar tarifa de renta PJ",
+)
+async def upsert_tarifa_renta(
+    body: TarifaRentaUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TarifaRentaResponse:
+    """Insert or update a tarifa_renta row keyed by (regimen, actividad, year_from)."""
+    from decimal import Decimal
+
+    row = db_service.upsert_tarifa_renta(
+        db,
+        regimen=body.regimen,
+        actividad=body.actividad,
+        tarifa_base=Decimal(str(body.tarifa_base)),
+        sobretasa=Decimal(str(body.sobretasa)),
+        year_from=body.year_from,
+        year_to=body.year_to,
+        base_legal=body.base_legal,
+        notas=body.notas,
+    )
+    tarifa_efectiva = float(Decimal(str(row.tarifa_base)) + Decimal(str(row.sobretasa)))
+    return TarifaRentaResponse(
+        id=row.id,
+        regimen=row.regimen,
+        actividad=row.actividad,
+        tarifa_base=float(row.tarifa_base),
+        sobretasa=float(row.sobretasa),
+        tarifa_efectiva=tarifa_efectiva,
+        year_from=row.year_from,
+        year_to=row.year_to,
+        base_legal=row.base_legal,
+        notas=row.notas,
+    )
+
+
+@router.delete(
+    "/tarifas-renta/{tarifa_id}",
+    status_code=204,
+    summary="Eliminar tarifa de renta PJ",
+)
+async def delete_tarifa_renta(
+    tarifa_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Hard delete a tarifa_renta row by ID."""
+    from app.models.database import TarifaRenta
+
+    row = db.query(TarifaRenta).filter(TarifaRenta.id == tarifa_id).first()
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"Tarifa de renta {tarifa_id} no encontrada"
+        )
+    db.delete(row)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# TaxConcept endpoints — F350 retención catalog (Res. DIAN 000031/2024)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/concepts",
+    response_model=list[TaxConceptResponse],
+    summary="Listar conceptos de retención F350",
+)
+async def list_tax_concepts_endpoint(
+    activo: Optional[bool] = Query(
+        True, description="True (default) = solo activos; null = todos"
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[TaxConceptResponse]:
+    """List all rows in tax_concepts. Defaults to activo=True."""
+    rows = db_service.list_tax_concepts(db, activo=activo)
+    return [TaxConceptResponse(**r) for r in rows]
+
+
+@router.put(
+    "/concepts",
+    response_model=TaxConceptResponse,
+    status_code=200,
+    summary="Crear o actualizar concepto de retención",
+)
+async def upsert_tax_concept_endpoint(
+    body: TaxConceptUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaxConceptResponse:
+    """Insert or update a tax_concepts row keyed by code."""
+    row = db_service.upsert_tax_concept(
+        db,
+        code=body.code,
+        label=body.label,
+        renglon_350=body.renglon_350,
+        aplica_a=body.aplica_a,
+        categoria=body.categoria,
+        tarifa_default=(
+            Decimal(str(body.tarifa_default))
+            if body.tarifa_default is not None
+            else None
+        ),
+        base_minima_uvt=(
+            Decimal(str(body.base_minima_uvt))
+            if body.base_minima_uvt is not None
+            else None
+        ),
+        art_referencia=body.art_referencia,
+        activo=body.activo,
+    )
+    return TaxConceptResponse(
+        code=row.code,
+        label=row.label,
+        renglon_350=row.renglon_350,
+        aplica_a=row.aplica_a,
+        tarifa_default=(
+            float(row.tarifa_default) if row.tarifa_default is not None else None
+        ),
+        base_minima_uvt=(
+            float(row.base_minima_uvt) if row.base_minima_uvt is not None else None
+        ),
+        categoria=row.categoria,
+        art_referencia=row.art_referencia,
+        activo=bool(row.activo),
+    )
+
+
+@router.delete(
+    "/concepts/{code}",
+    status_code=204,
+    summary="Soft delete (activo=False) concepto de retención",
+)
+async def delete_tax_concept_endpoint(
+    code: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Soft delete: marks activo=False so historical data stays queryable."""
+    row = db_service.soft_delete_tax_concept(db, code)
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"Concepto de retención '{code}' no encontrado"
+        )
+
+
+# ---------------------------------------------------------------------------
+# AjusteFiscal endpoints — F2516 fiscal reconciliation adjustments
+# ---------------------------------------------------------------------------
+
+
+def _ajuste_to_response(row) -> AjusteFiscalResponse:
+    return AjusteFiscalResponse(
+        id=row.id,
+        company_nit=row.company_nit,
+        year=row.year,
+        seccion=row.seccion,
+        concepto=row.concepto,
+        valor_contable=float(row.valor_contable),
+        valor_fiscal=float(row.valor_fiscal),
+        tipo_diferencia=row.tipo_diferencia,
+        descripcion=row.descripcion,
+    )
+
+
+@router.get(
+    "/ajustes-fiscales",
+    response_model=list[AjusteFiscalResponse],
+    summary="Listar ajustes fiscales para F2516",
+)
+async def list_ajustes_fiscales(
+    company_nit: str = Query(..., description="Company NIT"),
+    year: int = Query(..., ge=1990, le=2100),
+    seccion: Optional[str] = Query(
+        None,
+        description="ESF_ACTIVO | ESF_PASIVO | ESF_PATRIMONIO | ERI_INGRESO | ERI_COSTO | ERI_GASTO",
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[AjusteFiscalResponse]:
+    try:
+        normalized_nit = normalize_nit(company_nit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+
+    rows = db_service.list_ajustes_fiscales(db, normalized_nit, year, seccion)
+    return [_ajuste_to_response(r) for r in rows]
+
+
+@router.put(
+    "/ajustes-fiscales",
+    response_model=AjusteFiscalResponse,
+    summary="Crear o actualizar un ajuste fiscal (F2516)",
+)
+async def upsert_ajuste_fiscal(
+    body: AjusteFiscalUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AjusteFiscalResponse:
+    try:
+        normalized_nit = normalize_nit(body.company_nit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+
+    row = db_service.upsert_ajuste_fiscal(
+        db,
+        company_nit=normalized_nit,
+        year=body.year,
+        seccion=body.seccion,
+        concepto=body.concepto,
+        valor_contable=Decimal(str(body.valor_contable)),
+        valor_fiscal=Decimal(str(body.valor_fiscal)),
+        tipo_diferencia=body.tipo_diferencia,
+        descripcion=body.descripcion,
+    )
+    return _ajuste_to_response(row)
+
+
+@router.delete(
+    "/ajustes-fiscales/{ajuste_id}",
+    status_code=204,
+    summary="Eliminar un ajuste fiscal",
+)
+async def delete_ajuste_fiscal(
+    ajuste_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    deleted = db_service.delete_ajuste_fiscal(db, ajuste_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail=f"Ajuste fiscal {ajuste_id} no encontrado"
+        )
