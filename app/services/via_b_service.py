@@ -13,7 +13,8 @@ no caller needs to duplicate JSONB unwrap logic.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -419,6 +420,310 @@ def get_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
         "latest_period": latest.isoformat() if latest else None,
         "derivation_ready": bool(common_period_ends),
     }
+
+
+# ---------------------------------------------------------------------------
+# Tributario readers (consumed by /api/v1/tax)
+# ---------------------------------------------------------------------------
+
+
+def _iva_a_pagar_status(iva_a_pagar: float) -> str:
+    if iva_a_pagar > 0:
+        return "saldo_a_pagar"
+    if iva_a_pagar < 0:
+        return "saldo_a_favor"
+    return "saldo_cero"
+
+
+def _drop_redundant_codes(
+    candidates: List[tuple[str, float, str]],
+) -> List[tuple[str, float, str]]:
+    """Remove any candidate whose code is a strict prefix of another candidate.
+
+    PUC charts often list both an intermediate parent (e.g. ``240801``) and
+    its children (e.g. ``24080101``). Counting both double-charges the saldo;
+    keeping only the most-specific code preserves the right total whatever
+    depth the upload happens to use.
+    """
+    codes = [c[0] for c in candidates]
+    return [
+        (code, saldo, group)
+        for code, saldo, group in candidates
+        if not any(other != code and other.startswith(code) for other in codes)
+    ]
+
+
+def _sum_account_group(
+    accounts: List[Dict[str, Any]],
+    *,
+    generado_prefixes: tuple[str, ...],
+    descontable_prefixes: tuple[str, ...],
+    parent_code: str,
+) -> tuple[float, float]:
+    """Sum IVA-style accounts split by generado vs descontable.
+
+    Walks every account starting with the configured prefixes, drops those
+    that are duplicated at a more specific level (see
+    :func:`_drop_redundant_codes`), and falls back to ``parent_code``'s
+    saldo when no group accounts are present at all.
+    """
+    candidates: List[tuple[str, float, str]] = []
+    parent_saldo: Optional[float] = None
+    for acc in accounts:
+        if not isinstance(acc, dict):
+            continue
+        code = str(acc.get("cuenta_puc") or "")
+        if not code:
+            continue
+        saldo = safe_float(acc.get("saldo"))
+        if code == parent_code:
+            parent_saldo = saldo
+            continue
+        if any(code.startswith(p) for p in generado_prefixes):
+            candidates.append((code, saldo, "g"))
+        elif any(code.startswith(p) for p in descontable_prefixes):
+            candidates.append((code, saldo, "d"))
+
+    non_redundant = _drop_redundant_codes(candidates)
+    generado = sum(abs(s) for _, s, g in non_redundant if g == "g")
+    descontable = sum(abs(s) for _, s, g in non_redundant if g == "d")
+
+    if not non_redundant and parent_saldo is not None:
+        if parent_saldo >= 0:
+            generado = parent_saldo
+        else:
+            descontable = abs(parent_saldo)
+    return generado, descontable
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def get_iva_report(
+    db: Session, company_nit: str, period_end: Optional[date] = None
+) -> Optional[Dict[str, Any]]:
+    """Derive an ``IVAOutput``-shaped payload from a Vía B balance_general.
+
+    IVA generated lives in subaccounts of 240801/240805 (credit-natured);
+    IVA deductible lives in 240802/240810/240811 (debit-natured against the
+    liability, often stored as negative). Falls back to the parent ``2408``
+    when only the aggregate is present. Returns ``None`` when no balance
+    is loaded so the endpoint can render an empty state.
+    """
+    stmt = _latest_statement(db, company_nit, "balance_general", period_end)
+    if stmt is None:
+        return None
+    accounts = _accounts(_data(stmt))
+    iva_generado, iva_descontable = _sum_account_group(
+        accounts,
+        generado_prefixes=("240801", "240805"),
+        descontable_prefixes=("240802", "240810", "240811"),
+        parent_code="2408",
+    )
+    iva_a_pagar = iva_generado - iva_descontable
+    return {
+        "report_type": "iva_report",
+        "source": "via_b",
+        "period_start": (
+            stmt.period_start.date().isoformat() if stmt.period_start else None
+        ),
+        "period_end": (
+            stmt.period_end.date().isoformat()
+            if stmt.period_end
+            else date.today().isoformat()
+        ),
+        "company_nit": company_nit,
+        "generated_at": _now_iso(),
+        "iva_generado": iva_generado,
+        "iva_descontable": iva_descontable,
+        "iva_a_pagar": iva_a_pagar,
+        "iva_status": _iva_a_pagar_status(iva_a_pagar),
+        "referencias": [
+            "Art. 437 ET — Responsables del impuesto sobre las ventas",
+            "Art. 484 ET — IVA descontable",
+            "Cifras derivadas del balance general cargado (Vía B); no hay detalle por factura.",
+        ],
+    }
+
+
+def get_withholdings_report(
+    db: Session, company_nit: str, period_end: Optional[date] = None
+) -> Optional[Dict[str, Any]]:
+    """Derive a ``WithholdingsOutput``-shaped payload from balance saldos.
+
+    Retefuente lives in 2365 (and subaccounts); ReteICA in 2368. Both are
+    credit-natured liabilities — their saldo at the cutoff is the pending
+    amount to remit. Returns ``None`` when no balance is loaded.
+    """
+    stmt = _latest_statement(db, company_nit, "balance_general", period_end)
+    if stmt is None:
+        return None
+    accounts = _accounts(_data(stmt))
+
+    def _saldo_for(prefix: str) -> float:
+        """Sum non-redundant saldos under ``prefix``; fall back to the parent.
+
+        Same de-duplication rule as IVA: drop any code that is a strict prefix
+        of another collected code so we don't double-count parent+child.
+        """
+        parent_saldo: Optional[float] = None
+        candidates: List[tuple[str, float, str]] = []
+        for acc in accounts:
+            if not isinstance(acc, dict):
+                continue
+            code = str(acc.get("cuenta_puc") or "")
+            if not code.startswith(prefix):
+                continue
+            saldo = safe_float(acc.get("saldo"))
+            if code == prefix:
+                parent_saldo = saldo
+            else:
+                candidates.append((code, saldo, "x"))
+        non_redundant = _drop_redundant_codes(candidates)
+        if non_redundant:
+            return sum(abs(s) for _, s, _ in non_redundant)
+        return abs(parent_saldo) if parent_saldo is not None else 0.0
+
+    retefuente = _saldo_for("2365")
+    reteica = _saldo_for("2368")
+    total = retefuente + reteica
+    return {
+        "report_type": "withholdings_report",
+        "source": "via_b",
+        "period_start": (
+            stmt.period_start.date().isoformat() if stmt.period_start else None
+        ),
+        "period_end": (
+            stmt.period_end.date().isoformat()
+            if stmt.period_end
+            else date.today().isoformat()
+        ),
+        "company_nit": company_nit,
+        "generated_at": _now_iso(),
+        "retencion_en_la_fuente": retefuente,
+        "retencion_ica": reteica,
+        "total_retenciones": total,
+        "referencias": [
+            "Art. 365 ET — Agentes de retención en la fuente",
+            "Ley 14 de 1983 — ReteICA",
+            "Cifras derivadas del balance general cargado (Vía B); no hay detalle por tercero.",
+        ],
+    }
+
+
+def get_ica_report(
+    db: Session,
+    company_nit: str,
+    period_end: Optional[date] = None,
+    tasa_ica: Optional[Decimal] = None,
+) -> Optional[Dict[str, Any]]:
+    """Derive an ``ICADeclaracionOutput`` from the uploaded estado_resultados.
+
+    ``ingresos_brutos`` is taken from the period's E.R. (``total_ingresos`` or
+    the sum of class-4 saldos when the total isn't present). The configured
+    ``tasa_ica`` is applied per :func:`_calc_ica`. Returns ``None`` when no
+    E.R. is loaded.
+    """
+    from app.agents.tributario_agent import TASA_ICA_DEFAULT, _calc_ica
+
+    stmt = _latest_statement(db, company_nit, "estado_resultados", period_end)
+    if stmt is None:
+        return None
+    data = _data(stmt)
+    accounts = _accounts(data)
+    ingresos = safe_float(data.get("total_ingresos"))
+    if ingresos == 0:
+        # Fall back to class-4 saldos when the rolled-up total is missing.
+        ingresos = sum(
+            safe_float(a.get("saldo"))
+            for a in accounts
+            if isinstance(a, dict) and str(a.get("cuenta_puc") or "").startswith("4")
+        )
+    rate = tasa_ica if tasa_ica is not None else TASA_ICA_DEFAULT
+    ica_a_pagar = _calc_ica(Decimal(str(ingresos)), rate)
+    return {
+        "report_type": "ica_declaracion",
+        "source": "via_b",
+        "period_start": (
+            stmt.period_start.date().isoformat() if stmt.period_start else None
+        ),
+        "period_end": (
+            stmt.period_end.date().isoformat()
+            if stmt.period_end
+            else date.today().isoformat()
+        ),
+        "generated_at": _now_iso(),
+        "ingresos_brutos": float(ingresos),
+        "tasa_ica": float(rate),
+        "ica_a_pagar": float(ica_a_pagar),
+        "cuenta_gasto_puc": "540101",
+        "cuenta_pasivo_puc": "2368",
+        "referencias": [
+            "Ley 14 de 1983 — Impuesto de Industria y Comercio",
+            "Decreto 1333 de 1986 — Código de Régimen Municipal",
+            "Cifras derivadas del estado de resultados cargado (Vía B).",
+        ],
+    }
+
+
+def get_renta_provision_report(
+    db: Session,
+    company_nit: str,
+    period_end: Optional[date] = None,
+    tasa_renta: Optional[Decimal] = None,
+) -> Optional[Dict[str, Any]]:
+    """Derive a ``RentaProvisionOutput`` from the uploaded estado_resultados.
+
+    Uses ``utilidad_neta`` from the E.R. as ``utilidad_antes_impuestos`` (Vía B
+    statements typically report the audited pre-tax line as ``utilidad_neta``
+    of the operating cycle; provisions live elsewhere). Provision = utilidad ×
+    tasa, clamped at zero on losses. Returns ``None`` when no E.R. is loaded.
+    """
+    from app.agents.tributario_agent import TASA_RENTA
+
+    stmt = _latest_statement(db, company_nit, "estado_resultados", period_end)
+    if stmt is None:
+        return None
+    data = _data(stmt)
+    utilidad = safe_float(data.get("utilidad_neta"))
+    if utilidad == 0:
+        # Try utilidad_bruta - gastos as a fallback if the LLM didn't extract
+        # the net line cleanly.
+        bruta = safe_float(data.get("utilidad_bruta"))
+        gastos = safe_float(data.get("total_gastos"))
+        utilidad = bruta - gastos if (bruta or gastos) else 0.0
+    rate = tasa_renta if tasa_renta is not None else TASA_RENTA
+    provision = max(Decimal(str(utilidad)) * rate, Decimal("0"))
+    return {
+        "report_type": "renta_provision",
+        "source": "via_b",
+        "period_start": (
+            stmt.period_start.date().isoformat() if stmt.period_start else None
+        ),
+        "period_end": (
+            stmt.period_end.date().isoformat()
+            if stmt.period_end
+            else date.today().isoformat()
+        ),
+        "generated_at": _now_iso(),
+        "utilidad_antes_impuestos": float(utilidad),
+        "tasa_renta": float(rate),
+        "provision_renta": float(provision),
+        "cuenta_gasto_puc": "540502",
+        "cuenta_pasivo_puc": "240405",
+        "referencias": [
+            "Art. 240 ET — Tarifa general sociedades nacionales",
+            "Ley 2277 de 2022 — Reforma tributaria",
+            "Cifras derivadas del estado de resultados cargado (Vía B); "
+            "verificar si utilidad_neta está antes o después de impuestos.",
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Monthly trend (consumed by /api/v1/dashboard/monthly-trend)
+# ---------------------------------------------------------------------------
 
 
 def get_monthly_trend(

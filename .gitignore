@@ -62,3 +62,7 @@ test_*.pdf
 
 # Frontend repo cloned inside the backend workspace for cross-stack work
 /frontend_pae_account_multiagent_system/
+
+# pnpm content-addressable store created when running pnpm install inside the
+# frontend repo from this workspace
+.pnpm-store/

@@ -255,6 +255,7 @@ class ICADeclaracionOutput(BaseModel):
     cuenta_gasto_puc: str = "540101"
     cuenta_pasivo_puc: str = "2368"
     referencias: List[str]
+    source: Optional[str] = None  # 'via_a' | 'via_b' — used by FE for context badge
 
 
 class RentaProvisionOutput(BaseModel):
@@ -270,3 +271,4 @@ class RentaProvisionOutput(BaseModel):
     cuenta_gasto_puc: str = "540502"
     cuenta_pasivo_puc: str = "240405"
     referencias: List[str]
+    source: Optional[str] = None  # 'via_a' | 'via_b' — used by FE for context badge

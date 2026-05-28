@@ -319,6 +319,156 @@ class TestGetDashboardOverrides:
         assert result["derivation_ready"] is True
 
 
+class TestGetIvaReport:
+    def _bg(self, accounts):
+        return _stmt(statement_type="balance_general", data={"accounts": accounts})
+
+    def test_leaf_subaccounts_split_into_generado_and_descontable(self):
+        from app.services import via_b_service
+
+        bg = self._bg(
+            [
+                {"cuenta_puc": "24080101", "saldo": 4_298_712},  # generado leaf
+                {"cuenta_puc": "240801", "saldo": 4_298_712},  # parent → ignored
+                {"cuenta_puc": "24080203", "saldo": -233_780},  # descontable leaf
+                {"cuenta_puc": "240802", "saldo": -233_780},  # parent → ignored
+                {"cuenta_puc": "2408", "saldo": 4_064_932},  # grandparent → ignored
+            ]
+        )
+        result = via_b_service.get_iva_report(_mock_db([bg]), "800999888")
+
+        assert result["iva_generado"] == 4_298_712.0
+        assert result["iva_descontable"] == 233_780.0
+        assert result["iva_a_pagar"] == 4_298_712.0 - 233_780.0
+        assert result["iva_status"] == "saldo_a_pagar"
+        assert result["source"] == "via_b"
+
+    def test_only_parent_account_used_when_no_leaves(self):
+        from app.services import via_b_service
+
+        bg = self._bg([{"cuenta_puc": "2408", "saldo": 4_064_932}])
+        result = via_b_service.get_iva_report(_mock_db([bg]), "800999888")
+
+        assert result["iva_generado"] == 4_064_932.0
+        assert result["iva_descontable"] == 0.0
+        assert result["iva_status"] == "saldo_a_pagar"
+
+    def test_saldo_a_favor_when_descontable_exceeds_generado(self):
+        from app.services import via_b_service
+
+        bg = self._bg(
+            [
+                {"cuenta_puc": "240801", "saldo": 100_000},
+                {"cuenta_puc": "240802", "saldo": -300_000},
+            ]
+        )
+        result = via_b_service.get_iva_report(_mock_db([bg]), "800999888")
+
+        assert result["iva_a_pagar"] == -200_000.0
+        assert result["iva_status"] == "saldo_a_favor"
+
+    def test_returns_none_when_no_balance_uploaded(self):
+        from app.services import via_b_service
+
+        assert via_b_service.get_iva_report(_mock_db([]), "800999888") is None
+
+
+class TestGetWithholdingsReport:
+    def _bg(self, accounts):
+        return _stmt(statement_type="balance_general", data={"accounts": accounts})
+
+    def test_retefuente_and_reteica_summed_from_leaf_subaccounts(self):
+        from app.services import via_b_service
+
+        bg = self._bg(
+            [
+                {"cuenta_puc": "236505", "saldo": 500_000},  # retefuente leaf
+                {"cuenta_puc": "236525", "saldo": 200_000},  # retefuente leaf
+                {"cuenta_puc": "2365", "saldo": 700_000},  # parent → ignored
+                {"cuenta_puc": "236805", "saldo": 80_000},  # reteica leaf
+                {"cuenta_puc": "2368", "saldo": 80_000},  # parent → ignored
+            ]
+        )
+        result = via_b_service.get_withholdings_report(_mock_db([bg]), "800999888")
+
+        assert result["retencion_en_la_fuente"] == 700_000.0
+        assert result["retencion_ica"] == 80_000.0
+        assert result["total_retenciones"] == 780_000.0
+        assert result["source"] == "via_b"
+
+    def test_returns_zeros_when_no_retencion_accounts_in_balance(self):
+        from app.services import via_b_service
+
+        bg = self._bg([{"cuenta_puc": "1105", "saldo": 50_000}])
+        result = via_b_service.get_withholdings_report(_mock_db([bg]), "800999888")
+
+        assert result["retencion_en_la_fuente"] == 0.0
+        assert result["retencion_ica"] == 0.0
+
+
+class TestGetIcaReport:
+    def test_ica_uses_estado_resultados_ingresos_times_tasa(self):
+        from decimal import Decimal
+
+        from app.services import via_b_service
+
+        er = _stmt(
+            statement_type="estado_resultados",
+            data={"total_ingresos": 22_625_936, "accounts": []},
+        )
+        result = via_b_service.get_ica_report(
+            _mock_db([er]), "800999888", tasa_ica=Decimal("0.00690")
+        )
+
+        assert result["ingresos_brutos"] == 22_625_936.0
+        assert result["tasa_ica"] == 0.0069
+        # _calc_ica rounds to integer (per Colombian DIAN); accept either int or
+        # exact float depending on the implementation.
+        assert abs(result["ica_a_pagar"] - 156_118.96) < 1.0
+        assert result["source"] == "via_b"
+
+    def test_returns_none_when_no_estado_resultados(self):
+        from app.services import via_b_service
+
+        assert via_b_service.get_ica_report(_mock_db([]), "800999888") is None
+
+
+class TestGetRentaProvisionReport:
+    def test_renta_uses_utilidad_neta_times_tasa(self):
+        from decimal import Decimal
+
+        from app.services import via_b_service
+
+        er = _stmt(
+            statement_type="estado_resultados",
+            data={"utilidad_neta": 8_983_445.4, "accounts": []},
+        )
+        result = via_b_service.get_renta_provision_report(
+            _mock_db([er]), "800999888", tasa_renta=Decimal("0.35")
+        )
+
+        assert result["utilidad_antes_impuestos"] == 8_983_445.4
+        assert result["tasa_renta"] == 0.35
+        assert abs(result["provision_renta"] - 3_144_205.89) < 0.01
+        assert result["source"] == "via_b"
+
+    def test_provision_is_zero_when_there_is_a_loss(self):
+        from decimal import Decimal
+
+        from app.services import via_b_service
+
+        er = _stmt(
+            statement_type="estado_resultados",
+            data={"utilidad_neta": -5_000_000, "accounts": []},
+        )
+        result = via_b_service.get_renta_provision_report(
+            _mock_db([er]), "800999888", tasa_renta=Decimal("0.35")
+        )
+
+        assert result["utilidad_antes_impuestos"] == -5_000_000.0
+        assert result["provision_renta"] == 0.0  # clamped
+
+
 class TestGetMonthlyTrend:
     def test_returns_none_when_fewer_than_two_pnls(self):
         from app.services import via_b_service
