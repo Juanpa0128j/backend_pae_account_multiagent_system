@@ -59,6 +59,12 @@ class DashboardStatsResponse(BaseModel):
     via_b_statements_count: int = 0
     latest_via_b_period: Optional[str] = None
     derivation_ready: bool = False
+    # The period the KPIs reflect. For Vía B this is the most recent date
+    # shared by balance + E.R. + libro_aux when ``period_resolution="common"``;
+    # ``"partial"`` means each KPI may come from a different period. The
+    # frontend should surface this so users know what they're looking at.
+    period_end: Optional[str] = None
+    period_resolution: Optional[str] = None  # 'common' | 'partial' | None
 
 
 SPANISH_MONTHS = {
@@ -153,6 +159,8 @@ async def get_dashboard_stats(
             via_b_statements_count=vb["statements_count"],
             latest_via_b_period=vb["latest_period"],
             derivation_ready=vb["derivation_ready"],
+            period_end=vb.get("period_end"),
+            period_resolution=vb.get("period_resolution"),
         )
 
     # Pending documents

@@ -95,6 +95,91 @@ def _lines(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return lines if isinstance(lines, list) else []
 
 
+def _drop_redundant_codes(
+    candidates: List[tuple[str, float, str]],
+) -> List[tuple[str, float, str]]:
+    """Remove any candidate whose code is a strict prefix of another candidate.
+
+    PUC charts often list both an intermediate parent (e.g. ``240801``) and
+    its children (e.g. ``24080101``). Counting both double-charges the saldo;
+    keeping only the most-specific code preserves the right total whatever
+    depth the upload happens to use.
+    """
+    codes = [c[0] for c in candidates]
+    return [
+        (code, saldo, group)
+        for code, saldo, group in candidates
+        if not any(other != code and other.startswith(code) for other in codes)
+    ]
+
+
+_CORE_STATEMENT_TYPES: tuple[str, ...] = (
+    "balance_general",
+    "estado_resultados",
+    "libro_auxiliar",
+)
+
+
+def latest_common_period(db: Session, company_nit: str) -> Optional[date]:
+    """Return the latest period_end shared by balance + E.R. + libro auxiliar.
+
+    Used to anchor dashboard / reports KPIs to a single coherent period so
+    figures from different statement types don't get mixed (e.g. assets from
+    January with utilidad from December). Returns ``None`` when at least one
+    of the three core types has no upload that shares any period_end with the
+    others.
+    """
+    period_sets: list[set[date]] = []
+    for stype in _CORE_STATEMENT_TYPES:
+        rows = _statements(db, company_nit, stype)
+        period_sets.append(
+            {r.period_end.date() for r in rows if r.period_end is not None}
+        )
+    if not all(period_sets):
+        return None
+    common = set.intersection(*period_sets)
+    return max(common) if common else None
+
+
+def resolve_utilidad_neta(balance_data: Dict[str, Any]) -> float:
+    """Find the period's net result inside a balance_general JSONB.
+
+    LLM-extracted balances put the utilidad in one of three places depending
+    on the source PDF:
+
+    1. As a top-level ``utilidad_neta`` field (the canonical shape).
+    2. Nested under ``patrimonio.resultados_del_ejercicio`` (newer extractor).
+    3. Only as a row in ``accounts`` with PUC ``3605*`` (some chart-heavy
+       uploads).
+
+    Probing in that order keeps backwards compatibility while making the
+    common "result wasn't extracted to the top-level" case work without
+    affecting balances that already populate the field.
+    """
+    direct = safe_float(balance_data.get("utilidad_neta"))
+    if direct:
+        return direct
+    patrimonio_obj = balance_data.get("patrimonio")
+    if isinstance(patrimonio_obj, dict):
+        nested = safe_float(patrimonio_obj.get("resultados_del_ejercicio"))
+        if nested:
+            return nested
+    # Walk the accounts list as a last resort. Same dedup rule as IVA so
+    # parent (``3605``) + leaves (``360505``) don't double-count.
+    candidates: List[tuple[str, float, str]] = []
+    for acc in _accounts(balance_data):
+        if not isinstance(acc, dict):
+            continue
+        code = str(acc.get("cuenta_puc") or "")
+        if not code.startswith("3605"):
+            continue
+        candidates.append((code, safe_float(acc.get("saldo")), "u"))
+    non_redundant = _drop_redundant_codes(candidates)
+    if non_redundant:
+        return sum(s for _, s, _ in non_redundant)
+    return 0.0
+
+
 # ---------------------------------------------------------------------------
 # Books-shaped readers (consumed by /api/v1/books)
 # ---------------------------------------------------------------------------
@@ -195,7 +280,7 @@ def get_balance(
     activos = safe_float(data.get("total_activos"))
     pasivos = safe_float(data.get("total_pasivos"))
     patrimonio_total = safe_float(data.get("total_patrimonio"))
-    utilidad_neta = safe_float(data.get("utilidad_neta"))
+    utilidad_neta = resolve_utilidad_neta(data)
     patrimonio = patrimonio_total - utilidad_neta
 
     diferencia = activos - (pasivos + patrimonio_total)
@@ -366,9 +451,16 @@ def get_top_accounts(
 def get_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
     """Compute Vía B financial totals from FinancialStatement rows.
 
+    Anchors every KPI to a single coherent period — the most recent date
+    shared by balance_general + estado_resultados + libro_auxiliar — so
+    figures don't mix periods. When no single shared period exists, falls
+    back to the latest of each type independently and flags the response
+    as ``period_resolution: "partial"`` so the frontend can warn the user.
+
     Returns the same keys the Vía A flow computes from journal entries
     (``total_activos``, ``total_pasivos``, …) plus Vía B metadata
-    (``statements_count``, ``latest_period``, ``derivation_ready``).
+    (``statements_count``, ``latest_period``, ``derivation_ready``,
+    ``period_end``, ``period_resolution``).
     """
     rows = (
         db.query(FinancialStatement)
@@ -376,16 +468,36 @@ def get_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
         .order_by(FinancialStatement.period_end.desc())
         .all()
     )
-    bg = next((r for r in rows if r.statement_type == "balance_general"), None)
-    er = next((r for r in rows if r.statement_type == "estado_resultados"), None)
-    la = next((r for r in rows if r.statement_type == "libro_auxiliar"), None)
+
+    common_period = latest_common_period(db, company_nit)
+    period_resolution = "common" if common_period is not None else "partial"
+
+    def _pick(stype: str) -> Optional[FinancialStatement]:
+        if common_period is not None:
+            for r in rows:
+                if (
+                    r.statement_type == stype
+                    and r.period_end is not None
+                    and r.period_end.date() == common_period
+                ):
+                    return r
+        return next((r for r in rows if r.statement_type == stype), None)
+
+    bg = _pick("balance_general")
+    er = _pick("estado_resultados")
+    la = _pick("libro_auxiliar")
 
     bg_data = bg.data if bg and isinstance(bg.data, dict) else {}
     er_data = er.data if er and isinstance(er.data, dict) else {}
 
     total_activos = safe_float(bg_data.get("total_activos"))
     total_pasivos = safe_float(bg_data.get("total_pasivos"))
-    utilidad_neta = safe_float(er_data.get("utilidad_neta"))
+    # Prefer the E.R. utilidad (canonical source of profit). Fall back to the
+    # balance — same multi-shape resolver as the chat/reports use — when the
+    # E.R. for the chosen period is missing or its top-level field is empty.
+    utilidad_neta = safe_float(er_data.get("utilidad_neta")) or resolve_utilidad_neta(
+        bg_data
+    )
 
     efectivo = 0.0
     if la and isinstance(la.data, dict):
@@ -399,17 +511,12 @@ def get_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
                 )
 
     direct = [r for r in rows if r.source_mode == "direct"]
-    required_types = ("balance_general", "estado_resultados", "libro_auxiliar")
-    period_ends_by_type: Dict[str, set] = {t: set() for t in required_types}
-    for r in direct:
-        if r.statement_type in period_ends_by_type and r.period_end is not None:
-            period_ends_by_type[r.statement_type].add(r.period_end)
-    common_period_ends = (
-        set.intersection(*period_ends_by_type.values())
-        if all(period_ends_by_type[t] for t in required_types)
-        else set()
-    )
     latest = max((r.period_end for r in direct if r.period_end), default=None)
+    period_end = (
+        common_period.isoformat()
+        if common_period
+        else (latest.date().isoformat() if latest else None)
+    )
 
     return {
         "total_activos": total_activos,
@@ -418,7 +525,9 @@ def get_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
         "efectivo": efectivo,
         "statements_count": len(direct),
         "latest_period": latest.isoformat() if latest else None,
-        "derivation_ready": bool(common_period_ends),
+        "period_end": period_end,
+        "period_resolution": period_resolution,
+        "derivation_ready": common_period is not None,
     }
 
 
@@ -433,24 +542,6 @@ def _iva_a_pagar_status(iva_a_pagar: float) -> str:
     if iva_a_pagar < 0:
         return "saldo_a_favor"
     return "saldo_cero"
-
-
-def _drop_redundant_codes(
-    candidates: List[tuple[str, float, str]],
-) -> List[tuple[str, float, str]]:
-    """Remove any candidate whose code is a strict prefix of another candidate.
-
-    PUC charts often list both an intermediate parent (e.g. ``240801``) and
-    its children (e.g. ``24080101``). Counting both double-charges the saldo;
-    keeping only the most-specific code preserves the right total whatever
-    depth the upload happens to use.
-    """
-    codes = [c[0] for c in candidates]
-    return [
-        (code, saldo, group)
-        for code, saldo, group in candidates
-        if not any(other != code and other.startswith(code) for other in codes)
-    ]
 
 
 def _sum_account_group(

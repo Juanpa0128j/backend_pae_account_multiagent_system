@@ -319,6 +319,116 @@ class TestGetDashboardOverrides:
         assert result["derivation_ready"] is True
 
 
+class TestResolveUtilidadNeta:
+    """Probing order: top-level → patrimonio.resultados_del_ejercicio → 3605* leaves."""
+
+    def test_top_level_wins(self):
+        from app.services import via_b_service
+
+        data = {
+            "utilidad_neta": 10_000_000,
+            "patrimonio": {"resultados_del_ejercicio": 999_999},
+            "accounts": [{"cuenta_puc": "3605", "saldo": 0}],
+        }
+        assert via_b_service.resolve_utilidad_neta(data) == 10_000_000.0
+
+    def test_falls_back_to_patrimonio_nested(self):
+        from app.services import via_b_service
+
+        data = {
+            "patrimonio": {"resultados_del_ejercicio": "8982254.4"},
+            "accounts": [],
+        }
+        assert via_b_service.resolve_utilidad_neta(data) == pytest.approx(8_982_254.4)
+
+    def test_falls_back_to_account_3605(self):
+        from app.services import via_b_service
+
+        data = {
+            "accounts": [
+                {"cuenta_puc": "360505", "saldo": 5_000_000},
+                {"cuenta_puc": "3605", "saldo": 5_000_000},  # parent → dropped
+            ]
+        }
+        assert via_b_service.resolve_utilidad_neta(data) == 5_000_000.0
+
+    def test_returns_zero_when_no_source(self):
+        from app.services import via_b_service
+
+        assert via_b_service.resolve_utilidad_neta({}) == 0.0
+
+
+class TestLatestCommonPeriod:
+    """Patches the internal ``_statements`` so each statement_type returns its
+    own list — the generic ``_mock_db`` can't distinguish filters."""
+
+    @staticmethod
+    def _patched_statements(rows_by_type):
+        def _stub(_db, _nit, statement_type):
+            return rows_by_type.get(statement_type, [])
+
+        from unittest.mock import patch as _patch
+
+        return _patch("app.services.via_b_service._statements", side_effect=_stub)
+
+    def test_returns_shared_period_when_all_three_align(self):
+        from datetime import date
+
+        from app.services import via_b_service
+
+        jan = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        rows_by_type = {
+            "balance_general": [
+                _stmt(statement_type="balance_general", data={}, period_end=jan)
+            ],
+            "estado_resultados": [
+                _stmt(statement_type="estado_resultados", data={}, period_end=jan)
+            ],
+            "libro_auxiliar": [
+                _stmt(statement_type="libro_auxiliar", data={}, period_end=jan)
+            ],
+        }
+        with self._patched_statements(rows_by_type):
+            assert via_b_service.latest_common_period(MagicMock(), "800999888") == date(
+                2026, 1, 31
+            )
+
+    def test_returns_none_when_no_overlap(self):
+        from app.services import via_b_service
+
+        jan = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        dec = datetime(2025, 12, 31, tzinfo=timezone.utc)
+        rows_by_type = {
+            "balance_general": [
+                _stmt(statement_type="balance_general", data={}, period_end=jan)
+            ],
+            "estado_resultados": [
+                _stmt(statement_type="estado_resultados", data={}, period_end=dec)
+            ],
+            "libro_auxiliar": [
+                _stmt(statement_type="libro_auxiliar", data={}, period_end=jan)
+            ],
+        }
+        with self._patched_statements(rows_by_type):
+            assert via_b_service.latest_common_period(MagicMock(), "800999888") is None
+
+    def test_returns_none_when_one_type_missing(self):
+        from app.services import via_b_service
+
+        jan = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        rows_by_type = {
+            "balance_general": [
+                _stmt(statement_type="balance_general", data={}, period_end=jan)
+            ],
+            "estado_resultados": [
+                _stmt(statement_type="estado_resultados", data={}, period_end=jan)
+            ],
+            "libro_auxiliar": [],  # missing
+        }
+        with self._patched_statements(rows_by_type):
+            assert via_b_service.latest_common_period(MagicMock(), "800999888") is None
+
+
 class TestGetIvaReport:
     def _bg(self, accounts):
         return _stmt(statement_type="balance_general", data={"accounts": accounts})
