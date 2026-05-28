@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Iterator
 
 from sqlalchemy import func
@@ -80,6 +80,16 @@ REGLAS DE CLASIFICACIÓN:
 - general_question SOLO para preguntas conceptuales sin datos del usuario (ej. "qué es el IVA"). Si la pregunta pide CIFRAS o ESTADO de impuestos → usa iva / withholdings / analysis.
 - Si la pregunta menciona varias cosas, elige la intención PRINCIPAL.
 
+EXTRACCIÓN DE PERÍODO (period_start / period_end):
+- Hoy es {today}. Resuelve meses/años relativos contra esta fecha.
+- Si el usuario nombra un período, devuelve period_start y period_end en ISO YYYY-MM-DD:
+  * "balance de diciembre 2025" → period_start=2025-12-01, period_end=2025-12-31
+  * "enero" (sin año) → usa el año más reciente cuyo enero ya ocurrió o está en curso respecto a hoy
+  * "primer trimestre 2026" → period_start=2026-01-01, period_end=2026-03-31
+  * "el año pasado" → period_start=AAAA-01-01, period_end=AAAA-12-31 del año anterior
+- Si NO menciona ningún período, deja period_start y period_end en null (se usará el más reciente disponible).
+- Un balance es un corte a fecha: para "balance de diciembre" lo relevante es period_end (último día del mes).
+
 Historial reciente:
 {history_text}
 
@@ -101,6 +111,29 @@ Respondes de forma clara, concisa y amigable en español.
 - Margen Neto = Utilidad / Ingresos × 100
 - ROA = Utilidad / Activos × 100
 - Endeudamiento = Pasivos / Activos (alerta si > 0.7)
+
+## Tipo de empresa (Vía A vs Vía B)
+- **Vía A (build_from_scratch):** la empresa cargó documentos fuente (facturas,
+  extractos, declaraciones). Tienes asientos contables individuales (libro
+  diario) y puedes hacer drill-down a cada movimiento.
+- **Vía B (work_with_existing):** la empresa cargó estados financieros ya
+  consolidados (balance general, estado de resultados, libro auxiliar). NO
+  tienes asientos individuales; responde con los totales del estado disponible
+  y aclara que no hay detalle movimiento a movimiento.
+- El contexto inyectado indica cuál aplica (campo `pathway`). Si en Vía B te
+  piden algo que sólo existe en Vía A (IVA por factura, retenciones por
+  movimiento, conteos de transacciones procesadas), dilo explícitamente:
+  "Esta empresa cargó estados financieros agregados; para ver el detalle por
+  movimiento haría falta cargar los documentos fuente (Vía A)."
+
+## Período de las cifras
+- Los datos traen un campo `period_end` (y a veces `period_start`): indica SIEMPRE
+  a qué fecha/período corresponden las cifras que reportas.
+- NUNCA presentes cifras de un período como si fueran de otro. Si el usuario pide
+  un mes y los datos son de otro, acláralo.
+- Si recibes una tarjeta `period_not_found`, NO inventes ni reutilices otro
+  período: dile al usuario que ese período no está cargado y lista los disponibles
+  (`available_periods`).
 
 ## Reglas
 - Usa cifras concretas cuando tengas datos. Formatea moneda como COP.
@@ -313,7 +346,9 @@ def classify_intent(message: str, history: list[dict]) -> dict:
         history_text = "\n".join(lines)
 
     prompt = _INTENT_PROMPT.format(
-        history_text=history_text or "(sin historial)", message=message
+        history_text=history_text or "(sin historial)",
+        message=message,
+        today=datetime.now(timezone.utc).date().isoformat(),
     )
 
     # Intents that ALWAYS require financial data from the DB, regardless of
@@ -357,12 +392,28 @@ def classify_intent(message: str, history: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _build_params(request: ChatRequest) -> dict:
+def _parse_iso_date(value: Any) -> date | None:
+    """Parse an ISO ``YYYY-MM-DD`` string to ``date``; tolerate junk → None."""
+    if not value:
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def _build_params(request: ChatRequest, intent: dict | None = None) -> dict:
+    """Build reportero params. Explicit request dates win; otherwise fall back
+    to the period the intent classifier extracted from the message text."""
     params: dict[str, Any] = {}
-    if request.start_date:
-        params["start_date"] = request.start_date.isoformat()
-    if request.end_date:
-        params["end_date"] = request.end_date.isoformat()
+    start = request.start_date or _parse_iso_date((intent or {}).get("period_start"))
+    end = request.end_date or _parse_iso_date((intent or {}).get("period_end"))
+    if start:
+        params["start_date"] = start.isoformat()
+    if end:
+        params["end_date"] = end.isoformat()
     if request.company_nit:
         params["company_nit"] = request.company_nit
     return params
@@ -377,13 +428,26 @@ def gather_financial_data(
         return None, []
 
     intent_name = intent["intent"]
-    params = _build_params(request)
+    params = _build_params(request, intent)
 
     from app.core.database import SessionLocal
     from app.services import db_service
 
     db = SessionLocal()
     try:
+        # Pathway-aware branch: Vía B companies have data in `financial_statements`
+        # only. The Vía A builders read journal_entry_lines and would return
+        # zeros for them — route to via_b_service instead.
+        pathway: str | None = None
+        if request.company_nit:
+            try:
+                pathway = db_service.get_company_locked_pathway(db, request.company_nit)
+            except Exception as exc:
+                logger.warning("locked_pathway lookup failed (non-fatal): %s", exc)
+        if pathway == "work_with_existing":
+            period_end = request.end_date or _parse_iso_date(intent.get("period_end"))
+            return _gather_via_b(intent_name, request, db, period_end)
+
         data: dict | None = None
         card_type = intent_name
         title = ""
@@ -471,6 +535,228 @@ def gather_financial_data(
         return None, []
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Vía B data gathering
+# ---------------------------------------------------------------------------
+
+
+# Intents that have no Vía B equivalent — Vía B uploads aggregated statements,
+# not source documents, so there is no per-movement IVA / retención detail and
+# no transaction counts. The LLM gets a `not_applicable` card so it can answer
+# explicitly instead of saying "no data" or fabricating numbers.
+_VIA_B_NOT_APPLICABLE_INTENTS = frozenset({"iva", "withholdings"})
+
+
+def _not_applicable_card(intent_name: str) -> FinancialDataCard:
+    return FinancialDataCard(
+        card_type="not_applicable",
+        title=f"{_intent_label(intent_name)} (no disponible)",
+        data={
+            "reason": "via_b",
+            "intent": intent_name,
+            "explanation": (
+                "Esta empresa cargó estados financieros agregados (Vía B); "
+                "no existen movimientos individuales para calcular este reporte."
+            ),
+        },
+    )
+
+
+# Vía B intents backed by a single statement type — used to look up which
+# periods are available when the requested one isn't found.
+_VIA_B_INTENT_STATEMENT_TYPE = {
+    "balance": "balance_general",
+    "pnl": "estado_resultados",
+    "cashflow": "libro_auxiliar",
+    "top_accounts": "libro_auxiliar",
+}
+
+
+def _period_label(period_end: date) -> str:
+    """Human month-year label, e.g. 'diciembre de 2025'."""
+    meses = [
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+    ]
+    return f"{meses[period_end.month - 1]} de {period_end.year}"
+
+
+def _period_not_found_card(
+    intent_name: str, period_end: date, available: list[str]
+) -> FinancialDataCard:
+    """Card telling the LLM the requested period isn't loaded — and which are.
+
+    Prevents the model from passing off the latest snapshot as the requested
+    month (the bug where a January balance was reported as December).
+    """
+    return FinancialDataCard(
+        card_type="period_not_found",
+        title=f"{_intent_label(intent_name)} — {_period_label(period_end)} no disponible",
+        data={
+            "reason": "via_b_period_not_found",
+            "intent": intent_name,
+            "requested_period": period_end.isoformat(),
+            "available_periods": available,
+            "explanation": (
+                f"No hay un estado cargado para {_period_label(period_end)}. "
+                "NO uses cifras de otro período como si fueran de este. "
+                "Informa al usuario los períodos disponibles."
+            ),
+        },
+    )
+
+
+def _gather_via_b(
+    intent_name: str,
+    request: ChatRequest,
+    db,
+    period_end: date | None = None,
+) -> tuple[dict | None, list[FinancialDataCard]]:
+    """Route a Vía B request to the appropriate via_b_service reader.
+
+    Returns the same ``(data, cards)`` tuple the Vía A branch yields, with a
+    ``pathway: 'work_with_existing'`` marker so the response prompt can frame
+    its answer correctly. ``period_end`` selects the statement for a specific
+    month; when the user named a period that isn't loaded, a
+    ``period_not_found`` card is returned instead of silently using the latest.
+    """
+    from app.services import via_b_service
+
+    company_nit = request.company_nit
+    assert company_nit, "_gather_via_b requires company_nit"
+
+    if intent_name in _VIA_B_NOT_APPLICABLE_INTENTS:
+        card = _not_applicable_card(intent_name)
+        return card.data, [card]
+
+    data: dict | None = None
+    title = ""
+    card_type = intent_name
+
+    if intent_name == "balance":
+        data = via_b_service.get_balance(db, company_nit, period_end)
+        title = "Balance General (Vía B)"
+
+    elif intent_name == "pnl":
+        data = via_b_service.get_pnl(db, company_nit, period_end)
+        title = "Estado de Resultados (Vía B)"
+
+    elif intent_name == "cashflow":
+        data = via_b_service.get_cashflow(db, company_nit, period_end)
+        title = "Flujo de Caja (Vía B)"
+
+    elif intent_name == "top_accounts":
+        data = via_b_service.get_top_accounts(db, company_nit, limit=5)
+        title = "Cuentas con Mayor Movimiento (Vía B)"
+
+    elif intent_name == "ratios":
+        balance = via_b_service.get_balance(db, company_nit, period_end)
+        pnl = via_b_service.get_pnl(db, company_nit, period_end)
+        if balance or pnl:
+            data = _compute_ratios_via_b(balance, pnl)
+            title = "Ratios Financieros (Vía B)"
+
+    elif intent_name in ("dashboard", "analysis"):
+        overrides = via_b_service.get_dashboard_overrides(db, company_nit)
+        balance = via_b_service.get_balance(db, company_nit, period_end)
+        pnl = via_b_service.get_pnl(db, company_nit, period_end)
+        data = {
+            **overrides,
+            "balance": balance,
+            "estado_resultados": pnl,
+        }
+        title = (
+            "Resumen General (Vía B)"
+            if intent_name == "dashboard"
+            else "Análisis Financiero (Vía B)"
+        )
+
+    if data is None:
+        # Distinguish "you asked for a period we don't have" from "nothing
+        # uploaded at all" — the former lists the periods that DO exist.
+        stmt_type = _VIA_B_INTENT_STATEMENT_TYPE.get(intent_name)
+        if period_end is not None and stmt_type:
+            available = via_b_service.list_periods(db, company_nit, stmt_type)
+            if available:
+                card = _period_not_found_card(intent_name, period_end, available)
+                return card.data, [card]
+        # No statement uploaded yet for this intent — surface that explicitly
+        # so the LLM tells the user instead of inventing numbers.
+        empty_card = FinancialDataCard(
+            card_type="empty_via_b",
+            title=f"{_intent_label(intent_name)} (sin datos cargados)",
+            data={
+                "reason": "via_b_no_statement",
+                "intent": intent_name,
+                "explanation": (
+                    "Esta empresa no ha cargado el estado financiero necesario "
+                    "para responder esta consulta."
+                ),
+            },
+        )
+        return empty_card.data, [empty_card]
+
+    enriched = {**data, "pathway": "work_with_existing"}
+    return enriched, [
+        FinancialDataCard(card_type=card_type, title=title, data=enriched)
+    ]
+
+
+def _compute_ratios_via_b(balance: dict | None, pnl: dict | None) -> dict:
+    """Compute the headline ratios using Vía B totals only.
+
+    Keys, units, and rounding mirror the Vía A ``_compute_ratios`` in
+    ``reportero_agent`` so the same frontend RatiosCard renders both pathways:
+    ``margen_neto`` and ``roa`` are pre-formatted percentages (e.g. ``39.7``
+    means 39.7 %), while ``razon_endeudamiento`` / ``deuda_patrimonio`` /
+    ``rotacion_activos`` stay as plain ratios. Vía B doesn't break out activos
+    vs pasivos corrientes, so ``razon_corriente`` and ``prueba_acida`` are
+    ``None`` and the LLM is told to explain the limitation.
+    """
+    activos = float((balance or {}).get("activos") or 0)
+    pasivos = float((balance or {}).get("pasivos") or 0)
+    patrimonio_total = float((balance or {}).get("patrimonio_total") or 0)
+    utilidad_neta = float((pnl or {}).get("utilidad_neta") or 0)
+    ingresos = float((pnl or {}).get("total_ingresos") or 0)
+
+    def _pct(num: float, den: float) -> float | None:
+        if not den:
+            return None
+        return round((num / den) * 100, 2)
+
+    def _ratio(num: float, den: float) -> float | None:
+        if not den:
+            return None
+        return round(num / den, 4)
+
+    return {
+        "report_type": "ratios",
+        "source": "via_b",
+        "razon_corriente": None,
+        "prueba_acida": None,
+        "margen_neto": _pct(utilidad_neta, ingresos),
+        "roa": _pct(utilidad_neta, activos),
+        "razon_endeudamiento": _ratio(pasivos, activos),
+        "deuda_patrimonio": _ratio(pasivos, patrimonio_total),
+        "rotacion_activos": _ratio(ingresos, activos),
+        "patrimonio_total": patrimonio_total,
+        "nota": (
+            "Razón corriente y prueba ácida no se calculan porque el balance "
+            "Vía B no separa activos/pasivos corrientes."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
