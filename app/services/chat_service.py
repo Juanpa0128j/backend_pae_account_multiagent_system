@@ -578,6 +578,62 @@ def _intent_label(intent_name: str) -> str:
     }.get(intent_name, intent_name)
 
 
+# ---------------------------------------------------------------------------
+# Reasoning-trace copy helpers (accountant-friendly Spanish — no jargon)
+# ---------------------------------------------------------------------------
+
+
+def _periodo_label(start, end) -> str:
+    """Human period label for the reasoning trace, e.g. '01/01/2026 → 31/01/2026'."""
+
+    def _fmt(d) -> str:
+        return d.strftime("%d/%m/%Y")
+
+    if start and end:
+        return f"{_fmt(start)} → {_fmt(end)}"
+    if start:
+        return f"desde {_fmt(start)}"
+    if end:
+        return f"hasta {_fmt(end)}"
+    return "todos los periodos"
+
+
+def _params_detail(request: ChatRequest) -> str:
+    """'Empresa NIT X · <periodo>' for the params reasoning step."""
+    periodo = _periodo_label(request.start_date, request.end_date)
+    if request.company_nit:
+        return f"Empresa NIT {request.company_nit} · {periodo}"
+    return f"Empresa actual · {periodo}"
+
+
+def _gathering_label(needs_data: bool) -> str:
+    return (
+        "Revisé tus libros contables"
+        if needs_data
+        else "No fue necesario consultar cifras"
+    )
+
+
+def _gathering_detail(needs_data: bool, n_cards: int) -> str:
+    if not needs_data:
+        return "Esta pregunta no requería datos contables"
+    plural = "reporte" if n_cards == 1 else "reportes"
+    return f"{n_cards} {plural} consultado{'s' if n_cards != 1 else ''}"
+
+
+def _rag_detail(rag_query, rag_context: str) -> str:
+    if not rag_query:
+        return "No se requirió consultar normativa"
+    n = len(rag_context.split("---")) if rag_context else 0
+    plural = "referencia" if n == 1 else "referencias"
+    return f"Revisé {n} {plural} (Estatuto Tributario / PUC / NIIF)"
+
+
+def _generacion_segundos(ms: int) -> str:
+    """'0,7 s' — Spanish decimal comma."""
+    return f"{ms / 1000:.1f}".replace(".", ",") + " s"
+
+
 def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     """Full pipeline: session → intent → data → stream → persist.
 
@@ -618,25 +674,22 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="intent",
-            label=f"Intención detectada: {_intent_label(intent_name)}",
-            detail=f"intent={intent_name}, needs_data={needs_data}",
+            label=f"Entendí tu consulta: {_intent_label(intent_name)}",
+            detail=(
+                "Requiere consultar tus cifras contables"
+                if needs_data
+                else "Pregunta general — no necesita cifras"
+            ),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
 
     # 5. Show resolved parameters (NIT, fechas)
-    params_summary_parts: list[str] = []
-    if request.company_nit:
-        params_summary_parts.append(f"NIT={request.company_nit}")
-    if request.start_date:
-        params_summary_parts.append(f"desde={request.start_date.isoformat()}")
-    if request.end_date:
-        params_summary_parts.append(f"hasta={request.end_date.isoformat()}")
     yield _emit(
         _thinking_step(
             phase="params",
-            label="Parámetros aplicados",
-            detail=", ".join(params_summary_parts) or "sin filtros adicionales",
+            label="Empresa y periodo",
+            detail=_params_detail(request),
         )
     )
 
@@ -646,16 +699,8 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="gathering_data",
-            label=(
-                "Datos financieros recolectados"
-                if needs_data
-                else "Sin recolección de datos (consulta general)"
-            ),
-            detail=(
-                f"tarjetas={len(data_cards)}"
-                if needs_data
-                else "no se requirieron datos"
-            ),
+            label=_gathering_label(needs_data),
+            detail=_gathering_detail(needs_data, len(data_cards)),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -667,12 +712,8 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="rag",
-            label="Contexto normativo (RAG)",
-            detail=(
-                f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
-                if rag_query
-                else "sin consulta normativa"
-            ),
+            label="Normativa colombiana",
+            detail=_rag_detail(rag_query, rag_context),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -685,8 +726,8 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="generating",
-            label="Generando respuesta",
-            detail=f"modelo={getattr(llm, 'name', 'desconocido')}",
+            label="Redacté la respuesta",
+            detail=f"Modelo de IA: {llm.model_label}",
         )
     )
 
@@ -729,8 +770,8 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="complete",
-            label="Respuesta entregada",
-            detail=f"tokens={len(response_chunks)} | generation_ms={generation_ms}",
+            label="Respuesta lista",
+            detail=f"Generada en {_generacion_segundos(generation_ms)}",
             duration_ms=int((time.perf_counter() - pipeline_start) * 1000),
         )
     )
@@ -782,25 +823,22 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="intent",
-            label=f"Intención detectada: {_intent_label(intent_name)}",
-            detail=f"intent={intent_name}, needs_data={needs_data}",
+            label=f"Entendí tu consulta: {_intent_label(intent_name)}",
+            detail=(
+                "Requiere consultar tus cifras contables"
+                if needs_data
+                else "Pregunta general — no necesita cifras"
+            ),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
 
     # Params summary
-    params_summary_parts: list[str] = []
-    if request.company_nit:
-        params_summary_parts.append(f"NIT={request.company_nit}")
-    if request.start_date:
-        params_summary_parts.append(f"desde={request.start_date.isoformat()}")
-    if request.end_date:
-        params_summary_parts.append(f"hasta={request.end_date.isoformat()}")
     reasoning_steps.append(
         _thinking_step(
             phase="params",
-            label="Parámetros aplicados",
-            detail=", ".join(params_summary_parts) or "sin filtros adicionales",
+            label="Empresa y periodo",
+            detail=_params_detail(request),
         )
     )
 
@@ -810,16 +848,8 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="gathering_data",
-            label=(
-                "Datos financieros recolectados"
-                if needs_data
-                else "Sin recolección de datos (consulta general)"
-            ),
-            detail=(
-                f"tarjetas={len(data_cards)}"
-                if needs_data
-                else "no se requirieron datos"
-            ),
+            label=_gathering_label(needs_data),
+            detail=_gathering_detail(needs_data, len(data_cards)),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -830,12 +860,8 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="rag",
-            label="Contexto normativo (RAG)",
-            detail=(
-                f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
-                if rag_query
-                else "sin consulta normativa"
-            ),
+            label="Normativa colombiana",
+            detail=_rag_detail(rag_query, rag_context),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -848,8 +874,8 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="generating",
-            label="Generando respuesta",
-            detail=f"modelo={getattr(llm, 'name', 'desconocido')}",
+            label="Redacté la respuesta",
+            detail=f"Modelo de IA: {llm.model_label}",
         )
     )
 
@@ -865,8 +891,8 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="complete",
-            label="Respuesta entregada",
-            detail=f"caracteres={len(reply)}",
+            label="Respuesta lista",
+            detail=f"Generada en {_generacion_segundos(int((time.perf_counter() - pipeline_start) * 1000))}",
             duration_ms=int((time.perf_counter() - pipeline_start) * 1000),
         )
     )

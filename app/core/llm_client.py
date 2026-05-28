@@ -75,6 +75,28 @@ def _compact_error_message(exc: Exception, max_len: int = 240) -> str:
     return f"{msg[: max_len - 3]}..."
 
 
+def _pretty_model_name(raw: str) -> str:
+    """Turn a raw model id into a user-friendly display name.
+
+    Examples: ``gpt-4.1-mini`` → ``GPT-4.1 mini``,
+    ``gemini-2.5-flash`` → ``Gemini 2.5 Flash``,
+    ``openai/gpt-oss-20b`` → ``gpt-oss-20b``.
+    """
+    if not raw:
+        return "modelo desconocido"
+    name = raw.split("/")[-1]  # drop vendor prefix like "openai/"
+    if name.lower().startswith("gpt"):
+        # gpt-4.1-mini -> GPT-4.1 mini ; gpt-4o-mini -> GPT-4o mini
+        name = name.replace("gpt", "GPT", 1)
+        for suffix in ("-mini", "-nano", "-turbo"):
+            name = name.replace(suffix, f" {suffix[1:]}")
+        return name
+    if name.lower().startswith("gemini"):
+        # gemini-2.5-flash -> Gemini 2.5 Flash
+        return " ".join(part.capitalize() for part in name.split("-"))
+    return name
+
+
 class LLMClient:
     """
     Multi-provider LLM client.
@@ -102,6 +124,38 @@ class LLMClient:
         self._openai: Any = None
         self._gemini: Any = None
         self._groq: Any = None
+
+    # ------------------------------------------------------------------
+    # Public metadata
+    # ------------------------------------------------------------------
+
+    @property
+    def model_label(self) -> str:
+        """Human-friendly name of the primary LLM that will answer.
+
+        Resolves the first available provider in the fallback order
+        (OpenAI → Gemini → Groq) and returns a label like
+        ``"GPT-4.1 mini (OpenAI)"``. Used in the chat reasoning trace so
+        the user can see which model generated the response. Shows the
+        primary model (the one used >99% of the time); fallback isn't
+        tracked per-call.
+        """
+        vendors = (
+            (self._openai_key, self._get_openai, "OpenAI"),
+            (self._gemini_key, self._get_gemini, "Google"),
+            (self._groq_key, self._get_groq, "Groq"),
+        )
+        for key, getter, vendor in vendors:
+            if not key:
+                continue
+            try:
+                provider = getter()
+            except Exception:  # provider init failed — try next in chain
+                continue
+            if provider is None:
+                continue
+            return f"{_pretty_model_name(provider.model_name)} ({vendor})"
+        return "modelo no disponible"
 
     # ------------------------------------------------------------------
     # Internal fallback chain
