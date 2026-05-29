@@ -32,8 +32,8 @@ router = APIRouter()
 _TASA_RETEFUENTE_SERVICIOS = (
     0.04  # Retefuente servicios generales, declarantes (DIAN 2026)
 )
-_TASA_RETEFUENTE_BIENES = 0.03
-_TASA_RETEFUENTE_ARRENDAMIENTO = 0.10
+_TASA_RETEFUENTE_BIENES = 0.025
+_TASA_RETEFUENTE_ARRENDAMIENTO = 0.035
 
 
 @router.get("/company/{nit}", response_model=CompanySettingsResponse)
