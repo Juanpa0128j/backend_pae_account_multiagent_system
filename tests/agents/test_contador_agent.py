@@ -176,8 +176,9 @@ def test_contador_example_unbalanced_output_warns_without_retry() -> None:
         "total_creditos": 900000,
     }
 
-    state = _base_state(contador_output=unbalanced, interpreted_data=unbalanced)
-    result = validate_contador_output_node(state)
+    with patch("app.agents.validation_rules.SessionLocal"):
+        state = _base_state(contador_output=unbalanced, interpreted_data=unbalanced)
+        result = validate_contador_output_node(state)
 
     assert result["error"] is None
     assert result["correction_feedback"] is None

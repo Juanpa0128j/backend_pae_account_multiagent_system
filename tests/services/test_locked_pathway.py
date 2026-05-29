@@ -199,13 +199,16 @@ class TestUploadPathwayEnforcement:
             mock_db = MagicMock()
 
             with (
-                patch("app.agents.supervisor.SessionLocal", return_value=mock_db),
                 patch(
-                    "app.agents.supervisor.db_service.get_ingest_job",
+                    "app.agents.routing.ingest_router.SessionLocal",
+                    return_value=mock_db,
+                ),
+                patch(
+                    "app.agents.routing.ingest_router.db_service.get_ingest_job",
                     return_value=mock_job,
                 ),
                 patch(
-                    "app.agents.supervisor.db_service.set_company_locked_pathway"
+                    "app.agents.routing.ingest_router.db_service.set_company_locked_pathway"
                 ) as mock_set_lock,
                 patch(
                     "app.services.pdf_processor.extract_text_from_pdf", return_value=""
