@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
@@ -36,6 +36,8 @@ from app.models.schemas import (
     TaxConstantsResponse,
     UvtUpsertRequest,
     VALID_CONCEPTO_VALUES,
+    ReteicaTarifaResponse,
+    ReteicaTarifaUpsertRequest,
 )
 from app.services import db_service, via_b_service
 from app.services.nit_utils import normalize_nit
@@ -963,6 +965,66 @@ def api_exogena(
         "invalid_rows": invalid_count,
         "rows": rows,
     }
+
+
+# ─── Admin: ReteICA Municipal Tarifas ────────────────────────────
+
+
+@router.get("/reteica-tarifas", response_model=list[ReteicaTarifaResponse])
+async def list_reteica_tarifas_endpoint(
+    municipio: Optional[str] = Query(
+        None, description="Filter by city name (lowercase)"
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[ReteicaTarifaResponse]:
+    """List ReteICA tariff rows. Optional filter by municipio."""
+    rows = db_service.list_reteica_tarifas(db, municipio=municipio)
+    return [ReteicaTarifaResponse(**r) for r in rows]
+
+
+@router.put("/reteica-tarifas", response_model=ReteicaTarifaResponse)
+async def upsert_reteica_tarifa_endpoint(
+    body: ReteicaTarifaUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReteicaTarifaResponse:
+    """Insert or update a ReteICA tariff row keyed by (municipio, ciiu_seccion)."""
+    row = db_service.upsert_reteica_tarifa(
+        db,
+        municipio=body.municipio,
+        ciiu_seccion=body.ciiu_seccion,
+        tasa=Decimal(str(body.tasa)),
+        fuente=body.fuente,
+        base_minima_uvt=Decimal(str(body.base_minima_uvt))
+        if body.base_minima_uvt is not None
+        else None,
+    )
+    return ReteicaTarifaResponse(
+        id=row.id,
+        municipio=row.municipio,
+        ciiu_seccion=row.ciiu_seccion,
+        tasa=float(row.tasa),
+        fuente=row.fuente,
+        base_minima_uvt=float(row.base_minima_uvt)
+        if row.base_minima_uvt is not None
+        else None,
+    )
+
+
+@router.delete("/reteica-tarifas/{row_id}", status_code=204)
+async def delete_reteica_tarifa_endpoint(
+    row_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Hard-delete a ReteICA tariff row by id."""
+    deleted = db_service.delete_reteica_tarifa(db, row_id=row_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail=f"ReteicaTarifa id={row_id} not found."
+        )
+    return Response(status_code=204)
 
 
 # ─── Admin: UVT & Base Mínima constants ──────────────────────────
