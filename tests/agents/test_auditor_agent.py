@@ -415,7 +415,7 @@ class TestProcessSupervisorNode:
         assert result["tributario_output"].get("aplica_impuestos") is False
         assert str(result["tributario_output"].get("total_impuestos")) == "0"
 
-    @patch("app.services.doc_classifier.classify_document")
+    @patch("app.agents.routing.ingest_router.classify_document")
     @patch("app.services.excel_parser.parse_excel")
     def test_ingest_extracto_xlsx_forces_build_from_scratch_pathway(
         self,
