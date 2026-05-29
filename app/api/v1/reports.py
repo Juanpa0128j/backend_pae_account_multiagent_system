@@ -1481,16 +1481,68 @@ async def run_derivation_via_a(
     finally:
         db.close()
 
+    # If any required first-level state failed to build, surface the error now
+    # instead of letting derive_financial_statements raise a cryptic 409.
+    required = {"balance_general", "estado_resultados", "libro_auxiliar"}
+    build_errors = first_level.get("build_errors", {})
+    # A type is acceptable if it was created now OR was already in the DB (skipped).
+    # Only fail if it ended up in build_errors (truly failed, not just pre-existing).
+    failed_required = {t: e for t, e in build_errors.items() if t in required}
+    if failed_required:
+        detail = (
+            "No se pudieron construir los estados de primer nivel desde los asientos. "
+            "Verifica que las transacciones del periodo esten procesadas y persistidas. "
+            f"Errores: { {k: v[:200] for k, v in failed_required.items()} }"
+        )
+        raise HTTPException(status_code=409, detail=detail)
+
     try:
         derived = derive_financial_statements(
             company_nit=normalized_nit,
             period_start=period_start,
             period_end=period_end,
+            allow_missing_prior=True,  # Via A: first period has no prior BG
         )
     except BusinessRuleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
-    return {"status": "ok", "first_level": first_level, "derived": derived}
+    # Warn if there are journal entries before this period that were never
+    # derived — the cash flow opening balance will be zero instead of the real
+    # prior balance, producing incorrect working-capital deltas.
+    prior_warning: str | None = None
+    db2 = SessionLocal()
+    try:
+        from app.models.database import JournalEntryLine as _JEL  # noqa: PLC0415
+
+        has_prior_journal = (
+            db2.query(_JEL)
+            .filter(
+                _JEL.company_nit == normalized_nit,
+                _JEL.fecha < period_start,
+            )
+            .first()
+            is not None
+        )
+        if has_prior_journal:
+            from app.services.financial_statement_service import _load_prior_balance  # noqa: PLC0415
+
+            prior_bg = _load_prior_balance(db2, normalized_nit, period_start)
+            if prior_bg is None:
+                prior_warning = (
+                    "Existen asientos de períodos anteriores que aún no han sido derivados. "
+                    "El flujo de caja de este período usa saldo inicial $0 en lugar del "
+                    "balance real del período previo. Deriva los períodos anteriores primero "
+                    "y vuelve a derivar este período para corregirlo."
+                )
+    finally:
+        db2.close()
+
+    return {
+        "status": "ok",
+        "first_level": first_level,
+        "derived": derived,
+        **({"prior_period_warning": prior_warning} if prior_warning else {}),
+    }
 
 
 @router.get("/derivation/status-via-a")
@@ -1551,13 +1603,35 @@ async def get_derivation_status_via_a(
         reverse=True,
     )
 
+    # Detect order gaps: a period has a gap when its period_start is not the
+    # global earliest AND no derived BG exists with period_end < period_start.
+    # This means the prior period was never derived, so NIC 7 cash flow will
+    # use empty opening balances and produce incorrect working-capital deltas.
+    derived_bg_ends: set[str] = set()
+    for row in all_rows:
+        if (
+            row.get("statement_type") == "balance_general"
+            and row.get("source_mode") in ("derived_from_journal", "derived", "direct")
+            and row.get("period_end")
+        ):
+            derived_bg_ends.add(row["period_end"][:10])
+
+    sorted_periods = sorted(
+        first_level_by_period.values(), key=lambda x: x["period_end"], reverse=True
+    )
+    for p in sorted_periods:
+        ps = (p.get("period_start") or "")[:10]
+        # First period ever → no prior expected
+        if not ps or ps == (earliest or "")[:10]:
+            p["prior_period_gap"] = False
+            continue
+        # Has any derived BG with period_end before this period_start?
+        has_prior = any(pe < ps for pe in derived_bg_ends)
+        p["prior_period_gap"] = not has_prior
+
     return {
         "company_nit": normalized_nit,
-        "first_level_periods": sorted(
-            first_level_by_period.values(),
-            key=lambda x: x["period_end"],
-            reverse=True,
-        ),
+        "first_level_periods": sorted_periods,
         "derived_periods": derived_periods,
         "journal_date_range": {"earliest": earliest, "latest": latest},
     }

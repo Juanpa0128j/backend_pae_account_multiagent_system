@@ -92,6 +92,7 @@ def build_first_level_from_journal_entries(
     normalized_nit = normalize_nit(company_nit)
     created: dict[str, str] = {}
     skipped: list[str] = []
+    build_errors: dict[str, str] = {}
 
     # --- Balance General ---
     if not _first_level_type_exists(
@@ -106,6 +107,44 @@ def build_first_level_from_journal_entries(
             bg_raw = db_service.get_balance_sheet(
                 db, cutoff_date=period_end, company_nit=normalized_nit
             )
+            # Per-account cumulative balances (needed by derivation functions
+            # that call _leaf_accounts on bg_data["accounts"]).
+            # get_general_ledger returns {account, name, total_debit, total_credit, net_balance}
+            # where net_balance = debito - credito for all classes. We convert to
+            # natural-balance saldos: debit-natural classes (1,5,6) keep D-C as positive;
+            # credit-natural classes (2,3,4) use C-D as positive.
+            ledger_cumulative = db_service.get_general_ledger(
+                db, None, period_end, normalized_nit
+            )
+            bg_accounts = []
+            for row in ledger_cumulative:
+                code = str(row.get("account") or "")
+                if not code or not code[0].isdigit():
+                    continue
+                clase = int(code[0])
+                d = Decimal(str(row.get("total_debit") or 0))
+                c = Decimal(str(row.get("total_credit") or 0))
+                saldo = (d - c) if clase in (1, 5, 6) else (c - d)
+                bg_accounts.append(
+                    {
+                        "cuenta_puc": code,
+                        "nombre": row.get("name") or "",
+                        "saldo": float(saldo),
+                    }
+                )
+            # Vía A never closes class 4/5 to class 36 (resultados del ejercicio)
+            # in journal entries. Synthesize a class 36 leaf so _compute_equity_changes
+            # can find the period result and set saldo_final correctly.
+            net_profit = Decimal(str(bg_raw.get("net_profit") or 0))
+            has_class3 = any(a["cuenta_puc"].startswith("3") for a in bg_accounts)
+            if net_profit != 0 and not has_class3:
+                bg_accounts.append(
+                    {
+                        "cuenta_puc": "360505",
+                        "nombre": "Utilidad del ejercicio",
+                        "saldo": float(net_profit),
+                    }
+                )
             bg_data = {
                 "tipo": "balance_general",
                 "entidad": {"nit": normalized_nit},
@@ -119,6 +158,7 @@ def build_first_level_from_journal_entries(
                 "cuadre": bg_raw.get("is_balanced", False),
                 "moneda": "COP",
                 "source": "derived_from_journal",
+                "accounts": bg_accounts,
             }
             ingest_job = _create_derivation_ingest_job(
                 db, normalized_nit, period_end, "balance_general"
@@ -136,7 +176,12 @@ def build_first_level_from_journal_entries(
             )
             created["balance_general"] = stmt.id
         except Exception as exc:
-            _log.warning("build_first_level: failed to create balance_general: %s", exc)
+            _log.error(
+                "build_first_level: failed to create balance_general: %s",
+                exc,
+                exc_info=True,
+            )
+            build_errors["balance_general"] = str(exc)
             skipped.append("balance_general")
     else:
         skipped.append("balance_general")
@@ -156,6 +201,16 @@ def build_first_level_from_journal_entries(
                 start_date=period_start,
                 end_date=period_end,
             )
+            # Build accounts list so derivation can find ER leaves by PUC prefix.
+            er_accounts = [
+                {"cuenta_puc": item["cuenta_puc"], "saldo": item["valor"]}
+                for item in (
+                    er_raw.get("ingresos", [])
+                    + er_raw.get("gastos", [])
+                    + er_raw.get("costo_ventas", [])
+                )
+                if isinstance(item, dict) and item.get("cuenta_puc")
+            ]
             er_data = {
                 "tipo": "estado_resultados",
                 "entidad": {"nit": normalized_nit},
@@ -168,6 +223,7 @@ def build_first_level_from_journal_entries(
                 "utilidad_neta": er_raw.get("utilidad_neta", 0),
                 "moneda": "COP",
                 "source": "derived_from_journal",
+                "accounts": er_accounts,
             }
             ingest_job = _create_derivation_ingest_job(
                 db, normalized_nit, period_end, "estado_resultados"
@@ -185,9 +241,12 @@ def build_first_level_from_journal_entries(
             )
             created["estado_resultados"] = stmt.id
         except Exception as exc:
-            _log.warning(
-                "build_first_level: failed to create estado_resultados: %s", exc
+            _log.error(
+                "build_first_level: failed to create estado_resultados: %s",
+                exc,
+                exc_info=True,
             )
+            build_errors["estado_resultados"] = str(exc)
             skipped.append("estado_resultados")
     else:
         skipped.append("estado_resultados")
@@ -205,12 +264,23 @@ def build_first_level_from_journal_entries(
             ledger = db_service.get_general_ledger(
                 db, period_start, period_end, normalized_nit
             )
+            # Individual journal entry lines needed by _compute_equity_changes
+            # (reads la_data["lines"] for debito/credito per account/period).
+            journal_lines_for_la = db_service.get_journal_entry_lines(
+                db,
+                company_nit=normalized_nit,
+                start_date=period_start,
+                end_date=period_end,
+            )
             la_data = {
                 "tipo": "libro_auxiliar",
                 "entidad": {"nit": normalized_nit},
                 "periodo_inicio": period_start.date().isoformat(),
                 "periodo_fin": period_end.date().isoformat(),
                 "accounts": ledger if isinstance(ledger, list) else [],
+                "lines": journal_lines_for_la
+                if isinstance(journal_lines_for_la, list)
+                else [],
                 "moneda": "COP",
                 "source": "derived_from_journal",
             }
@@ -230,7 +300,12 @@ def build_first_level_from_journal_entries(
             )
             created["libro_auxiliar"] = stmt.id
         except Exception as exc:
-            _log.warning("build_first_level: failed to create libro_auxiliar: %s", exc)
+            _log.error(
+                "build_first_level: failed to create libro_auxiliar: %s",
+                exc,
+                exc_info=True,
+            )
+            build_errors["libro_auxiliar"] = str(exc)
             skipped.append("libro_auxiliar")
     else:
         skipped.append("libro_auxiliar")
@@ -286,6 +361,7 @@ def build_first_level_from_journal_entries(
         "created": created,
         "skipped": len(skipped),
         "skipped_types": skipped,
+        "build_errors": build_errors,
     }
 
 
@@ -371,7 +447,9 @@ def _load_prior_balance(
         .filter(
             FinancialStatement.entity_nit == company_nit,
             FinancialStatement.statement_type == "balance_general",
-            FinancialStatement.source_mode == "direct",
+            FinancialStatement.source_mode.in_(
+                ["direct", "via_a", "derived_from_journal"]
+            ),
             FinancialStatement.period_end < period_start,
         )
         .order_by(FinancialStatement.period_end.desc())
@@ -952,13 +1030,20 @@ def derive_financial_statements(
     company_nit: str,
     period_start: datetime,
     period_end: datetime,
+    allow_missing_prior: bool = False,
 ) -> dict[str, Any]:
     """Derive cashflow/equity changes/notes from BG+ER+LA for one company and period.
 
+    Args:
+        allow_missing_prior: Via A passes True — first period has no prior BG and
+            that is valid (all opening positions are zero). Via B must always have
+            a prior-period BG uploaded (balance_general_anterior); passing False
+            (default) keeps the original 409 enforcement.
+
     Raises:
         BusinessRuleError: when required source statements are not available, or
-        when the prior-period balance_general (needed for NIC 7 indirect cash
-        flow) is not present.
+        when the prior-period balance_general is not present and allow_missing_prior
+        is False.
     """
     normalized_nit = normalize_nit(company_nit)
 
@@ -1000,16 +1085,18 @@ def derive_financial_statements(
         er = source_rows["estado_resultados"].data or {}
         la = source_rows["libro_auxiliar"].data or {}
 
-        # NIC 7 indirect method needs a prior-period BG to compute working-capital
-        # variations and opening cash. Refuse rather than silently degrade.
+        # NIC 7 indirect method requires the prior-period BG to compute working-capital
+        # variations and opening cash.
+        # Via B: prior BG must exist (uploaded as balance_general_anterior). Raise if missing.
+        # Via A: first period has no prior — all opening positions are zero. Allow if flag set.
         prior_bg_row = _load_prior_balance(db, normalized_nit, period_start)
-        if prior_bg_row is None:
+        if prior_bg_row is None and not allow_missing_prior:
             raise BusinessRuleError(
-                "Para derivar flujo de caja según NIC 7 método indirecto se requiere "
-                "el balance general del período anterior. Sube el balance del período "
-                "previo para esta empresa y vuelve a intentar."
+                "Balance general del período anterior no encontrado. "
+                "Sube el balance_general_anterior antes de derivar (Vía B), "
+                "o usa el endpoint run-via-a si estás en Vía A."
             )
-        prior_bg = prior_bg_row.data or {}
+        prior_bg = prior_bg_row.data if prior_bg_row is not None else {}
 
         flujo_data = _compute_cash_flow_indirect(
             company_nit=normalized_nit,

@@ -1443,6 +1443,21 @@ class CambiosPatrimonioExporter:
             alignment=1,
             textColor=colors.HexColor("#1f4788"),
         )
+        cell_style = ParagraphStyle(
+            "CambiosCell",
+            parent=styles["Normal"],
+            fontSize=8,
+            leading=10,
+            wordWrap="LTR",
+        )
+        header_style = ParagraphStyle(
+            "CambiosHeader",
+            parent=styles["Normal"],
+            fontSize=8,
+            leading=10,
+            textColor=colors.whitesmoke,
+            fontName="Helvetica-Bold",
+        )
 
         story = []
         story.append(Paragraph("ESTADO DE CAMBIOS EN EL PATRIMONIO", title_style))
@@ -1455,36 +1470,50 @@ class CambiosPatrimonioExporter:
         )
         story.append(Spacer(1, 0.2 * inch))
 
+        # usable width = 8.5 - 0.75 - 0.75 = 7.0 inches
+        col_widths = [1.5 * inch, 2.2 * inch, 1.1 * inch, 1.1 * inch, 1.1 * inch]
+
         data = [
-            ["Cuenta PUC", "Descripcion", "Mov. Debito", "Mov. Credito", "Saldo Final"]
+            [
+                Paragraph("Cuenta PUC", header_style),
+                Paragraph("Descripción", header_style),
+                Paragraph("Mov. Débito", header_style),
+                Paragraph("Mov. Crédito", header_style),
+                Paragraph("Saldo Final", header_style),
+            ]
         ]
 
         for cambio in report.get("cambios", []):
             data.append(
                 [
-                    cambio.get("codigo", ""),
-                    _escape_paragraph_text(cambio.get("nombre", ""))[:30],
+                    Paragraph(
+                        _escape_paragraph_text(cambio.get("codigo", "")), cell_style
+                    ),
+                    Paragraph(
+                        _escape_paragraph_text(cambio.get("nombre", "")), cell_style
+                    ),
                     _format_currency(cambio.get("movimiento_debito", 0)),
                     _format_currency(cambio.get("movimiento_credito", 0)),
                     _format_currency(cambio.get("saldo_final", 0)),
                 ]
             )
 
-        table = Table(
-            data,
-            colWidths=[0.9 * inch, 1.8 * inch, 1.3 * inch, 1.3 * inch, 1.3 * inch],
-        )
+        table = Table(data, colWidths=col_widths, repeatRows=1)
         table.setStyle(
             TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f4788")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                     ("FONTSIZE", (0, 0), (-1, -1), 8),
                     ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
                     ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e8f0f7")),
                     ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
                     (
                         "ROWBACKGROUNDS",
                         (0, 1),
