@@ -1440,6 +1440,76 @@ def get_reteica_base_minima_uvt(db: Session, ciudad: str, ciiu: str) -> Decimal 
     return None
 
 
+def list_reteica_tarifas(
+    db: Session,
+    municipio: Optional[str] = None,
+) -> list[dict]:
+    """Return ReteicaTarifa rows as dicts. Optionally filter by municipio."""
+    q = db.query(ReteicaTarifa)
+    if municipio:
+        q = q.filter(ReteicaTarifa.municipio == municipio.lower().strip())
+    rows = q.order_by(ReteicaTarifa.municipio, ReteicaTarifa.ciiu_seccion).all()
+    return [
+        {
+            "id": r.id,
+            "municipio": r.municipio,
+            "ciiu_seccion": r.ciiu_seccion,
+            "tasa": float(r.tasa),
+            "fuente": r.fuente,
+            "base_minima_uvt": float(r.base_minima_uvt)
+            if r.base_minima_uvt is not None
+            else None,
+        }
+        for r in rows
+    ]
+
+
+def upsert_reteica_tarifa(
+    db: Session,
+    municipio: str,
+    ciiu_seccion: str,
+    tasa: Decimal,
+    fuente: Optional[str] = None,
+    base_minima_uvt: Optional[Decimal] = None,
+) -> ReteicaTarifa:
+    """Insert or update a ReteicaTarifa row keyed by (municipio, ciiu_seccion)."""
+    municipio = municipio.lower().strip()
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == municipio,
+            ReteicaTarifa.ciiu_seccion == ciiu_seccion,
+        )
+        .first()
+    )
+    if row is None:
+        row = ReteicaTarifa(
+            municipio=municipio,
+            ciiu_seccion=ciiu_seccion,
+            tasa=tasa,
+            fuente=fuente,
+            base_minima_uvt=base_minima_uvt,
+        )
+        db.add(row)
+    else:
+        row.tasa = tasa
+        row.fuente = fuente
+        row.base_minima_uvt = base_minima_uvt
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_reteica_tarifa(db: Session, row_id: int) -> bool:
+    """Hard-delete a ReteicaTarifa row by id. Returns True if deleted."""
+    row = db.query(ReteicaTarifa).filter(ReteicaTarifa.id == row_id).first()
+    if row is None:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
+
+
 # ─── VectorDocument ───────────────────────────────────────────────────────────
 
 
