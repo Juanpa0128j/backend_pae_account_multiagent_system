@@ -34,6 +34,7 @@ from app.models.schemas import (
     IngestDetailResponse,
     IngestResponse,
     MergeIngestRequest,
+    PeriodReviewUpdateRequest,
 )
 from app.services.ingest_matcher import find_merge_candidates
 from app.models.trace import PipelineTrace
@@ -178,6 +179,89 @@ def _run_ingest_pipeline(
                 Path(path).unlink(missing_ok=True)
 
 
+_LOW_CONFIDENCE_THRESHOLD = 0.85
+
+
+def _build_period_review(db: Session, job: IngestJob) -> Optional[dict]:
+    """Decide whether the accountant should re-check the extracted period.
+
+    Returns a ``PeriodReviewResponse``-shaped dict when human review is
+    advisable, ``None`` otherwise. Only fires for Vía B doc types that landed
+    in ``financial_statements`` — Vía A documents don't anchor reporting
+    periods the same way.
+
+    Heuristics (any one triggers review):
+      * LLM extraction confidence below ``_LOW_CONFIDENCE_THRESHOLD``.
+      * Period start equals period end (collapsed range — fine for balance_general
+        snapshots, suspicious for estado_resultados / libro_auxiliar that need a
+        proper range).
+      * Frequency column is NULL or the value came from span inference rather
+        than the LLM-extracted ``periodicidad`` field.
+      * Annual statement (high-value for derivation): always confirm.
+    """
+    from app.models.database import FinancialStatement  # noqa: PLC0415
+    from app.services.financial_statement_service import (  # noqa: PLC0415
+        infer_frequency,
+        normalize_periodicidad,
+    )
+
+    stmt = (
+        db.query(FinancialStatement)
+        .filter(FinancialStatement.ingest_id == job.id)
+        .order_by(FinancialStatement.created_at.desc())
+        .first()
+    )
+    if stmt is None:
+        return None
+
+    confidence = (
+        float(job.classification_confidence)
+        if job.classification_confidence is not None
+        else None
+    )
+    extracted_periodicidad = normalize_periodicidad(
+        (stmt.data or {}).get("periodicidad")
+    )
+    inferred_frequency = infer_frequency(stmt.period_start, stmt.period_end)
+    frequency_from_span = (
+        extracted_periodicidad is None and inferred_frequency is not None
+    )
+
+    reasons: list[str] = []
+    if confidence is not None and confidence < _LOW_CONFIDENCE_THRESHOLD:
+        reasons.append("low_confidence")
+    if (
+        stmt.period_start
+        and stmt.period_end
+        and stmt.period_start == stmt.period_end
+        and stmt.statement_type in ("estado_resultados", "libro_auxiliar")
+    ):
+        reasons.append("collapsed_range")
+    if frequency_from_span:
+        reasons.append("span_inferred")
+    # Annual is high-leverage (it drives derivation). Always confirm so the
+    # contador signs off before NIC 7 flows from this row.
+    if stmt.frequency == "annual" or inferred_frequency == "annual":
+        reasons.append("annual_high_value")
+
+    if not reasons:
+        return None
+
+    return {
+        "extracted_period_start": (
+            stmt.period_start.date().isoformat() if stmt.period_start else None
+        ),
+        "extracted_period_end": (
+            stmt.period_end.date().isoformat() if stmt.period_end else None
+        ),
+        "extracted_periodicidad": stmt.frequency or inferred_frequency,
+        "extraction_confidence": confidence,
+        "inferred_from_span": frequency_from_span,
+        "requires_review": True,
+        "review_reason": reasons[0],
+    }
+
+
 def _build_ingest_detail_response(
     db: Session, job: IngestJob, base_url: Optional[str] = None
 ) -> dict:
@@ -244,6 +328,13 @@ def _build_ingest_detail_response(
             "wrong_upload_area": is_wrong_area,
         }
 
+    # ── Period HITL ─────────────────────────────────────────────────────────
+    # Only Vía B uploads land in financial_statements with a period — surface
+    # the period editor when the LLM extraction was shaky or the periodicity
+    # was inferred from the span rather than read off the document. The
+    # accountant edits via PATCH /ingest/{id}/period below.
+    period_review = _build_period_review(db, job)
+
     trace_url = (
         f"{base_url.rstrip('/')}/api/v1/ingest/{job.id}/trace" if base_url else None
     )
@@ -271,6 +362,7 @@ def _build_ingest_detail_response(
         "has_warnings": False,
         "trace_url": trace_url,
         "classification_review": classification_review,
+        "period_review": period_review,
         "file_names": job.file_names or [],
         "multi_file_mode": job.multi_file_mode,
         "current_file_index": job.current_file_index,
@@ -692,6 +784,119 @@ async def update_ingest_classification(
             status_code=500, detail="Error al refrescar el trabajo de ingesta"
         )
     return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))
+
+
+@router.patch(
+    "/{ingest_id}/period",
+    response_model=IngestDetailResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_ingest_period(
+    ingest_id: str,
+    body: PeriodReviewUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """HITL override of the period extracted by the LLM.
+
+    Updates the ``FinancialStatement`` row associated with the ingest:
+    ``period_start``, ``period_end``, and ``frequency`` (normalised from
+    ``periodicidad``). Records an audit log so the override is traceable
+    (Ley 43/1990 — the contador is responsible for the final figure).
+
+    Refuses ``period_end < period_start`` with 400.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from app.models.database import FinancialStatement  # noqa: PLC0415
+    from app.services.financial_statement_service import (  # noqa: PLC0415
+        infer_frequency,
+        normalize_periodicidad,
+    )
+
+    job = db_service.get_ingest_job(db, ingest_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Trabajo de ingesta no encontrado")
+
+    try:
+        new_start = datetime.fromisoformat(body.period_start)
+        new_end = datetime.fromisoformat(body.period_end)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="period_start y period_end deben ser ISO YYYY-MM-DD",
+        )
+    if new_end.tzinfo is None:
+        new_end = new_end.replace(tzinfo=timezone.utc)
+    if new_start.tzinfo is None:
+        new_start = new_start.replace(tzinfo=timezone.utc)
+    if new_end < new_start:
+        raise HTTPException(
+            status_code=400,
+            detail="period_end no puede ser anterior a period_start",
+        )
+
+    stmt = (
+        db.query(FinancialStatement)
+        .filter(FinancialStatement.ingest_id == ingest_id)
+        .order_by(FinancialStatement.created_at.desc())
+        .first()
+    )
+    if stmt is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No hay un estado financiero asociado a este ingest para editar período",
+        )
+
+    # Normalise frequency: prefer the explicit user choice; fall back to span.
+    new_frequency = normalize_periodicidad(body.periodicidad) or infer_frequency(
+        new_start, new_end
+    )
+
+    prev = {
+        "period_start": stmt.period_start.isoformat() if stmt.period_start else None,
+        "period_end": stmt.period_end.isoformat() if stmt.period_end else None,
+        "frequency": stmt.frequency,
+    }
+    stmt.period_start = new_start
+    stmt.period_end = new_end
+    stmt.frequency = new_frequency
+    # Keep the JSONB payload in sync so downstream readers (chat, reports)
+    # see the same period without a database join.
+    if isinstance(stmt.data, dict):
+        stmt.data = {
+            **stmt.data,
+            "periodo_inicio": new_start.date().isoformat(),
+            "periodo_fin": new_end.date().isoformat(),
+            "periodicidad": body.periodicidad,
+        }
+    db.add(stmt)
+
+    # Audit trail — Ley 43/1990 traceability.
+    db_service.create_audit_log(
+        db,
+        action="period_review_override",
+        entity_id=stmt.id,
+        entity_type="financial_statement",
+        company_nit=stmt.entity_nit,
+        created_by=getattr(current_user, "email", None),
+        details={
+            "ingest_id": ingest_id,
+            "previous": prev,
+            "new": {
+                "period_start": new_start.date().isoformat(),
+                "period_end": new_end.date().isoformat(),
+                "frequency": new_frequency,
+                "periodicidad": body.periodicidad,
+            },
+        },
+        commit=False,
+    )
+
+    db.commit()
+    db.refresh(job)
+    return _build_ingest_detail_response(db, job, base_url=str(request.base_url))
 
 
 @router.patch(

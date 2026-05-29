@@ -691,6 +691,12 @@ class FinancialStatement(Base):
         server_default="direct",
         comment="direct | derived | derived_from_journal",
     )
+    frequency = Column(
+        String(20),
+        nullable=True,
+        comment="monthly | quarterly | annual | custom — extracted by LLM or "
+        "inferred from period span. Annual gates the NIC 7 derivation.",
+    )
     data = Column(JSONB, nullable=False, comment="Full parsed financial statement data")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

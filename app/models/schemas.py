@@ -39,6 +39,27 @@ class ClassificationReviewResponse(BaseModel):
     wrong_upload_area: bool = False
 
 
+class PeriodReviewResponse(BaseModel):
+    """HITL surface for the period & periodicity extracted from a Vía B upload.
+
+    Same flavour as ``ClassificationReviewResponse`` but for the period range
+    and frequency. Surfaced on ``IngestDetailResponse`` when the extraction
+    confidence is low, the period collapsed to a single day, or the frequency
+    had to be inferred from the span. The accountant can then PATCH the
+    ``FinancialStatement`` row's period through ``PATCH /ingest/{id}/period``.
+    """
+
+    extracted_period_start: Optional[str] = None  # ISO YYYY-MM-DD
+    extracted_period_end: Optional[str] = None
+    extracted_periodicidad: Optional[str] = None  # 'mensual' | 'trimestral' | 'anual'
+    extraction_confidence: Optional[float] = None  # 0..1 if available
+    inferred_from_span: bool = False  # True when periodicidad came from fallback
+    requires_review: bool = False
+    review_reason: Optional[str] = (
+        None  # 'low_confidence' | 'collapsed_range' | 'span_inferred' | 'annual_high_value'
+    )
+
+
 class IngestDetailResponse(BaseModel):
     ingest_id: str
     file_name: str
@@ -57,6 +78,7 @@ class IngestDetailResponse(BaseModel):
     has_warnings: bool = False
     trace_url: Optional[str] = None
     classification_review: Optional[ClassificationReviewResponse] = None
+    period_review: Optional[PeriodReviewResponse] = None
     file_names: Optional[List[str]] = None
     multi_file_mode: Optional[str] = None
     current_file_index: Optional[int] = None
@@ -66,6 +88,18 @@ class ClassificationReviewUpdateRequest(BaseModel):
     doc_type: str
     confirmed: bool = True
     parser_mode: Optional[str] = None
+
+
+class PeriodReviewUpdateRequest(BaseModel):
+    """Body for ``PATCH /api/v1/ingest/{id}/period`` — HITL override of the
+    LLM-extracted period after human review (Ley 43/1990: el contador asume
+    responsabilidad sobre la cifra final)."""
+
+    period_start: str  # ISO YYYY-MM-DD
+    period_end: str  # ISO YYYY-MM-DD
+    periodicidad: Optional[str] = (
+        None  # 'mensual' | 'trimestral' | 'anual' | 'personalizado'
+    )
 
 
 class MergeIngestRequest(BaseModel):
