@@ -96,3 +96,26 @@ class TestDeleteReteicaTarifa:
         result = db_service.delete_reteica_tarifa(db, row_id=999)
         assert result is False
         db.delete.assert_not_called()
+
+
+def test_reteica_schemas_importable():
+    from app.models.schemas import ReteicaTarifaResponse, ReteicaTarifaUpsertRequest
+
+    assert ReteicaTarifaResponse
+    assert ReteicaTarifaUpsertRequest
+
+
+def test_reteica_upsert_request_validates_ciiu():
+    from app.models.schemas import ReteicaTarifaUpsertRequest
+    import pytest
+
+    with pytest.raises(Exception):
+        ReteicaTarifaUpsertRequest(municipio="bogota", ciiu_seccion="Z", tasa=0.005)
+
+
+def test_reteica_upsert_request_validates_tasa_max():
+    from app.models.schemas import ReteicaTarifaUpsertRequest
+    import pytest
+
+    with pytest.raises(Exception):
+        ReteicaTarifaUpsertRequest(municipio="bogota", ciiu_seccion="J", tasa=0.5)

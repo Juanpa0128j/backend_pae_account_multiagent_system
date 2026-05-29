@@ -376,6 +376,49 @@ class PerdidaFiscalUpsertRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# ReteicaTarifa schemas
+# ---------------------------------------------------------------------------
+
+_VALID_CIIU_SECCION = frozenset(
+    {chr(c) for c in range(ord("A"), ord("U") + 1)} | {"general"}
+)
+
+
+class ReteicaTarifaResponse(BaseModel):
+    """Single reteica_tarifas row returned by the API."""
+
+    id: int
+    municipio: str
+    ciiu_seccion: str
+    tasa: float
+    fuente: Optional[str] = None
+    base_minima_uvt: Optional[float] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ReteicaTarifaUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/reteica-tarifas."""
+
+    municipio: str = Field(..., min_length=1, max_length=100)
+    ciiu_seccion: str = Field(..., description="CIIU section letter A-U or 'general'")
+    tasa: float = Field(
+        ..., gt=0, le=0.1, description="Rate as decimal fraction, e.g. 0.00966"
+    )
+    fuente: Optional[str] = Field(None, max_length=255)
+    base_minima_uvt: Optional[float] = Field(None, ge=0)
+
+    @field_validator("ciiu_seccion")
+    @classmethod
+    def _check_ciiu(cls, v: str) -> str:
+        if v not in _VALID_CIIU_SECCION:
+            raise ValueError(
+                f"ciiu_seccion must be a letter A-U or 'general', got {v!r}"
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
 # TarifaRenta schemas
 # ---------------------------------------------------------------------------
 
