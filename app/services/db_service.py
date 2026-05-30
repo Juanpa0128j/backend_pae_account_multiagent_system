@@ -1573,8 +1573,24 @@ def get_journal_entry_lines(
     start_date: datetime = None,
     end_date: datetime = None,
 ) -> List[Dict[str, Any]]:
-    """Return JournalEntryLine rows for a company as list of dicts."""
-    q = db.query(JournalEntryLine).filter(JournalEntryLine.company_nit == company_nit)
+    """Return JournalEntryLine rows for a company as list of dicts.
+
+    Only includes lines whose parent TransactionPosted has status=POSTED so
+    that REJECTED/ERROR transactions are excluded from accounting reports.
+    """
+    from app.models.database import TransactionPosted, TransactionStatus
+
+    q = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(
+            JournalEntryLine.company_nit == company_nit,
+            TransactionPosted.status == TransactionStatus.POSTED,
+        )
+    )
     if start_date:
         q = q.filter(JournalEntryLine.fecha >= start_date)
     if end_date:

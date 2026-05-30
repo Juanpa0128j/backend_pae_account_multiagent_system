@@ -1529,6 +1529,7 @@ async def run_derivation(
             company_nit=normalized_nit,
             period_start=period_start,
             period_end=period_end,
+            input_source_mode="direct",  # Via B: only use manually uploaded statements
         )
     except BusinessRuleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -1545,7 +1546,11 @@ async def run_derivation_via_a(
 ):
     """Manually trigger Vía A derivation: build first-level statements from journal
     entries, then derive flujo de caja / cambios patrimonio / notas.  Both steps are
-    idempotent — already-existing statements are skipped."""
+    idempotent — already-existing statements are skipped.
+
+    The opening balance for NIC 7 is recomputed from the cumulative journal on every
+    call, so derivation is order-independent: deriving a later period before an earlier
+    one still produces correct working-capital deltas and opening cash."""
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
@@ -1570,16 +1575,37 @@ async def run_derivation_via_a(
     finally:
         db.close()
 
+    # If any required first-level state failed to build, surface the error now
+    # instead of letting derive_financial_statements raise a cryptic 409.
+    required = {"balance_general", "estado_resultados", "libro_auxiliar"}
+    build_errors = first_level.get("build_errors", {})
+    # A type is acceptable if it was created now OR was already in the DB (skipped).
+    # Only fail if it ended up in build_errors (truly failed, not just pre-existing).
+    failed_required = {t: e for t, e in build_errors.items() if t in required}
+    if failed_required:
+        detail = (
+            "No se pudieron construir los estados de primer nivel desde los asientos. "
+            "Verifica que las transacciones del periodo estén procesadas y persistidas. "
+            f"Errores: { {k: v[:200] for k, v in failed_required.items()} }"
+        )
+        raise HTTPException(status_code=409, detail=detail)
+
     try:
         derived = derive_financial_statements(
             company_nit=normalized_nit,
             period_start=period_start,
             period_end=period_end,
+            input_source_mode="derived_from_journal",  # Via A: only use journal-built statements
+            prior_from_journal=True,  # Via A: opening balance computed from journal cutoff
         )
     except BusinessRuleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
-    return {"status": "ok", "first_level": first_level, "derived": derived}
+    return {
+        "status": "ok",
+        "first_level": first_level,
+        "derived": derived,
+    }
 
 
 @router.get("/derivation/status-via-a")
@@ -1640,13 +1666,35 @@ async def get_derivation_status_via_a(
         reverse=True,
     )
 
+    # Detect order gaps: a period has a gap when its period_start is not the
+    # global earliest AND no derived BG exists with period_end < period_start.
+    # This means the prior period was never derived, so NIC 7 cash flow will
+    # use empty opening balances and produce incorrect working-capital deltas.
+    derived_bg_ends: set[str] = set()
+    for row in all_rows:
+        if (
+            row.get("statement_type") == "balance_general"
+            and row.get("source_mode") in ("derived_from_journal", "derived", "direct")
+            and row.get("period_end")
+        ):
+            derived_bg_ends.add(row["period_end"][:10])
+
+    sorted_periods = sorted(
+        first_level_by_period.values(), key=lambda x: x["period_end"], reverse=True
+    )
+    for p in sorted_periods:
+        ps = (p.get("period_start") or "")[:10]
+        # First period ever → no prior expected
+        if not ps or ps == (earliest or "")[:10]:
+            p["prior_period_gap"] = False
+            continue
+        # Has any derived BG with period_end before this period_start?
+        has_prior = any(pe < ps for pe in derived_bg_ends)
+        p["prior_period_gap"] = not has_prior
+
     return {
         "company_nit": normalized_nit,
-        "first_level_periods": sorted(
-            first_level_by_period.values(),
-            key=lambda x: x["period_end"],
-            reverse=True,
-        ),
+        "first_level_periods": sorted_periods,
         "derived_periods": derived_periods,
         "journal_date_range": {"earliest": earliest, "latest": latest},
     }
