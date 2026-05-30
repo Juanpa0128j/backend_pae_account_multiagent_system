@@ -1,7 +1,7 @@
 import calendar
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -37,7 +37,7 @@ from app.models.schemas import (
     UvtUpsertRequest,
     VALID_CONCEPTO_VALUES,
 )
-from app.services import db_service
+from app.services import db_service, via_b_service
 from app.services.nit_utils import normalize_nit
 
 router = APIRouter()
@@ -101,6 +101,133 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
     return result.get("report", {})
 
 
+def _normalize_or_422(company_nit: Optional[str]) -> Optional[str]:
+    """Normalize a NIT or raise HTTP 422."""
+    if not company_nit:
+        return None
+    try:
+        return normalize_nit(company_nit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+
+def _is_via_b(db: Session, company_nit: Optional[str]) -> bool:
+    """Return True if the company is locked to the work_with_existing pathway.
+
+    Used to branch the tax endpoints away from the journal-entry-based pipeline
+    (which yields zeros for Vía B) to ``via_b_service`` which derives figures
+    from uploaded balance / estado de resultados saldos.
+    """
+    if not company_nit:
+        return False
+    try:
+        return (
+            db_service.get_company_locked_pathway(db, company_nit)
+            == "work_with_existing"
+        )
+    except Exception:
+        return False
+
+
+def _empty_referencias(
+    statement_kind: str, end_date: date, available_periods: List[str]
+) -> List[str]:
+    """Compose the explanatory references shown when no data was derivable.
+
+    Distinguishes "you uploaded nothing yet" from "you picked a period that
+    isn't in your uploads" — the second one lists the periods that do exist
+    so the user can switch the PeriodSelector to a valid month.
+    """
+    if not available_periods:
+        return [
+            f"No se encontró un {statement_kind} cargado para esta empresa (Vía B)."
+        ]
+    available_str = ", ".join(available_periods)
+    return [
+        f"No hay {statement_kind} para el período {end_date.isoformat()} (Vía B).",
+        f"Períodos disponibles: {available_str}.",
+    ]
+
+
+def _empty_iva(
+    company_nit: Optional[str], end_date: date, available_periods: List[str]
+) -> dict:
+    """Zero-state IVA payload for a Vía B company with no matching balance."""
+    return {
+        "report_type": "iva_report",
+        "source": "via_b",
+        "period_start": None,
+        "period_end": end_date.isoformat(),
+        "company_nit": company_nit,
+        "generated_at": datetime.utcnow().isoformat(),
+        "iva_generado": 0.0,
+        "iva_descontable": 0.0,
+        "iva_a_pagar": 0.0,
+        "iva_status": "saldo_cero",
+        "referencias": _empty_referencias(
+            "balance general", end_date, available_periods
+        ),
+    }
+
+
+def _empty_withholdings(
+    company_nit: Optional[str], end_date: date, available_periods: List[str]
+) -> dict:
+    """Zero-state retenciones payload for a Vía B company with no match."""
+    return {
+        "report_type": "withholdings_report",
+        "source": "via_b",
+        "period_start": None,
+        "period_end": end_date.isoformat(),
+        "company_nit": company_nit,
+        "generated_at": datetime.utcnow().isoformat(),
+        "retencion_en_la_fuente": 0.0,
+        "retencion_ica": 0.0,
+        "total_retenciones": 0.0,
+        "referencias": _empty_referencias(
+            "balance general", end_date, available_periods
+        ),
+    }
+
+
+def _empty_ica(end_date: date, available_periods: List[str]) -> dict:
+    """Zero-state ICA payload for a Vía B company with no matching E.R."""
+    return {
+        "report_type": "ica_declaracion",
+        "source": "via_b",
+        "period_start": None,
+        "period_end": end_date.isoformat(),
+        "generated_at": datetime.utcnow().isoformat(),
+        "ingresos_brutos": 0.0,
+        "tasa_ica": float(TASA_ICA_DEFAULT),
+        "ica_a_pagar": 0.0,
+        "cuenta_gasto_puc": "540101",
+        "cuenta_pasivo_puc": "2368",
+        "referencias": _empty_referencias(
+            "estado de resultados", end_date, available_periods
+        ),
+    }
+
+
+def _empty_renta(end_date: date, available_periods: List[str]) -> dict:
+    """Zero-state renta payload for a Vía B company with no matching E.R."""
+    return {
+        "report_type": "renta_provision",
+        "source": "via_b",
+        "period_start": None,
+        "period_end": end_date.isoformat(),
+        "generated_at": datetime.utcnow().isoformat(),
+        "utilidad_antes_impuestos": 0.0,
+        "tasa_renta": float(TASA_RENTA),
+        "provision_renta": 0.0,
+        "cuenta_gasto_puc": "540502",
+        "cuenta_pasivo_puc": "240405",
+        "referencias": _empty_referencias(
+            "estado de resultados", end_date, available_periods
+        ),
+    }
+
+
 @router.get("/iva", response_model=IVAOutput)
 async def get_iva_report(
     period_start: Optional[date] = Query(
@@ -112,14 +239,33 @@ async def get_iva_report(
         description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Reporte IVA.
     Computes IVA generated (account 240808) vs. IVA deductible (account 240802)
     and returns the net IVA payable with applicable legal references.
+
+    For Vía B (work_with_existing) companies the figures are derived from the
+    saldos of cuentas 2408* in the uploaded balance general instead of journal
+    entries; the response carries ``source: "via_b"`` so the frontend can
+    render a context badge.
     """
     start, end = _resolve_period(period_start, period_end)
+    nit = _normalize_or_422(company_nit)
+    if _is_via_b(db, nit):
+        # Pass the user's raw period_end (may be None) so Vía B falls back to
+        # the latest balance when no explicit period was requested. Using the
+        # resolved ``end`` would force an exact-month match against today's
+        # month and miss the latest upload.
+        payload = via_b_service.get_iva_report(db, nit, period_end=period_end)
+        if payload is not None:
+            return payload
+        available = (
+            via_b_service.list_periods(db, nit, "balance_general") if nit else []
+        )
+        return _empty_iva(nit, end, available)
     return _run_report("iva", _build_params(start, end), company_nit)
 
 
@@ -134,6 +280,7 @@ async def get_withholdings_report(
         description="Fin del período YYYY-MM-DD (default: último día del mes actual)",
     ),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """
@@ -141,8 +288,20 @@ async def get_withholdings_report(
     Returns Retefuente (account 2365) and ReteICA (account 2368) balances
     with applicable legal references.
     Optionally includes LLM-powered analysis when include_analysis=true.
+
+    For Vía B companies the figures are derived from the saldos of cuentas
+    2365/2368 in the uploaded balance general.
     """
     start, end = _resolve_period(period_start, period_end)
+    nit = _normalize_or_422(company_nit)
+    if _is_via_b(db, nit):
+        payload = via_b_service.get_withholdings_report(db, nit, period_end=period_end)
+        if payload is not None:
+            return payload
+        available = (
+            via_b_service.list_periods(db, nit, "balance_general") if nit else []
+        )
+        return _empty_withholdings(nit, end, available)
     return _run_report("withholdings", _build_params(start, end), company_nit)
 
 
@@ -168,8 +327,33 @@ async def get_ica_declaration(
     (nit_receptor on transactions_posted), and applies the company's tasa_ica
     (or national default 6.9‰).
     Ref: Ley 14/1983, Decreto 1333/1986.
+
+    For Vía B companies, ``ingresos_brutos`` comes from the uploaded estado de
+    resultados instead of summing journal entries.
     """
     start, end = _resolve_period(period_start, period_end)
+    nit = _normalize_or_422(company_nit)
+
+    if _is_via_b(db, nit):
+        tasa_ica_vb: Optional[Decimal] = None
+        if nit:
+            settings = db_service.get_company_settings(db, nit)
+            if settings and settings.tasa_ica:
+                tasa_ica_vb = Decimal(str(settings.tasa_ica))
+        payload = via_b_service.get_ica_report(
+            db, nit, period_end=period_end, tasa_ica=tasa_ica_vb
+        )
+        if payload is None:
+            available = (
+                via_b_service.list_periods(db, nit, "estado_resultados") if nit else []
+            )
+            return ICADeclaracionOutput(**_empty_ica(end, available))
+        # Honor the per-company cuenta_pasivo override even on Vía B
+        if nit:
+            settings = db_service.get_company_settings(db, nit)
+            if settings and settings.cuenta_ica_propio:
+                payload["cuenta_pasivo_puc"] = settings.cuenta_ica_propio
+        return ICADeclaracionOutput(**payload)
 
     where_nit = "AND tp.company_nit = :nit" if company_nit else ""
     where_start = "AND j.fecha >= :period_start"
@@ -236,9 +420,29 @@ async def get_renta_provision(
     Provisión Impuesto de Renta — tarifa general 35% (Art. 240 ET, Ley 2277/2022).
     Aggregates income (4xxx credits), costs (6xxx debits), and expenses (5xxx debits)
     from journal_entry_lines to compute net income and the corresponding tax provision.
+
+    For Vía B companies, ``utilidad_antes_impuestos`` comes from the uploaded
+    estado de resultados instead of summing journal entries.
     """
     start, end = _resolve_period(period_start, period_end)
     year = end.year
+    nit = _normalize_or_422(company_nit)
+
+    if _is_via_b(db, nit):
+        tasa_renta_vb: Optional[Decimal] = None
+        if nit:
+            settings_vb = db_service.get_company_settings(db, nit)
+            if settings_vb and settings_vb.tasa_renta:
+                tasa_renta_vb = Decimal(str(settings_vb.tasa_renta))
+        payload = via_b_service.get_renta_provision_report(
+            db, nit, period_end=period_end, tasa_renta=tasa_renta_vb
+        )
+        if payload is None:
+            available = (
+                via_b_service.list_periods(db, nit, "estado_resultados") if nit else []
+            )
+            return RentaProvisionOutput(**_empty_renta(end, available))
+        return RentaProvisionOutput(**payload)
 
     tasa_renta = TASA_RENTA
     settings = None

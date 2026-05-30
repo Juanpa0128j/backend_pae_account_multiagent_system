@@ -57,7 +57,7 @@ dev:
 # ── Development ───────────────────────────────────────────────────────────────
 
 server:
-	uv run uvicorn main:app --reload
+	uv run python -m uvicorn main:app --reload
 
 # ── Testing ───────────────────────────────────────────────────────────────────
 

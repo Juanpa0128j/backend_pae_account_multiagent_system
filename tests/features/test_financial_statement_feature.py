@@ -28,16 +28,25 @@ class _FakeDB:
         self.closed = True
 
 
-def _row(statement_id: str, statement_type: str, data: dict):
+def _row(
+    statement_id: str,
+    statement_type: str,
+    data: dict,
+    *,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+    frequency: str | None = None,
+):
     return SimpleNamespace(
         id=statement_id,
         statement_type=statement_type,
         data=data,
         ingest_id="ing_1",
-        period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        period_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+        period_start=period_start or datetime(2026, 1, 1, tzinfo=timezone.utc),
+        period_end=period_end or datetime(2026, 1, 31, tzinfo=timezone.utc),
         entity_nit="900123456-7",
         source_mode="direct",
+        frequency=frequency,
         created_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
     )
 
@@ -91,14 +100,32 @@ def test_derive_financial_statements_persists_outputs_and_lineage(monkeypatch):
     fake_db = _FakeDB()
     lineage_calls = []
 
+    # Annual rows so we get past the new annual gate (paso 6 of the rework).
+    annual_start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    annual_end = datetime(2025, 12, 31, tzinfo=timezone.utc)
     bg = _row(
         "fs_bg",
         "balance_general",
         {"total_activos": 1000, "total_pasivos": 400, "total_patrimonio": 600},
+        period_start=annual_start,
+        period_end=annual_end,
+        frequency="annual",
     )
-    er = _row("fs_er", "estado_resultados", {"utilidad_neta": 120})
+    er = _row(
+        "fs_er",
+        "estado_resultados",
+        {"utilidad_neta": 120},
+        period_start=annual_start,
+        period_end=annual_end,
+        frequency="annual",
+    )
     la = _row(
-        "fs_la", "libro_auxiliar", {"lines": [{"cuenta_puc": "110505", "saldo": 250}]}
+        "fs_la",
+        "libro_auxiliar",
+        {"lines": [{"cuenta_puc": "110505", "saldo": 250}]},
+        period_start=annual_start,
+        period_end=annual_end,
+        frequency="annual",
     )
 
     def _get_financial_statements(_db, **kwargs):
@@ -142,11 +169,14 @@ def test_derive_financial_statements_persists_outputs_and_lineage(monkeypatch):
 
     result = derive_financial_statements(
         company_nit="900123456-7",
-        period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        period_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+        period_start=annual_start,
+        period_end=annual_end,
     )
 
     assert result["derived_count"] == 3
-    assert result["lineage_links"] == 9
-    assert len(lineage_calls) == 9
+    # Source rows are BG + ER + LA + prior_bg (4 sources × 3 targets = 12 links).
+    # The earlier hard-coded ``9`` reflected the legacy 3-input shape; the new
+    # derivation also records the prior-period source explicitly.
+    assert result["lineage_links"] == 12
+    assert len(lineage_calls) == 12
     assert fake_db.committed is True
