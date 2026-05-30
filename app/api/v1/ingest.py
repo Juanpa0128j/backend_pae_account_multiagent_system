@@ -199,6 +199,8 @@ def _build_period_review(db: Session, job: IngestJob) -> Optional[dict]:
         than the LLM-extracted ``periodicidad`` field.
       * Annual statement (high-value for derivation): always confirm.
     """
+    from datetime import datetime  # noqa: PLC0415
+
     from app.models.database import FinancialStatement  # noqa: PLC0415
     from app.services.financial_statement_service import (  # noqa: PLC0415
         infer_frequency,
@@ -212,6 +214,15 @@ def _build_period_review(db: Session, job: IngestJob) -> Optional[dict]:
         .first()
     )
     if stmt is None:
+        return None
+
+    # Defensive guard: skip when the row doesn't have real datetime bounds.
+    # Without these we can't compute span / inferred frequency and the rest
+    # of the function blows up. Also covers test setups where ``db`` is a
+    # MagicMock leaking from a fixture that didn't clean up its override.
+    if not isinstance(stmt.period_start, datetime) or not isinstance(
+        stmt.period_end, datetime
+    ):
         return None
 
     # Once the contador has explicitly confirmed the period via the HITL
