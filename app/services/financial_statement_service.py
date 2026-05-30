@@ -1039,6 +1039,7 @@ def derive_financial_statements(
     period_start: datetime,
     period_end: datetime,
     allow_missing_prior: bool = False,
+    input_source_mode: str | None = None,
 ) -> dict[str, Any]:
     """Derive cashflow/equity changes/notes from BG+ER+LA for one company and period.
 
@@ -1047,6 +1048,11 @@ def derive_financial_statements(
             that is valid (all opening positions are zero). Via B must always have
             a prior-period BG uploaded (balance_general_anterior); passing False
             (default) keeps the original 409 enforcement.
+        input_source_mode: When set, restricts the BG/ER/LA source lookup to that
+            source_mode. Via B passes "direct" (only uploaded statements); Via A
+            passes "derived_from_journal" (only journal-built statements). This
+            enforces pathway separation at the data layer: Via B cannot accidentally
+            use Via A statements as inputs and vice versa.
 
     Raises:
         BusinessRuleError: when required source statements are not available, or
@@ -1065,6 +1071,7 @@ def derive_financial_statements(
                 statement_type=stmt_type,
                 period_start=period_start,
                 period_end=period_end,
+                source_mode=input_source_mode,
             )
             if not rows:
                 raise BusinessRuleError(

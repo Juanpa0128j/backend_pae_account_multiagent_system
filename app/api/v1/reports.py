@@ -1440,6 +1440,7 @@ async def run_derivation(
             company_nit=normalized_nit,
             period_start=period_start,
             period_end=period_end,
+            input_source_mode="direct",  # Via B: only use manually uploaded statements
         )
     except BusinessRuleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -1502,6 +1503,7 @@ async def run_derivation_via_a(
             period_start=period_start,
             period_end=period_end,
             allow_missing_prior=True,  # Via A: first period has no prior BG
+            input_source_mode="derived_from_journal",  # Via A: only use journal-built statements
         )
     except BusinessRuleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
