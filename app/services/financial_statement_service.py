@@ -1424,15 +1424,17 @@ def derive_financial_statements(
                 "(NIC 7 método indirecto / Decreto 2650/1993)"
             )
 
-        # Annual gate. Inputs may classify as 'annual' via the LLM-extracted
-        # periodicidad or via span inference (see ``infer_frequency``).
-        inputs_for_check = [r for r in (bg_rows + er_rows + la_rows) if r]
-        if not any(is_annual(r) for r in inputs_for_check):
-            raise BusinessRuleError(
-                "La derivación de flujo, cambios y notas requiere estados ANUALES "
-                "(NIC 7). Los estados mensuales sirven para reportes individuales "
-                "pero no pueden anclar la derivación NIIF."
-            )
+        # Annual gate — Via B only. Via B uploads real documents whose periodicidad
+        # must be annual for NIC 7 indirect method. Via A builds statements from the
+        # journal for any period the user requests, so the gate does not apply.
+        if not prior_from_journal:
+            inputs_for_check = [r for r in (bg_rows + er_rows + la_rows) if r]
+            if not any(is_annual(r) for r in inputs_for_check):
+                raise BusinessRuleError(
+                    "La derivación de flujo, cambios y notas requiere estados ANUALES "
+                    "(NIC 7). Los estados mensuales sirven para reportes individuales "
+                    "pero no pueden anclar la derivación NIIF."
+                )
 
         # Dedup guard: skip derived types that already exist
         existing_derived = {
