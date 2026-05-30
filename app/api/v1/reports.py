@@ -1491,7 +1491,7 @@ async def run_derivation_via_a(
     if failed_required:
         detail = (
             "No se pudieron construir los estados de primer nivel desde los asientos. "
-            "Verifica que las transacciones del periodo esten procesadas y persistidas. "
+            "Verifica que las transacciones del periodo estén procesadas y persistidas. "
             f"Errores: { {k: v[:200] for k, v in failed_required.items()} }"
         )
         raise HTTPException(status_code=409, detail=detail)
@@ -1513,20 +1513,28 @@ async def run_derivation_via_a(
     db2 = SessionLocal()
     try:
         from app.models.database import JournalEntryLine as _JEL  # noqa: PLC0415
+        from app.models.database import TransactionPosted as _TP  # noqa: PLC0415
+        from app.models.database import TransactionStatus as _TS  # noqa: PLC0415
 
         has_prior_journal = (
             db2.query(_JEL)
+            .join(_TP, _JEL.transaction_posted_id == _TP.id)
             .filter(
                 _JEL.company_nit == normalized_nit,
                 _JEL.fecha < period_start,
+                _TP.status == _TS.POSTED,
             )
             .first()
             is not None
         )
         if has_prior_journal:
-            from app.services.financial_statement_service import _load_prior_balance  # noqa: PLC0415
+            from app.services.financial_statement_service import (
+                _load_prior_balance,
+            )  # noqa: PLC0415
 
-            prior_bg = _load_prior_balance(db2, normalized_nit, period_start)
+            prior_bg = _load_prior_balance(
+                db2, normalized_nit, period_start, via_a=True
+            )
             if prior_bg is None:
                 prior_warning = (
                     "Existen asientos de períodos anteriores que aún no han sido derivados. "

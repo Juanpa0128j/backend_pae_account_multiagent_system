@@ -136,8 +136,8 @@ def build_first_level_from_journal_entries(
             # in journal entries. Synthesize a class 36 leaf so _compute_equity_changes
             # can find the period result and set saldo_final correctly.
             net_profit = Decimal(str(bg_raw.get("net_profit") or 0))
-            has_class3 = any(a["cuenta_puc"].startswith("3") for a in bg_accounts)
-            if net_profit != 0 and not has_class3:
+            has_class36 = any(a["cuenta_puc"].startswith("36") for a in bg_accounts)
+            if net_profit != 0 and not has_class36:
                 bg_accounts.append(
                     {
                         "cuenta_puc": "360505",
@@ -278,9 +278,11 @@ def build_first_level_from_journal_entries(
                 "periodo_inicio": period_start.date().isoformat(),
                 "periodo_fin": period_end.date().isoformat(),
                 "accounts": ledger if isinstance(ledger, list) else [],
-                "lines": journal_lines_for_la
-                if isinstance(journal_lines_for_la, list)
-                else [],
+                "lines": (
+                    journal_lines_for_la
+                    if isinstance(journal_lines_for_la, list)
+                    else []
+                ),
                 "moneda": "COP",
                 "source": "derived_from_journal",
             }
@@ -432,24 +434,30 @@ def _dec(value: Any) -> Decimal:
 
 
 def _load_prior_balance(
-    db: Session, company_nit: str, period_start: datetime
+    db: Session,
+    company_nit: str,
+    period_start: datetime,
+    *,
+    via_a: bool = False,
 ) -> "FinancialStatement | None":
-    """Return the most recent direct balance_general with period_end < period_start.
+    """Return the most recent balance_general with period_end < period_start.
 
     Used to compute working-capital variations and prior cash position required
     for the NIC 7 indirect method. Returning None signals the caller to raise a
     BusinessRuleError so the API surfaces a 409 instead of silently degrading.
+
+    via_a=True  — accepts derived_from_journal (Via A prior periods)
+    via_a=False — only direct (Via B uploaded balances), enforcing pathway separation
     """
     from app.models.database import FinancialStatement  # local to avoid cycle
 
+    allowed_modes = ["direct", "derived_from_journal"] if via_a else ["direct"]
     return (
         db.query(FinancialStatement)
         .filter(
             FinancialStatement.entity_nit == company_nit,
             FinancialStatement.statement_type == "balance_general",
-            FinancialStatement.source_mode.in_(
-                ["direct", "via_a", "derived_from_journal"]
-            ),
+            FinancialStatement.source_mode.in_(allowed_modes),
             FinancialStatement.period_end < period_start,
         )
         .order_by(FinancialStatement.period_end.desc())
@@ -1089,7 +1097,9 @@ def derive_financial_statements(
         # variations and opening cash.
         # Via B: prior BG must exist (uploaded as balance_general_anterior). Raise if missing.
         # Via A: first period has no prior — all opening positions are zero. Allow if flag set.
-        prior_bg_row = _load_prior_balance(db, normalized_nit, period_start)
+        prior_bg_row = _load_prior_balance(
+            db, normalized_nit, period_start, via_a=allow_missing_prior
+        )
         if prior_bg_row is None and not allow_missing_prior:
             raise BusinessRuleError(
                 "Balance general del período anterior no encontrado. "
