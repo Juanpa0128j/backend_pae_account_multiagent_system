@@ -214,6 +214,12 @@ def _build_period_review(db: Session, job: IngestJob) -> Optional[dict]:
     if stmt is None:
         return None
 
+    # Once the contador has explicitly confirmed the period via the HITL
+    # editor, stop nagging — even on annual statements (which would otherwise
+    # always trip the ``annual_high_value`` heuristic).
+    if isinstance(stmt.data, dict) and stmt.data.get("period_reviewed_at"):
+        return None
+
     confidence = (
         float(job.classification_confidence)
         if job.classification_confidence is not None
@@ -809,6 +815,8 @@ async def update_ingest_period(
     """
     from datetime import datetime, timezone  # noqa: PLC0415
 
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
     from app.models.database import FinancialStatement  # noqa: PLC0415
     from app.services.financial_statement_service import (  # noqa: PLC0415
         infer_frequency,
@@ -863,14 +871,20 @@ async def update_ingest_period(
     stmt.period_end = new_end
     stmt.frequency = new_frequency
     # Keep the JSONB payload in sync so downstream readers (chat, reports)
-    # see the same period without a database join.
+    # see the same period without a database join. ``period_reviewed_at`` is
+    # the sentinel ``_build_period_review`` checks to stop re-prompting.
     if isinstance(stmt.data, dict):
         stmt.data = {
             **stmt.data,
             "periodo_inicio": new_start.date().isoformat(),
             "periodo_fin": new_end.date().isoformat(),
             "periodicidad": body.periodicidad,
+            "period_reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "period_reviewed_by": getattr(current_user, "email", None),
         }
+        # JSONB mutation tracking — flag explicitly so the UPDATE fires even
+        # if SQLAlchemy's attribute instrumentation misses the dict swap.
+        flag_modified(stmt, "data")
     db.add(stmt)
 
     # Audit trail — Ley 43/1990 traceability.
