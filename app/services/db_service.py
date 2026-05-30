@@ -1043,6 +1043,7 @@ def create_financial_statement(
     period_start: datetime = None,
     period_end: datetime = None,
     source_mode: str = "direct",
+    frequency: str | None = None,
     commit: bool = True,
 ) -> FinancialStatement:
     row = FinancialStatement(
@@ -1053,6 +1054,7 @@ def create_financial_statement(
         period_end=period_end,
         entity_nit=entity_nit,
         source_mode=source_mode,
+        frequency=frequency,
         data=data,
     )
     db.add(row)

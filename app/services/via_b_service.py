@@ -120,7 +120,9 @@ _CORE_STATEMENT_TYPES: tuple[str, ...] = (
 )
 
 
-def latest_common_period(db: Session, company_nit: str) -> Optional[date]:
+def latest_common_period(
+    db: Session, company_nit: str, *, annual_only: bool = False
+) -> Optional[date]:
     """Return the latest period_end shared by balance + E.R. + libro auxiliar.
 
     Used to anchor dashboard / reports KPIs to a single coherent period so
@@ -128,10 +130,27 @@ def latest_common_period(db: Session, company_nit: str) -> Optional[date]:
     January with utilidad from December). Returns ``None`` when at least one
     of the three core types has no upload that shares any period_end with the
     others.
+
+    ``annual_only=True`` further restricts the search to rows whose
+    ``frequency`` (extracted by the LLM or inferred from span) is ``annual``.
+    Used by ``derivation_ready`` and the dashboard's annual KPI gate so a
+    company with only monthly uploads doesn't show as derivation-ready.
     """
+    from app.services.financial_statement_service import (  # noqa: PLC0415
+        infer_frequency,
+    )
+
+    def _is_annual(r) -> bool:
+        freq = getattr(r, "frequency", None) or infer_frequency(
+            r.period_start, r.period_end
+        )
+        return freq == "annual"
+
     period_sets: list[set[date]] = []
     for stype in _CORE_STATEMENT_TYPES:
         rows = _statements(db, company_nit, stype)
+        if annual_only:
+            rows = [r for r in rows if _is_annual(r)]
         period_sets.append(
             {r.period_end.date() for r in rows if r.period_end is not None}
         )
@@ -479,6 +498,12 @@ def get_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
 
     common_period = latest_common_period(db, company_nit)
     period_resolution = "common" if common_period is not None else "partial"
+    # ``derivation_ready`` is stricter than KPI anchoring: we only flag a
+    # company as derivable when the three core uploads share an annual
+    # period_end. NIC 7 indirect cash flow requires two-year deltas, so a
+    # monthly common period is meaningless here even when KPIs can still be
+    # rendered against it.
+    annual_common_period = latest_common_period(db, company_nit, annual_only=True)
 
     def _pick(stype: str) -> Optional[FinancialStatement]:
         if common_period is not None:
@@ -535,7 +560,10 @@ def get_dashboard_overrides(db: Session, company_nit: str) -> Dict[str, Any]:
         "latest_period": latest.isoformat() if latest else None,
         "period_end": period_end,
         "period_resolution": period_resolution,
-        "derivation_ready": common_period is not None,
+        "derivation_ready": annual_common_period is not None,
+        "derivation_annual_period": (
+            annual_common_period.isoformat() if annual_common_period else None
+        ),
     }
 
 

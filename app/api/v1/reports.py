@@ -1335,10 +1335,21 @@ async def get_derivation_status(
 ):
     """Report which Vía B source statements are uploaded for a company.
 
-    Returns one entry per source type with its periods (if any), plus a
-    `ready_periods` list showing which `(period_start, period_end)` windows
-    have all 3 source statements present and would therefore allow derivation.
+    Each source row now carries its ``frequency`` so the frontend can show
+    monthly vs annual closings separately. ``ready_periods`` is the set of
+    **annual** periods that satisfy at least one of the two normative paths:
+
+    * BG + ER both present for the period, or
+    * a comprehensive libro auxiliar (PUC classes 1-7) for the period.
+
+    See ``derive_financial_statements`` for the rationale (NIC 7 § 18 +
+    Decreto 2650/1993). Monthly periods are returned separately in
+    ``monthly_periods`` as informational rows — they don't drive derivation.
     """
+    from app.services.financial_statement_service import (  # noqa: PLC0415
+        _libro_auxiliar_is_comprehensive,
+    )
+
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
@@ -1350,6 +1361,8 @@ async def get_derivation_status(
         statement_type=None,
         source_mode="direct",
     )
+    # Index full rows (with .data) for the LA comprehensiveness check below.
+    rows_by_id: dict[str, dict] = {row.get("id"): row for row in rows}
     for row in rows:
         st = row.get("statement_type")
         if st in sources:
@@ -1358,36 +1371,83 @@ async def get_derivation_status(
                     "id": row.get("id"),
                     "period_start": row.get("period_start"),
                     "period_end": row.get("period_end"),
+                    "frequency": row.get("frequency"),
                 }
             )
 
-    # A period is "ready" if all 3 source types have a statement covering it.
-    # Use period_end as the matching key (a balance is a snapshot at period_end).
-    period_end_sets: dict[str, set] = {
-        t: {item["period_end"] for item in sources[t] if item["period_end"]}
-        for t in _REQUIRED_SOURCE_TYPES
-    }
-    common_period_ends = (
-        set.intersection(*period_end_sets.values())
-        if period_end_sets.values()
-        else set()
-    )
+    # A period is annual when at least one of its source rows is annual. We
+    # only consider annual periods as candidates for derivation (NIC 7).
+    annual_pes: set[str] = set()
+    monthly_pes: set[str] = set()
+    for stype in _REQUIRED_SOURCE_TYPES:
+        for item in sources[stype]:
+            pe = item.get("period_end")
+            if not pe:
+                continue
+            if item.get("frequency") == "annual":
+                annual_pes.add(pe)
+            elif item.get("frequency") == "monthly":
+                monthly_pes.add(pe)
 
-    ready_periods = []
-    for pe in sorted(common_period_ends, reverse=True):
-        # For each common period_end, find the matching period_start of estado_resultados (rango)
-        # Balance is snapshot, so it uses period_end as both. Use ER's range as the canonical period.
-        er_match = next(
-            (item for item in sources["estado_resultados"] if item["period_end"] == pe),
-            None,
+    # Among annual period_ends, check which actually satisfy a normative path.
+    ready_periods: list[dict] = []
+    for pe in sorted(annual_pes, reverse=True):
+        bg_match = next(
+            (i for i in sources["balance_general"] if i["period_end"] == pe), None
         )
-        if er_match:
-            ready_periods.append(
-                {
-                    "period_start": er_match["period_start"],
-                    "period_end": pe,
-                }
+        er_match = next(
+            (i for i in sources["estado_resultados"] if i["period_end"] == pe), None
+        )
+        la_match = next(
+            (i for i in sources["libro_auxiliar"] if i["period_end"] == pe), None
+        )
+
+        path_a = bool(bg_match and er_match)
+        la_is_comprehensive = False
+        if la_match:
+            la_row = rows_by_id.get(la_match["id"])
+            la_is_comprehensive = bool(la_row) and _libro_auxiliar_is_comprehensive(
+                la_row.get("data") or {}
             )
+
+        if not (path_a or la_is_comprehensive):
+            continue
+
+        # Canonical period range: ER first, then BG, then LA.
+        anchor = er_match or bg_match or la_match
+        ready_periods.append(
+            {
+                "period_start": anchor["period_start"],
+                "period_end": pe,
+                "satisfies": (
+                    ["bg+er", "la_comprehensive"]
+                    if (path_a and la_is_comprehensive)
+                    else (["bg+er"] if path_a else ["la_comprehensive"])
+                ),
+            }
+        )
+
+    # Monthly periods (informational only — derivation is annual-gated).
+    monthly_periods: list[dict] = []
+    for pe in sorted(monthly_pes, reverse=True):
+        loaded_types = [
+            stype
+            for stype in _REQUIRED_SOURCE_TYPES
+            if any(i["period_end"] == pe for i in sources[stype])
+        ]
+        anchor = next(
+            (i for i in sources["estado_resultados"] if i["period_end"] == pe),
+            next(
+                (i for i in sources["balance_general"] if i["period_end"] == pe), None
+            ),
+        )
+        monthly_periods.append(
+            {
+                "period_start": (anchor or {}).get("period_start"),
+                "period_end": pe,
+                "loaded_types": loaded_types,
+            }
+        )
 
     # Derived statements already produced for this company (source_mode="derived" only)
     all_rows = list_financial_statements(
@@ -1417,8 +1477,30 @@ async def get_derivation_status(
         "company_nit": normalized_nit,
         "sources": sources,
         "ready_periods": ready_periods,
+        "monthly_periods": monthly_periods,
         "derived_periods": derived_periods,
         "is_ready": len(ready_periods) > 0,
+        "minimum_requirements": {
+            # Either of these paths suffices for derivation. Annual-only.
+            "paths": [
+                {
+                    "id": "bg+er",
+                    "label": "Balance General + Estado de Resultados",
+                    "requires": ["balance_general", "estado_resultados"],
+                    "notes": "NIC 7 método indirecto canónico",
+                },
+                {
+                    "id": "la_comprehensive",
+                    "label": "Libro Auxiliar anual (clases 1-7 del PUC)",
+                    "requires": ["libro_auxiliar"],
+                    "notes": (
+                        "Decreto 2650/1993: el libro auxiliar comprende todos "
+                        "los movimientos; sumando clases 1-3 → BG, clases 4-7 → ER."
+                    ),
+                },
+            ],
+            "annual_only": True,
+        },
     }
 
 
