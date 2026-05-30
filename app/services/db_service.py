@@ -862,6 +862,19 @@ def get_all_puc_including_inactive(db: Session) -> List[CuentaPUC]:
     return db.query(CuentaPUC).order_by(CuentaPUC.codigo).all()
 
 
+def deactivate_puc(
+    db: Session, codigo: str, commit: bool = True
+) -> Optional[CuentaPUC]:
+    """Soft-delete a PUC account by setting activa=False. Returns None if not found."""
+    row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
+    if not row:
+        return None
+    row.activa = False
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
 # ─── ProcessJob ──────────────────────────────────────────────────
 
 
