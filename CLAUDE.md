@@ -78,7 +78,7 @@ merged one. Never merge a PR with multiple heads.
 
 ### Configurable national tax rates (`national_rates` table)
 
-Migration `a7b8c9d0e1f2` adds `national_rates` (code PK, value, descripcion, norma_referencia, vigente_desde). Seeded with 4 statutory rates:
+Migration `b8c9d0e1f2a3` adds `national_rates` (code PK, value, descripcion, norma_referencia, vigente_desde). Seeded with 4 statutory rates:
 - `retefuente_servicios` 4% (Art. 392 ET)
 - `retefuente_bienes` 2.5% (Art. 401 ET)
 - `retefuente_arrendamiento` 3.5% (Art. 401 ET)

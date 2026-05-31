@@ -1048,7 +1048,7 @@ class NationalRate(Base):
     (e.g., legislative amendments) can be applied via settings UI without
     a code deploy.
 
-    Seeded by Alembic migration a7b8c9d0e1f2. Codes are stable identifiers:
+    Seeded by Alembic migration b8c9d0e1f2a3. Codes are stable identifiers:
       'retefuente_servicios'     — Art. 392 ET
       'retefuente_bienes'        — Art. 401 ET
       'retefuente_arrendamiento' — Art. 401 ET

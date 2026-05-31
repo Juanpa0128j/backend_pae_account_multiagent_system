@@ -209,7 +209,7 @@ def setup_company_tax_profile(
             logger.warning(
                 "setup_company_tax_profile: national_rates DB entry missing for "
                 "code=%s — using hardcoded fallback %.4f. "
-                "Ensure migration a7b8c9d0e1f2 was applied.",
+                "Ensure migration b8c9d0e1f2a3 was applied.",
                 code,
                 fallback,
             )

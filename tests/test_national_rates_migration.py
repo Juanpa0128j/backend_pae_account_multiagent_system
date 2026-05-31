@@ -23,20 +23,7 @@ def db_session():
 
 def test_national_rates_table_has_four_rows(db_session):
     """Verify that the national_rates table contains exactly four configured rates."""
-    # Manually create the national_rates table and seed it
-    db_session.execute(
-        text("""
-        CREATE TABLE national_rates (
-            code VARCHAR(64) PRIMARY KEY,
-            value NUMERIC(8,6) NOT NULL,
-            descripcion VARCHAR(255) NOT NULL,
-            norma_referencia VARCHAR(128) NOT NULL,
-            vigente_desde DATE NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    )
-
+    # Table created by Base.metadata.create_all in fixture; seed data manually
     db_session.execute(
         text("""
         INSERT INTO national_rates (code, value, descripcion, norma_referencia, vigente_desde)
@@ -63,20 +50,7 @@ def test_national_rates_table_has_four_rows(db_session):
 
 def test_national_rates_values_match_statutory_constants(db_session):
     """Verify that the seeded rates match the statutory constants from settings.py."""
-    # Manually create the national_rates table and seed it
-    db_session.execute(
-        text("""
-        CREATE TABLE national_rates (
-            code VARCHAR(64) PRIMARY KEY,
-            value NUMERIC(8,6) NOT NULL,
-            descripcion VARCHAR(255) NOT NULL,
-            norma_referencia VARCHAR(128) NOT NULL,
-            vigente_desde DATE NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    )
-
+    # Table created by Base.metadata.create_all in fixture; seed data manually
     db_session.execute(
         text("""
         INSERT INTO national_rates (code, value, descripcion, norma_referencia, vigente_desde)
