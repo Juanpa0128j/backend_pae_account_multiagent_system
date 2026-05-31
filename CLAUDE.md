@@ -76,6 +76,16 @@ up with multiple heads. CI runs `make migrate-check-heads` before tests
 and fails until the second author rebases their migration on top of the
 merged one. Never merge a PR with multiple heads.
 
+### Configurable national tax rates (`national_rates` table)
+
+Migration `b8c9d0e1f2a3` adds `national_rates` (code PK, value, descripcion, norma_referencia, vigente_desde). Seeded with 4 statutory rates:
+- `retefuente_servicios` 4% (Art. 392 ET)
+- `retefuente_bienes` 2.5% (Art. 401 ET)
+- `retefuente_arrendamiento` 3.5% (Art. 401 ET)
+- `renta_general` 35% (Art. 240 ET, L.2277/2022)
+
+These replace the module-level constants in `settings.py:32-36, 214`. The `/setup` endpoint will read from this table (Phase 4) so rate changes require no code deploy. DB layer: `list_national_rates`, `get_national_rate`, `upsert_national_rate` in `db_service.py`. API endpoints at `/api/v1/settings/national-rates` (Phase 3, pending).
+
 ## After Every File Modification
 
 **MANDATORY — run in order after any code change:**

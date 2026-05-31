@@ -21,10 +21,13 @@ Usage:
 """
 
 import datetime
+import logging
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 _FECHA_NUEVA_TABLA = datetime.date(2026, 5, 8)
 
@@ -231,7 +234,54 @@ def _get_tabla(fecha_pago: Optional[datetime.date]) -> list[RetencionRegla]:
 _TABLA = _TABLA_ORIGINAL
 
 
-def get_base_minima_pesos(base_minima_uvt: int) -> int:
+def get_base_minima_pesos(
+    base_minima_uvt: int, uvt_value: float | None = None, fiscal_year: int | None = None
+) -> int:
+    """
+    Calculate the minimum taxable base in pesos from UVT units.
+
+    Args:
+        base_minima_uvt: Minimum base in UVT units.
+        uvt_value: Optional UVT value (in pesos). If provided, use this directly.
+        fiscal_year: Fiscal year for DB lookup if uvt_value is None. Defaults to current year.
+
+    Returns:
+        Minimum base in Colombian pesos.
+    """
+    if uvt_value is not None:
+        return int(base_minima_uvt * uvt_value)
+
+    # Query DB for UVT if not provided
+    if fiscal_year is None:
+        fiscal_year = datetime.date.today().year
+
+    try:
+        from app.core.database import SessionLocal
+        from app.services import db_service as _db_svc
+
+        _db = SessionLocal()
+        try:
+            _uvt_db = _db_svc.get_uvt(_db, fiscal_year)
+            if _uvt_db is not None:
+                logger.debug(
+                    "get_base_minima_pesos: UVT %d from DB = %s", fiscal_year, _uvt_db
+                )
+                return int(base_minima_uvt * _uvt_db)
+            else:
+                logger.debug(
+                    "get_base_minima_pesos: UVT %d not in DB, using fallback %s",
+                    fiscal_year,
+                    UVT_2026,
+                )
+        finally:
+            _db.close()
+    except Exception as e:
+        logger.warning(
+            "get_base_minima_pesos: DB query failed for year %d, using fallback: %s",
+            fiscal_year,
+            e,
+        )
+
     return base_minima_uvt * UVT_2026
 
 
@@ -240,6 +290,8 @@ def get_retencion_rate(
     es_declarante: bool,
     base_pesos: float,
     fecha_pago: Optional[datetime.date] = None,
+    uvt_value: float | None = None,
+    fiscal_year: int | None = None,
 ) -> Optional[Decimal]:
     """
     Return the applicable retention rate.
@@ -253,6 +305,8 @@ def get_retencion_rate(
         fecha_pago: Payment date. Determines which table applies:
             - None or < 2026-05-08: tabla original (Decreto 0572 vigente)
             - >= 2026-05-08: tabla modificada (suspensión Decreto 0572)
+        uvt_value: Optional UVT value in pesos. If provided, use this for calculations.
+        fiscal_year: Fiscal year for DB lookup if uvt_value is None. Defaults to current year.
 
     Returns:
         Decimal rate (e.g. Decimal("0.04") for 4%), or None if not applicable.
@@ -266,7 +320,9 @@ def get_retencion_rate(
             and regla.aplica_declarante != es_declarante
         ):
             continue
-        if base_pesos < get_base_minima_pesos(regla.base_minima_uvt):
+        if base_pesos < get_base_minima_pesos(
+            regla.base_minima_uvt, uvt_value=uvt_value, fiscal_year=fiscal_year
+        ):
             return None
         return regla.tarifa
     return None

@@ -410,6 +410,49 @@ class PerdidaFiscalUpsertRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# ReteicaTarifa schemas
+# ---------------------------------------------------------------------------
+
+_VALID_CIIU_SECCION = frozenset(
+    {chr(c) for c in range(ord("A"), ord("U") + 1)} | {"general"}
+)
+
+
+class ReteicaTarifaResponse(BaseModel):
+    """Single reteica_tarifas row returned by the API."""
+
+    id: int
+    municipio: str
+    ciiu_seccion: str
+    tasa: float
+    fuente: Optional[str] = None
+    base_minima_uvt: Optional[float] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ReteicaTarifaUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/reteica-tarifas."""
+
+    municipio: str = Field(..., min_length=1, max_length=100)
+    ciiu_seccion: str = Field(..., description="CIIU section letter A-U or 'general'")
+    tasa: float = Field(
+        ..., gt=0, le=0.1, description="Rate as decimal fraction, e.g. 0.00966"
+    )
+    fuente: Optional[str] = Field(None, max_length=255)
+    base_minima_uvt: Optional[float] = Field(None, ge=0)
+
+    @field_validator("ciiu_seccion")
+    @classmethod
+    def _check_ciiu(cls, v: str) -> str:
+        if v not in _VALID_CIIU_SECCION:
+            raise ValueError(
+                f"ciiu_seccion must be a letter A-U or 'general', got {v!r}"
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
 # TarifaRenta schemas
 # ---------------------------------------------------------------------------
 
@@ -672,3 +715,36 @@ class AjusteFiscalUpsertRequest(BaseModel):
                 f"tipo_diferencia must be one of {sorted(_VALID_AJUSTE_TIPO_DIFERENCIA)}"
             )
         return v
+
+
+# ── NationalRate schemas ──────────────────────────────────────────────────────
+
+
+class NationalRateResponse(BaseModel):
+    """Single national_rates row returned by the API."""
+
+    code: str
+    value: float
+    descripcion: str
+    norma_referencia: str
+    vigente_desde: str  # ISO date string e.g. "2023-01-01"
+
+    model_config = {"from_attributes": True}
+
+
+class NationalRateUpdateRequest(BaseModel):
+    """Request body for PUT /api/v1/settings/national-rates/{code}."""
+
+    value: float = Field(
+        ...,
+        gt=0,
+        le=1.0,
+        description="Rate as decimal fraction, e.g. 0.04 for 4%",
+    )
+    descripcion: str = Field(..., min_length=1, max_length=255)
+    norma_referencia: str = Field(..., min_length=1, max_length=128)
+    vigente_desde: str = Field(
+        ...,
+        description="Effective date ISO format YYYY-MM-DD",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )

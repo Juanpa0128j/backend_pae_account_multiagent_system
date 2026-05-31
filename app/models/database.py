@@ -26,6 +26,7 @@ from sqlalchemy import (
     String,
     Numeric,
     DateTime,
+    Date,
     Enum,
     Text,
     Integer,
@@ -1042,6 +1043,55 @@ class TaxConcept(Base):
             f"<TaxConcept(code={self.code}, renglon_350={self.renglon_350}, "
             f"aplica_a={self.aplica_a}, categoria={self.categoria})>"
         )
+
+
+class NationalRate(Base):
+    """
+    Configurable Colombian statutory tax rates.
+
+    Replaces the module-level constants in settings.py (_TASA_RETEFUENTE_*,
+    tasa_renta). The /setup endpoint reads from this table so rate changes
+    (e.g., legislative amendments) can be applied via settings UI without
+    a code deploy.
+
+    Seeded by Alembic migration b8c9d0e1f2a3. Codes are stable identifiers:
+      'retefuente_servicios'     — Art. 392 ET
+      'retefuente_bienes'        — Art. 401 ET
+      'retefuente_arrendamiento' — Art. 401 ET
+      'renta_general'            — Art. 240 ET, L.2277/2022
+    """
+
+    __tablename__ = "national_rates"
+
+    code = Column(
+        String(64),
+        primary_key=True,
+        comment="Stable identifier, e.g. 'retefuente_servicios'",
+    )
+    value = Column(
+        Numeric(8, 6),
+        nullable=False,
+        comment="Rate as decimal fraction, e.g. 0.04 for 4%",
+    )
+    descripcion = Column(String(255), nullable=False)
+    norma_referencia = Column(
+        String(128),
+        nullable=False,
+        comment="Legal citation, e.g. 'Art. 392 ET'",
+    )
+    vigente_desde = Column(
+        Date,
+        nullable=False,
+        comment="Effective date of this rate",
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<NationalRate(code={self.code!r}, value={self.value})>"
 
 
 class PerdidaFiscalAcumulada(Base):
