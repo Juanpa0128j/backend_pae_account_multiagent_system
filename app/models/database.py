@@ -1254,3 +1254,73 @@ class UserCompany(Base):
 
     def __repr__(self):
         return f"<UserCompany(user_id={self.user_id}, company_nit={self.company_nit})>"
+
+
+class CompanyPucConfig(Base):
+    """
+    Per-company PUC (Chart of Accounts) configuration.
+
+    OPT-OUT model: Companies start with full active PUC catalog. A row with
+    is_active=False deactivates an account for that company. No row = active.
+    custom_nombre allows company-specific account labels.
+    """
+
+    __tablename__ = "company_puc_config"
+
+    company_nit = Column(
+        String(20),
+        ForeignKey("company_settings.nit", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    cuenta_codigo = Column(
+        String(10), ForeignKey("cuentas_puc.codigo"), primary_key=True
+    )
+    is_active = Column(Boolean, default=True, nullable=False)
+    custom_nombre = Column(String(255), nullable=True)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    company = relationship("CompanySettings")
+    cuenta = relationship("CuentaPUC")
+
+    def __repr__(self):
+        return (
+            f"<CompanyPucConfig(nit={self.company_nit}, codigo={self.cuenta_codigo}, "
+            f"is_active={self.is_active})>"
+        )
+
+
+class CompanyRateOverride(Base):
+    """
+    Per-company tax rate overrides.
+
+    Layers on top of national_rates. company_nit + rate_code composite PK.
+    A row here means this company uses a custom value for this rate instead
+    of the national default. No row = use national_rates value.
+    """
+
+    __tablename__ = "company_rate_overrides"
+
+    company_nit = Column(
+        String(20),
+        ForeignKey("company_settings.nit", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    rate_code = Column(String(64), primary_key=True)
+    value = Column(Numeric(8, 6), nullable=False)
+    norma_referencia = Column(String(128), nullable=True)
+    vigente_desde = Column(Date, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    company = relationship("CompanySettings")
+
+    def __repr__(self):
+        return (
+            f"<CompanyRateOverride(nit={self.company_nit}, "
+            f"code={self.rate_code}, value={self.value})>"
+        )

@@ -1043,6 +1043,8 @@ async def get_tax_constants(
     return TaxConstantsResponse(
         uvt=data["uvt"],
         base_minima=data["base_minima"],
+        tarifas_renta=data["tarifas_renta"],
+        tax_concepts=data["tax_concepts"],
     )
 
 

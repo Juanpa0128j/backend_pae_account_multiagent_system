@@ -35,6 +35,8 @@ class TestGetTaxConstants:
             "base_minima": [
                 {"concepto": "retefuente_servicios", "uvt_units": "4.00", "year": 2026},
             ],
+            "tarifas_renta": [],
+            "tax_concepts": [],
         }
         with patch("app.services.db_service.list_tax_constants", return_value=expected):
             response = client.get("/api/v1/tax/constants?year=2026")
@@ -52,7 +54,12 @@ class TestGetTaxConstants:
         client, mock_db = client_with_db
         with patch(
             "app.services.db_service.list_tax_constants",
-            return_value={"uvt": None, "base_minima": []},
+            return_value={
+                "uvt": None,
+                "base_minima": [],
+                "tarifas_renta": [],
+                "tax_concepts": [],
+            },
         ):
             response = client.get("/api/v1/tax/constants?year=2020")
         assert response.status_code == 200

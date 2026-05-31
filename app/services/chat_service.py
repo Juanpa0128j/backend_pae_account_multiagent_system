@@ -456,9 +456,9 @@ def gather_financial_data(
         )
 
         if intent_name == "balance":
-            from app.agents.reportero_agent import _build_balance
+            from app.services.report_builders.balance import build_balance
 
-            data = _build_balance(db, params, db_service)
+            data = build_balance(db, params, db_service)
             title = "Balance General"
 
         elif intent_name == "pnl":
@@ -512,7 +512,7 @@ def gather_financial_data(
             title = "Cuentas con Mayor Movimiento"
 
         elif intent_name == "ratios":
-            from app.agents.reportero_agent import _compute_ratios
+            from app.services.report_builders.analysis import _compute_ratios
 
             if request.start_date is not None:
                 balance = db_service.get_balance_sheet_for_period(

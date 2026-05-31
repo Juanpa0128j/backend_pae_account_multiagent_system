@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
@@ -375,6 +377,8 @@ class TaxConstantsResponse(BaseModel):
 
     uvt: Optional[UvtResponse] = None
     base_minima: List[BaseMinimaItem] = Field(default_factory=list)
+    tarifas_renta: List[TarifaRentaResponse] = Field(default_factory=list)
+    tax_concepts: List[TaxConceptResponse] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -743,6 +747,60 @@ class NationalRateUpdateRequest(BaseModel):
     )
     descripcion: str = Field(..., min_length=1, max_length=255)
     norma_referencia: str = Field(..., min_length=1, max_length=128)
+    vigente_desde: str = Field(
+        ...,
+        description="Effective date ISO format YYYY-MM-DD",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
+
+
+# ── Company-scoped PUC and Rate Override schemas ────────────────────────────────
+
+
+class CompanyPucEntryResponse(BaseModel):
+    """Single PUC account with per-company activation status."""
+
+    codigo: str
+    nombre: str
+    clase: int
+    naturaleza: str
+    activa: bool  # Global activa flag
+    is_active_for_company: bool  # Effective for this company
+    custom_nombre: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class CompanyPucToggleRequest(BaseModel):
+    """Request body for PUT /api/v1/settings/company/{nit}/puc/{codigo}."""
+
+    is_active: bool
+    custom_nombre: Optional[str] = None
+
+
+class EffectiveRateResponse(BaseModel):
+    """Single effective rate (national + company override)."""
+
+    code: str
+    value: float
+    descripcion: str
+    norma_referencia: str
+    vigente_desde: str  # ISO date string
+    overridden: bool = False  # True if company has an override
+
+    model_config = {"from_attributes": True}
+
+
+class CompanyRateOverrideRequest(BaseModel):
+    """Request body for PUT /api/v1/settings/company/{nit}/rates/{code}."""
+
+    value: float = Field(
+        ...,
+        gt=0,
+        le=1.0,
+        description="Rate as decimal fraction, e.g. 0.04 for 4%",
+    )
+    norma_referencia: Optional[str] = Field(None, max_length=128)
     vigente_desde: str = Field(
         ...,
         description="Effective date ISO format YYYY-MM-DD",

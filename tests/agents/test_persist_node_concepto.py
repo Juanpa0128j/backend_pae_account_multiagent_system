@@ -71,7 +71,7 @@ def test_concepto_pes_from_descripcion():
             None,
             descripcion="Servicio digital plataforma streaming",
         )
-        == "pes_servicios_digitales"
+        == "pes_svcs_dig"
     )
 
 

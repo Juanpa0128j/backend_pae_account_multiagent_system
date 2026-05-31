@@ -196,10 +196,17 @@ db-migrate:
 
 seed:
 	uv run python scripts/seed_puc.py
+	uv run python scripts/seed_tax_concepts.py
+	uv run python scripts/seed_tarifas_renta.py
+	uv run python scripts/seed_tax_constants.py
 	uv run python scripts/populate_rag.py
 
 dev-bootstrap: db-up db-migrate seed
 	@echo ">>> Dev environment ready (DB up + migrations applied + PUC/RAG seeded)."
+	@echo ">>> REMINDER: For production, also run the seed scripts against the prod DB:"
+	@echo ">>>   DATABASE_URL=<prod> uv run python scripts/seed_tax_concepts.py"
+	@echo ">>>   DATABASE_URL=<prod> uv run python scripts/seed_tarifas_renta.py"
+	@echo ">>>   DATABASE_URL=<prod> uv run python scripts/seed_tax_constants.py"
 
 db-logs:
 	docker compose -f docker-compose.dev.yml logs -f db

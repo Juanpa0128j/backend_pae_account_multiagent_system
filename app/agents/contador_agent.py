@@ -279,7 +279,7 @@ def _load_company_context(company_nit: str | None) -> dict | None:
                 pass
 
 
-def _load_puc_ingresos_catalog() -> list[dict]:
+def _load_puc_ingresos_catalog(company_nit: str | None = None) -> list[dict]:
     """Return the FULL PUC catalog (all classes) as ``{codigo, descripcion}``.
 
     Historical name kept for callers; the helper now returns every row of
@@ -289,11 +289,13 @@ def _load_puc_ingresos_catalog() -> list[dict]:
     subdivisions (e.g. ``11200501`` Bancolombia ahorros) that are not in the
     seeded catalog, and the persist step then fails with ``PUC code not found``.
 
+    When company_nit is provided, returns only accounts active for that company
+    (company-scoped catalog). Falls back to global active accounts when None.
     Empty list when the catalog table is unreachable so the prompt still builds.
     """
     try:
         from app.core.database import SessionLocal
-        from app.models.database import CuentaPUC
+        from app import services
     except Exception as imp_err:
         logger.warning("contador: puc catalog import failed: %s", imp_err)
         return []
@@ -301,7 +303,13 @@ def _load_puc_ingresos_catalog() -> list[dict]:
     db = None
     try:
         db = SessionLocal()
-        rows = db.query(CuentaPUC).order_by(CuentaPUC.codigo).all()
+        # Company-scoped catalog when nit given (main); otherwise global. No
+        # class filter — HEAD intent is to expose the FULL catalog so the LLM
+        # cannot invent codes outside class 4.
+        if company_nit:
+            rows = services.db_service.get_puc_for_company(db, company_nit)
+        else:
+            rows = services.db_service.get_all_puc(db)
         return [
             {"codigo": str(r.codigo), "descripcion": str(r.descripcion or "")}
             for r in rows
@@ -559,7 +567,7 @@ def contador_node(state: AgentState) -> AgentState:
                         if company_nit:
                             break
             company_context = _load_company_context(company_nit)
-            puc_ingresos_catalog = _load_puc_ingresos_catalog()
+            puc_ingresos_catalog = _load_puc_ingresos_catalog(company_nit)
         elif is_nomina or is_cesantias:
             # For payroll documents (nomina, liquidacion_cesantias), load company context
             # to understand cost centers, departamentos, and labor regime.

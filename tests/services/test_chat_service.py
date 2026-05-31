@@ -88,7 +88,10 @@ class TestGatherFinancialData:
     """Tests for data gathering from reportero builders."""
 
     @patch("app.core.database.SessionLocal")
-    @patch("app.agents.reportero_agent._build_balance", return_value=_MOCK_BALANCE_DATA)
+    @patch(
+        "app.services.report_builders.balance.build_balance",
+        return_value=_MOCK_BALANCE_DATA,
+    )
     def test_gather_balance_data(self, mock_build, mock_session_cls):
         from app.services.chat_service import gather_financial_data
 
@@ -131,7 +134,8 @@ class TestGatherRatiosPeriodScoped:
 
     @patch("app.core.database.SessionLocal")
     @patch(
-        "app.agents.reportero_agent._compute_ratios", return_value={"margen_neto": 1.0}
+        "app.services.report_builders.analysis._compute_ratios",
+        return_value={"margen_neto": 1.0},
     )
     @patch("app.services.db_service.get_general_ledger", return_value=[])
     @patch("app.services.db_service.get_balance_sheet_for_period", return_value={})
@@ -163,7 +167,8 @@ class TestGatherRatiosPeriodScoped:
 
     @patch("app.core.database.SessionLocal")
     @patch(
-        "app.agents.reportero_agent._compute_ratios", return_value={"margen_neto": 1.0}
+        "app.services.report_builders.analysis._compute_ratios",
+        return_value={"margen_neto": 1.0},
     )
     @patch("app.services.db_service.get_general_ledger", return_value=[])
     @patch("app.services.db_service.get_balance_sheet", return_value={})
@@ -195,7 +200,7 @@ class TestGatherFinancialDataViaB:
         return_value="work_with_existing",
     )
     @patch("app.services.via_b_service.get_balance")
-    @patch("app.agents.reportero_agent._build_balance")
+    @patch("app.services.report_builders.balance.build_balance")
     def test_balance_intent_uses_via_b_service_not_reportero(
         self,
         mock_via_a_balance,

@@ -34,7 +34,7 @@ class TestSinglePassBypass:
         state = _state_after_first_audit("extracto_bancario", findings)
 
         with patch(
-            "app.agents.supervisor.validate_auditor_output_node",
+            "app.agents.routing.process_router.validate_auditor_output_node",
             side_effect=lambda s: s,
         ):
             result = supervisor_node(state)
@@ -57,7 +57,7 @@ class TestSinglePassBypass:
         state = _state_after_first_audit("factura_venta", findings)
 
         with patch(
-            "app.agents.supervisor.validate_auditor_output_node",
+            "app.agents.routing.process_router.validate_auditor_output_node",
             side_effect=lambda s: s,
         ):
             result = supervisor_node(state)
@@ -79,7 +79,7 @@ class TestSinglePassBypass:
         state = _state_after_first_audit("extracto_bancario", findings)
 
         with patch(
-            "app.agents.supervisor.validate_auditor_output_node",
+            "app.agents.routing.process_router.validate_auditor_output_node",
             side_effect=lambda s: s,
         ):
             result = supervisor_node(state)
