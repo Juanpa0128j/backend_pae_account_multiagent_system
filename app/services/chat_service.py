@@ -451,6 +451,9 @@ def gather_financial_data(
         data: dict | None = None
         card_type = intent_name
         title = ""
+        _ratios_balance_for_llm: dict | None = (
+            None  # set in ratios branch; used to enrich LLM context
+        )
 
         if intent_name == "balance":
             from app.agents.reportero_agent import _build_balance
@@ -515,6 +518,10 @@ def gather_financial_data(
             ledger = db_service.get_general_ledger(db, company_nit=request.company_nit)
             data = _compute_ratios(ledger, balance)
             title = "Ratios Financieros"
+            # Stash raw balance so we can enrich the LLM context below. Without
+            # the raw values (activos, ingresos, utilidad) the LLM hallucinates
+            # ratio percentages that contradict the card.
+            _ratios_balance_for_llm = balance
 
         elif intent_name == "dashboard":
             balance = db_service.get_balance_sheet(db, company_nit=request.company_nit)
@@ -527,6 +534,13 @@ def gather_financial_data(
         cards: list[FinancialDataCard] = []
         if data:
             cards.append(FinancialDataCard(card_type=card_type, title=title, data=data))
+
+        # For ratios: enrich the LLM-facing dict with the raw balance so the
+        # model can cite real values instead of inventing percentages from the
+        # system-prompt formula guidance. Card already captured the flat dict
+        # above, so its rendering is unaffected.
+        if intent_name == "ratios" and data and _ratios_balance_for_llm is not None:
+            data = {"balance_summary": _ratios_balance_for_llm, "ratios": data}
 
         return data, cards
 
@@ -650,6 +664,10 @@ def _gather_via_b(
     data: dict | None = None
     title = ""
     card_type = intent_name
+    # Set in the ratios branch below; used to enrich the LLM-facing dict with
+    # the raw balance/pnl so the model can cite concrete values instead of
+    # inventing percentages from the formula guidance in the system prompt.
+    _ratios_extra_for_llm: dict | None = None
 
     if intent_name == "balance":
         data = via_b_service.get_balance(db, company_nit, period_end)
@@ -675,6 +693,10 @@ def _gather_via_b(
         if balance or pnl:
             data = _compute_ratios_via_b(balance, pnl)
             title = "Ratios Financieros (Vía B)"
+            _ratios_extra_for_llm = {
+                "balance_summary": balance,
+                "estado_resultados": pnl,
+            }
 
     elif intent_name in ("dashboard", "analysis"):
         # When a specific period is requested, the per-statement readers
@@ -724,10 +746,23 @@ def _gather_via_b(
         )
         return empty_card.data, [empty_card]
 
-    enriched = {**data, "pathway": "work_with_existing"}
-    return enriched, [
-        FinancialDataCard(card_type=card_type, title=title, data=enriched)
-    ]
+    # Card always sees the flat dict (so RatiosCard etc. render unchanged).
+    card_payload = {**data, "pathway": "work_with_existing"}
+    card = FinancialDataCard(card_type=card_type, title=title, data=card_payload)
+
+    # For ratios: enrich the LLM-facing dict with raw balance + estado_resultados
+    # so the model cites concrete values instead of inventing percentages from
+    # the formula guidance. Card already captured the flat shape above.
+    if intent_name == "ratios" and _ratios_extra_for_llm is not None:
+        enriched = {
+            **_ratios_extra_for_llm,
+            "ratios": data,
+            "pathway": "work_with_existing",
+        }
+    else:
+        enriched = card_payload
+
+    return enriched, [card]
 
 
 def _compute_ratios_via_b(balance: dict | None, pnl: dict | None) -> dict:

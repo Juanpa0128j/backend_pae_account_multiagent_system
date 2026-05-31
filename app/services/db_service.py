@@ -1900,6 +1900,9 @@ def get_monthly_trend(
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=months * 31)
 
+    # Join + status filter so charts only reflect POSTED transactions.
+    # Without this, PENDING_REVIEW and REJECTED journal lines leak into the
+    # monthly Ingresos/Gastos trend and the KPI cards that consume it.
     query = (
         db.query(
             extract("year", JournalEntryLine.fecha).label("yr"),
@@ -1907,7 +1910,12 @@ def get_monthly_trend(
             func.sum(JournalEntryLine.debito).label("total_debit"),
             func.sum(JournalEntryLine.credito).label("total_credit"),
         )
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
         .filter(
+            TransactionPosted.status == TransactionStatus.POSTED,
             JournalEntryLine.cuenta_puc.startswith(account_prefix),
             JournalEntryLine.fecha >= cutoff,
         )
