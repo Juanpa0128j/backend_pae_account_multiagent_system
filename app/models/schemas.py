@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
@@ -375,6 +377,8 @@ class TaxConstantsResponse(BaseModel):
 
     uvt: Optional[UvtResponse] = None
     base_minima: List[BaseMinimaItem] = Field(default_factory=list)
+    tarifas_renta: List[TarifaRentaResponse] = Field(default_factory=list)
+    tax_concepts: List[TaxConceptResponse] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

@@ -233,9 +233,9 @@ def infer_concepto_retencion(
         if "publicidad" in desc_lower and (
             "online" in desc_lower or "digital" in desc_lower
         ):
-            return "pes_publicidad_online"
+            return "pes_pub_online"
         if "servicio digital" in desc_lower or "plataforma digital" in desc_lower:
-            return "pes_servicios_digitales"
+            return "pes_svcs_dig"
         return None
 
     # Map (categoria, tipo_persona) → concept code.
@@ -244,7 +244,7 @@ def infer_concepto_retencion(
         ("compras", TIPO_PERSONA_PJ): "compras_pj",
         ("compras", TIPO_PERSONA_PN): "compras_pn",
         ("servicios", TIPO_PERSONA_PJ): "servicios_pj",
-        ("servicios", TIPO_PERSONA_PN): "servicios_pn_decl",
+        ("servicios", TIPO_PERSONA_PN): "serv_pn_decl",
         ("honorarios", TIPO_PERSONA_PJ): "honorarios_pj",
         ("honorarios", TIPO_PERSONA_PN): "honorarios_pn",
         ("arrendamiento", TIPO_PERSONA_PJ): "arrendamiento_pj",

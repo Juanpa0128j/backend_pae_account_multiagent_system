@@ -60,7 +60,7 @@ def _seed_standard_concepts(db):
     _seed_concept(db, "compras_pn", "27", aplica_a="PN", categoria="compras")
     _seed_concept(db, "honorarios_pj", "32", aplica_a="PJ", categoria="honorarios")
     _seed_concept(db, "hidrocarburos", "40", aplica_a="AMB", categoria="hidrocarburos")
-    _seed_concept(db, "pes_servicios_digitales", "65", aplica_a="AMB", categoria="pes")
+    _seed_concept(db, "pes_svcs_dig", "65", aplica_a="AMB", categoria="pes")
     _seed_concept(db, "salarios_383", "50", aplica_a="PN", categoria="salarios")
     _seed_concept(db, "reteica", "76", aplica_a="AMB", categoria="ica")
 
@@ -191,7 +191,7 @@ def test_f350_hidrocarburos_renglon_40_not_25(db):
 
 def test_f350_pes_renglon_65(db):
     _seed_standard_concepts(db)
-    _post_retencion(db, "t1", "pes_servicios_digitales", "300")
+    _post_retencion(db, "t1", "pes_svcs_dig", "300")
     fields, _ = _build_f350(
         _ledger_2365_2368(retefuente=300.0),
         _settings(),

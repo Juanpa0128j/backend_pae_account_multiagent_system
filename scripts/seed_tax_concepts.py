@@ -61,7 +61,7 @@ ROWS = [
         "Art. 392 ET",
     ),
     (
-        "servicios_pn_decl",
+        "serv_pn_decl",
         "Servicios — personas naturales declarantes",
         "29",
         "PN",
@@ -71,7 +71,7 @@ ROWS = [
         "Art. 392 ET",
     ),
     (
-        "servicios_pn_no_decl",
+        "serv_pn_no_decl",
         "Servicios — personas naturales no declarantes",
         "30",
         "PN",
@@ -155,7 +155,7 @@ ROWS = [
     ),
     # ── Presencia Económica Significativa (Art. 20-3 ET, Ley 2277/2022) ──────
     (
-        "pes_servicios_digitales",
+        "pes_svcs_dig",
         "PES — servicios digitales",
         "65",
         "AMB",
@@ -165,7 +165,7 @@ ROWS = [
         "Art. 20-3 ET",
     ),
     (
-        "pes_publicidad_online",
+        "pes_pub_online",
         "PES — publicidad online",
         "66",
         "AMB",

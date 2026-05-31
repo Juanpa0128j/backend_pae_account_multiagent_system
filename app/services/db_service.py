@@ -2111,12 +2111,14 @@ def get_base_minima(
 
 
 def list_tax_constants(db: Session, year: int) -> dict:
-    """Return UVT and base_minima constants for given year.
+    """Return UVT, base_minima, tarifas_renta and tax_concepts for given year.
 
     Shape:
         {
             "uvt": {"year": int, "value": str, "referencia_normativa": str | None},
-            "base_minima": [{"concepto": str, "uvt_units": str, "year": int}, ...]
+            "base_minima": [{"concepto": str, "uvt_units": str, "year": int}, ...],
+            "tarifas_renta": [dict, ...],
+            "tax_concepts": [dict, ...],
         }
     """
     uvt_row = db.query(UvtValue).filter(UvtValue.year == year).first()
@@ -2144,6 +2146,8 @@ def list_tax_constants(db: Session, year: int) -> dict:
             }
             for r in bm_rows
         ],
+        "tarifas_renta": list_tarifas_renta(db, year=year),
+        "tax_concepts": list_tax_concepts(db, activo=True),
     }
 
 
