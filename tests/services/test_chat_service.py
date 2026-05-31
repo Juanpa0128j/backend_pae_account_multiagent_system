@@ -113,6 +113,79 @@ class TestGatherFinancialData:
         assert cards == []
 
 
+_MOCK_INTENT_RATIOS = {
+    "intent": "ratios",
+    "needs_data": True,
+    "rag_query": None,
+    "explanation": "Ratios",
+}
+
+
+class TestGatherRatiosPeriodScoped:
+    """Bug fix Issue 2 — ratios must respect period filters from the request.
+
+    Before the fix, _gather_ratios called get_balance_sheet/get_general_ledger
+    without start/end_date, yielding all-time cumulative numbers that diverged
+    from the period-scoped figures used by intent=analysis.
+    """
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.agents.reportero_agent._compute_ratios", return_value={"margen_neto": 1.0}
+    )
+    @patch("app.services.db_service.get_general_ledger", return_value=[])
+    @patch("app.services.db_service.get_balance_sheet_for_period", return_value={})
+    @patch("app.services.db_service.get_balance_sheet")
+    def test_ratios_with_period_calls_for_period_variant(
+        self,
+        mock_balance_all,
+        mock_balance_period,
+        mock_ledger,
+        mock_ratios,
+        mock_session_cls,
+    ):
+        import datetime as dt
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+        request = _make_request(
+            start_date=dt.date(2026, 1, 1),
+            end_date=dt.date(2026, 1, 31),
+        )
+        gather_financial_data(_MOCK_INTENT_RATIOS, request)
+
+        mock_balance_period.assert_called_once()
+        mock_balance_all.assert_not_called()
+
+        kwargs = mock_ledger.call_args.kwargs
+        assert kwargs.get("start_date") == dt.date(2026, 1, 1)
+        assert kwargs.get("end_date") == dt.date(2026, 1, 31)
+
+    @patch("app.core.database.SessionLocal")
+    @patch(
+        "app.agents.reportero_agent._compute_ratios", return_value={"margen_neto": 1.0}
+    )
+    @patch("app.services.db_service.get_general_ledger", return_value=[])
+    @patch("app.services.db_service.get_balance_sheet", return_value={})
+    @patch("app.services.db_service.get_balance_sheet_for_period")
+    def test_ratios_without_period_uses_cutoff_variant(
+        self,
+        mock_balance_period,
+        mock_balance_all,
+        mock_ledger,
+        mock_ratios,
+        mock_session_cls,
+    ):
+        from app.services.chat_service import gather_financial_data
+
+        mock_session_cls.return_value = MagicMock()
+        request = _make_request()
+        gather_financial_data(_MOCK_INTENT_RATIOS, request)
+
+        mock_balance_all.assert_called_once()
+        mock_balance_period.assert_not_called()
+
+
 class TestGatherFinancialDataViaB:
     """Pathway branching: Vía B companies must read from ``via_b_service``."""
 

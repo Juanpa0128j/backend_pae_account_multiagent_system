@@ -24,6 +24,7 @@ from app.agents.validation_rules import (
     MAX_AUDITOR_RETRIES,
     MAX_CONTADOR_RETRIES,
     RETRY_BUDGETS,
+    SINGLE_PASS_DOC_TYPES,
     _hydrate_contador_account_names,
     _missing_puc_codes,
     _normalize_contador_puc_codes,
@@ -743,6 +744,10 @@ def supervisor_node(state: AgentState) -> AgentState:
                     if not f.fixable and f.severity == Severity.BLOCKER
                 ]
 
+                classification = state.get("document_classification") or {}
+                current_doc_type = str(classification.get("doc_type") or "")
+                is_single_pass = current_doc_type in SINGLE_PASS_DOC_TYPES
+
                 if blockers:
                     # Unfixable BLOCKER — cannot auto-recover, pause for HITL review.
                     if state.get("unfixable_findings") is None:
@@ -765,6 +770,30 @@ def supervisor_node(state: AgentState) -> AgentState:
                             "next_agent": "audit_review_terminal",
                             "reason": "unfixable_blockers",
                             "rule_ids": rule_ids,
+                        },
+                    )
+
+                elif is_single_pass:
+                    # Bank statements: bypass audit retry loop. No IVA/retention
+                    # and partida_doble is trivial — extra iterations only add
+                    # latency. Persist with audit warnings for human review.
+                    state["current_agent"] = "db_persist"
+                    state["has_warnings"] = True
+                    logger.info(
+                        "Supervisor: %s — bypassing audit loop (single-pass doc), "
+                        "persisting with %d non-blocker finding(s)",
+                        current_doc_type,
+                        len(findings),
+                    )
+                    append_log(
+                        state,
+                        "supervisor",
+                        "routing_complete",
+                        {
+                            "next_agent": "db_persist",
+                            "reason": "single_pass_doc_type",
+                            "doc_type": current_doc_type,
+                            "non_blocker_findings": len(findings),
                         },
                     )
 

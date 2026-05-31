@@ -371,12 +371,25 @@ class NotaDebitoContent(ContentBase):
 
 class BankMovement(BaseModel):
     fecha: str = Field(description="Date YYYY-MM-DD")
-    descripcion: str = Field(description="Movement description")
+    descripcion: Optional[str] = Field(
+        default="",
+        description=(
+            "Movement description. Empty string is allowed for footer/closing "
+            "rows (e.g. 'FIN ESTADO DE CUENTA') that the LLM may include — the "
+            "row will still validate so the rest of the statement persists."
+        ),
+    )
     referencia: Optional[str] = Field(None, description="Reference number")
     tipo: Optional[str] = Field(None, description="debito | credito")
     debito: Optional[Decimal] = Field(None)
     credito: Optional[Decimal] = Field(None)
     saldo: Optional[Decimal] = Field(None, description="Running balance after movement")
+
+    @field_validator("descripcion", mode="before")
+    @classmethod
+    def coerce_description(cls, v):
+        """Accept None / empty as legitimate (closing rows, partial OCR)."""
+        return v if v else ""
 
     @field_validator("debito", "credito", "saldo", mode="before")
     @classmethod

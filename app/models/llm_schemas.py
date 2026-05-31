@@ -601,6 +601,7 @@ REGLA ANTI-HALLUCINATION: el header "Factura Electrónica de Venta" describe el 
 Reporta direction_signal Y emisor_extracted obligatoriamente cuando doc_type sea factura_venta o factura_compra.
 - Prefijo "DS"/"DM" en el número o proveedor "No responsable de IVA" o "Generado por: Solución Gratuita DIAN" → documento_soporte
 - Prefijo "CE" o texto "Comprobante de Egreso" → comprobante_egreso
+- Texto "PayZen" / "Powered by Lyra" / "PSE: $... COP Aprobada" / cualquier comprobante de pasarela de pago electrónico (PSE, ACH, transferencia bancaria con estado "Aprobada") sin factura DIAN asociada → comprobante_egreso (es el soporte del pago a un tercero — proveedor financiero, fiduciaria, etc.).
 - Prefijo "RC" o texto "Recibo de Caja" → recibo_caja
 - Movimientos de cuentas 2408xx (IVA) → auxiliar_iva
 - Cuentas de impuestos específicos (retención, ICA) en libro auxiliar → auxiliar_impuesto

@@ -514,8 +514,25 @@ def gather_financial_data(
         elif intent_name == "ratios":
             from app.agents.reportero_agent import _compute_ratios
 
-            balance = db_service.get_balance_sheet(db, company_nit=request.company_nit)
-            ledger = db_service.get_general_ledger(db, company_nit=request.company_nit)
+            if request.start_date is not None:
+                balance = db_service.get_balance_sheet_for_period(
+                    db,
+                    start_date=request.start_date,
+                    end_date=request.end_date or request.start_date,
+                    company_nit=request.company_nit,
+                )
+            else:
+                balance = db_service.get_balance_sheet(
+                    db,
+                    cutoff_date=request.end_date,
+                    company_nit=request.company_nit,
+                )
+            ledger = db_service.get_general_ledger(
+                db,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                company_nit=request.company_nit,
+            )
             data = _compute_ratios(ledger, balance)
             title = "Ratios Financieros"
             # Stash raw balance so we can enrich the LLM context below. Without

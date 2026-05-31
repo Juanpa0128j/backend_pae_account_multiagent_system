@@ -340,12 +340,17 @@ def _linear_regression_predict(
 ) -> list[float]:
     """Simple linear regression on data_points, predict next n_predict values.
 
-    Returns empty list if fewer than 2 data points.
+    Returns empty list if zero data points. With a single point, projects flat
+    (carry forward) since slope is undefined — better than returning empty,
+    which would collapse the LLM-facing projection to $0 and confuse the user.
     Set allow_negative=True for metrics that can go below zero (e.g. cash flow).
     """
     n = len(data_points)
-    if n < 2:
+    if n == 0:
         return []
+    if n == 1:
+        raw = [data_points[0]] * n_predict
+        return raw if allow_negative else [max(0, v) for v in raw]
     x = list(range(n))
     x_mean = sum(x) / n
     y_mean = sum(data_points) / n

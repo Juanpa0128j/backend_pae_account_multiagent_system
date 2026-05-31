@@ -574,9 +574,19 @@ def ingest_node(state: AgentState) -> AgentState:
             append_log(state, "ingesta", "node_error", {"error": state["error"]})
             return state
 
-        # All document types now return rich structured content objects via
-        # dedicated extraction methods. raw_transactions is always empty here;
-        # the contador agent derives transactions later from interpreted_data.
+        if doc_type == "extracto_bancario":
+            from app.services.bank_statement_repair import repair_bank_movements
+
+            interpreted_data, repair_logs = repair_bank_movements(interpreted_data)
+            state["interpreted_data"] = interpreted_data
+            if repair_logs:
+                append_log(
+                    state,
+                    "ingesta",
+                    "bank_statement_repaired",
+                    {"repairs": repair_logs, "count": len(repair_logs)},
+                )
+
         state["raw_transactions"] = []
         data_summary = {
             "doc_type": doc_type,

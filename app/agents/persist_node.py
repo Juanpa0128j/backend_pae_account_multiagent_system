@@ -715,10 +715,16 @@ def _run_persist(state: AgentState) -> AgentState:
                 puc_descripcion = as_str(tx_data.get("cuenta_nombre"), "")
 
             puc_record = db_service.validate_puc_exists(db, cuenta_puc)
-            if not puc_record and len(cuenta_puc) > 4:
+            if not puc_record and len(cuenta_puc) > 2:
                 # ERP auxiliary codes (7-12 digits) are company-specific subdivisions.
-                # Walk up the hierarchy (6 → 5 → 4 digits) to find the parent account.
-                for parent_len in (6, 5, 4):
+                # Walk up the hierarchy (6 → 5 → 4 → 3 → 2 digits) to find the
+                # closest parent in the official PUC catalog. The 3/2-digit
+                # levels catch tenants whose auxiliaries belong to subgroups
+                # not seeded in our 91-row catalog (e.g. ``1120*`` cuentas de
+                # ahorro).
+                for parent_len in (6, 5, 4, 3, 2):
+                    if parent_len >= len(cuenta_puc):
+                        continue
                     parent_code = cuenta_puc[:parent_len]
                     parent_record = db_service.validate_puc_exists(db, parent_code)
                     if parent_record:
