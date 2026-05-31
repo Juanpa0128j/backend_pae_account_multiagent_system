@@ -39,6 +39,27 @@ class ClassificationReviewResponse(BaseModel):
     wrong_upload_area: bool = False
 
 
+class PeriodReviewResponse(BaseModel):
+    """HITL surface for the period & periodicity extracted from a Vía B upload.
+
+    Same flavour as ``ClassificationReviewResponse`` but for the period range
+    and frequency. Surfaced on ``IngestDetailResponse`` when the extraction
+    confidence is low, the period collapsed to a single day, or the frequency
+    had to be inferred from the span. The accountant can then PATCH the
+    ``FinancialStatement`` row's period through ``PATCH /ingest/{id}/period``.
+    """
+
+    extracted_period_start: Optional[str] = None  # ISO YYYY-MM-DD
+    extracted_period_end: Optional[str] = None
+    extracted_periodicidad: Optional[str] = None  # 'mensual' | 'trimestral' | 'anual'
+    extraction_confidence: Optional[float] = None  # 0..1 if available
+    inferred_from_span: bool = False  # True when periodicidad came from fallback
+    requires_review: bool = False
+    review_reason: Optional[str] = (
+        None  # 'low_confidence' | 'collapsed_range' | 'span_inferred' | 'annual_high_value'
+    )
+
+
 class IngestDetailResponse(BaseModel):
     ingest_id: str
     file_name: str
@@ -57,6 +78,7 @@ class IngestDetailResponse(BaseModel):
     has_warnings: bool = False
     trace_url: Optional[str] = None
     classification_review: Optional[ClassificationReviewResponse] = None
+    period_review: Optional[PeriodReviewResponse] = None
     file_names: Optional[List[str]] = None
     multi_file_mode: Optional[str] = None
     current_file_index: Optional[int] = None
@@ -66,6 +88,18 @@ class ClassificationReviewUpdateRequest(BaseModel):
     doc_type: str
     confirmed: bool = True
     parser_mode: Optional[str] = None
+
+
+class PeriodReviewUpdateRequest(BaseModel):
+    """Body for ``PATCH /api/v1/ingest/{id}/period`` — HITL override of the
+    LLM-extracted period after human review (Ley 43/1990: el contador asume
+    responsabilidad sobre la cifra final)."""
+
+    period_start: str  # ISO YYYY-MM-DD
+    period_end: str  # ISO YYYY-MM-DD
+    periodicidad: Optional[str] = (
+        None  # 'mensual' | 'trimestral' | 'anual' | 'personalizado'
+    )
 
 
 class MergeIngestRequest(BaseModel):
@@ -376,6 +410,49 @@ class PerdidaFiscalUpsertRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# ReteicaTarifa schemas
+# ---------------------------------------------------------------------------
+
+_VALID_CIIU_SECCION = frozenset(
+    {chr(c) for c in range(ord("A"), ord("U") + 1)} | {"general"}
+)
+
+
+class ReteicaTarifaResponse(BaseModel):
+    """Single reteica_tarifas row returned by the API."""
+
+    id: int
+    municipio: str
+    ciiu_seccion: str
+    tasa: float
+    fuente: Optional[str] = None
+    base_minima_uvt: Optional[float] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ReteicaTarifaUpsertRequest(BaseModel):
+    """Request body for PUT /api/v1/tax/reteica-tarifas."""
+
+    municipio: str = Field(..., min_length=1, max_length=100)
+    ciiu_seccion: str = Field(..., description="CIIU section letter A-U or 'general'")
+    tasa: float = Field(
+        ..., gt=0, le=0.1, description="Rate as decimal fraction, e.g. 0.00966"
+    )
+    fuente: Optional[str] = Field(None, max_length=255)
+    base_minima_uvt: Optional[float] = Field(None, ge=0)
+
+    @field_validator("ciiu_seccion")
+    @classmethod
+    def _check_ciiu(cls, v: str) -> str:
+        if v not in _VALID_CIIU_SECCION:
+            raise ValueError(
+                f"ciiu_seccion must be a letter A-U or 'general', got {v!r}"
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
 # TarifaRenta schemas
 # ---------------------------------------------------------------------------
 
@@ -638,3 +715,36 @@ class AjusteFiscalUpsertRequest(BaseModel):
                 f"tipo_diferencia must be one of {sorted(_VALID_AJUSTE_TIPO_DIFERENCIA)}"
             )
         return v
+
+
+# ── NationalRate schemas ──────────────────────────────────────────────────────
+
+
+class NationalRateResponse(BaseModel):
+    """Single national_rates row returned by the API."""
+
+    code: str
+    value: float
+    descripcion: str
+    norma_referencia: str
+    vigente_desde: str  # ISO date string e.g. "2023-01-01"
+
+    model_config = {"from_attributes": True}
+
+
+class NationalRateUpdateRequest(BaseModel):
+    """Request body for PUT /api/v1/settings/national-rates/{code}."""
+
+    value: float = Field(
+        ...,
+        gt=0,
+        le=1.0,
+        description="Rate as decimal fraction, e.g. 0.04 for 4%",
+    )
+    descripcion: str = Field(..., min_length=1, max_length=255)
+    norma_referencia: str = Field(..., min_length=1, max_length=128)
+    vigente_desde: str = Field(
+        ...,
+        description="Effective date ISO format YYYY-MM-DD",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )

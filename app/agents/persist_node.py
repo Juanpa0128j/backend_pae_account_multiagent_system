@@ -1222,6 +1222,27 @@ def _persist_financial_statement(state: AgentState) -> None:
             "balance_general" if doc_type == "balance_general_anterior" else doc_type
         )
 
+        # Periodicity: prefer the LLM-extracted ``periodicidad`` (more accurate
+        # for cases like "año terminado en diciembre" that span only ~300 days);
+        # fall back to inferring from the period span. None when neither is
+        # available — the row stays NULL and HITL flags it for review.
+        from app.services.financial_statement_service import (  # noqa: PLC0415
+            infer_frequency,
+            normalize_periodicidad,
+        )
+
+        frequency = normalize_periodicidad(
+            interpreted.get("periodicidad")
+        ) or infer_frequency(period_start, period_end)
+        if frequency is None and period_start and period_end:
+            logger.warning(
+                "db_persist: could not classify frequency for %s "
+                "(period_start=%s, period_end=%s)",
+                doc_type or "unknown",
+                period_start,
+                period_end,
+            )
+
         # Create FinancialStatement record
         stmt = db_service.create_financial_statement(
             db,
@@ -1232,6 +1253,7 @@ def _persist_financial_statement(state: AgentState) -> None:
             entity_nit=company_nit,
             source_mode="direct",
             data=interpreted,
+            frequency=frequency,
             commit=False,
         )
 

@@ -213,16 +213,84 @@ def test_notes_skip_empty_classes():
 
 
 def test_derive_raises_when_prior_balance_missing():
-    """The pipeline must raise BusinessRuleError when no prior BG exists."""
+    """The pipeline must raise BusinessRuleError when no prior BG/LA exists.
+
+    Inputs are annual so we get past the new annual gate (paso 6) before
+    reaching the prior-balance check.
+    """
     from app.services import financial_statement_service as fss
 
     fake_src = MagicMock()
     fake_src.data = {}
+    fake_src.frequency = "annual"
+    fake_src.period_start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    fake_src.period_end = datetime(2025, 12, 31, tzinfo=timezone.utc)
     with (
         patch.object(fss, "_load_prior_balance", return_value=None),
+        patch.object(fss, "_load_prior_libro_auxiliar", return_value=None),
         patch.object(fss, "_first_level_type_exists", return_value=False),
         patch.object(
             fss.db_service, "get_financial_statements", return_value=[fake_src]
+        ),
+        patch.object(fss, "SessionLocal", return_value=MagicMock()),
+    ):
+        try:
+            fss.derive_financial_statements(
+                company_nit="800999888",
+                period_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                period_end=datetime(2025, 12, 31, tzinfo=timezone.utc),
+            )
+        except fss.BusinessRuleError as exc:
+            assert "período anterior" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("Expected BusinessRuleError when prior BG is missing")
+
+
+def test_derive_raises_when_only_bg_no_er_no_la():
+    """Neither path satisfied — refuses with a normative-citation message."""
+    from app.services import financial_statement_service as fss
+
+    bg = MagicMock()
+    bg.data = {}
+    bg.frequency = "annual"
+    bg.period_start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    bg.period_end = datetime(2025, 12, 31, tzinfo=timezone.utc)
+
+    def _by_type(*_, statement_type=None, **__):
+        # Only the BG query returns rows; ER and LA come back empty.
+        return [bg] if statement_type == "balance_general" else []
+
+    with (
+        patch.object(fss.db_service, "get_financial_statements", side_effect=_by_type),
+        patch.object(fss, "SessionLocal", return_value=MagicMock()),
+    ):
+        try:
+            fss.derive_financial_statements(
+                company_nit="800999888",
+                period_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                period_end=datetime(2025, 12, 31, tzinfo=timezone.utc),
+            )
+        except fss.BusinessRuleError as exc:
+            assert "Balance General + Estado de Resultados" in str(exc)
+            assert "Libro Auxiliar anual" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError(
+                "Expected BusinessRuleError when neither normative path is satisfied"
+            )
+
+
+def test_derive_raises_when_inputs_are_monthly():
+    """Annual gate refuses monthly inputs even when BG+ER both exist."""
+    from app.services import financial_statement_service as fss
+
+    monthly = MagicMock()
+    monthly.data = {}
+    monthly.frequency = "monthly"
+    monthly.period_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    monthly.period_end = datetime(2026, 1, 31, tzinfo=timezone.utc)
+    with (
+        patch.object(
+            fss.db_service, "get_financial_statements", return_value=[monthly]
         ),
         patch.object(fss, "SessionLocal", return_value=MagicMock()),
     ):
@@ -233,9 +301,11 @@ def test_derive_raises_when_prior_balance_missing():
                 period_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
             )
         except fss.BusinessRuleError as exc:
-            assert "período anterior" in str(exc)
+            assert "ANUALES" in str(exc)
         else:  # pragma: no cover
-            raise AssertionError("Expected BusinessRuleError when prior BG is missing")
+            raise AssertionError(
+                "Expected BusinessRuleError when inputs are not annual"
+            )
 
 
 # ─── v4 leaf-based extraction ─────────────────────────────────────────────────

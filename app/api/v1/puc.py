@@ -2,15 +2,16 @@
 PUC (Plan Único de Cuentas) CRUD endpoints.
 
 Endpoints:
-  GET  /api/v1/puc              — list all PUC accounts (with search/include_inactive filters)
-  GET  /api/v1/puc/{codigo}     — get one PUC account
-  POST /api/v1/puc              — create new PUC account
-  PUT  /api/v1/puc/{codigo}     — update existing PUC account
+  GET    /api/v1/puc              — list all PUC accounts (with search/include_inactive filters)
+  GET    /api/v1/puc/{codigo}     — get one PUC account
+  POST   /api/v1/puc              — create new PUC account
+  PUT    /api/v1/puc/{codigo}     — update existing PUC account
+  DELETE /api/v1/puc/{codigo}     — soft-delete (sets activa=False)
 """
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
@@ -90,3 +91,17 @@ def update_puc(
         raise HTTPException(status_code=404, detail=f"PUC code '{codigo}' not found")
     logger.info(f"PUC updated: {codigo}")
     return row
+
+
+@router.delete("/{codigo}", status_code=204)
+def delete_puc(
+    codigo: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Soft-delete a PUC account (sets activa=False). Returns 404 if not found."""
+    row = db_service.deactivate_puc(db, codigo)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"PUC code '{codigo}' not found")
+    logger.info(f"PUC deactivated: {codigo}")
+    return Response(status_code=204)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -26,6 +26,225 @@ _FIRST_LEVEL_TYPES = (
     "libro_auxiliar",
     "libro_diario",
 )
+
+# Periodicity thresholds — same as the alembic backfill so historical and new
+# rows are classified identically. Picked to absorb fiscal-year and partial-
+# month variance: a "monthly" close can be 28-31 days, a quarter 89-92, etc.
+_ANNUAL_MIN_DAYS = 300
+_QUARTERLY_MIN_DAYS = 80
+_MONTHLY_MIN_DAYS = 25
+
+# Map LLM-extracted Spanish labels to the canonical English values stored in
+# the ``frequency`` column. Lowercased + stripped before lookup.
+_PERIODICIDAD_NORMALIZE = {
+    "mensual": "monthly",
+    "monthly": "monthly",
+    "trimestral": "quarterly",
+    "quarterly": "quarterly",
+    "anual": "annual",
+    "annual": "annual",
+    "yearly": "annual",
+    "personalizado": "custom",
+    "custom": "custom",
+}
+
+
+def infer_frequency(
+    period_start: datetime | None, period_end: datetime | None
+) -> str | None:
+    """Classify a statement's span as monthly / quarterly / annual / custom.
+
+    Same thresholds as the alembic backfill in
+    ``a7b8c9d0e1f2_add_frequency_to_financial_statements.py``.
+    Returns ``None`` when either bound is missing — the caller can decide
+    whether to require a review.
+    """
+    if period_start is None or period_end is None:
+        return None
+    days = (period_end - period_start).days
+    if days >= _ANNUAL_MIN_DAYS:
+        return "annual"
+    if days >= _QUARTERLY_MIN_DAYS:
+        return "quarterly"
+    if days >= _MONTHLY_MIN_DAYS:
+        return "monthly"
+    if days >= 0:
+        return "custom"
+    return None
+
+
+def normalize_periodicidad(value: str | None) -> str | None:
+    """Translate an LLM-emitted Spanish/English label to the stored value."""
+    if not value:
+        return None
+    return _PERIODICIDAD_NORMALIZE.get(str(value).strip().lower())
+
+
+def is_annual(stmt: FinancialStatement) -> bool:
+    """True when the row is (or computes to) an annual closing.
+
+    Reads ``frequency`` when populated; otherwise falls back to
+    :func:`infer_frequency` so legacy rows uploaded before the column existed
+    keep working without a manual backfill.
+    """
+    freq = getattr(stmt, "frequency", None)
+    if freq is None:
+        freq = infer_frequency(stmt.period_start, stmt.period_end)
+    return freq == "annual"
+
+
+def _libro_auxiliar_is_comprehensive(la_data: dict) -> bool:
+    """A LA can stand in for BG+ER when it covers PUC classes 1-7.
+
+    Per Decreto 2650/1993 the chart of accounts splits classes 1-3 (balance)
+    from 4-7 (resultados). A libro auxiliar that lists movements in both halves
+    is functionally equivalent to having BG + ER together. If the upload only
+    covers caja (class 11) or only IVA (class 2408), it's NOT comprehensive
+    and the derivation will refuse to use it as the sole source.
+    """
+    if not isinstance(la_data, dict):
+        return False
+    classes_present: set[str] = set()
+    for line in la_data.get("lines") or la_data.get("accounts") or []:
+        if not isinstance(line, dict):
+            continue
+        code = str(line.get("cuenta_puc") or line.get("codigo") or "")
+        if code:
+            classes_present.add(code[0])
+    has_balance_classes = {"1", "2", "3"}.issubset(classes_present)
+    has_pnl_classes = bool({"4", "5", "6", "7"} & classes_present)
+    return has_balance_classes and has_pnl_classes
+
+
+def synthesize_balance_from_libro_auxiliar(la_data: dict) -> dict:
+    """Reconstruct a balance_general payload from a comprehensive LA.
+
+    Aggregates débitos − créditos per cuenta_puc, then groups class 1 / 2 / 3
+    accounts into activos / pasivos / patrimonio. Signs follow the
+    debit-natured convention for class 1 (assets positive when net debit) and
+    credit-natured for classes 2-3 (liabilities/equity positive when net
+    credit). Shape mirrors the LLM-extracted balance_general so downstream
+    derivation can consume it transparently.
+    """
+    totals: dict[str, dict[str, Any]] = {}
+    for line in (la_data or {}).get("lines") or (la_data or {}).get("accounts") or []:
+        if not isinstance(line, dict):
+            continue
+        code = str(line.get("cuenta_puc") or line.get("codigo") or "")
+        if not code or code[0] not in ("1", "2", "3"):
+            continue
+        try:
+            debit = float(line.get("debito") or 0)
+            credit = float(line.get("credito") or 0)
+        except (TypeError, ValueError):
+            debit = credit = 0.0
+        entry = totals.setdefault(
+            code,
+            {
+                "cuenta_puc": code,
+                "nombre": str(line.get("cuenta_nombre") or line.get("nombre") or ""),
+                "_debit": 0.0,
+                "_credit": 0.0,
+            },
+        )
+        entry["_debit"] += debit
+        entry["_credit"] += credit
+
+    accounts: list[dict[str, Any]] = []
+    total_activos = total_pasivos = total_patrimonio = 0.0
+    for entry in totals.values():
+        code = entry["cuenta_puc"]
+        debit = entry["_debit"]
+        credit = entry["_credit"]
+        # class 1 = debit-natured; classes 2 & 3 = credit-natured.
+        saldo = (debit - credit) if code.startswith("1") else (credit - debit)
+        accounts.append(
+            {
+                "cuenta_puc": code,
+                "nombre": entry["nombre"],
+                "saldo": saldo,
+            }
+        )
+        if code.startswith("1"):
+            total_activos += saldo
+        elif code.startswith("2"):
+            total_pasivos += saldo
+        elif code.startswith("3"):
+            total_patrimonio += saldo
+
+    accounts.sort(key=lambda a: a["cuenta_puc"])
+    return {
+        "accounts": accounts,
+        "total_activos": total_activos,
+        "total_pasivos": total_pasivos,
+        "total_patrimonio": total_patrimonio,
+        "source": "synthesized_from_libro_auxiliar",
+    }
+
+
+def synthesize_income_statement_from_libro_auxiliar(la_data: dict) -> dict:
+    """Reconstruct an estado_resultados payload from a comprehensive LA.
+
+    Class 4 = ingresos (credit-natured), class 5 = gastos (debit-natured),
+    class 6 = costo de ventas, class 7 = costos de producción (both
+    debit-natured). Utilidad neta = ingresos − costo − gastos.
+    """
+    totals: dict[str, dict[str, Any]] = {}
+    for line in (la_data or {}).get("lines") or (la_data or {}).get("accounts") or []:
+        if not isinstance(line, dict):
+            continue
+        code = str(line.get("cuenta_puc") or line.get("codigo") or "")
+        if not code or code[0] not in ("4", "5", "6", "7"):
+            continue
+        try:
+            debit = float(line.get("debito") or 0)
+            credit = float(line.get("credito") or 0)
+        except (TypeError, ValueError):
+            debit = credit = 0.0
+        entry = totals.setdefault(
+            code,
+            {
+                "cuenta_puc": code,
+                "nombre": str(line.get("cuenta_nombre") or line.get("nombre") or ""),
+                "_debit": 0.0,
+                "_credit": 0.0,
+            },
+        )
+        entry["_debit"] += debit
+        entry["_credit"] += credit
+
+    accounts: list[dict[str, Any]] = []
+    total_ingresos = total_gastos = total_costo = 0.0
+    for entry in totals.values():
+        code = entry["cuenta_puc"]
+        debit = entry["_debit"]
+        credit = entry["_credit"]
+        saldo = (credit - debit) if code.startswith("4") else (debit - credit)
+        accounts.append(
+            {
+                "cuenta_puc": code,
+                "nombre": entry["nombre"],
+                "saldo": saldo,
+            }
+        )
+        if code.startswith("4"):
+            total_ingresos += saldo
+        elif code.startswith("5"):
+            total_gastos += saldo
+        elif code.startswith("6") or code.startswith("7"):
+            total_costo += saldo
+
+    accounts.sort(key=lambda a: a["cuenta_puc"])
+    utilidad_neta = total_ingresos - total_costo - total_gastos
+    return {
+        "accounts": accounts,
+        "total_ingresos": total_ingresos,
+        "total_costo_ventas": total_costo,
+        "total_gastos": total_gastos,
+        "utilidad_bruta": total_ingresos - total_costo,
+        "utilidad_neta": utilidad_neta,
+        "source": "synthesized_from_libro_auxiliar",
+    }
 
 
 def _first_level_type_exists(
@@ -77,6 +296,85 @@ def _create_derivation_ingest_job(
     return ingest_job
 
 
+def _build_bg_data_from_journal(
+    db,
+    *,
+    company_nit: str,
+    cutoff_date: datetime,
+    period_start: datetime,
+    period_end: datetime,
+) -> dict[str, Any]:
+    """Build a balance_general data dict from posted journal entries up to cutoff_date.
+
+    The balance is CUMULATIVE: it sums every posted entry with ``fecha <= cutoff_date``
+    (get_balance_sheet / get_general_ledger both accumulate from the beginning of time).
+
+    This single source of truth is used for two purposes:
+    - Current-period BG: cutoff = period_end.
+    - Prior-period opening snapshot: cutoff = the instant before period_start.
+
+    Because the opening balance is recomputed from the journal on every call, Via A
+    derivation never depends on a previously-persisted prior BG — it is correct
+    regardless of the order periods are derived in, and is refreshed automatically
+    when new documents are processed.
+
+    get_general_ledger returns {account, name, total_debit, total_credit, net_balance}
+    where net_balance = debito - credito for all classes. We convert to natural-balance
+    saldos: debit-natural classes (1,5,6) keep D-C as positive; credit-natural classes
+    (2,3,4) use C-D as positive.
+    """
+    bg_raw = db_service.get_balance_sheet(
+        db, cutoff_date=cutoff_date, company_nit=company_nit
+    )
+    ledger_cumulative = db_service.get_general_ledger(
+        db, None, cutoff_date, company_nit
+    )
+    bg_accounts = []
+    for row in ledger_cumulative:
+        code = str(row.get("account") or "")
+        if not code or not code[0].isdigit():
+            continue
+        clase = int(code[0])
+        d = Decimal(str(row.get("total_debit") or 0))
+        c = Decimal(str(row.get("total_credit") or 0))
+        saldo = (d - c) if clase in (1, 5, 6) else (c - d)
+        bg_accounts.append(
+            {
+                "cuenta_puc": code,
+                "nombre": row.get("name") or "",
+                "saldo": float(saldo),
+            }
+        )
+    # Vía A never closes class 4/5 to class 36 (resultados del ejercicio) in journal
+    # entries. Synthesize a class 36 leaf so _compute_equity_changes can find the
+    # period result and set saldo_final correctly.
+    net_profit = Decimal(str(bg_raw.get("net_profit") or 0))
+    has_class36 = any(a["cuenta_puc"].startswith("36") for a in bg_accounts)
+    if net_profit != 0 and not has_class36:
+        bg_accounts.append(
+            {
+                "cuenta_puc": "360505",
+                "nombre": "Utilidad del ejercicio",
+                "saldo": float(net_profit),
+            }
+        )
+    return {
+        "tipo": "balance_general",
+        "entidad": {"nit": company_nit},
+        "periodo_inicio": period_start.date().isoformat(),
+        "periodo_fin": period_end.date().isoformat(),
+        "total_activos": bg_raw.get("assets", 0),
+        "total_pasivos": bg_raw.get("liabilities", 0),
+        "total_patrimonio": bg_raw.get("total_equity", 0),
+        "utilidad_neta": bg_raw.get("net_profit", 0),
+        "patrimonio_sin_utilidad": bg_raw.get("equity", 0),
+        "cuadre": bg_raw.get("is_balanced", False),
+        "moneda": "COP",
+        "source": "derived_from_journal",
+        "accounts": bg_accounts,
+    }
+
+
 def build_first_level_from_journal_entries(
     db,
     *,
@@ -92,6 +390,7 @@ def build_first_level_from_journal_entries(
     normalized_nit = normalize_nit(company_nit)
     created: dict[str, str] = {}
     skipped: list[str] = []
+    build_errors: dict[str, str] = {}
 
     # --- Balance General ---
     if not _first_level_type_exists(
@@ -102,24 +401,14 @@ def build_first_level_from_journal_entries(
         period_end=period_end,
     ):
         try:
-            # get_balance_sheet uses cutoff_date (not start_date/end_date); use period_end as cutoff
-            bg_raw = db_service.get_balance_sheet(
-                db, cutoff_date=period_end, company_nit=normalized_nit
+            # Cumulative BG as of period_end (uses cutoff_date semantics, not a range).
+            bg_data = _build_bg_data_from_journal(
+                db,
+                company_nit=normalized_nit,
+                cutoff_date=period_end,
+                period_start=period_start,
+                period_end=period_end,
             )
-            bg_data = {
-                "tipo": "balance_general",
-                "entidad": {"nit": normalized_nit},
-                "periodo_inicio": period_start.date().isoformat(),
-                "periodo_fin": period_end.date().isoformat(),
-                "total_activos": bg_raw.get("assets", 0),
-                "total_pasivos": bg_raw.get("liabilities", 0),
-                "total_patrimonio": bg_raw.get("total_equity", 0),
-                "utilidad_neta": bg_raw.get("net_profit", 0),
-                "patrimonio_sin_utilidad": bg_raw.get("equity", 0),
-                "cuadre": bg_raw.get("is_balanced", False),
-                "moneda": "COP",
-                "source": "derived_from_journal",
-            }
             ingest_job = _create_derivation_ingest_job(
                 db, normalized_nit, period_end, "balance_general"
             )
@@ -136,7 +425,12 @@ def build_first_level_from_journal_entries(
             )
             created["balance_general"] = stmt.id
         except Exception as exc:
-            _log.warning("build_first_level: failed to create balance_general: %s", exc)
+            _log.error(
+                "build_first_level: failed to create balance_general: %s",
+                exc,
+                exc_info=True,
+            )
+            build_errors["balance_general"] = str(exc)
             skipped.append("balance_general")
     else:
         skipped.append("balance_general")
@@ -156,6 +450,16 @@ def build_first_level_from_journal_entries(
                 start_date=period_start,
                 end_date=period_end,
             )
+            # Build accounts list so derivation can find ER leaves by PUC prefix.
+            er_accounts = [
+                {"cuenta_puc": item["cuenta_puc"], "saldo": item["valor"]}
+                for item in (
+                    er_raw.get("ingresos", [])
+                    + er_raw.get("gastos", [])
+                    + er_raw.get("costo_ventas", [])
+                )
+                if isinstance(item, dict) and item.get("cuenta_puc")
+            ]
             er_data = {
                 "tipo": "estado_resultados",
                 "entidad": {"nit": normalized_nit},
@@ -168,6 +472,7 @@ def build_first_level_from_journal_entries(
                 "utilidad_neta": er_raw.get("utilidad_neta", 0),
                 "moneda": "COP",
                 "source": "derived_from_journal",
+                "accounts": er_accounts,
             }
             ingest_job = _create_derivation_ingest_job(
                 db, normalized_nit, period_end, "estado_resultados"
@@ -185,9 +490,12 @@ def build_first_level_from_journal_entries(
             )
             created["estado_resultados"] = stmt.id
         except Exception as exc:
-            _log.warning(
-                "build_first_level: failed to create estado_resultados: %s", exc
+            _log.error(
+                "build_first_level: failed to create estado_resultados: %s",
+                exc,
+                exc_info=True,
             )
+            build_errors["estado_resultados"] = str(exc)
             skipped.append("estado_resultados")
     else:
         skipped.append("estado_resultados")
@@ -205,12 +513,25 @@ def build_first_level_from_journal_entries(
             ledger = db_service.get_general_ledger(
                 db, period_start, period_end, normalized_nit
             )
+            # Individual journal entry lines needed by _compute_equity_changes
+            # (reads la_data["lines"] for debito/credito per account/period).
+            journal_lines_for_la = db_service.get_journal_entry_lines(
+                db,
+                company_nit=normalized_nit,
+                start_date=period_start,
+                end_date=period_end,
+            )
             la_data = {
                 "tipo": "libro_auxiliar",
                 "entidad": {"nit": normalized_nit},
                 "periodo_inicio": period_start.date().isoformat(),
                 "periodo_fin": period_end.date().isoformat(),
                 "accounts": ledger if isinstance(ledger, list) else [],
+                "lines": (
+                    journal_lines_for_la
+                    if isinstance(journal_lines_for_la, list)
+                    else []
+                ),
                 "moneda": "COP",
                 "source": "derived_from_journal",
             }
@@ -230,7 +551,12 @@ def build_first_level_from_journal_entries(
             )
             created["libro_auxiliar"] = stmt.id
         except Exception as exc:
-            _log.warning("build_first_level: failed to create libro_auxiliar: %s", exc)
+            _log.error(
+                "build_first_level: failed to create libro_auxiliar: %s",
+                exc,
+                exc_info=True,
+            )
+            build_errors["libro_auxiliar"] = str(exc)
             skipped.append("libro_auxiliar")
     else:
         skipped.append("libro_auxiliar")
@@ -286,6 +612,7 @@ def build_first_level_from_journal_entries(
         "created": created,
         "skipped": len(skipped),
         "skipped_types": skipped,
+        "build_errors": build_errors,
     }
 
 
@@ -332,6 +659,11 @@ def list_financial_statements(
                 "period_end": row.period_end.isoformat() if row.period_end else None,
                 "entity_nit": row.entity_nit,
                 "source_mode": row.source_mode,
+                # Falls back to span-based inference when the column is NULL
+                # (legacy rows or LLM extraction blanks). Keeps the FE filters
+                # working uniformly across old and new data.
+                "frequency": row.frequency
+                or infer_frequency(row.period_start, row.period_end),
                 "data": row.data,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
             }
@@ -356,21 +688,54 @@ def _dec(value: Any) -> Decimal:
 
 
 def _load_prior_balance(
-    db: Session, company_nit: str, period_start: datetime
+    db: Session,
+    company_nit: str,
+    period_start: datetime,
+    *,
+    via_a: bool = False,
 ) -> "FinancialStatement | None":
-    """Return the most recent direct balance_general with period_end < period_start.
+    """Return the most recent balance_general with period_end < period_start.
 
     Used to compute working-capital variations and prior cash position required
     for the NIC 7 indirect method. Returning None signals the caller to raise a
     BusinessRuleError so the API surfaces a 409 instead of silently degrading.
+
+    via_a=True  — accepts derived_from_journal (Via A prior periods)
+    via_a=False — only direct (Via B uploaded balances), enforcing pathway separation
     """
     from app.models.database import FinancialStatement  # local to avoid cycle
 
+    allowed_modes = ["direct", "derived_from_journal"] if via_a else ["direct"]
     return (
         db.query(FinancialStatement)
         .filter(
             FinancialStatement.entity_nit == company_nit,
             FinancialStatement.statement_type == "balance_general",
+            FinancialStatement.source_mode.in_(allowed_modes),
+            FinancialStatement.period_end < period_start,
+        )
+        .order_by(FinancialStatement.period_end.desc())
+        .first()
+    )
+
+
+def _load_prior_libro_auxiliar(
+    db: Session, company_nit: str, period_start: datetime
+) -> "FinancialStatement | None":
+    """Fallback for ``_load_prior_balance`` when only a LA is on file.
+
+    Per Decreto 2650/1993 + NIC 7, a comprehensive libro auxiliar can stand in
+    for a prior balance_general because summing class 1-3 movements yields the
+    same closing position. This lets us compute working-capital variations
+    even when the user only uploaded LAs for both years.
+    """
+    from app.models.database import FinancialStatement
+
+    return (
+        db.query(FinancialStatement)
+        .filter(
+            FinancialStatement.entity_nit == company_nit,
+            FinancialStatement.statement_type == "libro_auxiliar",
             FinancialStatement.source_mode == "direct",
             FinancialStatement.period_end < period_start,
         )
@@ -481,15 +846,20 @@ def _compute_cash_flow_indirect(
     bg_data: dict[str, Any],
     prior_bg_data: dict[str, Any],
     er_data: dict[str, Any],
-    la_data: dict[str, Any],
+    la_data: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Full NIC 7 indirect method using BG (current + prior) + ER + LA.
+    """Full NIC 7 indirect method using BG (current + prior) + ER (+ optional LA).
 
     v4: reads from leaf-level `accounts[]` (deduped via _leaf_accounts) using
     PUC class prefixes. This is robust to the LLM emitting hierarchical rows or
     inconsistent NIIF categorization between the two BGs (corriente vs no
     corriente, bruto vs neto). Falls back to nested keys only when the
     accounts list is empty.
+
+    ``la_data=None`` is supported when the user uploads only BG+ER without a
+    libro auxiliar (Path A from the normative analysis). In that case the
+    ``dividendos_pagados`` figure is reported as zero with a note — the rest
+    of the cash flow is unaffected.
     """
 
     # ── Deduped leaf accounts (so hierarchical aggregates don't double-count) ──
@@ -608,15 +978,24 @@ def _compute_cash_flow_indirect(
     )
 
     # Dividendos pagados: LA lines with cuenta_puc startswith "3705" and debito>0.
+    # Optional input — when LA wasn't uploaded (Path A), dividends fall through
+    # as zero with a note so the user knows the figure is incomplete.
     dividendos = Decimal("0")
-    la_lines = la_data.get("lines") or []
-    if isinstance(la_lines, list):
-        for line in la_lines:
-            if not isinstance(line, dict):
-                continue
-            code = str(line.get("cuenta_puc") or "")
-            if code.startswith("3705"):
-                dividendos += _dec(line.get("debito"))
+    dividendos_nota: str | None = None
+    if la_data is None:
+        dividendos_nota = (
+            "Dividendos pagados no calculados: libro auxiliar no cargado. "
+            "El flujo de financiación reportado es aproximado."
+        )
+    else:
+        la_lines = la_data.get("lines") or []
+        if isinstance(la_lines, list):
+            for line in la_lines:
+                if not isinstance(line, dict):
+                    continue
+                code = str(line.get("cuenta_puc") or "")
+                if code.startswith("3705"):
+                    dividendos += _dec(line.get("debito"))
 
     flujo_financiacion = (
         (ob_fin_now - ob_fin_prior) + (capital_now - capital_prior) - dividendos
@@ -670,6 +1049,11 @@ def _compute_cash_flow_indirect(
                 "delta_obligaciones_financieras": float(ob_fin_now - ob_fin_prior),
                 "delta_capital_social": float(capital_now - capital_prior),
                 "dividendos_pagados": float(dividendos),
+                **(
+                    {"dividendos_pagados_nota": dividendos_nota}
+                    if dividendos_nota
+                    else {}
+                ),
             },
             "nic7_identity": {
                 "expected_fin": float(expected_fin),
@@ -699,7 +1083,7 @@ def _compute_equity_changes(
     bg_data: dict[str, Any],
     prior_bg_data: dict[str, Any],
     er_data: dict[str, Any],
-    la_data: dict[str, Any],
+    la_data: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Build per-component equity changes (NIC 1 / Sección 6 NIIF Pymes).
 
@@ -707,10 +1091,14 @@ def _compute_equity_changes(
     first, falling back to the nested `patrimonio.<key>` only when the
     accounts list is empty. This avoids the LLM's inconsistent categorization
     between BGs and double-counting of hierarchical levels.
+
+    ``la_data=None`` is supported (Path A from the normative analysis): the
+    movement-detail sections fall through empty, the headline initial/final
+    balances + utilidad_neta still come from BG + ER.
     """
 
-    la_lines = la_data.get("lines") or []
-    la_lines = la_lines if isinstance(la_lines, list) else []
+    la_lines_raw = (la_data or {}).get("lines") or []
+    la_lines = la_lines_raw if isinstance(la_lines_raw, list) else []
 
     leaves_now = _leaf_accounts(bg_data.get("accounts"))
     leaves_prior = _leaf_accounts(prior_bg_data.get("accounts"))
@@ -826,9 +1214,14 @@ def _compute_notes(
     period_end: datetime,
     bg_data: dict[str, Any],
     er_data: dict[str, Any],
-    la_data: dict[str, Any],
+    la_data: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Build a 12-note structure following NIC 1 minimums, skipping notes with no data."""
+    """Build a 12-note structure following NIC 1 minimums, skipping notes with no data.
+
+    ``la_data`` is accepted but not currently consumed by the notes derivation
+    (kept in the signature for symmetry with flujo and cambios). Passing
+    ``None`` is therefore always safe.
+    """
 
     notas: list[dict[str, Any]] = []
     entidad = bg_data.get("entidad") or {}
@@ -952,33 +1345,96 @@ def derive_financial_statements(
     company_nit: str,
     period_start: datetime,
     period_end: datetime,
+    input_source_mode: str | None = None,
+    prior_from_journal: bool = False,
 ) -> dict[str, Any]:
-    """Derive cashflow/equity changes/notes from BG+ER+LA for one company and period.
+    """Derive cashflow / equity changes / notes for one company and period.
+
+    Accepts either of two normative input combinations (per Decreto 2650/1993
+    + NIC 7):
+
+    * **Path A — BG + ER:** the canonical NIIF set. LA is optional and only
+      enriches the equity-changes / cashflow with movement detail.
+    * **Path B — comprehensive LA alone:** when the libro auxiliar covers
+      PUC classes 1-7, ``synthesize_balance_from_libro_auxiliar`` and
+      ``synthesize_income_statement_from_libro_auxiliar`` reconstruct BG
+      and ER from movements (Decreto 2649/1993 art. 125+).
+
+    Only **annual** inputs are accepted: monthly closings can't drive NIC 7
+    indirect cash flow (which needs working-capital variation across two
+    fiscal years). The annual gate refuses mensual / trimestral / custom.
+
+    Args:
+        input_source_mode: When set, restricts the BG/ER/LA source lookup to that
+            source_mode. Via B passes "direct" (only uploaded statements); Via A
+            passes "derived_from_journal" (only journal-built statements). Enforces
+            pathway separation: Via B cannot use Via A statements as inputs and
+            vice versa.
+        prior_from_journal: Via A passes True — computes the prior-period opening
+            balance directly from cumulative journal entries (cutoff = period_start
+            - 1µs). Makes derivation order-independent: no persisted prior BG
+            needed. Via B keeps False and requires an uploaded balance_general_anterior.
 
     Raises:
-        BusinessRuleError: when required source statements are not available, or
-        when the prior-period balance_general (needed for NIC 7 indirect cash
-        flow) is not present.
+        BusinessRuleError: when neither path is satisfied, when the inputs
+            aren't annual, or when no prior period is available for NIC 7
+            variation calculation.
     """
     normalized_nit = normalize_nit(company_nit)
 
     db = SessionLocal()
     try:
-        source_rows = {}
-        for stmt_type in _REQUIRED_DERIVATION_INPUTS:
-            rows = db_service.get_financial_statements(
-                db,
-                company_nit=normalized_nit,
-                statement_type=stmt_type,
-                period_start=period_start,
-                period_end=period_end,
+        bg_rows = db_service.get_financial_statements(
+            db,
+            company_nit=normalized_nit,
+            statement_type="balance_general",
+            period_start=period_start,
+            period_end=period_end,
+            source_mode=input_source_mode,
+        )
+        er_rows = db_service.get_financial_statements(
+            db,
+            company_nit=normalized_nit,
+            statement_type="estado_resultados",
+            period_start=period_start,
+            period_end=period_end,
+            source_mode=input_source_mode,
+        )
+        la_rows = db_service.get_financial_statements(
+            db,
+            company_nit=normalized_nit,
+            statement_type="libro_auxiliar",
+            period_start=period_start,
+            period_end=period_end,
+            source_mode=input_source_mode,
+        )
+
+        la_is_comprehensive = bool(la_rows) and _libro_auxiliar_is_comprehensive(
+            la_rows[0].data or {}
+        )
+
+        # Two acceptable paths — refuse only when neither is satisfied. This
+        # follows the normative analysis (NIC 7 § 18 + Decreto 2650/1993).
+        path_a_satisfied = bool(bg_rows and er_rows)
+        if not path_a_satisfied and not la_is_comprehensive:
+            raise BusinessRuleError(
+                "Se requiere una de dos combinaciones para derivar:\n"
+                "  • Balance General + Estado de Resultados, o\n"
+                "  • Libro Auxiliar anual que cubra clases 1-7 del PUC.\n"
+                "(NIC 7 método indirecto / Decreto 2650/1993)"
             )
-            if not rows:
+
+        # Annual gate — Via B only. Via B uploads real documents whose periodicidad
+        # must be annual for NIC 7 indirect method. Via A builds statements from the
+        # journal for any period the user requests, so the gate does not apply.
+        if not prior_from_journal:
+            inputs_for_check = [r for r in (bg_rows + er_rows + la_rows) if r]
+            if not any(is_annual(r) for r in inputs_for_check):
                 raise BusinessRuleError(
-                    "Missing required inputs for derivation: "
-                    f"{stmt_type}. Required set: {', '.join(_REQUIRED_DERIVATION_INPUTS)}"
+                    "La derivación de flujo, cambios y notas requiere estados ANUALES "
+                    "(NIC 7). Los estados mensuales sirven para reportes individuales "
+                    "pero no pueden anclar la derivación NIIF."
                 )
-            source_rows[stmt_type] = rows[0]
 
         # Dedup guard: skip derived types that already exist
         existing_derived = {
@@ -996,20 +1452,70 @@ def derive_financial_statements(
         if not targets_to_create:
             return {"status": "already_derived", "skipped": list(existing_derived)}
 
-        bg = source_rows["balance_general"].data or {}
-        er = source_rows["estado_resultados"].data or {}
-        la = source_rows["libro_auxiliar"].data or {}
+        # Build BG and ER. When the user uploaded BG+ER directly, use them;
+        # otherwise synthesize from the comprehensive LA.
+        bg = (
+            (bg_rows[0].data or {})
+            if bg_rows
+            else synthesize_balance_from_libro_auxiliar(la_rows[0].data or {})
+        )
+        er = (
+            (er_rows[0].data or {})
+            if er_rows
+            else synthesize_income_statement_from_libro_auxiliar(la_rows[0].data or {})
+        )
+        # LA stays optional. When BG+ER came from uploads and no LA exists,
+        # downstream _compute_* helpers handle the None gracefully (see paso 7).
+        la = (la_rows[0].data or {}) if la_rows else None
 
         # NIC 7 indirect method needs a prior-period BG to compute working-capital
-        # variations and opening cash. Refuse rather than silently degrade.
-        prior_bg_row = _load_prior_balance(db, normalized_nit, period_start)
-        if prior_bg_row is None:
-            raise BusinessRuleError(
-                "Para derivar flujo de caja según NIC 7 método indirecto se requiere "
-                "el balance general del período anterior. Sube el balance del período "
-                "previo para esta empresa y vuelve a intentar."
+        # variations and opening cash.
+        # Via A: compute prior BG directly from the cumulative journal (order-independent).
+        # Via B: require an uploaded prior BG or prior LA (uploaded as balance_general_anterior).
+        if prior_from_journal:
+            prior_cutoff = period_start - timedelta(microseconds=1)
+            prior_bg = _build_bg_data_from_journal(
+                db,
+                company_nit=normalized_nit,
+                cutoff_date=prior_cutoff,
+                period_start=prior_cutoff,
+                period_end=prior_cutoff,
             )
-        prior_bg = prior_bg_row.data or {}
+            prior_bg_row = None
+            prior_la_row = None
+        else:
+            prior_bg_row = _load_prior_balance(db, normalized_nit, period_start)
+            prior_la_row = (
+                None
+                if prior_bg_row
+                else _load_prior_libro_auxiliar(db, normalized_nit, period_start)
+            )
+            if prior_bg_row is None and prior_la_row is None:
+                raise BusinessRuleError(
+                    "Para derivar flujo de caja según NIC 7 método indirecto se requiere "
+                    "el balance general (o libro auxiliar anual) del período anterior. "
+                    "Sube el cierre del año previo para esta empresa y vuelve a intentar."
+                )
+            prior_bg = (
+                (prior_bg_row.data or {})
+                if prior_bg_row
+                else synthesize_balance_from_libro_auxiliar(prior_la_row.data or {})
+            )
+
+        # Capture which source rows actually back this derivation, so lineage
+        # links only point to documents that exist. Synthesized BG/ER don't
+        # have their own row — their lineage is the LA they came from.
+        source_rows: dict[str, "FinancialStatement"] = {}
+        if bg_rows:
+            source_rows["balance_general"] = bg_rows[0]
+        if er_rows:
+            source_rows["estado_resultados"] = er_rows[0]
+        if la_rows:
+            source_rows["libro_auxiliar"] = la_rows[0]
+        if prior_bg_row is not None:
+            source_rows["balance_general_anterior"] = prior_bg_row
+        elif prior_la_row is not None:
+            source_rows["libro_auxiliar_anterior"] = prior_la_row
 
         flujo_data = _compute_cash_flow_indirect(
             company_nit=normalized_nit,
@@ -1065,14 +1571,19 @@ def derive_financial_statements(
                 period_start=period_start,
                 period_end=period_end,
                 source_mode="derived",
+                # Annual gate (paso 6) ensures inputs are annual, so derived
+                # rows inherit ``annual`` too — keeps reports filters honest.
+                frequency=infer_frequency(period_start, period_end),
                 data=payload,
                 commit=False,
             )
 
         for target_type in targets_to_create:
             target = created_rows[target_type]
-            for source_type in _REQUIRED_DERIVATION_INPUTS:
-                source = source_rows[source_type]
+            # Lineage links only against sources that actually exist — when BG
+            # was synthesized from LA, lineage points to the LA, not to a phantom
+            # BG row.
+            for source in source_rows.values():
                 db_service.create_financial_statement_lineage(
                     db,
                     target_statement_id=target.id,
@@ -1090,8 +1601,11 @@ def derive_financial_statements(
             "period_end": period_end.isoformat(),
             "created_statement_ids": {k: v.id for k, v in created_rows.items()},
             "source_statement_ids": {k: v.id for k, v in source_rows.items()},
+            "derivation_path": (
+                "BG+ER" if (bg_rows and er_rows) else "LA_comprehensive"
+            ),
             "derived_count": len(created_rows),
-            "lineage_links": len(created_rows) * len(_REQUIRED_DERIVATION_INPUTS),
+            "lineage_links": len(created_rows) * len(source_rows),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception:

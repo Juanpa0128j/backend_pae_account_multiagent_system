@@ -25,6 +25,7 @@ from app.models.database import (
     IngestJob,
     IngestStatus,
     JournalEntryLine,
+    NationalRate,
     ProcessJob,
     ProcessStatus,
     ReteicaTarifa,
@@ -862,6 +863,19 @@ def get_all_puc_including_inactive(db: Session) -> List[CuentaPUC]:
     return db.query(CuentaPUC).order_by(CuentaPUC.codigo).all()
 
 
+def deactivate_puc(
+    db: Session, codigo: str, commit: bool = True
+) -> Optional[CuentaPUC]:
+    """Soft-delete a PUC account by setting activa=False. Returns None if not found."""
+    row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
+    if not row:
+        return None
+    row.activa = False
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
 # ─── ProcessJob ──────────────────────────────────────────────────
 
 
@@ -1043,6 +1057,7 @@ def create_financial_statement(
     period_start: datetime = None,
     period_end: datetime = None,
     source_mode: str = "direct",
+    frequency: str | None = None,
     commit: bool = True,
 ) -> FinancialStatement:
     row = FinancialStatement(
@@ -1053,6 +1068,7 @@ def create_financial_statement(
         period_end=period_end,
         entity_nit=entity_nit,
         source_mode=source_mode,
+        frequency=frequency,
         data=data,
     )
     db.add(row)
@@ -1440,6 +1456,76 @@ def get_reteica_base_minima_uvt(db: Session, ciudad: str, ciiu: str) -> Decimal 
     return None
 
 
+def list_reteica_tarifas(
+    db: Session,
+    municipio: Optional[str] = None,
+) -> list[dict]:
+    """Return ReteicaTarifa rows as dicts. Optionally filter by municipio."""
+    q = db.query(ReteicaTarifa)
+    if municipio:
+        q = q.filter(ReteicaTarifa.municipio == municipio.lower().strip())
+    rows = q.order_by(ReteicaTarifa.municipio, ReteicaTarifa.ciiu_seccion).all()
+    return [
+        {
+            "id": r.id,
+            "municipio": r.municipio,
+            "ciiu_seccion": r.ciiu_seccion,
+            "tasa": float(r.tasa),
+            "fuente": r.fuente,
+            "base_minima_uvt": float(r.base_minima_uvt)
+            if r.base_minima_uvt is not None
+            else None,
+        }
+        for r in rows
+    ]
+
+
+def upsert_reteica_tarifa(
+    db: Session,
+    municipio: str,
+    ciiu_seccion: str,
+    tasa: Decimal,
+    fuente: Optional[str] = None,
+    base_minima_uvt: Optional[Decimal] = None,
+) -> ReteicaTarifa:
+    """Insert or update a ReteicaTarifa row keyed by (municipio, ciiu_seccion)."""
+    municipio = municipio.lower().strip()
+    row = (
+        db.query(ReteicaTarifa)
+        .filter(
+            ReteicaTarifa.municipio == municipio,
+            ReteicaTarifa.ciiu_seccion == ciiu_seccion,
+        )
+        .first()
+    )
+    if row is None:
+        row = ReteicaTarifa(
+            municipio=municipio,
+            ciiu_seccion=ciiu_seccion,
+            tasa=tasa,
+            fuente=fuente,
+            base_minima_uvt=base_minima_uvt,
+        )
+        db.add(row)
+    else:
+        row.tasa = tasa
+        row.fuente = fuente
+        row.base_minima_uvt = base_minima_uvt
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_reteica_tarifa(db: Session, row_id: int) -> bool:
+    """Hard-delete a ReteicaTarifa row by id. Returns True if deleted."""
+    row = db.query(ReteicaTarifa).filter(ReteicaTarifa.id == row_id).first()
+    if row is None:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
+
+
 # ─── VectorDocument ───────────────────────────────────────────────────────────
 
 
@@ -1571,8 +1657,24 @@ def get_journal_entry_lines(
     start_date: datetime = None,
     end_date: datetime = None,
 ) -> List[Dict[str, Any]]:
-    """Return JournalEntryLine rows for a company as list of dicts."""
-    q = db.query(JournalEntryLine).filter(JournalEntryLine.company_nit == company_nit)
+    """Return JournalEntryLine rows for a company as list of dicts.
+
+    Only includes lines whose parent TransactionPosted has status=POSTED so
+    that REJECTED/ERROR transactions are excluded from accounting reports.
+    """
+    from app.models.database import TransactionPosted, TransactionStatus
+
+    q = (
+        db.query(JournalEntryLine)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(
+            JournalEntryLine.company_nit == company_nit,
+            TransactionPosted.status == TransactionStatus.POSTED,
+        )
+    )
     if start_date:
         q = q.filter(JournalEntryLine.fecha >= start_date)
     if end_date:
@@ -2576,3 +2678,55 @@ def delete_ajuste_fiscal(db: Session, ajuste_id: str) -> bool:
     db.delete(row)
     db.commit()
     return True
+
+
+# ── NationalRate ─────────────────────────────────────────────────────────────
+
+
+def list_national_rates(db: Session) -> list[dict]:
+    """Return all national_rates rows as dicts, ordered by code."""
+    rows = db.query(NationalRate).order_by(NationalRate.code).all()
+    return [
+        {
+            "code": r.code,
+            "value": float(r.value),
+            "descripcion": r.descripcion,
+            "norma_referencia": r.norma_referencia,
+            "vigente_desde": r.vigente_desde.isoformat() if r.vigente_desde else None,
+        }
+        for r in rows
+    ]
+
+
+def get_national_rate(db: Session, code: str) -> NationalRate | None:
+    """Return the NationalRate row for the given code, or None."""
+    return db.query(NationalRate).filter(NationalRate.code == code).first()
+
+
+def upsert_national_rate(
+    db: Session,
+    code: str,
+    value: Decimal,
+    descripcion: str,
+    norma_referencia: str,
+    vigente_desde: date,
+) -> NationalRate:
+    """Insert or update a NationalRate row keyed by code."""
+    row = db.query(NationalRate).filter(NationalRate.code == code).first()
+    if row is None:
+        row = NationalRate(
+            code=code,
+            value=value,
+            descripcion=descripcion,
+            norma_referencia=norma_referencia,
+            vigente_desde=vigente_desde,
+        )
+        db.add(row)
+    else:
+        row.value = value
+        row.descripcion = descripcion
+        row.norma_referencia = norma_referencia
+        row.vigente_desde = vigente_desde
+    db.commit()
+    db.refresh(row)
+    return row
