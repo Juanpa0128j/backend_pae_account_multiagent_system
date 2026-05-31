@@ -1311,12 +1311,13 @@ async def delete_tarifa_renta(
 )
 async def list_tax_concepts_endpoint(
     activo: Optional[bool] = Query(
-        True, description="True (default) = solo activos; null = todos"
+        None,
+        description="True = solo activos; False = solo inactivos; null (default) = todos",
     ),
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[TaxConceptResponse]:
-    """List all rows in tax_concepts. Defaults to activo=True."""
+    """List tax_concepts rows. No activo filter by default (returns all)."""
     rows = db_service.list_tax_concepts(db, activo=activo)
     return [TaxConceptResponse(**r) for r in rows]
 
