@@ -84,6 +84,16 @@ def downgrade() -> None:
         )
 
     # Narrow tax_concepts.code 32 -> 16 (only safe if no codes >16 chars).
+    max_len_row = conn.execute(
+        text("SELECT MAX(LENGTH(code)) FROM tax_concepts")
+    ).first()
+    max_len = int(max_len_row[0] or 0) if max_len_row is not None else 0
+    if max_len > 16:
+        raise RuntimeError(
+            "Cannot downgrade tax_concepts.code to VARCHAR(16): "
+            f"found code length {max_len} > 16. "
+            "Delete or shorten the offending rows before downgrading."
+        )
     op.alter_column(
         "tax_concepts",
         "code",

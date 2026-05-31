@@ -528,6 +528,17 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
                 },
             )
             _mark_processing_transactions_failed_safe(ingest_id)
+            # COMPLETED is "active" for get_active_process_job_for_ingest,
+            # so no follow-up ProcessJob will be created. Mark remaining
+            # PENDING txs as ERROR to prevent stranding.
+            try:
+                for tx in db_service.get_transactions_by_ingest(db, ingest_id):
+                    if tx.status == TransactionStatus.PENDING:
+                        _mark_pending_failed_safe(str(tx.id))
+            except Exception:
+                logger.exception(
+                    "Failed to mark PENDING transactions as ERROR after timeout"
+                )
         else:
             db_service.update_process_job(
                 db,

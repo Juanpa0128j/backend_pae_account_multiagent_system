@@ -80,7 +80,7 @@ def _pretty_model_name(raw: str) -> str:
 
     Examples: ``gpt-4.1-mini`` → ``GPT-4.1 mini``,
     ``gemini-2.5-flash`` → ``Gemini 2.5 Flash``,
-    ``openai/gpt-oss-20b`` → ``gpt-oss-20b``.
+    ``openai/gpt-oss-20b`` → ``GPT-oss-20b``.
     """
     if not raw:
         return "modelo desconocido"
