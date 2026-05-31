@@ -43,7 +43,9 @@ def build_iva(db, params: dict, svc) -> dict:
     iva_status = (
         "saldo_a_pagar"
         if iva_a_pagar > 0
-        else "saldo_a_favor" if iva_a_pagar < 0 else "saldo_cero"
+        else "saldo_a_favor"
+        if iva_a_pagar < 0
+        else "saldo_cero"
     )
 
     rag_refs = _fetch_rag_referencias(

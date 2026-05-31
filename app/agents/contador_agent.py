@@ -611,9 +611,7 @@ def contador_node(state: AgentState) -> AgentState:
                         puc_ingresos_catalog=puc_ingresos_catalog or None,
                         agent_label=f"contador-tx-{idx}",
                     )
-                except (
-                    Exception
-                ) as mov_err:  # noqa: BLE001 — fail closed on partial batch errors
+                except Exception as mov_err:  # noqa: BLE001 — fail closed on partial batch errors
                     logger.exception(
                         "contador: raw_transaction %d failed (%s); aborting multi-tx batch",
                         idx,

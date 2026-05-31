@@ -323,9 +323,9 @@ class TestSearchHybrid:
         qemb = ext_db.embed_query("honorarios")
         result = ext_db.search_hybrid(NORMATIVA_COLLECTION, "honorarios", qemb, 5)
         dists = result["distances"][0]
-        assert dists == sorted(
-            dists
-        ), "Hybrid results should be ordered by ascending distance"
+        assert dists == sorted(dists), (
+            "Hybrid results should be ordered by ascending distance"
+        )
 
     def test_keyword_match_boosts_ranking(self, ext_db: ExtendedFakeDB):
         """A document whose content contains the query words should rank near the top."""
@@ -511,16 +511,16 @@ class TestDataFileIntegrity:
             (DATA_DIR / "normativa_tributaria.json").read_text(encoding="utf-8")
         )
         ids = [e["id"] for e in data]
-        assert len(ids) == len(
-            set(ids)
-        ), f"Duplicate IDs: {[i for i in ids if ids.count(i) > 1]}"
+        assert len(ids) == len(set(ids)), (
+            f"Duplicate IDs: {[i for i in ids if ids.count(i) > 1]}"
+        )
 
     def test_ley_43_no_duplicate_ids(self):
         data = json.loads((DATA_DIR / "ley_43_1990.json").read_text(encoding="utf-8"))
         ids = [e["id"] for e in data]
-        assert len(ids) == len(
-            set(ids)
-        ), f"Duplicate IDs: {[i for i in ids if ids.count(i) > 1]}"
+        assert len(ids) == len(set(ids)), (
+            f"Duplicate IDs: {[i for i in ids if ids.count(i) > 1]}"
+        )
 
     def test_normativa_all_required_fields_present(self):
         required = {"id", "fuente", "articulo", "titulo", "contenido", "tags"}
@@ -543,16 +543,16 @@ class TestDataFileIntegrity:
             (DATA_DIR / "normativa_tributaria.json").read_text(encoding="utf-8")
         )
         for entry in data:
-            assert (
-                isinstance(entry["id"], str) and entry["id"].strip()
-            ), f"Empty or non-string ID: {entry['id']!r}"
+            assert isinstance(entry["id"], str) and entry["id"].strip(), (
+                f"Empty or non-string ID: {entry['id']!r}"
+            )
 
     def test_ley_43_ids_start_with_ley43(self):
         data = json.loads((DATA_DIR / "ley_43_1990.json").read_text(encoding="utf-8"))
         for entry in data:
-            assert entry["id"].startswith(
-                "LEY43_"
-            ), f"ID {entry['id']!r} does not start with 'LEY43_'"
+            assert entry["id"].startswith("LEY43_"), (
+                f"ID {entry['id']!r} does not start with 'LEY43_'"
+            )
 
     def test_normativa_all_contenido_nonempty(self):
         data = json.loads(
@@ -571,16 +571,16 @@ class TestDataFileIntegrity:
             (DATA_DIR / "normativa_tributaria.json").read_text(encoding="utf-8")
         )
         for entry in data:
-            assert isinstance(
-                entry["tags"], list
-            ), f"tags field in {entry['id']} is not a list"
+            assert isinstance(entry["tags"], list), (
+                f"tags field in {entry['id']} is not a list"
+            )
 
     def test_ley_43_fuente_is_consistent(self):
         data = json.loads((DATA_DIR / "ley_43_1990.json").read_text(encoding="utf-8"))
         for entry in data:
-            assert (
-                entry["fuente"] == "Ley 43 de 1990"
-            ), f"Unexpected fuente in {entry['id']}: {entry['fuente']!r}"
+            assert entry["fuente"] == "Ley 43 de 1990", (
+                f"Unexpected fuente in {entry['id']}: {entry['fuente']!r}"
+            )
 
     def test_pcga_articles_35_to_46_all_present(self):
         data = json.loads((DATA_DIR / "ley_43_1990.json").read_text(encoding="utf-8"))
@@ -606,6 +606,6 @@ class TestDataFileIntegrity:
 
     def test_puc_json_still_intact(self):
         data = json.loads((DATA_DIR / "puc_accounts.json").read_text(encoding="utf-8"))
-        assert (
-            len(data) >= 40
-        ), f"puc_accounts.json has fewer than 40 entries: {len(data)}"
+        assert len(data) >= 40, (
+            f"puc_accounts.json has fewer than 40 entries: {len(data)}"
+        )

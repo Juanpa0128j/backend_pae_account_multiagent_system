@@ -55,9 +55,7 @@ class TestListPerdidasAcumuladas:
     def test_list_all_without_year_filter(self, client_with_db):
         client, mock_db = client_with_db
         rows = [_make_perdida_row(id=1, year=2022), _make_perdida_row(id=2, year=2023)]
-        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
-            rows
-        )
+        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = rows
 
         response = client.get("/api/v1/tax/perdidas-acumuladas?nit=900123456")
 

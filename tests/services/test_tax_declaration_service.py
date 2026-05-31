@@ -136,9 +136,7 @@ def _mock_db(settings):
     # check; provide a reviewed F2516 by default so generic tests don't fail.
     f2516 = MagicMock()
     f2516.status = "reviewed"
-    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
-        f2516
-    )
+    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = f2516
     return db
 
 

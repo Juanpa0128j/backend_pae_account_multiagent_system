@@ -24,14 +24,16 @@ def db_session():
 def test_national_rates_table_has_four_rows(db_session):
     """Verify that the national_rates table contains exactly four configured rates."""
     # Table created by Base.metadata.create_all in fixture; seed data manually
-    db_session.execute(text("""
+    db_session.execute(
+        text("""
         INSERT INTO national_rates (code, value, descripcion, norma_referencia, vigente_desde)
         VALUES
             ('retefuente_servicios',     0.04,   'Retención en la fuente — servicios generales',     'Art. 392 ET',              '2023-01-01'),
             ('retefuente_bienes',        0.025,  'Retención en la fuente — compra de bienes',        'Art. 401 ET',              '2023-01-01'),
             ('retefuente_arrendamiento', 0.035,  'Retención en la fuente — arrendamiento inmuebles', 'Art. 401 ET',              '2023-01-01'),
             ('renta_general',            0.35,   'Tarifa general impuesto sobre la renta',           'Art. 240 ET, L.2277/2022', '2023-01-01')
-    """))
+    """)
+    )
     db_session.commit()
 
     rows = db_session.execute(
@@ -49,14 +51,16 @@ def test_national_rates_table_has_four_rows(db_session):
 def test_national_rates_values_match_statutory_constants(db_session):
     """Verify that the seeded rates match the statutory constants from settings.py."""
     # Table created by Base.metadata.create_all in fixture; seed data manually
-    db_session.execute(text("""
+    db_session.execute(
+        text("""
         INSERT INTO national_rates (code, value, descripcion, norma_referencia, vigente_desde)
         VALUES
             ('retefuente_servicios',     0.04,   'Retención en la fuente — servicios generales',     'Art. 392 ET',              '2023-01-01'),
             ('retefuente_bienes',        0.025,  'Retención en la fuente — compra de bienes',        'Art. 401 ET',              '2023-01-01'),
             ('retefuente_arrendamiento', 0.035,  'Retención en la fuente — arrendamiento inmuebles', 'Art. 401 ET',              '2023-01-01'),
             ('renta_general',            0.35,   'Tarifa general impuesto sobre la renta',           'Art. 240 ET, L.2277/2022', '2023-01-01')
-    """))
+    """)
+    )
     db_session.commit()
 
     values = {

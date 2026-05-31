@@ -180,9 +180,7 @@ class TestPeriodReviewSurface:
             data={"periodicidad": "anual"},
         )
         db = MagicMock()
-        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
-            stmt
-        )
+        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = stmt
 
         review = _build_period_review(db, job)
         assert review is not None
@@ -205,9 +203,7 @@ class TestPeriodReviewSurface:
             data={"periodicidad": "mensual"},
         )
         db = MagicMock()
-        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
-            stmt
-        )
+        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = stmt
 
         review = _build_period_review(db, job)
         assert review is not None
@@ -230,9 +226,7 @@ class TestPeriodReviewSurface:
             data={"periodicidad": "mensual"},
         )
         db = MagicMock()
-        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
-            stmt
-        )
+        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = stmt
 
         review = _build_period_review(db, job)
         assert review is None
@@ -245,8 +239,6 @@ class TestPeriodReviewSurface:
         job.id = "ing_via_a"
         job.classification_confidence = 0.95
         db = MagicMock()
-        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
-            None
-        )
+        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
 
         assert _build_period_review(db, job) is None

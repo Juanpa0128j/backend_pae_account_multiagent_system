@@ -64,9 +64,7 @@ def _big_ledger():
 def _mock_db(settings, f2516=None):
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = settings
-    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
-        f2516
-    )
+    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = f2516
     return db
 
 

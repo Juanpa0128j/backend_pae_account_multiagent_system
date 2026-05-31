@@ -60,9 +60,7 @@ class TestGetTarifaRenta:
         used inside get_tarifa_renta (exact actividad path).
         """
         mock_db = MagicMock()
-        chain = (
-            mock_db.query.return_value.filter.return_value.filter.return_value.order_by.return_value
-        )
+        chain = mock_db.query.return_value.filter.return_value.filter.return_value.order_by.return_value
         chain.first.return_value = first_return
         return mock_db
 

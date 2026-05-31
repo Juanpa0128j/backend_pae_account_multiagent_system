@@ -115,9 +115,7 @@ def _mock_db_no_f2516_no_perdidas(settings, year: int = 2026):
     # F2516 prerequisite check (order_by().first())
     f2516_gate = MagicMock()
     f2516_gate.status = "reviewed"
-    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
-        f2516_gate
-    )
+    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = f2516_gate
     return db
 
 

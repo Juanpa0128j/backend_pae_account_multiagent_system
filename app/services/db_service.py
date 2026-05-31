@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import distinct, extract, func, or_
+from sqlalchemy import desc, distinct, extract, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
@@ -2113,6 +2113,10 @@ def get_base_minima(
 def list_tax_constants(db: Session, year: int) -> dict:
     """Return UVT, base_minima, tarifas_renta and tax_concepts for given year.
 
+    Base mínima de-duplicated to one row per concept (latest effective_from
+    for that year), so the settings UI does not show overlapping temporal
+    windows as duplicates.
+
     Shape:
         {
             "uvt": {"year": int, "value": str, "referencia_normativa": str | None},
@@ -2122,12 +2126,26 @@ def list_tax_constants(db: Session, year: int) -> dict:
         }
     """
     uvt_row = db.query(UvtValue).filter(UvtValue.year == year).first()
-    bm_rows = (
-        db.query(TaxBaseMinima)
+
+    # One row per concept — the latest temporal window for the requested year
+    subq = (
+        db.query(
+            TaxBaseMinima.concepto,
+            TaxBaseMinima.uvt_units,
+            TaxBaseMinima.year,
+            TaxBaseMinima.effective_from,
+            func.row_number()
+            .over(
+                partition_by=TaxBaseMinima.concepto,
+                order_by=desc(func.coalesce(TaxBaseMinima.effective_from, date.min)),
+            )
+            .label("rn"),
+        )
         .filter(TaxBaseMinima.year == year)
-        .order_by(TaxBaseMinima.concepto)
-        .all()
+        .subquery()
     )
+    bm_rows = db.query(subq).filter(subq.c.rn == 1).order_by(subq.c.concepto).all()
+
     return {
         "uvt": (
             {
@@ -2147,7 +2165,7 @@ def list_tax_constants(db: Session, year: int) -> dict:
             for r in bm_rows
         ],
         "tarifas_renta": list_tarifas_renta(db, year=year),
-        "tax_concepts": list_tax_concepts(db, activo=True),
+        "tax_concepts": list_tax_concepts(db, activo=None),
     }
 
 
