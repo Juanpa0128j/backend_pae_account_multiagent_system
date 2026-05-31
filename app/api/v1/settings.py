@@ -9,6 +9,7 @@ Endpoints:
 """
 
 import logging
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
@@ -20,6 +21,8 @@ from app.models.schemas import (
     CompanyProfileSetupRequest,
     CompanySettingsRequest,
     CompanySettingsResponse,
+    NationalRateResponse,
+    NationalRateUpdateRequest,
 )
 from app.services import db_service
 from app.services.rag_service import get_rag_service
@@ -199,18 +202,89 @@ def setup_company_tax_profile(
         f"iva_responsable={body.iva_responsable}"
     )
 
-    # ── Step 3: Persist ───────────────────────────────────────────────────────
+    # ── Step 3a: Read national rates from DB (fallback to module constants) ──────
+    def _get_rate(code: str, fallback: float) -> float:
+        row = db_service.get_national_rate(db, code)
+        if row is None:
+            logger.warning(
+                "setup_company_tax_profile: national_rates DB entry missing for "
+                "code=%s — using hardcoded fallback %.4f. "
+                "Ensure migration a7b8c9d0e1f2 was applied.",
+                code,
+                fallback,
+            )
+            return fallback
+        return float(row.value)
+
+    _TASA_RENTA_FALLBACK = 0.35  # Art. 240 ET, Ley 2277/2022
+    tasa_retefuente_servicios = _get_rate(
+        "retefuente_servicios", _TASA_RETEFUENTE_SERVICIOS
+    )
+    tasa_retefuente_bienes = _get_rate("retefuente_bienes", _TASA_RETEFUENTE_BIENES)
+    tasa_retefuente_arrendamiento = _get_rate(
+        "retefuente_arrendamiento", _TASA_RETEFUENTE_ARRENDAMIENTO
+    )
+    tasa_renta = _get_rate("renta_general", _TASA_RENTA_FALLBACK)
+
+    # ── Step 3b: Persist ──────────────────────────────────────────────────────────
     settings_data = {
         "nombre": body.nombre,
         "ciudad": body.ciudad,
         "codigo_ciiu": body.codigo_ciiu,
         "iva_responsable": body.iva_responsable,
-        "tasa_retefuente_servicios": _TASA_RETEFUENTE_SERVICIOS,
-        "tasa_retefuente_bienes": _TASA_RETEFUENTE_BIENES,
-        "tasa_retefuente_arrendamiento": _TASA_RETEFUENTE_ARRENDAMIENTO,
+        "tasa_retefuente_servicios": tasa_retefuente_servicios,
+        "tasa_retefuente_bienes": tasa_retefuente_bienes,
+        "tasa_retefuente_arrendamiento": tasa_retefuente_arrendamiento,
         "tasa_reteica": tasa_reteica,
         "tasa_iva_general": tasa_iva,
         "tasa_ica": tasa_ica,
-        "tasa_renta": 0.35,  # Fixed — Art. 240 ET, Ley 2277/2022. Never inferred.
+        "tasa_renta": tasa_renta,
     }
     return db_service.upsert_company_settings(db, nit, settings_data)
+
+
+# ── National Rates ───────────────────────────────────────────────────────────
+
+
+@router.get("/national-rates", response_model=list[NationalRateResponse])
+async def list_national_rates_endpoint(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[NationalRateResponse]:
+    """List all configurable national statutory tax rates."""
+    rows = db_service.list_national_rates(db)
+    return [NationalRateResponse(**r) for r in rows]
+
+
+@router.put(
+    "/national-rates/{code}",
+    response_model=NationalRateResponse,
+)
+async def update_national_rate_endpoint(
+    code: str,
+    body: NationalRateUpdateRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NationalRateResponse:
+    """Update a national statutory tax rate by code.
+
+    Valid codes: retefuente_servicios, retefuente_bienes,
+    retefuente_arrendamiento, renta_general.
+    """
+    from datetime import date as date_type
+
+    row = db_service.upsert_national_rate(
+        db,
+        code=code,
+        value=Decimal(str(body.value)),
+        descripcion=body.descripcion,
+        norma_referencia=body.norma_referencia,
+        vigente_desde=date_type.fromisoformat(body.vigente_desde),
+    )
+    return NationalRateResponse(
+        code=row.code,
+        value=float(row.value),
+        descripcion=row.descripcion,
+        norma_referencia=row.norma_referencia,
+        vigente_desde=row.vigente_desde.isoformat(),
+    )

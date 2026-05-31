@@ -25,6 +25,7 @@ from app.models.database import (
     IngestJob,
     IngestStatus,
     JournalEntryLine,
+    NationalRate,
     ProcessJob,
     ProcessStatus,
     ReteicaTarifa,
@@ -2659,3 +2660,55 @@ def delete_ajuste_fiscal(db: Session, ajuste_id: str) -> bool:
     db.delete(row)
     db.commit()
     return True
+
+
+# ── NationalRate ─────────────────────────────────────────────────────────────
+
+
+def list_national_rates(db: Session) -> list[dict]:
+    """Return all national_rates rows as dicts, ordered by code."""
+    rows = db.query(NationalRate).order_by(NationalRate.code).all()
+    return [
+        {
+            "code": r.code,
+            "value": float(r.value),
+            "descripcion": r.descripcion,
+            "norma_referencia": r.norma_referencia,
+            "vigente_desde": r.vigente_desde.isoformat() if r.vigente_desde else None,
+        }
+        for r in rows
+    ]
+
+
+def get_national_rate(db: Session, code: str) -> NationalRate | None:
+    """Return the NationalRate row for the given code, or None."""
+    return db.query(NationalRate).filter(NationalRate.code == code).first()
+
+
+def upsert_national_rate(
+    db: Session,
+    code: str,
+    value: Decimal,
+    descripcion: str,
+    norma_referencia: str,
+    vigente_desde: date,
+) -> NationalRate:
+    """Insert or update a NationalRate row keyed by code."""
+    row = db.query(NationalRate).filter(NationalRate.code == code).first()
+    if row is None:
+        row = NationalRate(
+            code=code,
+            value=value,
+            descripcion=descripcion,
+            norma_referencia=norma_referencia,
+            vigente_desde=vigente_desde,
+        )
+        db.add(row)
+    else:
+        row.value = value
+        row.descripcion = descripcion
+        row.norma_referencia = norma_referencia
+        row.vigente_desde = vigente_desde
+    db.commit()
+    db.refresh(row)
+    return row

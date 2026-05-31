@@ -681,3 +681,36 @@ class AjusteFiscalUpsertRequest(BaseModel):
                 f"tipo_diferencia must be one of {sorted(_VALID_AJUSTE_TIPO_DIFERENCIA)}"
             )
         return v
+
+
+# ── NationalRate schemas ──────────────────────────────────────────────────────
+
+
+class NationalRateResponse(BaseModel):
+    """Single national_rates row returned by the API."""
+
+    code: str
+    value: float
+    descripcion: str
+    norma_referencia: str
+    vigente_desde: str  # ISO date string e.g. "2023-01-01"
+
+    model_config = {"from_attributes": True}
+
+
+class NationalRateUpdateRequest(BaseModel):
+    """Request body for PUT /api/v1/settings/national-rates/{code}."""
+
+    value: float = Field(
+        ...,
+        gt=0,
+        le=1.0,
+        description="Rate as decimal fraction, e.g. 0.04 for 4%",
+    )
+    descripcion: str = Field(..., min_length=1, max_length=255)
+    norma_referencia: str = Field(..., min_length=1, max_length=128)
+    vigente_desde: str = Field(
+        ...,
+        description="Effective date ISO format YYYY-MM-DD",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
