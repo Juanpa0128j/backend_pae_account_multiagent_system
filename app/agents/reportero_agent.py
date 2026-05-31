@@ -42,6 +42,7 @@ from app.services.report_builders import (
     build_cambios_patrimonio,
     build_notas_eeff,
 )
+from app.services.report_builders._base import _fetch_rag_context_text
 
 # db_service and SessionLocal are imported lazily inside reportero_node to
 # avoid loading psycopg2 / SQLAlchemy engine at module import time.
@@ -65,26 +66,8 @@ _VALID_REPORT_TYPES = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# RAG enrichment helper (non-fatal)
+# Report builders map
 # ---------------------------------------------------------------------------
-
-
-def _fetch_rag_context_text(query: str, n_results: int = 5) -> str:
-    """Return RAG results as a single text block for LLM context."""
-    try:
-        from app.services.rag_service import get_rag_service  # noqa: PLC0415
-
-        rag_svc = get_rag_service()
-        results = rag_svc.search_normativo(query, n_results=n_results)
-        parts = []
-        for r in results:
-            articulo = r.metadata.get("articulo", "")
-            fuente = r.metadata.get("fuente", "")
-            header = f"[{articulo} - {fuente}]" if articulo else ""
-            parts.append(f"{header}\n{r.content[:500]}")
-        return "\n\n".join(parts)
-    except Exception:  # noqa: BLE001
-        return ""
 
 
 _BUILDERS = {

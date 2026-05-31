@@ -26,13 +26,6 @@ from ._base import (
 
 logger = logging.getLogger(__name__)
 
-_CLASS_INGRESOS = CLASS_INGRESOS
-_CLASS_GASTOS = CLASS_GASTOS
-_CLASS_COSTO_VENTAS = CLASS_COSTO_VENTAS
-_PREFIX_ACTIVOS_CORRIENTES = PREFIX_ACTIVOS_CORRIENTES
-_PREFIX_PASIVOS_CORRIENTES = PREFIX_PASIVOS_CORRIENTES
-_PREFIX_INVENTARIOS = PREFIX_INVENTARIOS
-
 _SYSTEM_PROMPT_ANALISIS = """Eres un Director Financiero y Analista Contable Senior experto en contabilidad colombiana.
 
 ## TU ROL
@@ -67,15 +60,15 @@ interpretaciones profundas, predicciones fundamentadas y recomendaciones acciona
 def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
     activos_corrientes = sum(
         float(_debit_nature_balance(r))
-        for r in _ledger_by_prefixes(ledger, _PREFIX_ACTIVOS_CORRIENTES)
+        for r in _ledger_by_prefixes(ledger, PREFIX_ACTIVOS_CORRIENTES)
     )
     inventarios = sum(
         float(_debit_nature_balance(r))
-        for r in _ledger_by_prefix(ledger, _PREFIX_INVENTARIOS)
+        for r in _ledger_by_prefix(ledger, PREFIX_INVENTARIOS)
     )
     pasivos_corrientes = sum(
         float(_debit_nature_balance(r))
-        for r in _ledger_by_prefixes(ledger, _PREFIX_PASIVOS_CORRIENTES)
+        for r in _ledger_by_prefixes(ledger, PREFIX_PASIVOS_CORRIENTES)
     )
 
     activos = balance["assets"]
@@ -242,9 +235,9 @@ def build_analysis(db, params: dict, svc) -> dict:
         db, start_date=start_date, end_date=end_date, company_nit=company_nit
     )
 
-    ingresos_rows = _ledger_by_prefix(ledger, _CLASS_INGRESOS)
-    gastos_rows = _ledger_by_prefix(ledger, _CLASS_GASTOS)
-    costo_rows = _ledger_by_prefix(ledger, _CLASS_COSTO_VENTAS)
+    ingresos_rows = _ledger_by_prefix(ledger, CLASS_INGRESOS)
+    gastos_rows = _ledger_by_prefix(ledger, CLASS_GASTOS)
+    costo_rows = _ledger_by_prefix(ledger, CLASS_COSTO_VENTAS)
     total_ingresos = sum(float(_credit_nature_balance(r)) for r in ingresos_rows)
     total_gastos = sum(float(_debit_nature_balance(r)) for r in gastos_rows)
     total_costo_ventas = sum(float(_debit_nature_balance(r)) for r in costo_rows)
