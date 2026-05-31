@@ -84,7 +84,9 @@ def _run_supervisor_auditor_branch(state):
     """Run the supervisor auditor branch, bypassing schema validation."""
     from app.agents.supervisor import supervisor_node
 
-    with patch("app.agents.supervisor.validate_auditor_output_node") as mock_validate:
+    with patch(
+        "app.agents.routing.process_router.validate_auditor_output_node"
+    ) as mock_validate:
         mock_validate.side_effect = lambda s: s
         return supervisor_node(state)
 

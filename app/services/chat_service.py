@@ -453,9 +453,9 @@ def gather_financial_data(
         title = ""
 
         if intent_name == "balance":
-            from app.agents.reportero_agent import _build_balance
+            from app.services.report_builders.balance import build_balance
 
-            data = _build_balance(db, params, db_service)
+            data = build_balance(db, params, db_service)
             title = "Balance General"
 
         elif intent_name == "pnl":

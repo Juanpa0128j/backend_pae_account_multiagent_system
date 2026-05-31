@@ -10,6 +10,7 @@ Endpoints:
 
 import logging
 from decimal import Decimal
+from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
@@ -17,14 +18,20 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.core.llm_client import get_llm_client
+from app.models.database import CompanyPucConfig
 from app.models.schemas import (
+    CompanyPucEntryResponse,
+    CompanyPucToggleRequest,
     CompanyProfileSetupRequest,
+    CompanyRateOverrideRequest,
     CompanySettingsRequest,
     CompanySettingsResponse,
+    EffectiveRateResponse,
     NationalRateResponse,
     NationalRateUpdateRequest,
 )
 from app.services import db_service
+from app.services.nit_utils import normalize_nit
 from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
@@ -271,8 +278,6 @@ async def update_national_rate_endpoint(
     Valid codes: retefuente_servicios, retefuente_bienes,
     retefuente_arrendamiento, renta_general.
     """
-    from datetime import date as date_type
-
     row = db_service.upsert_national_rate(
         db,
         code=code,
@@ -288,3 +293,154 @@ async def update_national_rate_endpoint(
         norma_referencia=row.norma_referencia,
         vigente_desde=row.vigente_desde.isoformat(),
     )
+
+
+# ── Company-scoped PUC and Rate Overrides ────────────────────────────────────
+
+
+@router.get("/company/{nit}/puc", response_model=list[CompanyPucEntryResponse])
+async def list_company_puc(
+    nit: str,
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[CompanyPucEntryResponse]:
+    """List full PUC catalog with per-company activation status overlay.
+
+    Returns all active global accounts (or all if include_inactive=True) with
+    per-company is_active_for_company flag based on company_puc_config.
+    If company has no config entry for an account, it defaults to active.
+    """
+    nit = normalize_nit(nit)
+    # Get all global active accounts (or all accounts if include_inactive)
+    all_accounts = (
+        db_service.get_all_puc_including_inactive(db)
+        if include_inactive
+        else db_service.get_all_puc(db)
+    )
+    # Load company configs
+    configs = {
+        c.cuenta_codigo: c
+        for c in db.query(CompanyPucConfig).filter_by(company_nit=nit).all()
+    }
+
+    return [
+        CompanyPucEntryResponse(
+            codigo=a.codigo,
+            nombre=a.nombre,
+            clase=a.clase,
+            naturaleza=a.naturaleza.value,
+            activa=a.activa,
+            is_active_for_company=(
+                configs[a.codigo].is_active if a.codigo in configs else True
+            ),
+            custom_nombre=(
+                configs[a.codigo].custom_nombre if a.codigo in configs else None
+            ),
+        )
+        for a in all_accounts
+    ]
+
+
+@router.put(
+    "/company/{nit}/puc/{codigo}",
+    response_model=CompanyPucEntryResponse,
+)
+async def toggle_company_puc(
+    nit: str,
+    codigo: str,
+    body: CompanyPucToggleRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CompanyPucEntryResponse:
+    """Toggle PUC account activation for a specific company.
+
+    Updates company_puc_config to mark an account as active/inactive for
+    the given company. Returns the updated account entry with current status.
+    """
+    nit = normalize_nit(nit)
+    # Upsert the config
+    db_service.set_company_puc_config(
+        db,
+        company_nit=nit,
+        cuenta_codigo=codigo,
+        is_active=body.is_active,
+        custom_nombre=body.custom_nombre,
+    )
+    # Fetch the account to return
+    account = db_service.validate_puc_exists(db, codigo)
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail=f"PUC account {codigo} not found",
+        )
+    # Get the config we just upserted
+    config = (
+        db.query(CompanyPucConfig)
+        .filter_by(company_nit=nit, cuenta_codigo=codigo)
+        .first()
+    )
+    return CompanyPucEntryResponse(
+        codigo=account.codigo,
+        nombre=account.nombre,
+        clase=account.clase,
+        naturaleza=account.naturaleza.value,
+        activa=account.activa,
+        is_active_for_company=config.is_active if config else True,
+        custom_nombre=config.custom_nombre if config else None,
+    )
+
+
+@router.get(
+    "/company/{nit}/rates",
+    response_model=list[EffectiveRateResponse],
+)
+async def list_company_rates(
+    nit: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[EffectiveRateResponse]:
+    """List effective tax rates for a company.
+
+    Returns national rates with company overrides layered on top.
+    Each rate includes an 'overridden' flag (True if company has an override).
+    """
+    nit = normalize_nit(nit)
+    rows = db_service.get_effective_rates(db, nit)
+    return [EffectiveRateResponse(**r) for r in rows]
+
+
+@router.put(
+    "/company/{nit}/rates/{code}",
+    response_model=EffectiveRateResponse,
+)
+async def upsert_company_rate(
+    nit: str,
+    code: str,
+    body: CompanyRateOverrideRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> EffectiveRateResponse:
+    """Upsert a company-specific tax rate override.
+
+    Creates or updates a company_rate_override for the given rate code.
+    Returns the updated effective rate with overridden flag.
+    """
+    nit = normalize_nit(nit)
+    db_service.upsert_company_rate_override(
+        db,
+        company_nit=nit,
+        rate_code=code,
+        value=Decimal(str(body.value)),
+        norma_referencia=body.norma_referencia,
+        vigente_desde=date_type.fromisoformat(body.vigente_desde),
+    )
+    # Fetch updated rates and return the specific one
+    rows = db_service.get_effective_rates(db, nit)
+    rate = next((r for r in rows if r["code"] == code), None)
+    if not rate:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Rate code {code} not found",
+        )
+    return EffectiveRateResponse(**rate)

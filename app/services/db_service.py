@@ -11,13 +11,15 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import distinct, extract, func, or_
+from sqlalchemy import desc, distinct, extract, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
 from app.models.database import (
     AjusteFiscal,
     AuditLog,
+    CompanyPucConfig,
+    CompanyRateOverride,
     CompanySettings,
     CuentaPUC,
     FinancialStatement,
@@ -876,6 +878,60 @@ def deactivate_puc(
     return row
 
 
+def get_puc_for_company(db: Session, company_nit: str) -> List[CuentaPUC]:
+    """
+    Get active PUC accounts for a company (OPT-OUT model).
+
+    Returns all active PUC accounts except those explicitly deactivated
+    for this company via company_puc_config with is_active=False.
+    If company has no config rows, returns full active catalog.
+    """
+    from app.models.database import CompanyPucConfig
+
+    # Subquery: codes deactivated for this company
+    deactivated = (
+        db.query(CompanyPucConfig.cuenta_codigo)
+        .filter(
+            CompanyPucConfig.company_nit == company_nit,
+            ~CompanyPucConfig.is_active,
+        )
+        .subquery()
+    )
+    return (
+        db.query(CuentaPUC)
+        .filter(CuentaPUC.activa, ~CuentaPUC.codigo.in_(deactivated))
+        .order_by(CuentaPUC.codigo)
+        .all()
+    )
+
+
+def set_company_puc_config(
+    db: Session,
+    company_nit: str,
+    cuenta_codigo: str,
+    is_active: bool,
+    custom_nombre: str | None = None,
+    commit: bool = True,
+) -> "CompanyPucConfig":
+    """Upsert company PUC activation config."""
+    from app.models.database import CompanyPucConfig
+
+    row = (
+        db.query(CompanyPucConfig)
+        .filter_by(company_nit=company_nit, cuenta_codigo=cuenta_codigo)
+        .first()
+    )
+    if row is None:
+        row = CompanyPucConfig(company_nit=company_nit, cuenta_codigo=cuenta_codigo)
+        db.add(row)
+    row.is_active = is_active
+    if custom_nombre is not None:
+        row.custom_nombre = custom_nombre
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
 # ─── ProcessJob ──────────────────────────────────────────────────
 
 
@@ -1472,9 +1528,9 @@ def list_reteica_tarifas(
             "ciiu_seccion": r.ciiu_seccion,
             "tasa": float(r.tasa),
             "fuente": r.fuente,
-            "base_minima_uvt": float(r.base_minima_uvt)
-            if r.base_minima_uvt is not None
-            else None,
+            "base_minima_uvt": (
+                float(r.base_minima_uvt) if r.base_minima_uvt is not None else None
+            ),
         }
         for r in rows
     ]
@@ -2055,21 +2111,41 @@ def get_base_minima(
 
 
 def list_tax_constants(db: Session, year: int) -> dict:
-    """Return UVT and base_minima constants for given year.
+    """Return UVT, base_minima, tarifas_renta and tax_concepts for given year.
+
+    Base mínima de-duplicated to one row per concept (latest effective_from
+    for that year), so the settings UI does not show overlapping temporal
+    windows as duplicates.
 
     Shape:
         {
             "uvt": {"year": int, "value": str, "referencia_normativa": str | None},
-            "base_minima": [{"concepto": str, "uvt_units": str, "year": int}, ...]
+            "base_minima": [{"concepto": str, "uvt_units": str, "year": int}, ...],
+            "tarifas_renta": [dict, ...],
+            "tax_concepts": [dict, ...],
         }
     """
     uvt_row = db.query(UvtValue).filter(UvtValue.year == year).first()
-    bm_rows = (
-        db.query(TaxBaseMinima)
+
+    # One row per concept — the latest temporal window for the requested year
+    subq = (
+        db.query(
+            TaxBaseMinima.concepto,
+            TaxBaseMinima.uvt_units,
+            TaxBaseMinima.year,
+            TaxBaseMinima.effective_from,
+            func.row_number()
+            .over(
+                partition_by=TaxBaseMinima.concepto,
+                order_by=desc(func.coalesce(TaxBaseMinima.effective_from, date.min)),
+            )
+            .label("rn"),
+        )
         .filter(TaxBaseMinima.year == year)
-        .order_by(TaxBaseMinima.concepto)
-        .all()
+        .subquery()
     )
+    bm_rows = db.query(subq).filter(subq.c.rn == 1).order_by(subq.c.concepto).all()
+
     return {
         "uvt": (
             {
@@ -2088,6 +2164,8 @@ def list_tax_constants(db: Session, year: int) -> dict:
             }
             for r in bm_rows
         ],
+        "tarifas_renta": list_tarifas_renta(db, year=year),
+        "tax_concepts": list_tax_concepts(db, activo=None),
     }
 
 
@@ -2728,5 +2806,61 @@ def upsert_national_rate(
         row.norma_referencia = norma_referencia
         row.vigente_desde = vigente_desde
     db.commit()
+    db.refresh(row)
+    return row
+
+
+# ── Company Rate Overrides ───────────────────────────────────────────────────
+
+
+def get_effective_rates(db: Session, company_nit: str) -> list[dict]:
+    """
+    Return effective rates for a company: company override → national_rates fallback.
+
+    Returns all national rates with company overrides layered on top.
+    Each rate dict includes an 'overridden' flag (True if company has override).
+    """
+    nationals = {r["code"]: r for r in list_national_rates(db)}
+    overrides = (
+        db.query(CompanyRateOverride)
+        .filter(CompanyRateOverride.company_nit == company_nit)
+        .all()
+    )
+    result = {code: {**data, "overridden": False} for code, data in nationals.items()}
+    for ov in overrides:
+        if ov.rate_code in result:
+            result[ov.rate_code].update(
+                {
+                    "value": float(ov.value),
+                    "norma_referencia": ov.norma_referencia
+                    or result[ov.rate_code]["norma_referencia"],
+                    "overridden": True,
+                }
+            )
+    return list(result.values())
+
+
+def upsert_company_rate_override(
+    db: Session,
+    company_nit: str,
+    rate_code: str,
+    value: Decimal,
+    norma_referencia: str | None,
+    vigente_desde: date,
+    commit: bool = True,
+) -> CompanyRateOverride:
+    """Upsert a company-specific rate override."""
+    row = (
+        db.query(CompanyRateOverride)
+        .filter_by(company_nit=company_nit, rate_code=rate_code)
+        .first()
+    )
+    if row is None:
+        row = CompanyRateOverride(company_nit=company_nit, rate_code=rate_code)
+        db.add(row)
+    row.value = value
+    row.norma_referencia = norma_referencia
+    row.vigente_desde = vigente_desde
+    _commit_or_flush(db, commit)
     db.refresh(row)
     return row

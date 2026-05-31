@@ -279,15 +279,17 @@ def _load_company_context(company_nit: str | None) -> dict | None:
                 pass
 
 
-def _load_puc_ingresos_catalog() -> list[dict]:
+def _load_puc_ingresos_catalog(company_nit: str | None = None) -> list[dict]:
     """Return PUC accounts in the ingresos range (4xxx) as ``{codigo, descripcion}``.
 
+    When company_nit is provided, returns only accounts active for that company.
+    Falls back to global active accounts if company_nit is None.
     Empty list when the catalog table is unreachable so the prompt still builds.
     The LLM treats the list as a soft constraint via the prompt directive.
     """
     try:
         from app.core.database import SessionLocal
-        from app.models.database import CuentaPUC
+        from app import services
     except Exception as imp_err:
         logger.warning("contador: puc catalog import failed: %s", imp_err)
         return []
@@ -295,13 +297,13 @@ def _load_puc_ingresos_catalog() -> list[dict]:
     db = None
     try:
         db = SessionLocal()
-        rows = (
-            db.query(CuentaPUC)
-            .filter(CuentaPUC.codigo >= "4")
-            .filter(CuentaPUC.codigo < "5")
-            .order_by(CuentaPUC.codigo)
-            .all()
-        )
+        # Get company-scoped or global PUC accounts
+        if company_nit:
+            puc_accounts = services.db_service.get_puc_for_company(db, company_nit)
+        else:
+            puc_accounts = services.db_service.get_all_puc(db)
+        # Filter to ingresos range (4xxx)
+        rows = [r for r in puc_accounts if r.codigo >= "4" and r.codigo < "5"]
         return [
             {"codigo": str(r.codigo), "descripcion": str(r.descripcion or "")}
             for r in rows
@@ -559,7 +561,7 @@ def contador_node(state: AgentState) -> AgentState:
                         if company_nit:
                             break
             company_context = _load_company_context(company_nit)
-            puc_ingresos_catalog = _load_puc_ingresos_catalog()
+            puc_ingresos_catalog = _load_puc_ingresos_catalog(company_nit)
         elif is_nomina or is_cesantias:
             # For payroll documents (nomina, liquidacion_cesantias), load company context
             # to understand cost centers, departamentos, and labor regime.
