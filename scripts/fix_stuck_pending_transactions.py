@@ -33,9 +33,7 @@ from app.services import db_service, jobs
 
 def _find_stuck_ingest_ids(session):
     """Find ingest_ids that have pending transactions but no active ProcessJob."""
-    rows = (
-        session.execute(
-            text("""
+    rows = session.execute(text("""
             SELECT DISTINCT tp.ingest_id, COUNT(tp.id) as pending_count
             FROM transactions_pending tp
             WHERE tp.status = 'PENDING'
@@ -46,11 +44,7 @@ def _find_stuck_ingest_ids(session):
             )
             GROUP BY tp.ingest_id
             ORDER BY pending_count DESC
-        """)
-        )
-        .mappings()
-        .all()
-    )
+        """)).mappings().all()
     return rows
 
 

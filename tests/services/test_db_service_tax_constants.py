@@ -199,9 +199,9 @@ class TestGetBaseMinimaAsOfDate:
         result = db_service.get_base_minima(
             db, "retefuente_servicios", 2025, as_of_date=date(2025, 4, 15)
         )
-        assert result == Decimal("4"), (
-            "Should return pre-572 value (4 UVT) before Jun 2025"
-        )
+        assert result == Decimal(
+            "4"
+        ), "Should return pre-572 value (4 UVT) before Jun 2025"
 
     def test_returns_decreto_572_row_during_decreto_window(self, db):
         _insert_bm(
@@ -224,9 +224,9 @@ class TestGetBaseMinimaAsOfDate:
         result = db_service.get_base_minima(
             db, "retefuente_servicios", 2025, as_of_date=date(2025, 8, 1)
         )
-        assert result == Decimal("2"), (
-            "Should return Decreto 572 value (2 UVT) during window"
-        )
+        assert result == Decimal(
+            "2"
+        ), "Should return Decreto 572 value (2 UVT) during window"
 
     def test_returns_post_suspension_row_after_may_7_2026(self, db):
         _insert_bm(
@@ -244,9 +244,9 @@ class TestGetBaseMinimaAsOfDate:
         result = db_service.get_base_minima(
             db, "retefuente_servicios", 2026, as_of_date=date(2026, 5, 24)
         )
-        assert result == Decimal("4"), (
-            "Should return post-suspension value (4 UVT) after May 7 2026"
-        )
+        assert result == Decimal(
+            "4"
+        ), "Should return post-suspension value (4 UVT) after May 7 2026"
 
     def test_returns_none_when_no_valid_row_for_date(self, db):
         # Only has a row valid before 2025-06-01

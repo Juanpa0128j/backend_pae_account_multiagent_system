@@ -65,7 +65,9 @@ def _generate_f110(settings, ledger, f2516_mock=None, year: int = 2026):
     # gate F2516 prereq must return a "reviewed" draft so F110 generation proceeds
     gate = MagicMock()
     gate.status = "reviewed"
-    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = gate
+    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
+        gate
+    )
 
     with (
         patch(

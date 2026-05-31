@@ -298,9 +298,9 @@ def test_reteica_uses_custom_account_from_company_config(mock_rag_cls, mock_llm_
 
     enriched = result["tributario_output"]["asientos_enriquecidos"]
     cuentas = [a["cuenta_puc"] for a in enriched]
-    assert "2367" in cuentas, (
-        "Custom ReteICA account 2367 missing from enriched asientos"
-    )
+    assert (
+        "2367" in cuentas
+    ), "Custom ReteICA account 2367 missing from enriched asientos"
 
 
 @patch("app.agents.tributario_agent.get_llm_client")
@@ -333,9 +333,9 @@ def test_iva_captured_from_asientos_not_doubled(mock_rag_cls, mock_llm_fn):
     # contador already covers it. Check that the IVA sub-account (240802) is absent.
     enriquecidos = result["tributario_output"]["asientos_enriquecidos"]
     new_iva_entries = [a for a in enriquecidos if a.get("cuenta_puc") == "240802"]
-    assert len(new_iva_entries) == 0, (
-        "Tributario must not add IVA when already in asientos"
-    )
+    assert (
+        len(new_iva_entries) == 0
+    ), "Tributario must not add IVA when already in asientos"
 
 
 @patch("app.agents.tributario_agent.get_llm_client")
@@ -623,12 +623,12 @@ def test_ica_applied_for_income_transaction(mock_llm_fn, mock_rag_cls):
     assert Decimal(ica_entry["valor_impuesto"]) > Decimal("0")
 
     puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
-    assert "511505" in puc_codes, (
-        "Gasto ICA admin (511505) missing from asientos_enriquecidos"
-    )
-    assert "2368" in puc_codes, (
-        "ICA por Pagar (2368) missing from asientos_enriquecidos"
-    )
+    assert (
+        "511505" in puc_codes
+    ), "Gasto ICA admin (511505) missing from asientos_enriquecidos"
+    assert (
+        "2368" in puc_codes
+    ), "ICA por Pagar (2368) missing from asientos_enriquecidos"
 
 
 @patch("app.services.db_service.get_company_settings")
