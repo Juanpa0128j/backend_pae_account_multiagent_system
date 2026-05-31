@@ -769,6 +769,16 @@ class AuxiliaryLedgerContent(ContentBase):
     )
     periodo_inicio: Optional[str] = Field(None, description="YYYY-MM-DD")
     periodo_fin: Optional[str] = Field(None, description="YYYY-MM-DD")
+    periodicidad: Optional[
+        Literal["mensual", "trimestral", "anual", "personalizado"]
+    ] = Field(
+        None,
+        description=(
+            "Periodicidad declarada en el documento: 'mensual', 'trimestral', "
+            "'anual', 'personalizado'. Null si no es explícito; el backend "
+            "la infiere del span período_inicio→período_fin."
+        ),
+    )
     periodo: Optional[str] = Field(None, description="Period label (backward compat)")
     saldo_inicial: Optional[Decimal] = Field(None)
     lines: List[LedgerLine] = Field(description="Ledger lines")
@@ -958,6 +968,16 @@ class BalanceGeneralContent(ContentBase):
 
     entidad: Optional[NitEntidad] = Field(None)
     periodo_fin: Optional[str] = Field(None, description="Cut-off date YYYY-MM-DD")
+    periodicidad: Optional[
+        Literal["mensual", "trimestral", "anual", "personalizado"]
+    ] = Field(
+        None,
+        description=(
+            "'mensual' si el balance es de cierre de mes; 'anual' si es cierre "
+            "del ejercicio (típicamente 31-dic). Determina si el balance puede "
+            "anclar derivación NIC 7. Null si no es explícito en el PDF."
+        ),
+    )
     marco_normativo: Optional[str] = Field(
         None, description="NIIF_plenas | NIIF_pymes | NIF_microempresas"
     )
@@ -1014,6 +1034,16 @@ class EstadoResultadosContent(ContentBase):
     entidad: Optional[NitEntidad] = Field(None)
     periodo_inicio: Optional[str] = Field(None, description="YYYY-MM-DD")
     periodo_fin: Optional[str] = Field(None, description="YYYY-MM-DD")
+    periodicidad: Optional[
+        Literal["mensual", "trimestral", "anual", "personalizado"]
+    ] = Field(
+        None,
+        description=(
+            "'mensual', 'trimestral', 'anual', 'personalizado'. 'Año terminado' "
+            "→ 'anual'; 'mes de enero' → 'mensual'. Null si no es explícito; "
+            "el backend lo infiere del span período_inicio→período_fin."
+        ),
+    )
     marco_normativo: Optional[str] = Field(
         None, description="NIIF_plenas | NIIF_pymes | NIF_microempresas"
     )

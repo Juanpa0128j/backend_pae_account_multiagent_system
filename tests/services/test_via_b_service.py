@@ -19,15 +19,18 @@ def _stmt(
     statement_type: str,
     data: dict[str, Any],
     period_end: datetime | None = None,
+    period_start: datetime | None = None,
     source_mode: str = "direct",
+    frequency: str | None = None,
 ) -> MagicMock:
     """Build a mock ``FinancialStatement`` row."""
     row = MagicMock()
     row.statement_type = statement_type
     row.data = data
     row.period_end = period_end or datetime(2026, 3, 31, tzinfo=timezone.utc)
-    row.period_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    row.period_start = period_start or datetime(2026, 1, 1, tzinfo=timezone.utc)
     row.source_mode = source_mode
+    row.frequency = frequency
     return row
 
 
@@ -290,13 +293,22 @@ class TestGetDashboardOverrides:
     def test_aggregates_across_three_statement_types(self):
         from app.services import via_b_service
 
+        # Annual periods so the new annual-only derivation_ready gate fires.
+        annual_start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        annual_end = datetime(2025, 12, 31, tzinfo=timezone.utc)
         bg = _stmt(
             statement_type="balance_general",
             data={"total_activos": 1_000_000, "total_pasivos": 300_000},
+            period_start=annual_start,
+            period_end=annual_end,
+            frequency="annual",
         )
         er = _stmt(
             statement_type="estado_resultados",
             data={"utilidad_neta": 200_000},
+            period_start=annual_start,
+            period_end=annual_end,
+            frequency="annual",
         )
         la = _stmt(
             statement_type="libro_auxiliar",
@@ -307,6 +319,9 @@ class TestGetDashboardOverrides:
                     {"cuenta_puc": "5105", "debito": 80_000, "credito": 0},  # not 11*
                 ]
             },
+            period_start=annual_start,
+            period_end=annual_end,
+            frequency="annual",
         )
         db = _mock_db([bg, er, la])
 
@@ -317,6 +332,8 @@ class TestGetDashboardOverrides:
         assert result["efectivo"] == 40_000  # 50000 debit - 10000 credit
         assert result["statements_count"] == 3
         assert result["derivation_ready"] is True
+        # New: annual gate also exposes the matching period for the FE.
+        assert result["derivation_annual_period"] == "2025-12-31"
 
 
 class TestResolveUtilidadNeta:
@@ -613,3 +630,265 @@ class TestGetMonthlyTrend:
         assert result["data"][0]["month"] == "2026-02"
         assert result["data"][1]["month"] == "2026-03"
         assert result["data"][1]["ingresos"] == 900_000
+
+
+class TestFrequencyHelpers:
+    """``infer_frequency`` + ``is_annual`` underpin the derivation gate."""
+
+    def test_infer_frequency_thresholds(self):
+        from app.services.financial_statement_service import infer_frequency
+
+        assert (
+            infer_frequency(
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                datetime(2026, 1, 31, tzinfo=timezone.utc),
+            )
+            == "monthly"
+        )
+        assert (
+            infer_frequency(
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                datetime(2026, 3, 31, tzinfo=timezone.utc),
+            )
+            == "quarterly"
+        )
+        assert (
+            infer_frequency(
+                datetime(2025, 1, 1, tzinfo=timezone.utc),
+                datetime(2025, 12, 31, tzinfo=timezone.utc),
+            )
+            == "annual"
+        )
+        assert (
+            infer_frequency(
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                datetime(2026, 1, 5, tzinfo=timezone.utc),
+            )
+            == "custom"
+        )
+        assert infer_frequency(None, None) is None
+
+    def test_normalize_periodicidad(self):
+        from app.services.financial_statement_service import normalize_periodicidad
+
+        assert normalize_periodicidad("anual") == "annual"
+        assert normalize_periodicidad("MENSUAL") == "monthly"
+        assert normalize_periodicidad("foo") is None
+        assert normalize_periodicidad(None) is None
+
+    def test_is_annual_uses_column_then_span_fallback(self):
+        from app.services.financial_statement_service import is_annual
+
+        annual = _stmt(
+            statement_type="balance_general",
+            data={},
+            period_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            period_end=datetime(2025, 12, 31, tzinfo=timezone.utc),
+            frequency=None,  # forces span inference
+        )
+        monthly = _stmt(
+            statement_type="balance_general",
+            data={},
+            period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            period_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+            frequency="monthly",
+        )
+        assert is_annual(annual) is True
+        assert is_annual(monthly) is False
+
+
+class TestSynthesizeBalanceFromLibroAuxiliar:
+    """LA → BG conversion: sum class 1/2/3 by natural-side balance."""
+
+    def test_balanced_sample(self):
+        from app.services.financial_statement_service import (
+            synthesize_balance_from_libro_auxiliar,
+        )
+
+        la = {
+            "lines": [
+                {
+                    "cuenta_puc": "1105",
+                    "debito": 1000,
+                    "credito": 0,
+                    "cuenta_nombre": "Caja",
+                },
+                {
+                    "cuenta_puc": "2205",
+                    "debito": 0,
+                    "credito": 400,
+                    "cuenta_nombre": "Proveedores",
+                },
+                {
+                    "cuenta_puc": "3105",
+                    "debito": 0,
+                    "credito": 600,
+                    "cuenta_nombre": "Capital",
+                },
+            ]
+        }
+        bg = synthesize_balance_from_libro_auxiliar(la)
+        assert bg["total_activos"] == 1000
+        assert bg["total_pasivos"] == 400
+        assert bg["total_patrimonio"] == 600
+        assert bg["source"] == "synthesized_from_libro_auxiliar"
+        assert len(bg["accounts"]) == 3
+
+    def test_pnl_classes_ignored_in_balance(self):
+        from app.services.financial_statement_service import (
+            synthesize_balance_from_libro_auxiliar,
+        )
+
+        la = {
+            "lines": [
+                {"cuenta_puc": "1105", "debito": 100, "credito": 0},
+                {"cuenta_puc": "5105", "debito": 50, "credito": 0},  # gasto → ignore
+            ]
+        }
+        bg = synthesize_balance_from_libro_auxiliar(la)
+        # Only class 1 counted on the balance side.
+        assert len(bg["accounts"]) == 1
+        assert bg["accounts"][0]["cuenta_puc"] == "1105"
+
+
+class TestLibroAuxiliarComprehensive:
+    """`la_is_comprehensive` decides whether LA can replace BG+ER."""
+
+    def test_partial_la_not_comprehensive(self):
+        from app.services.financial_statement_service import (
+            _libro_auxiliar_is_comprehensive,
+        )
+
+        only_caja = {"lines": [{"cuenta_puc": "1105", "debito": 100, "credito": 0}]}
+        assert _libro_auxiliar_is_comprehensive(only_caja) is False
+
+    def test_only_balance_classes_not_comprehensive(self):
+        from app.services.financial_statement_service import (
+            _libro_auxiliar_is_comprehensive,
+        )
+
+        only_balance = {
+            "lines": [
+                {"cuenta_puc": "1105", "debito": 100, "credito": 0},
+                {"cuenta_puc": "2205", "debito": 0, "credito": 50},
+                {"cuenta_puc": "3105", "debito": 0, "credito": 50},
+            ]
+        }
+        assert _libro_auxiliar_is_comprehensive(only_balance) is False
+
+    def test_full_la_comprehensive(self):
+        from app.services.financial_statement_service import (
+            _libro_auxiliar_is_comprehensive,
+        )
+
+        full = {
+            "lines": [
+                {"cuenta_puc": "1105", "debito": 100, "credito": 0},
+                {"cuenta_puc": "2205", "debito": 0, "credito": 50},
+                {"cuenta_puc": "3105", "debito": 0, "credito": 50},
+                {"cuenta_puc": "4135", "debito": 0, "credito": 200},
+                {"cuenta_puc": "5105", "debito": 80, "credito": 0},
+            ]
+        }
+        assert _libro_auxiliar_is_comprehensive(full) is True
+
+
+class TestLatestCommonPeriodAnnualOnly:
+    """``annual_only=True`` filters out monthly closings — the derivation
+    gate must not mistake a coincident monthly period for an annual one."""
+
+    def test_only_monthly_uploads_returns_none(self):
+        from datetime import date as _date
+        from unittest.mock import patch as _patch
+
+        from app.services import via_b_service
+
+        jan = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        rows_by_type = {
+            "balance_general": [
+                _stmt(
+                    statement_type="balance_general",
+                    data={},
+                    period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    period_end=jan,
+                    frequency="monthly",
+                )
+            ],
+            "estado_resultados": [
+                _stmt(
+                    statement_type="estado_resultados",
+                    data={},
+                    period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    period_end=jan,
+                    frequency="monthly",
+                )
+            ],
+            "libro_auxiliar": [
+                _stmt(
+                    statement_type="libro_auxiliar",
+                    data={},
+                    period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    period_end=jan,
+                    frequency="monthly",
+                )
+            ],
+        }
+        with _patch(
+            "app.services.via_b_service._statements",
+            side_effect=lambda _db, _nit, stype: rows_by_type.get(stype, []),
+        ):
+            # Without annual_only, the common period is recognised.
+            assert via_b_service.latest_common_period(
+                MagicMock(), "800999888"
+            ) == _date(2026, 1, 31)
+            # With annual_only=True, the monthly rows are skipped → None.
+            assert (
+                via_b_service.latest_common_period(
+                    MagicMock(), "800999888", annual_only=True
+                )
+                is None
+            )
+
+    def test_annual_uploads_return_common_date(self):
+        from datetime import date as _date
+        from unittest.mock import patch as _patch
+
+        from app.services import via_b_service
+
+        dec = datetime(2025, 12, 31, tzinfo=timezone.utc)
+        rows_by_type = {
+            "balance_general": [
+                _stmt(
+                    statement_type="balance_general",
+                    data={},
+                    period_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    period_end=dec,
+                    frequency="annual",
+                )
+            ],
+            "estado_resultados": [
+                _stmt(
+                    statement_type="estado_resultados",
+                    data={},
+                    period_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    period_end=dec,
+                    frequency="annual",
+                )
+            ],
+            "libro_auxiliar": [
+                _stmt(
+                    statement_type="libro_auxiliar",
+                    data={},
+                    period_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    period_end=dec,
+                    frequency="annual",
+                )
+            ],
+        }
+        with _patch(
+            "app.services.via_b_service._statements",
+            side_effect=lambda _db, _nit, stype: rows_by_type.get(stype, []),
+        ):
+            assert via_b_service.latest_common_period(
+                MagicMock(), "800999888", annual_only=True
+            ) == _date(2025, 12, 31)
