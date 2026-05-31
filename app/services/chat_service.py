@@ -799,6 +799,7 @@ def _compute_ratios_via_b(balance: dict | None, pnl: dict | None) -> dict:
         "prueba_acida": None,
         "margen_neto": _pct(utilidad_neta, ingresos),
         "roa": _pct(utilidad_neta, activos),
+        "roe": _pct(utilidad_neta, patrimonio_total),
         "razon_endeudamiento": _ratio(pasivos, activos),
         "deuda_patrimonio": _ratio(pasivos, patrimonio_total),
         "rotacion_activos": _ratio(ingresos, activos),

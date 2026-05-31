@@ -109,10 +109,15 @@ def _try_stored_statement(
             FinancialStatement.entity_nit == normalized_company_nit,
             FinancialStatement.statement_type == statement_type,
         )
-        # Snapshot vigente para la fecha: periodo del statement debe haber
-        # INICIADO antes/en el cutoff. Ordenar por created_at DESC para fresh.
+        # Snapshot vigente para la fecha: period_end debe estar DENTRO del rango
+        # [period_start, period_end] del statement. Sin period_end>=cutoff
+        # devolvíamos estados pasados (e.g. enero) etiquetándolos como el mes
+        # pedido (e.g. mayo). Ordenar por created_at DESC para versión fresh.
         if period_end is not None:
-            q = q.filter(FinancialStatement.period_start <= period_end)
+            q = q.filter(
+                FinancialStatement.period_start <= period_end,
+                FinancialStatement.period_end >= period_end,
+            )
         stmt = q.order_by(FinancialStatement.created_at.desc()).first()
         if stmt is None:
             return None

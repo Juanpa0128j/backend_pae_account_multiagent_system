@@ -1472,9 +1472,9 @@ def list_reteica_tarifas(
             "ciiu_seccion": r.ciiu_seccion,
             "tasa": float(r.tasa),
             "fuente": r.fuente,
-            "base_minima_uvt": float(r.base_minima_uvt)
-            if r.base_minima_uvt is not None
-            else None,
+            "base_minima_uvt": (
+                float(r.base_minima_uvt) if r.base_minima_uvt is not None else None
+            ),
         }
         for r in rows
     ]
@@ -1898,7 +1898,22 @@ def get_monthly_trend(
 
     Groups by year-month and returns totals for debit, credit, and net.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=months * 31)
+    # Exact N-month rollback (no `timedelta(days=N*31)` drift).
+    now = datetime.now(timezone.utc)
+    cutoff_year = now.year
+    cutoff_month = now.month - months
+    while cutoff_month <= 0:
+        cutoff_month += 12
+        cutoff_year -= 1
+    cutoff = now.replace(
+        year=cutoff_year,
+        month=cutoff_month,
+        day=1,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
 
     # Join + status filter so charts only reflect POSTED transactions.
     # Without this, PENDING_REVIEW and REJECTED journal lines leak into the
@@ -2070,11 +2085,34 @@ def list_tax_constants(db: Session, year: int) -> dict:
             "uvt": {"year": int, "value": str, "referencia_normativa": str | None},
             "base_minima": [{"concepto": str, "uvt_units": str, "year": int}, ...]
         }
+
+    base_minima returns only the currently-effective row per concepto for the
+    requested ``year`` (1 row per concepto). The migration that dropped the
+    ``UNIQUE(concepto, year)`` constraint allows multiple temporal windows
+    (e.g. Decreto 572 ranges); this filter picks the one whose
+    ``[effective_from, effective_to]`` covers the as-of date — ``today`` when
+    consulting the current year, ``Dec 31 of year`` when looking at a past or
+    future year (point-in-time semantics).
     """
     uvt_row = db.query(UvtValue).filter(UvtValue.year == year).first()
+
+    today = date.today()
+    asof = today if today.year == year else date(year, 12, 31)
     bm_rows = (
         db.query(TaxBaseMinima)
         .filter(TaxBaseMinima.year == year)
+        .filter(
+            or_(
+                TaxBaseMinima.effective_from.is_(None),
+                TaxBaseMinima.effective_from <= asof,
+            )
+        )
+        .filter(
+            or_(
+                TaxBaseMinima.effective_to.is_(None),
+                TaxBaseMinima.effective_to >= asof,
+            )
+        )
         .order_by(TaxBaseMinima.concepto)
         .all()
     )

@@ -580,7 +580,13 @@ REGLAS PRIORIDAD 2 — PREFIJOS Y SEÑALES ESTRUCTURALES
 
 REGLA DIRECCIÓN PARA FACTURAS (aplica cuando el doc tiene CUFE o resolución DIAN):
 
-PASO 1 — EXTRAE el emisor literal del bloque "Datos del Emisor" / "Razón social del emisor" / etc, y reporta en el campo emisor_extracted. Si no logras extraerlo (redactado, ilegible, ausente del preview), DEJA emisor_extracted=null.
+PASO 1 — EXTRAE el emisor literal del bloque "Datos del Emisor" / "Razón social del emisor" / etc, y reporta en el campo emisor_extracted.
+
+REGLAS ESTRICTAS DE EXTRACCIÓN (anti-hallucination — léelas antes de poblar entity_nit / emisor_extracted):
+- entity_nit: SOLO si el NIT del EMISOR está visible, legible y completo en el documento. Si está cubierto, borroso, parcial, ilegible o ausente → entity_nit=null. PROHIBIDO copiar el NIT del adquirente, el NIT del tenant ({company_nit}), o cualquier número que no sea inequívocamente el NIT del emisor en el bloque "Datos del Emisor".
+- emisor_extracted: SOLO la razón social del emisor cuando es legible (mínimo 1 palabra sustantiva además del sufijo legal). Si solo logras leer sufijos legales sueltos ("SAS", "SA", "LTDA", "EU", "S.A.S") sin texto que los anteceda → emisor_extracted=null. NUNCA pongas el NIT del emisor en este campo (es solo razón social).
+- direction_signal=nit_match_emisor: SOLO si entity_nit no es null Y coincide con {company_nit}. Si entity_nit es null, direction_signal no puede ser nit_match_emisor — usa name_match_* o default_compra.
+- Mejor un null honesto que un valor inventado: si dudas, devuelve null para que la lógica del clasificador caiga al fallback correcto.
 
 PASO 2 — DECIDE dirección:
 1. Si extraes un NIT del emisor Y coincide con TU NIT ({company_nit}) → factura_venta. Señal: nit_match_emisor. PROHIBIDO reportar nit_match_emisor sin haber extraído literalmente un NIT del doc — eso es hallucination.

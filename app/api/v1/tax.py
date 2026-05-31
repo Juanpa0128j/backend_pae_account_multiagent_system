@@ -996,9 +996,11 @@ async def upsert_reteica_tarifa_endpoint(
         ciiu_seccion=body.ciiu_seccion,
         tasa=Decimal(str(body.tasa)),
         fuente=body.fuente,
-        base_minima_uvt=Decimal(str(body.base_minima_uvt))
-        if body.base_minima_uvt is not None
-        else None,
+        base_minima_uvt=(
+            Decimal(str(body.base_minima_uvt))
+            if body.base_minima_uvt is not None
+            else None
+        ),
     )
     return ReteicaTarifaResponse(
         id=row.id,
@@ -1006,9 +1008,9 @@ async def upsert_reteica_tarifa_endpoint(
         ciiu_seccion=row.ciiu_seccion,
         tasa=float(row.tasa),
         fuente=row.fuente,
-        base_minima_uvt=float(row.base_minima_uvt)
-        if row.base_minima_uvt is not None
-        else None,
+        base_minima_uvt=(
+            float(row.base_minima_uvt) if row.base_minima_uvt is not None else None
+        ),
     )
 
 
