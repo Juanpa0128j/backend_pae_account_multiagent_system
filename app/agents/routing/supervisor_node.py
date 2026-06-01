@@ -10,7 +10,12 @@ from app.agents.state import AgentState
 
 
 def supervisor_node_dispatcher(state: AgentState) -> AgentState:
-    """Thin dispatcher: routes to ingest or process pipeline based on mode."""
+    """Thin dispatcher: routes to ingest, process, or reporting pipeline based on mode."""
+    if state.get("mode") == "reporting":
+        # Reporting jumps straight to reportero (no ingest validation
+        # or audit loop). Lost during PR #72 routing extraction.
+        state["current_agent"] = "reportero"
+        return state
     if state.get("mode") == "process":
         return process_supervisor_node(state)
     return route_ingest(state)

@@ -68,6 +68,12 @@ def supervisor_node(state: AgentState) -> AgentState:
             "current_agent": state.get("current_agent", ""),
         },
     )
+    if state.get("mode") == "reporting":
+        # Reporting pipeline jumps straight to reportero node — no
+        # ingest validation, no contador/tributario/auditor loop. Lost
+        # during PR #72 routing extraction; restoring here.
+        state["current_agent"] = "reportero"
+        return state
     if state.get("mode") == "process":
         return route_process(state)
     return route_ingest(state)
