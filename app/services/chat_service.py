@@ -462,33 +462,33 @@ def gather_financial_data(
             title = "Balance General"
 
         elif intent_name == "pnl":
-            from app.agents.reportero_agent import _build_pnl
+            from app.services.report_builders.pnl import build_pnl
 
-            data = _build_pnl(db, params, db_service)
+            data = build_pnl(db, params, db_service)
             title = "Estado de Resultados"
 
         elif intent_name == "cashflow":
-            from app.agents.reportero_agent import _build_cashflow
+            from app.services.report_builders.cashflow import build_cashflow
 
-            data = _build_cashflow(db, params, db_service)
+            data = build_cashflow(db, params, db_service)
             title = "Flujo de Caja"
 
         elif intent_name == "iva":
-            from app.agents.reportero_agent import _build_iva
+            from app.services.report_builders.iva import build_iva
 
-            data = _build_iva(db, params, db_service)
+            data = build_iva(db, params, db_service)
             title = "Reporte IVA"
 
         elif intent_name == "withholdings":
-            from app.agents.reportero_agent import _build_withholdings
+            from app.services.report_builders.withholdings import build_withholdings
 
-            data = _build_withholdings(db, params, db_service)
+            data = build_withholdings(db, params, db_service)
             title = "Retenciones"
 
         elif intent_name == "analysis":
-            from app.agents.reportero_agent import _build_analysis
+            from app.services.report_builders.analysis import build_analysis
 
-            data = _build_analysis(db, params, db_service)
+            data = build_analysis(db, params, db_service)
             title = "Análisis Financiero"
 
         elif intent_name == "top_accounts":
@@ -837,7 +837,7 @@ def fetch_rag_context(query: str | None) -> str:
     if not query:
         return ""
     try:
-        from app.agents.reportero_agent import _fetch_rag_context_text
+        from app.services.report_builders._base import _fetch_rag_context_text
 
         return _fetch_rag_context_text(query, n_results=5)
     except Exception as exc:
