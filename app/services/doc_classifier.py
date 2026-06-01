@@ -179,6 +179,12 @@ def classify_document(
         #    (substring match either way) — proveedor externo, must be compra.
         emisor_norm = _normalize_name(emisor_extracted)
         company_norm = _normalize_name(company_name)
+        # When ``emisor_extracted`` is None the LLM honestly admitted it could
+        # not read the razón social from the document — treat as no signal
+        # (the LLM is instructed by CLASSIFICATION_PROMPT to NOT hallucinate
+        # the legal suffix or echo the NIT into this field). Mismatch only
+        # fires when we have real names on both sides and they truly differ
+        # by accent-folded substring match.
         emisor_mismatch = (
             bool(emisor_norm)
             and bool(company_norm)
@@ -192,6 +198,12 @@ def classify_document(
         # redacted/truncated (e.g. only "SAS" survives the OCR crop).
         entity_nit_root = _nit_root(entity_nit_value)
         company_nit_root = _nit_root(company_nit)
+        # NIT-match is authoritative: when the LLM explicitly compared the
+        # emisor NIT against the tenant NIT and they match, trust it. The
+        # CLASSIFICATION_PROMPT instructs the LLM to return ``entity_nit=None``
+        # when the printed NIT is redacted/blurred instead of hallucinating
+        # it, so reaching this branch with both NITs present means we have
+        # real evidence.
         nit_match_authoritative = (
             direction_signal == "nit_match_emisor"
             and entity_nit_root is not None
@@ -224,16 +236,33 @@ def classify_document(
             DocumentType.FACTURA_VENTA,
             DocumentType.FACTURA_COMPRA,
         ):
-            if doc_type != DocumentType.FACTURA_VENTA:
-                logger.info(
-                    "doc_classifier: DIAN 'Factura Electrónica de Venta' "
-                    "header authoritative — forcing factura_venta (was %s)",
-                    doc_type.value,
-                )
-            doc_type = DocumentType.FACTURA_VENTA
-            pathway = get_pathway(doc_type)
-            direction_signal = "header_factura_venta"
-            header_authoritative = True
+            if emisor_mismatch:
+                # Multi-tenant: the doc IS a DIAN factura_venta from the
+                # issuer's perspective, but the emisor name clearly differs
+                # from our tenant — so OUR tenant is the adquirente and the
+                # document goes into OUR books as a factura_compra.
+                if doc_type != DocumentType.FACTURA_COMPRA:
+                    logger.info(
+                        "doc_classifier: DIAN venta header + emisor_mismatch "
+                        "(emisor=%s, tenant=%s) — flipping to factura_compra",
+                        emisor_extracted or "—",
+                        company_name or "—",
+                    )
+                doc_type = DocumentType.FACTURA_COMPRA
+                pathway = get_pathway(doc_type)
+                direction_signal = "header_venta_emisor_mismatch_compra"
+                header_authoritative = True
+            else:
+                if doc_type != DocumentType.FACTURA_VENTA:
+                    logger.info(
+                        "doc_classifier: DIAN 'Factura Electrónica de Venta' "
+                        "header authoritative — forcing factura_venta (was %s)",
+                        doc_type.value,
+                    )
+                doc_type = DocumentType.FACTURA_VENTA
+                pathway = get_pathway(doc_type)
+                direction_signal = "header_factura_venta"
+                header_authoritative = True
         elif has_dian_compra_header and doc_type in (
             DocumentType.FACTURA_VENTA,
             DocumentType.FACTURA_COMPRA,

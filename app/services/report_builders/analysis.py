@@ -92,6 +92,13 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
             if activos and _safe_divide(utilidad, activos) is not None
             else None
         ),
+        "roe": (
+            round(_safe_divide(utilidad, patrimonio) * 100, 2)
+            if patrimonio
+            and patrimonio > 0
+            and _safe_divide(utilidad, patrimonio) is not None
+            else None
+        ),
         "razon_endeudamiento": _safe_divide(pasivos, activos) if activos else None,
         "deuda_patrimonio": _safe_divide(pasivos, patrimonio) if patrimonio else None,
         "rotacion_activos": _safe_divide(ingresos, activos) if activos else None,
@@ -104,9 +111,19 @@ def _linear_regression_predict(
     *,
     allow_negative: bool = False,
 ) -> list[float]:
+    """Simple linear regression on data_points, predict next n_predict values.
+
+    Returns empty list if zero data points. With a single point, projects flat
+    (carry forward) since slope is undefined — better than returning empty,
+    which would collapse the LLM-facing projection to $0 and confuse the user.
+    Set allow_negative=True for metrics that can go below zero (e.g. cash flow).
+    """
     n = len(data_points)
-    if n < 2:
+    if n == 0:
         return []
+    if n == 1:
+        raw = [data_points[0]] * n_predict
+        return raw if allow_negative else [max(0, v) for v in raw]
     x = list(range(n))
     x_mean = sum(x) / n
     y_mean = sum(data_points) / n

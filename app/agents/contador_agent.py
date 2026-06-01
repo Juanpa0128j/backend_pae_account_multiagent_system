@@ -280,12 +280,18 @@ def _load_company_context(company_nit: str | None) -> dict | None:
 
 
 def _load_puc_ingresos_catalog(company_nit: str | None = None) -> list[dict]:
-    """Return PUC accounts in the ingresos range (4xxx) as ``{codigo, descripcion}``.
+    """Return the FULL PUC catalog (all classes) as ``{codigo, descripcion}``.
 
-    When company_nit is provided, returns only accounts active for that company.
-    Falls back to global active accounts if company_nit is None.
+    Historical name kept for callers; the helper now returns every row of
+    ``cuentas_puc`` (≈91 rows) so the LLM contador can constrain its choices
+    to real codes across activos / pasivos / patrimonio / ingresos / gastos
+    — not only the 4xxx ingreso range. Otherwise the agent invents auxiliary
+    subdivisions (e.g. ``11200501`` Bancolombia ahorros) that are not in the
+    seeded catalog, and the persist step then fails with ``PUC code not found``.
+
+    When company_nit is provided, returns only accounts active for that company
+    (company-scoped catalog). Falls back to global active accounts when None.
     Empty list when the catalog table is unreachable so the prompt still builds.
-    The LLM treats the list as a soft constraint via the prompt directive.
     """
     try:
         from app.core.database import SessionLocal
@@ -297,13 +303,13 @@ def _load_puc_ingresos_catalog(company_nit: str | None = None) -> list[dict]:
     db = None
     try:
         db = SessionLocal()
-        # Get company-scoped or global PUC accounts
+        # Company-scoped catalog when nit given (main); otherwise global. No
+        # class filter — HEAD intent is to expose the FULL catalog so the LLM
+        # cannot invent codes outside class 4.
         if company_nit:
-            puc_accounts = services.db_service.get_puc_for_company(db, company_nit)
+            rows = services.db_service.get_puc_for_company(db, company_nit)
         else:
-            puc_accounts = services.db_service.get_all_puc(db)
-        # Filter to ingresos range (4xxx)
-        rows = [r for r in puc_accounts if r.codigo >= "4" and r.codigo < "5"]
+            rows = services.db_service.get_all_puc(db)
         return [
             {"codigo": str(r.codigo), "descripcion": str(r.descripcion or "")}
             for r in rows

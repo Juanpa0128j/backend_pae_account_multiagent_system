@@ -36,6 +36,11 @@ class OpenAIProvider:
         )
         logger.info("OpenAIProvider initialised (%s)", self._model_name)
 
+    @property
+    def model_name(self) -> str:
+        """Public name of the extraction/generation model in use."""
+        return self._model_name
+
     def _get_model(self, schema_cls: type[BaseModel]) -> Any:
         if schema_cls not in self._models:
             self._models[schema_cls] = self._base.with_structured_output(

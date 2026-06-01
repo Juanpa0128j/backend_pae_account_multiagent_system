@@ -36,6 +36,7 @@ from app.agents.state import AgentState
 from app.agents.validation_rules import (  # noqa: F401
     GLOBAL_AUDIT_FAILURES,
     RETRY_BUDGETS,
+    SINGLE_PASS_DOC_TYPES,
     _hydrate_contador_account_names,
     _missing_puc_codes,
     _normalize_contador_puc_codes,

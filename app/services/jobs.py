@@ -499,23 +499,64 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
             db2.close()
 
     except asyncio.TimeoutError:
-        db_service.update_process_job(
-            db,
-            process_id=process_id,
-            status=ProcessStatus.FAILED,
-            current_stage="timeout",
-            progress=100,
-            error_message=f"Job timeout: exceeded {MAX_PROCESS_SECONDS} seconds",
-            agent_log_entry={
-                "timestamp": _utc_iso(),
-                "agent": "supervisor",
-                "stage": "timeout",
-                "event": "failed",
-                "message": f"Timeout de procesamiento ({MAX_PROCESS_SECONDS}s)",
-            },
-        )
-        _mark_pending_failed_safe(pending_id)
-        _mark_processing_transactions_failed_safe(ingest_id)
+        posted_count = 0
+        try:
+            txs = db_service.get_transactions_by_ingest(db, ingest_id)
+            posted_count = sum(1 for tx in txs if tx.status == TransactionStatus.POSTED)
+        except Exception:
+            logger.exception(
+                "Failed to count POSTED transactions during timeout handler"
+            )
+
+        if posted_count > 0:
+            db_service.update_process_job(
+                db,
+                process_id=process_id,
+                status=ProcessStatus.COMPLETED,
+                current_stage="completed",
+                progress=100,
+                agent_log_entry={
+                    "timestamp": _utc_iso(),
+                    "agent": "supervisor",
+                    "stage": "timeout",
+                    "event": "non_fatal_error",
+                    "message": (
+                        f"Pipeline excedió {MAX_PROCESS_SECONDS}s pero "
+                        f"{posted_count} transacciones quedaron persistidas. "
+                        "Revise el detalle del proceso."
+                    ),
+                },
+            )
+            _mark_processing_transactions_failed_safe(ingest_id)
+            # COMPLETED is "active" for get_active_process_job_for_ingest,
+            # so no follow-up ProcessJob will be created. Mark remaining
+            # PENDING txs as ERROR to prevent stranding.
+            try:
+                for tx in db_service.get_transactions_by_ingest(db, ingest_id):
+                    if tx.status == TransactionStatus.PENDING:
+                        _mark_pending_failed_safe(str(tx.id))
+            except Exception:
+                logger.exception(
+                    "Failed to mark PENDING transactions as ERROR after timeout"
+                )
+        else:
+            db_service.update_process_job(
+                db,
+                process_id=process_id,
+                status=ProcessStatus.FAILED,
+                current_stage="timeout",
+                progress=100,
+                error_message=f"Job timeout: exceeded {MAX_PROCESS_SECONDS} seconds",
+                agent_log_entry={
+                    "timestamp": _utc_iso(),
+                    "agent": "supervisor",
+                    "stage": "timeout",
+                    "event": "failed",
+                    "message": f"Timeout de procesamiento ({MAX_PROCESS_SECONDS}s)",
+                },
+            )
+            _mark_pending_failed_safe(pending_id)
+            _mark_processing_transactions_failed_safe(ingest_id)
     except Exception as exc:  # pragma: no cover - defensive logging branch
         logger.exception("Unhandled error running process job %s", process_id)
         db_service.update_process_job(

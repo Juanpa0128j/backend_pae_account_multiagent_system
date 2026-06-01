@@ -451,6 +451,9 @@ def gather_financial_data(
         data: dict | None = None
         card_type = intent_name
         title = ""
+        _ratios_balance_for_llm: dict | None = (
+            None  # set in ratios branch; used to enrich LLM context
+        )
 
         if intent_name == "balance":
             from app.services.report_builders.balance import build_balance
@@ -459,33 +462,33 @@ def gather_financial_data(
             title = "Balance General"
 
         elif intent_name == "pnl":
-            from app.agents.reportero_agent import _build_pnl
+            from app.services.report_builders.pnl import build_pnl
 
-            data = _build_pnl(db, params, db_service)
+            data = build_pnl(db, params, db_service)
             title = "Estado de Resultados"
 
         elif intent_name == "cashflow":
-            from app.agents.reportero_agent import _build_cashflow
+            from app.services.report_builders.cashflow import build_cashflow
 
-            data = _build_cashflow(db, params, db_service)
+            data = build_cashflow(db, params, db_service)
             title = "Flujo de Caja"
 
         elif intent_name == "iva":
-            from app.agents.reportero_agent import _build_iva
+            from app.services.report_builders.iva import build_iva
 
-            data = _build_iva(db, params, db_service)
+            data = build_iva(db, params, db_service)
             title = "Reporte IVA"
 
         elif intent_name == "withholdings":
-            from app.agents.reportero_agent import _build_withholdings
+            from app.services.report_builders.withholdings import build_withholdings
 
-            data = _build_withholdings(db, params, db_service)
+            data = build_withholdings(db, params, db_service)
             title = "Retenciones"
 
         elif intent_name == "analysis":
-            from app.agents.reportero_agent import _build_analysis
+            from app.services.report_builders.analysis import build_analysis
 
-            data = _build_analysis(db, params, db_service)
+            data = build_analysis(db, params, db_service)
             title = "Análisis Financiero"
 
         elif intent_name == "top_accounts":
@@ -509,12 +512,36 @@ def gather_financial_data(
             title = "Cuentas con Mayor Movimiento"
 
         elif intent_name == "ratios":
-            from app.agents.reportero_agent import _compute_ratios
+            from app.services.report_builders.analysis import _compute_ratios
 
-            balance = db_service.get_balance_sheet(db, company_nit=request.company_nit)
-            ledger = db_service.get_general_ledger(db, company_nit=request.company_nit)
+            if request.start_date is not None:
+                balance = db_service.get_balance_sheet_for_period(
+                    db,
+                    start_date=request.start_date,
+                    end_date=request.end_date or request.start_date,
+                    company_nit=request.company_nit,
+                )
+            else:
+                balance = db_service.get_balance_sheet(
+                    db,
+                    cutoff_date=request.end_date,
+                    company_nit=request.company_nit,
+                )
+            ledger = db_service.get_general_ledger(
+                db,
+                start_date=request.start_date,
+                # Mirror the balance fallback: when only start_date is given,
+                # bound the ledger to the same single-day window so numerator
+                # and denominator of every ratio come from the same period.
+                end_date=request.end_date or request.start_date,
+                company_nit=request.company_nit,
+            )
             data = _compute_ratios(ledger, balance)
             title = "Ratios Financieros"
+            # Stash raw balance so we can enrich the LLM context below. Without
+            # the raw values (activos, ingresos, utilidad) the LLM hallucinates
+            # ratio percentages that contradict the card.
+            _ratios_balance_for_llm = balance
 
         elif intent_name == "dashboard":
             balance = db_service.get_balance_sheet(db, company_nit=request.company_nit)
@@ -527,6 +554,13 @@ def gather_financial_data(
         cards: list[FinancialDataCard] = []
         if data:
             cards.append(FinancialDataCard(card_type=card_type, title=title, data=data))
+
+        # For ratios: enrich the LLM-facing dict with the raw balance so the
+        # model can cite real values instead of inventing percentages from the
+        # system-prompt formula guidance. Card already captured the flat dict
+        # above, so its rendering is unaffected.
+        if intent_name == "ratios" and data and _ratios_balance_for_llm is not None:
+            data = {"balance_summary": _ratios_balance_for_llm, "ratios": data}
 
         return data, cards
 
@@ -650,6 +684,10 @@ def _gather_via_b(
     data: dict | None = None
     title = ""
     card_type = intent_name
+    # Set in the ratios branch below; used to enrich the LLM-facing dict with
+    # the raw balance/pnl so the model can cite concrete values instead of
+    # inventing percentages from the formula guidance in the system prompt.
+    _ratios_extra_for_llm: dict | None = None
 
     if intent_name == "balance":
         data = via_b_service.get_balance(db, company_nit, period_end)
@@ -675,6 +713,10 @@ def _gather_via_b(
         if balance or pnl:
             data = _compute_ratios_via_b(balance, pnl)
             title = "Ratios Financieros (Vía B)"
+            _ratios_extra_for_llm = {
+                "balance_summary": balance,
+                "estado_resultados": pnl,
+            }
 
     elif intent_name in ("dashboard", "analysis"):
         # When a specific period is requested, the per-statement readers
@@ -724,10 +766,23 @@ def _gather_via_b(
         )
         return empty_card.data, [empty_card]
 
-    enriched = {**data, "pathway": "work_with_existing"}
-    return enriched, [
-        FinancialDataCard(card_type=card_type, title=title, data=enriched)
-    ]
+    # Card always sees the flat dict (so RatiosCard etc. render unchanged).
+    card_payload = {**data, "pathway": "work_with_existing"}
+    card = FinancialDataCard(card_type=card_type, title=title, data=card_payload)
+
+    # For ratios: enrich the LLM-facing dict with raw balance + estado_resultados
+    # so the model cites concrete values instead of inventing percentages from
+    # the formula guidance. Card already captured the flat shape above.
+    if intent_name == "ratios" and _ratios_extra_for_llm is not None:
+        enriched = {
+            **_ratios_extra_for_llm,
+            "ratios": data,
+            "pathway": "work_with_existing",
+        }
+    else:
+        enriched = card_payload
+
+    return enriched, [card]
 
 
 def _compute_ratios_via_b(balance: dict | None, pnl: dict | None) -> dict:
@@ -757,6 +812,11 @@ def _compute_ratios_via_b(balance: dict | None, pnl: dict | None) -> dict:
             return None
         return round(num / den, 4)
 
+    # ROE and deuda_patrimonio are undefined when patrimonio is negative or
+    # zero — the denominator carries no meaning and any percentage we hand
+    # back to the LLM would be misleading. Return None and let the model
+    # explain the limitation.
+    patrimonio_safe = patrimonio_total > 0
     return {
         "report_type": "ratios",
         "source": "via_b",
@@ -764,8 +824,11 @@ def _compute_ratios_via_b(balance: dict | None, pnl: dict | None) -> dict:
         "prueba_acida": None,
         "margen_neto": _pct(utilidad_neta, ingresos),
         "roa": _pct(utilidad_neta, activos),
+        "roe": _pct(utilidad_neta, patrimonio_total) if patrimonio_safe else None,
         "razon_endeudamiento": _ratio(pasivos, activos),
-        "deuda_patrimonio": _ratio(pasivos, patrimonio_total),
+        "deuda_patrimonio": _ratio(pasivos, patrimonio_total)
+        if patrimonio_safe
+        else None,
         "rotacion_activos": _ratio(ingresos, activos),
         "patrimonio_total": patrimonio_total,
         "nota": (
@@ -784,7 +847,7 @@ def fetch_rag_context(query: str | None) -> str:
     if not query:
         return ""
     try:
-        from app.agents.reportero_agent import _fetch_rag_context_text
+        from app.services.report_builders._base import _fetch_rag_context_text
 
         return _fetch_rag_context_text(query, n_results=5)
     except Exception as exc:
@@ -880,6 +943,62 @@ def _intent_label(intent_name: str) -> str:
     }.get(intent_name, intent_name)
 
 
+# ---------------------------------------------------------------------------
+# Reasoning-trace copy helpers (accountant-friendly Spanish — no jargon)
+# ---------------------------------------------------------------------------
+
+
+def _periodo_label(start, end) -> str:
+    """Human period label for the reasoning trace, e.g. '01/01/2026 → 31/01/2026'."""
+
+    def _fmt(d) -> str:
+        return d.strftime("%d/%m/%Y")
+
+    if start and end:
+        return f"{_fmt(start)} → {_fmt(end)}"
+    if start:
+        return f"desde {_fmt(start)}"
+    if end:
+        return f"hasta {_fmt(end)}"
+    return "todos los periodos"
+
+
+def _params_detail(request: ChatRequest) -> str:
+    """'Empresa NIT X · <periodo>' for the params reasoning step."""
+    periodo = _periodo_label(request.start_date, request.end_date)
+    if request.company_nit:
+        return f"Empresa NIT {request.company_nit} · {periodo}"
+    return f"Empresa actual · {periodo}"
+
+
+def _gathering_label(needs_data: bool) -> str:
+    return (
+        "Revisé tus libros contables"
+        if needs_data
+        else "No fue necesario consultar cifras"
+    )
+
+
+def _gathering_detail(needs_data: bool, n_cards: int) -> str:
+    if not needs_data:
+        return "Esta pregunta no requería datos contables"
+    plural = "reporte" if n_cards == 1 else "reportes"
+    return f"{n_cards} {plural} consultado{'s' if n_cards != 1 else ''}"
+
+
+def _rag_detail(rag_query, rag_context: str) -> str:
+    if not rag_query:
+        return "No se requirió consultar normativa"
+    n = len(rag_context.split("---")) if rag_context else 0
+    plural = "referencia" if n == 1 else "referencias"
+    return f"Revisé {n} {plural} (Estatuto Tributario / PUC / NIIF)"
+
+
+def _generacion_segundos(ms: int) -> str:
+    """'0,7 s' — Spanish decimal comma."""
+    return f"{ms / 1000:.1f}".replace(".", ",") + " s"
+
+
 def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     """Full pipeline: session → intent → data → stream → persist.
 
@@ -920,25 +1039,22 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="intent",
-            label=f"Intención detectada: {_intent_label(intent_name)}",
-            detail=f"intent={intent_name}, needs_data={needs_data}",
+            label=f"Entendí tu consulta: {_intent_label(intent_name)}",
+            detail=(
+                "Requiere consultar tus cifras contables"
+                if needs_data
+                else "Pregunta general — no necesita cifras"
+            ),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
 
     # 5. Show resolved parameters (NIT, fechas)
-    params_summary_parts: list[str] = []
-    if request.company_nit:
-        params_summary_parts.append(f"NIT={request.company_nit}")
-    if request.start_date:
-        params_summary_parts.append(f"desde={request.start_date.isoformat()}")
-    if request.end_date:
-        params_summary_parts.append(f"hasta={request.end_date.isoformat()}")
     yield _emit(
         _thinking_step(
             phase="params",
-            label="Parámetros aplicados",
-            detail=", ".join(params_summary_parts) or "sin filtros adicionales",
+            label="Empresa y periodo",
+            detail=_params_detail(request),
         )
     )
 
@@ -948,16 +1064,8 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="gathering_data",
-            label=(
-                "Datos financieros recolectados"
-                if needs_data
-                else "Sin recolección de datos (consulta general)"
-            ),
-            detail=(
-                f"tarjetas={len(data_cards)}"
-                if needs_data
-                else "no se requirieron datos"
-            ),
+            label=_gathering_label(needs_data),
+            detail=_gathering_detail(needs_data, len(data_cards)),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -969,12 +1077,8 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="rag",
-            label="Contexto normativo (RAG)",
-            detail=(
-                f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
-                if rag_query
-                else "sin consulta normativa"
-            ),
+            label="Normativa colombiana",
+            detail=_rag_detail(rag_query, rag_context),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -987,8 +1091,8 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="generating",
-            label="Generando respuesta",
-            detail=f"modelo={getattr(llm, 'name', 'desconocido')}",
+            label="Redacté la respuesta",
+            detail=f"Modelo de IA: {llm.model_label}",
         )
     )
 
@@ -1031,8 +1135,8 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[dict]:
     yield _emit(
         _thinking_step(
             phase="complete",
-            label="Respuesta entregada",
-            detail=f"tokens={len(response_chunks)} | generation_ms={generation_ms}",
+            label="Respuesta lista",
+            detail=f"Generada en {_generacion_segundos(generation_ms)}",
             duration_ms=int((time.perf_counter() - pipeline_start) * 1000),
         )
     )
@@ -1084,25 +1188,22 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="intent",
-            label=f"Intención detectada: {_intent_label(intent_name)}",
-            detail=f"intent={intent_name}, needs_data={needs_data}",
+            label=f"Entendí tu consulta: {_intent_label(intent_name)}",
+            detail=(
+                "Requiere consultar tus cifras contables"
+                if needs_data
+                else "Pregunta general — no necesita cifras"
+            ),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
 
     # Params summary
-    params_summary_parts: list[str] = []
-    if request.company_nit:
-        params_summary_parts.append(f"NIT={request.company_nit}")
-    if request.start_date:
-        params_summary_parts.append(f"desde={request.start_date.isoformat()}")
-    if request.end_date:
-        params_summary_parts.append(f"hasta={request.end_date.isoformat()}")
     reasoning_steps.append(
         _thinking_step(
             phase="params",
-            label="Parámetros aplicados",
-            detail=", ".join(params_summary_parts) or "sin filtros adicionales",
+            label="Empresa y periodo",
+            detail=_params_detail(request),
         )
     )
 
@@ -1112,16 +1213,8 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="gathering_data",
-            label=(
-                "Datos financieros recolectados"
-                if needs_data
-                else "Sin recolección de datos (consulta general)"
-            ),
-            detail=(
-                f"tarjetas={len(data_cards)}"
-                if needs_data
-                else "no se requirieron datos"
-            ),
+            label=_gathering_label(needs_data),
+            detail=_gathering_detail(needs_data, len(data_cards)),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -1132,12 +1225,8 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="rag",
-            label="Contexto normativo (RAG)",
-            detail=(
-                f"consulta={rag_query!s} | fragmentos={len(rag_context.split('---')) if rag_context else 0}"
-                if rag_query
-                else "sin consulta normativa"
-            ),
+            label="Normativa colombiana",
+            detail=_rag_detail(rag_query, rag_context),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
     )
@@ -1150,8 +1239,8 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="generating",
-            label="Generando respuesta",
-            detail=f"modelo={getattr(llm, 'name', 'desconocido')}",
+            label="Redacté la respuesta",
+            detail=f"Modelo de IA: {llm.model_label}",
         )
     )
 
@@ -1167,8 +1256,8 @@ def handle_chat_message(request: ChatRequest) -> ChatResponse:
     reasoning_steps.append(
         _thinking_step(
             phase="complete",
-            label="Respuesta entregada",
-            detail=f"caracteres={len(reply)}",
+            label="Respuesta lista",
+            detail=f"Generada en {_generacion_segundos(int((time.perf_counter() - pipeline_start) * 1000))}",
             duration_ms=int((time.perf_counter() - pipeline_start) * 1000),
         )
     )

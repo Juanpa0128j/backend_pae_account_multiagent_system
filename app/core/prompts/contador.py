@@ -360,11 +360,22 @@ NO inventes una cuenta que no encaje con la actividad real del emisor."""
         )
         prompt += f"""
 
-=== CATALOGO DE CUENTAS DE INGRESO PUC (4xxx) DISPONIBLES ===
-Cuando el documento sea una factura de venta, elige la cuenta de ingreso (credito)
-EXCLUSIVAMENTE de la siguiente lista de cuentas reales del PUC sembradas en el sistema:
+=== CATALOGO PUC DISPONIBLE (CUENTAS VALIDAS DEL DECRETO 2650) ===
+Estas son las UNICAS cuentas validas para `cuenta_puc` en los asientos. Cubren
+todas las clases: 1 Activos, 2 Pasivos, 3 Patrimonio, 4 Ingresos, 5 Gastos, 6 CMV.
+
 {catalog_lines}
-Si ninguna de las cuentas anteriores aplica, usa la cuenta padre de 4 digitos correspondiente al grupo."""
+
+REGLAS ESTRICTAS:
+1. Solo puedes usar codigos que aparezcan en este listado. NO inventes
+   subcuentas auxiliares con mas de 6 digitos (ej. "11200501", "5110501").
+2. Para detallar bancos/cuentas/proveedores especificos NO uses codigos
+   auxiliares; usa el codigo PUC oficial mas cercano (ej. 111005 Bancos
+   Nacionales) y agrega el detalle en `descripcion` o `tercero_nit`.
+3. Para facturas de venta (credito en clase 4), elige la cuenta de ingreso
+   del listado que mejor encaje con la actividad economica del emisor.
+4. Si ninguna cuenta aplica perfectamente, usa la cuenta padre del grupo
+   (codigo de 4 digitos) que SI aparece en el listado."""
 
     if correction_feedback:
         prompt += f"""

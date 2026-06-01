@@ -33,6 +33,13 @@ RETRY_BUDGETS: dict[str, int] = {
 }
 GLOBAL_AUDIT_FAILURES = 5
 
+# Bank statements have no IVA/retention to apply and partida_doble is
+# trivial (banco vs contraparte) — extra audit iterations only add
+# latency and often push the job past the 300s timeout.
+SINGLE_PASS_DOC_TYPES: frozenset[str] = frozenset(
+    {"extracto_bancario", "conciliacion_bancaria"}
+)
+
 
 # ---------------------------------------------------------------------------
 # PUC helpers (used by contador validation)

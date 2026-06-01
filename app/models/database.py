@@ -993,7 +993,7 @@ class TaxConcept(Base):
     __tablename__ = "tax_concepts"
 
     code = Column(
-        String(16),
+        String(32),
         primary_key=True,
         comment="Stable identifier, e.g. 'compras_pj', 'pes_servicios_digitales'",
     )

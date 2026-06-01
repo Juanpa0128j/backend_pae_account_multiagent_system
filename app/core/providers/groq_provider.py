@@ -53,6 +53,11 @@ class GroqProvider:
         )
         logger.info("GroqProvider initialised (%s)", self._model_name)
 
+    @property
+    def model_name(self) -> str:
+        """Public name of the extraction/generation model in use."""
+        return self._model_name
+
     def _get_model(self, schema_cls: type[BaseModel]) -> Any:
         if schema_cls not in self._models:
             cleaned = _clean_schema_patterns(schema_cls.model_json_schema())

@@ -289,11 +289,15 @@ class TestClassifyDocument:
         assert result.emisor_extracted == "CORPORACIÓN COUNTRY CLUB EJECUTIVOS"
 
     @patch("app.services.doc_classifier._classify_with_llm")
-    def test_dian_venta_header_wins_over_emisor_mismatch(self, mock_classify):
-        """DIAN 'Factura Electrónica de Venta' header is authoritative: it forces
-        factura_venta even when the emisor differs from the company, so the
-        emisor_mismatch override does NOT apply (Sam's requirement: any FV
-        printed under any company is a venta)."""
+    def test_dian_venta_header_flips_to_compra_when_emisor_mismatches(
+        self, mock_classify
+    ):
+        """Multi-tenant: a DIAN 'Factura Electrónica de Venta' issued by a third
+        party (e.g. CORPORACIÓN COUNTRY CLUB EJECUTIVOS) and uploaded by a
+        different tenant (testing_insane SAS) is a factura_COMPRA in the
+        tenant's books — the tenant is the adquirente, not the issuer. The
+        header alone is not authoritative when the emisor name clearly differs
+        from the company name (FRA COUNTRY regression — sesión 2026-05-30)."""
         mock_classify.return_value = ClassificationResponse(
             doc_type="factura_venta",
             confidence=0.94,
@@ -309,8 +313,62 @@ class TestClassifyDocument:
             company_nit="901016386",
             company_name="testing_insane SAS",
         )
+        assert result.doc_type == DocumentType.FACTURA_COMPRA
+        assert result.direction_signal == "header_venta_emisor_mismatch_compra"
+
+    @patch("app.services.doc_classifier._classify_with_llm")
+    def test_dian_venta_header_stays_venta_when_tenant_is_emisor(self, mock_classify):
+        """When the tenant IS the emisor (NIT match + razón social match) the
+        DIAN venta header rightfully forces factura_venta. FV 192 case: the
+        empresa testing_insane SAS issues an invoice to ALMACENES EXITO SA."""
+        mock_classify.return_value = ClassificationResponse(
+            doc_type="factura_venta",
+            confidence=0.96,
+            entity_nit="901016386",
+            entity_name="TESTING_INSANE SAS",
+            direction_signal="nit_match_emisor",
+            emisor_extracted="TESTING_INSANE SAS",
+        )
+
+        result = classify_document(
+            text_preview="Factura Electrónica de Venta E-192 ...",
+            source_format="jpg",
+            company_nit="901016386",
+            company_name="testing_insane SAS",
+        )
         assert result.doc_type == DocumentType.FACTURA_VENTA
-        assert result.direction_signal == "header_factura_venta"
+        # NIT + emisor name both match → nit_match_authoritative still wins.
+        assert result.direction_signal in (
+            "nit_match_emisor",
+            "header_factura_venta",
+        )
+
+    @patch("app.services.doc_classifier._classify_with_llm")
+    def test_null_entity_nit_with_null_emisor_falls_through_to_header(
+        self, mock_classify
+    ):
+        """Data-driven path: when the LLM honestly admits it could not read
+        the emisor's NIT or razón social (both null per
+        ``CLASSIFICATION_PROMPT`` anti-hallucination rules), the classifier
+        has no name/NIT signal. The DIAN venta header then governs and
+        produces factura_venta (default for own-issued invoices when no
+        evidence contradicts it)."""
+        mock_classify.return_value = ClassificationResponse(
+            doc_type="factura_venta",
+            confidence=0.95,
+            entity_nit=None,
+            entity_name=None,
+            direction_signal=None,
+            emisor_extracted=None,
+        )
+
+        result = classify_document(
+            text_preview="Factura Electrónica de Venta E-192 ...",
+            source_format="jpg",
+            company_nit="901016386",
+            company_name="TESTING INSANE SAS",
+        )
+        assert result.doc_type == DocumentType.FACTURA_VENTA
 
     @patch("app.services.doc_classifier._classify_with_llm")
     def test_no_override_when_emisor_matches_company_via_accent_fold(

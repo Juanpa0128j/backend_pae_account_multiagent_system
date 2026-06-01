@@ -1954,8 +1954,26 @@ def get_monthly_trend(
 
     Groups by year-month and returns totals for debit, credit, and net.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=months * 31)
+    # Exact N-month rollback (no `timedelta(days=N*31)` drift).
+    now = datetime.now(timezone.utc)
+    cutoff_year = now.year
+    cutoff_month = now.month - months
+    while cutoff_month <= 0:
+        cutoff_month += 12
+        cutoff_year -= 1
+    cutoff = now.replace(
+        year=cutoff_year,
+        month=cutoff_month,
+        day=1,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
 
+    # Join + status filter so charts only reflect POSTED transactions.
+    # Without this, PENDING_REVIEW and REJECTED journal lines leak into the
+    # monthly Ingresos/Gastos trend and the KPI cards that consume it.
     query = (
         db.query(
             extract("year", JournalEntryLine.fecha).label("yr"),
@@ -1963,7 +1981,12 @@ def get_monthly_trend(
             func.sum(JournalEntryLine.debito).label("total_debit"),
             func.sum(JournalEntryLine.credito).label("total_credit"),
         )
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
         .filter(
+            TransactionPosted.status == TransactionStatus.POSTED,
             JournalEntryLine.cuenta_puc.startswith(account_prefix),
             JournalEntryLine.fecha >= cutoff,
         )
@@ -2124,27 +2147,50 @@ def list_tax_constants(db: Session, year: int) -> dict:
             "tarifas_renta": [dict, ...],
             "tax_concepts": [dict, ...],
         }
+
+    base_minima returns only the currently-effective row per concepto for the
+    requested ``year`` (1 row per concepto). The migration that dropped the
+    ``UNIQUE(concepto, year)`` constraint allows multiple temporal windows
+    (e.g. Decreto 572 ranges); this filter picks the one whose
+    ``[effective_from, effective_to]`` covers the as-of date — ``today`` when
+    consulting the current year, ``Dec 31 of year`` when looking at a past or
+    future year (point-in-time semantics).
     """
     uvt_row = db.query(UvtValue).filter(UvtValue.year == year).first()
 
-    # One row per concept — the latest temporal window for the requested year
-    subq = (
-        db.query(
-            TaxBaseMinima.concepto,
-            TaxBaseMinima.uvt_units,
-            TaxBaseMinima.year,
-            TaxBaseMinima.effective_from,
-            func.row_number()
-            .over(
-                partition_by=TaxBaseMinima.concepto,
-                order_by=desc(func.coalesce(TaxBaseMinima.effective_from, date.min)),
-            )
-            .label("rn"),
-        )
+    today = date.today()
+    asof = today if today.year == year else date(year, 12, 31)
+    # Two windows can legitimately cover the same as-of date (legacy row
+    # with effective_from=NULL + Decreto 572 row 2025-06-01 → NULL, both
+    # vigentes for asof=2026-05-31). Order by concepto then most-recent
+    # effective_from first, then dedup in Python so the docstring promise
+    # of "1 row per concepto" actually holds and the UI doesn't crash on
+    # duplicate React keys.
+    candidate_rows = (
+        db.query(TaxBaseMinima)
         .filter(TaxBaseMinima.year == year)
-        .subquery()
+        .filter(
+            or_(
+                TaxBaseMinima.effective_from.is_(None),
+                TaxBaseMinima.effective_from <= asof,
+            )
+        )
+        .filter(
+            or_(
+                TaxBaseMinima.effective_to.is_(None),
+                TaxBaseMinima.effective_to >= asof,
+            )
+        )
+        .order_by(TaxBaseMinima.concepto, desc(TaxBaseMinima.effective_from))
+        .all()
     )
-    bm_rows = db.query(subq).filter(subq.c.rn == 1).order_by(subq.c.concepto).all()
+    seen_concepts: set[str] = set()
+    bm_rows = []
+    for row in candidate_rows:
+        if row.concepto in seen_concepts:
+            continue
+        seen_concepts.add(row.concepto)
+        bm_rows.append(row)
 
     return {
         "uvt": (

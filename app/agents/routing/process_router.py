@@ -12,6 +12,7 @@ from app.agents.validation_rules import (
     GLOBAL_AUDIT_FAILURES,
     MAX_AUDITOR_RETRIES,
     RETRY_BUDGETS,
+    SINGLE_PASS_DOC_TYPES,
     validate_auditor_output_node,
     validate_contador_output_node,
 )
@@ -242,6 +243,10 @@ def route_process(state: AgentState) -> AgentState:
                 f for f in findings if not f.fixable and f.severity == Severity.BLOCKER
             ]
 
+            classification = state.get("document_classification") or {}
+            current_doc_type = str(classification.get("doc_type") or "")
+            is_single_pass = current_doc_type in SINGLE_PASS_DOC_TYPES
+
             if blockers:
                 # Unfixable BLOCKER — cannot auto-recover, pause for HITL review.
                 if state.get("unfixable_findings") is None:
@@ -262,6 +267,31 @@ def route_process(state: AgentState) -> AgentState:
                         "next_agent": "audit_review_terminal",
                         "reason": "unfixable_blockers",
                         "rule_ids": rule_ids,
+                    },
+                )
+
+            elif is_single_pass:
+                # Bank statements / conciliacion: bypass audit retry loop.
+                # No IVA/retención, partida_doble trivial — extra iterations
+                # only add latency and push past the 300s timeout. Persist
+                # with audit warnings for human review.
+                state["current_agent"] = "db_persist"
+                state["has_warnings"] = True
+                logger.info(
+                    "Process router: %s — bypassing audit loop (single-pass), "
+                    "persisting with %d non-blocker finding(s)",
+                    current_doc_type,
+                    len(findings),
+                )
+                append_log(
+                    state,
+                    "supervisor",
+                    "routing_complete",
+                    {
+                        "next_agent": "db_persist",
+                        "reason": "single_pass_doc_type",
+                        "doc_type": current_doc_type,
+                        "non_blocker_findings": len(findings),
                     },
                 )
 

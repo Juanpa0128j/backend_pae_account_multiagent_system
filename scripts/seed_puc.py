@@ -62,6 +62,15 @@ PUC_ACCOUNTS = [
         "descripcion": "Depósitos en cuentas de ahorro en instituciones financieras",
     },
     {
+        "codigo": "112005",
+        "nombre": "Bancos",
+        "clase": 1,
+        "grupo": "11",
+        "cuenta": "1120",
+        "naturaleza": "debito",
+        "descripcion": "Cuentas de ahorro en bancos comerciales (Decreto 2650, subcuenta 112005)",
+    },
+    {
         "codigo": "1235",
         "nombre": "Inversiones en Derechos Fiduciarios",
         "clase": 1,

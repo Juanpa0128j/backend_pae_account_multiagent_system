@@ -1052,3 +1052,36 @@ class TestIncludeAnalysis:
         assert result_state.get("error") is None
         report = result_state["result"]["report"]
         assert "analysis" not in report
+
+
+class TestLinearRegressionPredict:
+    """Tests for _linear_regression_predict — verifies n=1 carry-forward."""
+
+    def test_zero_points_returns_empty(self):
+        from app.services.report_builders.analysis import _linear_regression_predict
+
+        assert _linear_regression_predict([], 3) == []
+
+    def test_one_point_carries_forward_flat(self):
+        from app.services.report_builders.analysis import _linear_regression_predict
+
+        result = _linear_regression_predict([9_427_247], 3)
+        assert result == [9_427_247, 9_427_247, 9_427_247]
+
+    def test_one_point_negative_value_clipped_when_not_allowed(self):
+        from app.services.report_builders.analysis import _linear_regression_predict
+
+        assert _linear_regression_predict([-100], 3) == [0, 0, 0]
+
+    def test_one_point_negative_value_preserved_when_allowed(self):
+        from app.services.report_builders.analysis import _linear_regression_predict
+
+        result = _linear_regression_predict([-100], 3, allow_negative=True)
+        assert result == [-100, -100, -100]
+
+    def test_two_points_runs_regression(self):
+        from app.services.report_builders.analysis import _linear_regression_predict
+
+        # slope=10, intercept=0 → next 3 are 20, 30, 40
+        result = _linear_regression_predict([0, 10], 3)
+        assert result == [20, 30, 40]
