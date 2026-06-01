@@ -530,7 +530,10 @@ def gather_financial_data(
             ledger = db_service.get_general_ledger(
                 db,
                 start_date=request.start_date,
-                end_date=request.end_date,
+                # Mirror the balance fallback: when only start_date is given,
+                # bound the ledger to the same single-day window so numerator
+                # and denominator of every ratio come from the same period.
+                end_date=request.end_date or request.start_date,
                 company_nit=request.company_nit,
             )
             data = _compute_ratios(ledger, balance)
@@ -809,6 +812,11 @@ def _compute_ratios_via_b(balance: dict | None, pnl: dict | None) -> dict:
             return None
         return round(num / den, 4)
 
+    # ROE and deuda_patrimonio are undefined when patrimonio is negative or
+    # zero — the denominator carries no meaning and any percentage we hand
+    # back to the LLM would be misleading. Return None and let the model
+    # explain the limitation.
+    patrimonio_safe = patrimonio_total > 0
     return {
         "report_type": "ratios",
         "source": "via_b",
@@ -816,9 +824,11 @@ def _compute_ratios_via_b(balance: dict | None, pnl: dict | None) -> dict:
         "prueba_acida": None,
         "margen_neto": _pct(utilidad_neta, ingresos),
         "roa": _pct(utilidad_neta, activos),
-        "roe": _pct(utilidad_neta, patrimonio_total),
+        "roe": _pct(utilidad_neta, patrimonio_total) if patrimonio_safe else None,
         "razon_endeudamiento": _ratio(pasivos, activos),
-        "deuda_patrimonio": _ratio(pasivos, patrimonio_total),
+        "deuda_patrimonio": _ratio(pasivos, patrimonio_total)
+        if patrimonio_safe
+        else None,
         "rotacion_activos": _ratio(ingresos, activos),
         "patrimonio_total": patrimonio_total,
         "nota": (

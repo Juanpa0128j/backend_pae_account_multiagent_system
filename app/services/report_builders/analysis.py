@@ -94,7 +94,9 @@ def _compute_ratios(ledger: list[dict], balance: dict) -> dict:
         ),
         "roe": (
             round(_safe_divide(utilidad, patrimonio) * 100, 2)
-            if patrimonio and _safe_divide(utilidad, patrimonio) is not None
+            if patrimonio
+            and patrimonio > 0
+            and _safe_divide(utilidad, patrimonio) is not None
             else None
         ),
         "razon_endeudamiento": _safe_divide(pasivos, activos) if activos else None,

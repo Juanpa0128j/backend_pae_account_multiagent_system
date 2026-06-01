@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import distinct, extract, func, or_
+from sqlalchemy import desc, distinct, extract, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
@@ -2160,7 +2160,13 @@ def list_tax_constants(db: Session, year: int) -> dict:
 
     today = date.today()
     asof = today if today.year == year else date(year, 12, 31)
-    bm_rows = (
+    # Two windows can legitimately cover the same as-of date (legacy row
+    # with effective_from=NULL + Decreto 572 row 2025-06-01 → NULL, both
+    # vigentes for asof=2026-05-31). Order by concepto then most-recent
+    # effective_from first, then dedup in Python so the docstring promise
+    # of "1 row per concepto" actually holds and the UI doesn't crash on
+    # duplicate React keys.
+    candidate_rows = (
         db.query(TaxBaseMinima)
         .filter(TaxBaseMinima.year == year)
         .filter(
@@ -2175,9 +2181,16 @@ def list_tax_constants(db: Session, year: int) -> dict:
                 TaxBaseMinima.effective_to >= asof,
             )
         )
-        .order_by(TaxBaseMinima.concepto)
+        .order_by(TaxBaseMinima.concepto, desc(TaxBaseMinima.effective_from))
         .all()
     )
+    seen_concepts: set[str] = set()
+    bm_rows = []
+    for row in candidate_rows:
+        if row.concepto in seen_concepts:
+            continue
+        seen_concepts.add(row.concepto)
+        bm_rows.append(row)
 
     return {
         "uvt": (
