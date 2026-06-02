@@ -1,35 +1,136 @@
 """Tests for manual transaction CRUD."""
 
-from unittest.mock import MagicMock
-
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from app.core.database import get_db
+from app.core.database import Base, get_db
+from app.models.database import CompanySettings, TransactionPending, TransactionStatus
+from app.services.nit_utils import normalize_nit
 from main import app
 
 
 @pytest.fixture
-def client():
-    """TestClient with mocked DB."""
-    mock_db = MagicMock()
+def db_engine():
+    """Shared in-memory SQLite engine for all tests in this module."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    return engine
 
-    def _override_get_db():
-        yield mock_db
 
-    app.dependency_overrides[get_db] = _override_get_db
+@pytest.fixture
+def client(db_engine):
+    """TestClient with shared in-memory SQLite."""
+    SessionLocal = sessionmaker(bind=db_engine)
+
+    def get_db_test():
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = get_db_test
     yield TestClient(app, raise_server_exceptions=False)
     app.dependency_overrides.clear()
 
 
+@pytest.fixture
+def db(db_engine):
+    """In-memory SQLite session for direct DB access in tests (shares engine with client)."""
+    SessionLocal = sessionmaker(bind=db_engine)
+    session = SessionLocal()
+    yield session
+    session.close()
+
+
 class TestCreateManualTransaction:
-    def test_create_manual_transaction_returns_201(self, client: TestClient):
-        pass
+    def test_create_manual_transaction_returns_201(self, client: TestClient, db):
+        # Arrange: seed company settings
+        nit = "800999888"
+        db.add(
+            CompanySettings(nit=normalize_nit(nit), nombre="TestCo", ciudad="Bogotá")
+        )
+        db.commit()
+
+        payload = {
+            "fecha": "2024-03-15",
+            "concepto": "Servicios de consultoría",
+            "total": 1190000.0,
+            "nit_emisor": "800123456",
+            "nit_receptor": nit,
+            "tipo_documento": "factura",
+            "items": [
+                {"descripcion": "Servicios", "subtotal": 1000000.0, "iva": 190000.0}
+            ],
+            "company_nit": nit,
+        }
+
+        response = client.post("/api/v1/transactions", json=payload)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["transaction_id"].startswith("txn_")
+        assert data["ingest_id"].startswith("ing_")
+        assert data["status"] == "pending"
+
+        # Verify DB state
+        txn = (
+            db.query(TransactionPending)
+            .filter(TransactionPending.id == data["transaction_id"])
+            .first()
+        )
+        assert txn is not None
+        assert txn.status == TransactionStatus.PENDING
+        assert txn.ingest_id == data["ingest_id"]
+        assert txn.raw_data is not None
+        assert txn.raw_data["totales"]["total"] == 1190000.0
 
     def test_create_manual_transaction_requires_company_settings(
         self, client: TestClient
     ):
-        pass
+        payload = {
+            "fecha": "2024-03-15",
+            "concepto": "Test",
+            "total": 1000000.0,
+            "nit_emisor": "800123456",
+            "nit_receptor": "800999888",
+            "tipo_documento": "factura",
+            "items": [],
+            "company_nit": "800999888",
+        }
+        response = client.post("/api/v1/transactions", json=payload)
+        assert response.status_code == 409
+        assert response.json()["detail"]["error_code"] == "MISSING_COMPANY_SETTINGS"
+
+    def test_create_manual_transaction_validates_total(self, client: TestClient, db):
+        nit = "800999888"
+        db.add(
+            CompanySettings(nit=normalize_nit(nit), nombre="TestCo", ciudad="Bogotá")
+        )
+        db.commit()
+
+        payload = {
+            "fecha": "2024-03-15",
+            "concepto": "Test",
+            "total": 1000000.0,  # mismatch: 1000000 + 0 = 1000000, but items say 500000 + 95000
+            "nit_emisor": "800123456",
+            "nit_receptor": nit,
+            "tipo_documento": "factura",
+            "items": [{"descripcion": "Item", "subtotal": 500000.0, "iva": 95000.0}],
+            "company_nit": nit,
+        }
+        response = client.post("/api/v1/transactions", json=payload)
+        assert response.status_code == 422
+        assert (
+            "total" in response.json()["detail"].lower()
+            or "coincide" in response.json()["detail"].lower()
+        )
 
 
 class TestPatchManualTransaction:

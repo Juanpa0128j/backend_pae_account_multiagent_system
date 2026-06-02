@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Query, Depends, HTTPException, Body
+from decimal import Decimal
 from typing import List, Optional
+
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -86,6 +88,123 @@ def _libro_auxiliar_lines_as_transactions(
             )
         )
     return out[offset : offset + limit]
+
+
+class TransactionItem(BaseModel):
+    descripcion: str
+    subtotal: float
+    iva: float = 0.0
+
+
+class CreateTransactionPayload(BaseModel):
+    fecha: str
+    concepto: str
+    total: float
+    nit_emisor: str
+    nit_receptor: str
+    tipo_documento: str
+    items: List[TransactionItem] = []
+    company_nit: str
+
+
+def _build_raw_data(payload: CreateTransactionPayload) -> dict:
+    """Shape user input like a Gemini extraction for pipeline compatibility."""
+    items = []
+    for it in payload.items:
+        items.append(
+            {
+                "descripcion": it.descripcion,
+                "subtotal": it.subtotal,
+                "iva": it.iva,
+            }
+        )
+    subtotal = sum(it.subtotal for it in payload.items)
+    iva = sum(it.iva for it in payload.items)
+    return {
+        "fecha": payload.fecha,
+        "nit_emisor": payload.nit_emisor,
+        "nit_receptor": payload.nit_receptor,
+        "totales": {
+            "subtotal": subtotal,
+            "iva": iva,
+            "total": payload.total,
+        },
+        "items": items,
+        "tipo_documento": payload.tipo_documento,
+        "concepto": payload.concepto,
+    }
+
+
+@router.post("/", status_code=201)
+async def create_transaction(
+    payload: CreateTransactionPayload,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Create a manual transaction as a synthetic ingest + pending record."""
+    company_nit = normalize_nit(payload.company_nit)
+
+    # Business preconditions
+    settings = db_service.get_company_settings(db, company_nit)
+    if not settings:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_category": "business_precondition",
+                "error_code": "MISSING_COMPANY_SETTINGS",
+                "message": f"No se encontró configuración tributaria para la empresa con NIT {company_nit}.",
+                "remediation": "Configure el perfil tributario de su empresa en /settings y vuelva a intentarlo.",
+            },
+        )
+
+    # Validate total consistency
+    expected_total = sum(it.subtotal + it.iva for it in payload.items)
+    if abs(payload.total - expected_total) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"El total ({payload.total:.2f}) no coincide con la suma de items + IVA "
+                f"({expected_total:.2f})."
+            ),
+        )
+
+    # Create synthetic ingest job
+    ingest_job = db_service.create_manual_ingest_job(
+        db, company_nit=company_nit, created_by=str(current_user.id)
+    )
+
+    # Build raw_data shape compatible with pipeline
+    raw_data = _build_raw_data(payload)
+
+    # Parse fecha
+    parsed_fecha = safe_datetime(payload.fecha)
+    if parsed_fecha is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not parse fecha '{payload.fecha}'. Use YYYY-MM-DD or DD/MM/YYYY.",
+        )
+
+    # Create pending transaction
+    txn = db_service.create_transaction_pending(
+        db,
+        ingest_id=ingest_job.id,
+        fecha=parsed_fecha,
+        company_nit=company_nit,
+        nit_emisor=normalize_nit(payload.nit_emisor),
+        nit_receptor=normalize_nit(payload.nit_receptor),
+        total=Decimal(str(payload.total)),
+        descripcion=payload.concepto,
+        items=[{"tipo_documento": payload.tipo_documento, "items": raw_data["items"]}],
+        raw_data=raw_data,
+        source_file=None,
+        commit=True,
+    )
+
+    return {
+        "transaction_id": txn.id,
+        "ingest_id": ingest_job.id,
+        "status": txn.status.value,
+    }
 
 
 @router.get("/", response_model=List[TransactionListItem])
