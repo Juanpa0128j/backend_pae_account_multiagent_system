@@ -43,6 +43,8 @@ from app.models.database import (
     UserCompany,
     UvtValue,
 )
+from app.models.document_types import DocumentType, IngestPathway
+from app.services.nit_utils import normalize_nit
 
 logger = get_logger(__name__)
 
@@ -118,9 +120,10 @@ def create_manual_ingest_job(
     db: Session,
     company_nit: str,
     created_by: str | None = None,
+    commit: bool = True,
 ) -> IngestJob:
     """Create a synthetic ingest job for a manually-entered transaction."""
-    from app.services.nit_utils import normalize_nit
+    normalized_nit = normalize_nit(company_nit)
 
     job = IngestJob(
         id=_generate_id("ing_"),
@@ -129,10 +132,10 @@ def create_manual_ingest_job(
         file_names=None,
         multi_file_mode="pages",
         status=IngestStatus.COMPLETED,
-        document_type="manual_entry",
-        pathway="build_from_scratch",
+        document_type=DocumentType.MANUAL_ENTRY.value,
+        pathway=IngestPathway.BUILD_FROM_SCRATCH.value,
         classification_confirmed=True,
-        company_nit=normalize_nit(company_nit),
+        company_nit=normalized_nit,
         parser_mode="fast",
     )
     db.add(job)
@@ -141,11 +144,11 @@ def create_manual_ingest_job(
         "manual_ingest_created",
         job.id,
         "ingest",
-        {"company_nit": company_nit},
+        {"company_nit": normalized_nit},
         commit=False,
         created_by=created_by,
     )
-    db.commit()
+    _commit_or_flush(db, commit)
     db.refresh(job)
     logger.info("Created manual IngestJob: %s", job.id)
     return job
@@ -321,26 +324,45 @@ def update_transaction_pending(
     nit_receptor: str | None = None,
     items: list[dict] | None = None,
     raw_data: dict | None = None,
+    commit: bool = True,
 ) -> TransactionPending | None:
-    """Update a pending transaction in place. Returns None if not found."""
+    """Partially update a pending transaction's mutable fields. Only the provided fields are updated. Returns None if the transaction is not found."""
     txn = db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
     if not txn:
         return None
+
+    update_kwargs: dict[str, Any] = {}
     if fecha is not None:
         txn.fecha = fecha
+        update_kwargs["fecha"] = fecha
     if descripcion is not None:
         txn.descripcion = descripcion
+        update_kwargs["descripcion"] = descripcion
     if total is not None:
         txn.total = total
+        update_kwargs["total"] = str(total)
     if nit_emisor is not None:
         txn.nit_emisor = nit_emisor
+        update_kwargs["nit_emisor"] = nit_emisor
     if nit_receptor is not None:
         txn.nit_receptor = nit_receptor
+        update_kwargs["nit_receptor"] = nit_receptor
     if items is not None:
         txn.items = items
+        update_kwargs["items"] = items
     if raw_data is not None:
         txn.raw_data = raw_data
-    db.commit()
+        update_kwargs["raw_data"] = raw_data
+
+    create_audit_log(
+        db,
+        "transaction_pending_updated",
+        txn_id,
+        "transaction",
+        {"fields_updated": list(update_kwargs.keys())},
+        commit=False,
+    )
+    _commit_or_flush(db, commit)
     db.refresh(txn)
     return txn
 

@@ -138,7 +138,7 @@ DOCUMENT_TYPE_LABELS: dict[DocumentType, str] = {
     DocumentType.CUENTA_COBRO: "Cuenta de cobro",
     DocumentType.PLANILLA_SEGURIDAD_SOCIAL: "Planilla seguridad social",
     DocumentType.RECIBO_PAGO_IMPUESTO: "Recibo de pago de impuesto",
-    DocumentType.MANUAL_ENTRY: "Manual entry",
+    DocumentType.MANUAL_ENTRY: "Entrada manual",
     DocumentType.BALANCE_GENERAL: "Balance general",
     DocumentType.BALANCE_GENERAL_ANTERIOR: "Balance general anterior",
     DocumentType.ESTADO_RESULTADOS: "Estado de resultados",
