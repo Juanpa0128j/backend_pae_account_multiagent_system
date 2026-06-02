@@ -254,6 +254,13 @@ _DOC_GUIDANCE: dict[str, str] = {
         "Σdébitos == Σcréditos. La mayoría de débitos debe igualar total_neto_pagar al banco (ajustado por retenciones cuando aplique).\n"
         "NOTA: Si el documento trae `asientos_documento` (tabla contable pre-armada), respeta EXACTAMENTE esos códigos y montos."
     ),
+    "manual_entry": (
+        "REGLA ENTRADA MANUAL: Entrada contable manual proporcionada por el usuario. "
+        "El documento ya fue pre-validado por el usuario; confiar en los totales e items. "
+        "Si el total es positivo y nit_receptor == company_nit, clasificar como GASTO. "
+        "Si el total es positivo y nit_emisor == company_nit, clasificar como INGRESO. "
+        "Usar la descripción del concepto y los items para elegir la cuenta PUC."
+    ),
 }
 
 
