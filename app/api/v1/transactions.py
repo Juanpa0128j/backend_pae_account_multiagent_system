@@ -688,6 +688,88 @@ async def update_transaction(
     }
 
 
+class ReprocessResponse(BaseModel):
+    old_transaction_id: str
+    new_transaction_id: str
+    new_ingest_id: str
+
+
+@router.post("/{id}/reprocess", status_code=201, response_model=ReprocessResponse)
+async def reprocess_transaction(
+    id: str,
+    payload: Optional[CreateTransactionPayload] = Body(None),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Delete a posted transaction and recreate it as pending for re-processing."""
+    txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+
+    if txn.status != TransactionStatus.POSTED:
+        raise HTTPException(
+            status_code=409,
+            detail="Solo las transacciones contabilizadas (POSTED) pueden ser reprocesadas.",
+        )
+
+    # Capture data before deletion in case resync commits
+    old_raw_data = dict(txn.raw_data or {})
+    old_fecha = txn.fecha
+    old_descripcion = txn.descripcion
+    old_total = txn.total
+    old_nit_emisor = txn.nit_emisor
+    old_nit_receptor = txn.nit_receptor
+    old_items = txn.items
+
+    company_nit = _delete_transaction_cascade(db, id)
+    _resync_derived_statements(db, company_nit)
+
+    # Use updated data if provided, otherwise copy from old raw_data
+    if payload:
+        raw_data = _build_raw_data(payload)
+        fecha = safe_datetime(payload.fecha)
+        descripcion = payload.concepto
+        total = Decimal(str(payload.total))
+        nit_emisor = normalize_nit(payload.nit_emisor)
+        nit_receptor = normalize_nit(payload.nit_receptor)
+        items_data = raw_data["items"]
+    else:
+        raw_data = old_raw_data
+        fecha = old_fecha
+        descripcion = old_descripcion
+        total = old_total
+        nit_emisor = old_nit_emisor
+        nit_receptor = old_nit_receptor
+        items_data = old_items
+
+    # Create new synthetic ingest
+    ingest_job = db_service.create_manual_ingest_job(
+        db, company_nit=company_nit or "", created_by=str(current_user.id)
+    )
+
+    new_txn = db_service.create_transaction_pending(
+        db,
+        ingest_id=ingest_job.id,
+        fecha=fecha,
+        company_nit=company_nit,
+        nit_emisor=nit_emisor,
+        nit_receptor=nit_receptor,
+        total=total,
+        descripcion=descripcion,
+        items=items_data,
+        raw_data=raw_data,
+        source_file=None,
+        commit=True,
+    )
+
+    db.commit()
+    return ReprocessResponse(
+        old_transaction_id=id,
+        new_transaction_id=new_txn.id,
+        new_ingest_id=ingest_job.id,
+    )
+
+
 @router.delete("/{id}", status_code=204)
 async def delete_transaction(
     id: str,

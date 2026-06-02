@@ -232,8 +232,98 @@ class TestPatchManualTransaction:
 
 
 class TestReprocessTransaction:
-    def test_reprocess_posted_creates_new_pending(self, client: TestClient):
-        pass
+    def test_reprocess_posted_creates_new_pending(self, client: TestClient, db):
+        nit = "800999888"
+        db.add(
+            CompanySettings(nit=normalize_nit(nit), nombre="TestCo", ciudad="Bogotá")
+        )
+        db.commit()
 
-    def test_reprocess_non_posted_returns_409(self, client: TestClient):
-        pass
+        # Create a posted transaction
+        pending = db_service.create_transaction_pending(
+            db,
+            ingest_id="ing_old",
+            fecha=datetime.now(),
+            company_nit=nit,
+            nit_emisor="800123456",
+            nit_receptor=nit,
+            total=Decimal("1000000"),
+            descripcion="Old",
+            items=[],
+            raw_data={"concepto": "Old", "totales": {"total": 1000000}},
+            source_file=None,
+            commit=True,
+        )
+        db_service.create_transaction_posted(
+            db,
+            transaction_pending_id=str(pending.id),
+            company_nit=nit,
+            cuenta_puc="519595",
+            puc_descripcion="Gastos diversos",
+            retefuente=Decimal("0"),
+            reteica=Decimal("0"),
+            iva=Decimal("0"),
+            ica=Decimal("0"),
+            provision_renta=Decimal("0"),
+            neto_a_pagar=Decimal("1000000"),
+            journal_entries_json=[],
+            tax_references=[],
+            agent_reasoning={},
+            tipo_iva=None,
+            concepto_retencion=None,
+            tipo_persona_emisor=None,
+            commit=True,
+        )
+
+        response = client.post(f"/api/v1/transactions/{pending.id}/reprocess")
+        assert response.status_code == 201
+        data = response.json()
+        assert data["old_transaction_id"] == pending.id
+        assert data["new_transaction_id"] != pending.id
+        assert data["new_ingest_id"].startswith("ing_")
+
+        # Old should be gone
+        assert (
+            db.query(TransactionPending)
+            .filter(TransactionPending.id == pending.id)
+            .first()
+            is None
+        )
+
+        # New should exist
+        new_pending = (
+            db.query(TransactionPending)
+            .filter(TransactionPending.id == data["new_transaction_id"])
+            .first()
+        )
+        assert new_pending is not None
+        assert new_pending.status == TransactionStatus.PENDING
+
+    def test_reprocess_non_posted_returns_409(self, client: TestClient, db):
+        nit = "800999888"
+        db.add(
+            CompanySettings(nit=normalize_nit(nit), nombre="TestCo", ciudad="Bogotá")
+        )
+        db.commit()
+
+        pending = db_service.create_transaction_pending(
+            db,
+            ingest_id="ing_test",
+            fecha=datetime.now(),
+            company_nit=nit,
+            nit_emisor="800123456",
+            nit_receptor=nit,
+            total=Decimal("1000000"),
+            descripcion="Pending",
+            items=[],
+            raw_data={},
+            source_file=None,
+            commit=True,
+        )
+
+        response = client.post(f"/api/v1/transactions/{pending.id}/reprocess")
+        assert response.status_code == 409
+        assert (
+            "pendiente" in response.json()["detail"].lower()
+            or "contabilizada" in response.json()["detail"].lower()
+        )
