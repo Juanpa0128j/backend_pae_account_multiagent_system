@@ -194,7 +194,7 @@ async def create_transaction(
         nit_receptor=normalize_nit(payload.nit_receptor),
         total=Decimal(str(payload.total)),
         descripcion=payload.concepto,
-        items=[{"tipo_documento": payload.tipo_documento, "items": raw_data["items"]}],
+        items=raw_data["items"],
         raw_data=raw_data,
         source_file=None,
         commit=True,
