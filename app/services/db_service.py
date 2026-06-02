@@ -114,6 +114,43 @@ def create_ingest_job(
     return job
 
 
+def create_manual_ingest_job(
+    db: Session,
+    company_nit: str,
+    created_by: str | None = None,
+) -> IngestJob:
+    """Create a synthetic ingest job for a manually-entered transaction."""
+    from app.services.nit_utils import normalize_nit
+
+    job = IngestJob(
+        id=_generate_id("ing_"),
+        file_name="manual_entry",
+        file_path=None,
+        file_names=None,
+        multi_file_mode="pages",
+        status=IngestStatus.COMPLETED,
+        document_type="manual_entry",
+        pathway="build_from_scratch",
+        classification_confirmed=True,
+        company_nit=normalize_nit(company_nit),
+        parser_mode="fast",
+    )
+    db.add(job)
+    create_audit_log(
+        db,
+        "manual_ingest_created",
+        job.id,
+        "ingest",
+        {"company_nit": company_nit},
+        commit=False,
+        created_by=created_by,
+    )
+    db.commit()
+    db.refresh(job)
+    logger.info("Created manual IngestJob: %s", job.id)
+    return job
+
+
 def update_ingest_file_index(db: Session, ingest_id: str, index: int) -> None:
     """Update current_file_index on IngestJob for frontend progress reporting."""
     db.query(IngestJob).filter(IngestJob.id == ingest_id).update(
@@ -271,6 +308,40 @@ def update_transaction_status(
         txn.status = status
         _commit_or_flush(db, commit)
         db.refresh(txn)
+    return txn
+
+
+def update_transaction_pending(
+    db: Session,
+    txn_id: str,
+    fecha: datetime | None = None,
+    descripcion: str | None = None,
+    total: Decimal | None = None,
+    nit_emisor: str | None = None,
+    nit_receptor: str | None = None,
+    items: list[dict] | None = None,
+    raw_data: dict | None = None,
+) -> TransactionPending | None:
+    """Update a pending transaction in place. Returns None if not found."""
+    txn = db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
+    if not txn:
+        return None
+    if fecha is not None:
+        txn.fecha = fecha
+    if descripcion is not None:
+        txn.descripcion = descripcion
+    if total is not None:
+        txn.total = total
+    if nit_emisor is not None:
+        txn.nit_emisor = nit_emisor
+    if nit_receptor is not None:
+        txn.nit_receptor = nit_receptor
+    if items is not None:
+        txn.items = items
+    if raw_data is not None:
+        txn.raw_data = raw_data
+    db.commit()
+    db.refresh(txn)
     return txn
 
 
