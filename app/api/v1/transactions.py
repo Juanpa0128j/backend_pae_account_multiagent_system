@@ -107,6 +107,16 @@ class CreateTransactionPayload(BaseModel):
     company_nit: str
 
 
+class UpdateTransactionPayload(BaseModel):
+    fecha: Optional[str] = None
+    concepto: Optional[str] = None
+    total: Optional[float] = None
+    nit_emisor: Optional[str] = None
+    nit_receptor: Optional[str] = None
+    tipo_documento: Optional[str] = None
+    items: Optional[List[TransactionItem]] = None
+
+
 def _build_raw_data(payload: CreateTransactionPayload) -> dict:
     """Shape user input like a Gemini extraction for pipeline compatibility."""
     items = []
@@ -560,6 +570,121 @@ async def set_transaction_fecha(
     return {
         "id": txn.id,
         "fecha": txn.fecha.isoformat() if txn.fecha else None,
+    }
+
+
+@router.patch("/{id}")
+async def update_transaction(
+    id: str,
+    payload: UpdateTransactionPayload = Body(...),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Update a pending transaction. Posted transactions must be reprocessed."""
+    from app.models.database import TransactionPending, TransactionStatus
+
+    txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+
+    if txn.status == TransactionStatus.POSTED:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "La transacción ya fue contabilizada; su fecha no puede modificarse "
+                "directamente sin re-procesar el asiento. Use el endpoint de reprocessamiento."
+            ),
+        )
+
+    # Validate total consistency if provided
+    if payload.total is not None and payload.items is not None:
+        expected_total = sum(it.subtotal + it.iva for it in payload.items)
+        if abs(payload.total - expected_total) > 1:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"El total ({payload.total:.2f}) no coincide con la suma de items + IVA "
+                    f"({expected_total:.2f})."
+                ),
+            )
+
+    # Rebuild raw_data if any financial fields changed
+    raw_data = dict(txn.raw_data or {})
+    if payload.concepto is not None:
+        raw_data["concepto"] = payload.concepto
+    if payload.tipo_documento is not None:
+        raw_data["tipo_documento"] = payload.tipo_documento
+    if payload.nit_emisor is not None:
+        raw_data["nit_emisor"] = payload.nit_emisor
+        txn.nit_emisor = normalize_nit(payload.nit_emisor)
+    if payload.nit_receptor is not None:
+        raw_data["nit_receptor"] = payload.nit_receptor
+        txn.nit_receptor = normalize_nit(payload.nit_receptor)
+    if payload.items is not None:
+        raw_data["items"] = [
+            {"descripcion": it.descripcion, "subtotal": it.subtotal, "iva": it.iva}
+            for it in payload.items
+        ]
+        subtotal = sum(it.subtotal for it in payload.items)
+        iva = sum(it.iva for it in payload.items)
+        raw_data["totales"] = {
+            "subtotal": subtotal,
+            "iva": iva,
+            "total": (
+                payload.total if payload.total is not None else float(txn.total or 0)
+            ),
+        }
+    if payload.total is not None:
+        if "totales" not in raw_data:
+            raw_data["totales"] = {}
+        raw_data["totales"]["total"] = payload.total
+
+    # Apply simple field updates
+    update_kwargs: dict = {}
+    if payload.fecha is not None:
+        parsed = safe_datetime(payload.fecha)
+        if parsed is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not parse fecha '{payload.fecha}'. Use YYYY-MM-DD or DD/MM/YYYY.",
+            )
+        update_kwargs["fecha"] = parsed
+        raw_data["fecha"] = payload.fecha
+    if payload.concepto is not None:
+        update_kwargs["descripcion"] = payload.concepto
+    if payload.total is not None:
+        update_kwargs["total"] = Decimal(str(payload.total))
+
+    db_service.update_transaction_pending(
+        db,
+        txn_id=id,
+        items=raw_data.get("items", []) if payload.items is not None else None,
+        raw_data=(
+            raw_data
+            if any(
+                k in payload.model_dump(exclude_unset=True)
+                for k in (
+                    "concepto",
+                    "total",
+                    "items",
+                    "tipo_documento",
+                    "nit_emisor",
+                    "nit_receptor",
+                    "fecha",
+                )
+            )
+            else None
+        ),
+        **update_kwargs,
+    )
+
+    db.refresh(txn)
+    return {
+        "id": txn.id,
+        "fecha": str(txn.fecha) if txn.fecha else "",
+        "concepto": txn.descripcion or "",
+        "total": float(txn.total) if txn.total else 0,
+        "status": txn.status.value,
     }
 
 

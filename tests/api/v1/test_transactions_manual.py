@@ -1,5 +1,8 @@
 """Tests for manual transaction CRUD."""
 
+from datetime import datetime
+from decimal import Decimal
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -8,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.models.database import CompanySettings, TransactionPending, TransactionStatus
+from app.services import db_service
 from app.services.nit_utils import normalize_nit
 from main import app
 
@@ -134,11 +138,97 @@ class TestCreateManualTransaction:
 
 
 class TestPatchManualTransaction:
-    def test_patch_pending_updates_fields(self, client: TestClient):
-        pass
+    def test_patch_pending_updates_fields(self, client: TestClient, db):
+        nit = "800999888"
+        db.add(
+            CompanySettings(nit=normalize_nit(nit), nombre="TestCo", ciudad="Bogotá")
+        )
+        db.commit()
 
-    def test_patch_posted_returns_409(self, client: TestClient):
-        pass
+        # Create a pending transaction first
+        create_payload = {
+            "fecha": "2024-03-15",
+            "concepto": "Original",
+            "total": 1190000.0,
+            "nit_emisor": "800123456",
+            "nit_receptor": nit,
+            "tipo_documento": "factura",
+            "items": [{"descripcion": "Item", "subtotal": 1000000.0, "iva": 190000.0}],
+            "company_nit": nit,
+        }
+        create_resp = client.post("/api/v1/transactions", json=create_payload)
+        txn_id = create_resp.json()["transaction_id"]
+
+        patch_payload = {
+            "concepto": "Updated concept",
+            "total": 2380000.0,
+            "items": [
+                {"descripcion": "Item A", "subtotal": 1000000.0, "iva": 190000.0},
+                {"descripcion": "Item B", "subtotal": 1000000.0, "iva": 190000.0},
+            ],
+        }
+        response = client.patch(f"/api/v1/transactions/{txn_id}", json=patch_payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["concepto"] == "Updated concept"
+        assert data["total"] == 2380000.0
+
+        # Verify DB
+        txn = (
+            db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
+        )
+        assert txn.descripcion == "Updated concept"
+        assert float(txn.total) == 2380000.0
+        assert len(txn.raw_data["items"]) == 2
+
+    def test_patch_posted_returns_409(self, client: TestClient, db):
+        nit = "800999888"
+        db.add(
+            CompanySettings(nit=normalize_nit(nit), nombre="TestCo", ciudad="Bogotá")
+        )
+        db.commit()
+
+        # Create and post a transaction
+        pending = db_service.create_transaction_pending(
+            db,
+            ingest_id="ing_test",
+            fecha=datetime.now(),
+            company_nit=nit,
+            nit_emisor="800123456",
+            nit_receptor=nit,
+            total=Decimal("1000000"),
+            descripcion="Posted",
+            items=[],
+            raw_data={},
+            source_file=None,
+            commit=True,
+        )
+        db_service.create_transaction_posted(
+            db,
+            transaction_pending_id=str(pending.id),
+            company_nit=nit,
+            cuenta_puc="519595",
+            puc_descripcion="Gastos diversos",
+            retefuente=Decimal("0"),
+            reteica=Decimal("0"),
+            iva=Decimal("0"),
+            ica=Decimal("0"),
+            provision_renta=Decimal("0"),
+            neto_a_pagar=Decimal("1000000"),
+            journal_entries_json=[],
+            tax_references=[],
+            agent_reasoning={},
+            tipo_iva=None,
+            concepto_retencion=None,
+            tipo_persona_emisor=None,
+            commit=True,
+        )
+
+        response = client.patch(
+            f"/api/v1/transactions/{pending.id}", json={"concepto": "Nope"}
+        )
+        assert response.status_code == 409
+        assert "contabilizada" in response.json()["detail"].lower()
 
 
 class TestReprocessTransaction:
