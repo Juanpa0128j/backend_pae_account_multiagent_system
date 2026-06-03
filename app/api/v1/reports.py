@@ -1,8 +1,9 @@
 from datetime import date, datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from app.core.auth import CurrentUser, get_current_user
 from app.agents.graph import invoke_reporting_pipeline
@@ -14,7 +15,9 @@ from app.services.financial_statement_service import (
     DERIVED_TARGETS as _DERIVED_TARGETS,
     build_first_level_from_journal_entries,
     derive_financial_statements,
+    infer_frequency,
     list_financial_statements,
+    normalize_periodicidad,
 )
 from app.services.nit_utils import normalize_nit, normalize_optional_nit
 from app.services.report_export_service import (
@@ -1542,31 +1545,64 @@ async def run_derivation(
     return {"status": "ok", "result": result}
 
 
-@router.post("/derivation/run-via-a")
-async def run_derivation_via_a(
-    company_nit: str = Query(..., description="Company NIT"),
-    start_date: date = Query(..., description="Period start YYYY-MM-DD"),
-    end_date: date = Query(..., description="Period end YYYY-MM-DD"),
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    """Manually trigger Vía A derivation: build first-level statements from journal
-    entries, then derive flujo de caja / cambios patrimonio / notas.  Both steps are
-    idempotent — already-existing statements are skipped.
+class BuildFirstLevelViaARequest(BaseModel):
+    """Step 1 of the manual Vía A flow: generate first-level statements
+    (BG/ER/LA/LD) from journal entries for the chosen period."""
 
-    The opening balance for NIC 7 is recomputed from the cumulative journal on every
-    call, so derivation is order-independent: deriving a later period before an earlier
-    one still produces correct working-capital deltas and opening cash."""
-    try:
-        normalized_nit = normalize_nit(company_nit)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+    company_nit: str = Field(..., description="Company NIT")
+    period_type: Literal["annual", "monthly", "custom"] = Field(
+        ..., description="Period kind chosen by the user — stamped as frequency"
+    )
+    period_start: date = Field(..., description="Period start YYYY-MM-DD")
+    period_end: date = Field(..., description="Period end YYYY-MM-DD")
 
+
+class DeriveSecondaryViaARequest(BaseModel):
+    """Step 2 of the manual Vía A flow: derive secondary statements
+    (flujo de caja / cambios de patrimonio / notas) — annual only (NIC 7)."""
+
+    company_nit: str = Field(..., description="Company NIT")
+    period_start: date = Field(..., description="Period start YYYY-MM-DD")
+    period_end: date = Field(..., description="Period end YYYY-MM-DD")
+
+
+# period_type → stored frequency value. 'custom' falls back to span inference.
+_PERIOD_TYPE_TO_PERIODICIDAD = {"annual": "anual", "monthly": "mensual"}
+
+
+def _period_bounds_utc(start_date: date, end_date: date) -> tuple[datetime, datetime]:
+    """Expand date bounds to UTC datetimes covering the full days (00:00 / 23:59:59)."""
     period_start = datetime(
         start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc
     )
     period_end = datetime(
         end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc
     )
+    return period_start, period_end
+
+
+@router.post("/derivation/build-first-level-via-a")
+async def build_first_level_via_a(
+    body: BuildFirstLevelViaARequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Step 1 — build first-level statements (BG/ER/LA/LD) from journal entries.
+
+    The chosen ``period_type`` is stamped as the row ``frequency`` so step 2 (NIC 7
+    secondary derivation) can require an annual close. Idempotent: already-existing
+    types for the period are skipped, not rebuilt."""
+    try:
+        normalized_nit = normalize_nit(body.company_nit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    period_start, period_end = _period_bounds_utc(body.period_start, body.period_end)
+
+    # Resolve the frequency to stamp: explicit period_type maps directly; 'custom'
+    # falls back to span inference (≥300d → annual, etc.).
+    frequency = normalize_periodicidad(
+        _PERIOD_TYPE_TO_PERIODICIDAD.get(body.period_type)
+    ) or infer_frequency(period_start, period_end)
 
     db = SessionLocal()
     try:
@@ -1575,17 +1611,14 @@ async def run_derivation_via_a(
             company_nit=normalized_nit,
             period_start=period_start,
             period_end=period_end,
+            frequency=frequency,
         )
         db.commit()
     finally:
         db.close()
 
-    # If any required first-level state failed to build, surface the error now
-    # instead of letting derive_financial_statements raise a cryptic 409.
     required = {"balance_general", "estado_resultados", "libro_auxiliar"}
     build_errors = first_level.get("build_errors", {})
-    # A type is acceptable if it was created now OR was already in the DB (skipped).
-    # Only fail if it ended up in build_errors (truly failed, not just pre-existing).
     failed_required = {t: e for t, e in build_errors.items() if t in required}
     if failed_required:
         detail = (
@@ -1595,30 +1628,62 @@ async def run_derivation_via_a(
         )
         raise HTTPException(status_code=409, detail=detail)
 
+    return {
+        "status": "ok",
+        "frequency": frequency,
+        "period_start": period_start.date().isoformat(),
+        "period_end": period_end.date().isoformat(),
+        "first_level": first_level,
+    }
+
+
+@router.post("/derivation/run-via-a")
+async def run_derivation_via_a(
+    body: DeriveSecondaryViaARequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Step 2 — derive secondary statements (flujo de caja / cambios patrimonio /
+    notas) for a Vía A company. Annual only (NIC 7 indirect method).
+
+    Requires that step 1 already generated the first-level annual statements for the
+    period. The opening balance for NIC 7 is recomputed from the cumulative journal
+    on every call, so derivation is order-independent."""
+    try:
+        normalized_nit = normalize_nit(body.company_nit)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+
+    period_start, period_end = _period_bounds_utc(body.period_start, body.period_end)
+
     try:
         derived = derive_financial_statements(
             company_nit=normalized_nit,
             period_start=period_start,
             period_end=period_end,
-            input_source_mode="derived_from_journal",  # Via A: only use journal-built statements
+            input_source_mode="derived_from_journal",  # Via A: only journal-built statements
             prior_from_journal=True,  # Via A: opening balance computed from journal cutoff
         )
     except BusinessRuleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
-    return {
-        "status": "ok",
-        "first_level": first_level,
-        "derived": derived,
-    }
+    return {"status": "ok", "derived": derived}
 
 
 @router.get("/derivation/status-via-a")
 async def get_derivation_status_via_a(
     company_nit: str = Query(..., description="Company NIT"),
 ):
-    """Return derivation status for Vía A companies: first-level statements derived
-    from journal entries and secondary derivations (flujo de caja, etc.)."""
+    """Return derivation status for Vía A companies.
+
+    First-level statements are now generated MANUALLY per chosen period, so this
+    surfaces:
+      * ``journal_date_range`` straight from the journal (lets the UI offer period
+        generation even before any first-level row exists).
+      * ``first_level_periods`` with ``frequency`` and ``eligible_for_secondary``
+        (annual only) per period.
+      * ``ready_periods`` (annual + BG&ER present), ``monthly_periods`` (informational),
+        ``is_ready`` and ``minimum_requirements`` — mirrors the Vía B status shape.
+    """
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
@@ -1630,11 +1695,23 @@ async def get_derivation_status_via_a(
         source_mode=None,
     )
 
-    # Group first-level statements (source_mode="derived_from_journal") by period
+    # True journal span — independent of whether any statement was derived yet.
+    db = SessionLocal()
+    try:
+        from app.services import db_service as _db_svc  # noqa: PLC0415
+
+        journal_period = _db_svc.get_journal_entry_period(
+            db, company_nit=normalized_nit
+        )
+    finally:
+        db.close()
+    journal_earliest = journal_period[0].isoformat() if journal_period else None
+    journal_latest = journal_period[1].isoformat() if journal_period else None
+
+    # Group first-level statements (source_mode="derived_from_journal") by period.
     first_level_by_period: dict[str, dict] = {}
     derived_by_period_end: dict[str, list[str]] = {}
-    earliest: str | None = None
-    latest: str | None = None
+    fl_earliest: str | None = None
 
     for row in all_rows:
         st = row.get("statement_type")
@@ -1648,12 +1725,11 @@ async def get_derivation_status_via_a(
                     "period_start": ps,
                     "period_end": pe,
                     "types": [],
+                    "frequency": row.get("frequency"),
                 }
             first_level_by_period[key]["types"].append(st)
-            if earliest is None or (ps and ps < earliest):
-                earliest = ps
-            if latest is None or (pe and pe > latest):
-                latest = pe
+            if fl_earliest is None or (ps and ps < fl_earliest):
+                fl_earliest = ps
 
         if st in _DERIVED_TARGETS and pe and row.get("source_mode") == "derived":
             derived_by_period_end.setdefault(pe, []).append(st)
@@ -1672,34 +1748,72 @@ async def get_derivation_status_via_a(
     )
 
     # Detect order gaps: a period has a gap when its period_start is not the
-    # global earliest AND no derived BG exists with period_end < period_start.
-    # This means the prior period was never derived, so NIC 7 cash flow will
-    # use empty opening balances and produce incorrect working-capital deltas.
-    derived_bg_ends: set[str] = set()
+    # earliest first-level period AND no BG exists with period_end < period_start.
+    # Without a prior BG, NIC 7 opening balances are empty → wrong deltas.
+    bg_ends: set[str] = set()
     for row in all_rows:
         if (
             row.get("statement_type") == "balance_general"
             and row.get("source_mode") in ("derived_from_journal", "derived", "direct")
             and row.get("period_end")
         ):
-            derived_bg_ends.add(row["period_end"][:10])
+            bg_ends.add(row["period_end"][:10])
 
     sorted_periods = sorted(
         first_level_by_period.values(), key=lambda x: x["period_end"], reverse=True
     )
+    ready_periods: list[dict] = []
+    monthly_periods: list[dict] = []
     for p in sorted_periods:
         ps = (p.get("period_start") or "")[:10]
-        # First period ever → no prior expected
-        if not ps or ps == (earliest or "")[:10]:
+        # Annual gate: only annual periods can anchor NIC 7 secondary derivation.
+        is_annual_period = p.get("frequency") == "annual"
+        has_bg_er = {"balance_general", "estado_resultados"}.issubset(set(p["types"]))
+        p["eligible_for_secondary"] = bool(is_annual_period and has_bg_er)
+
+        # First period ever → no prior expected.
+        if not ps or ps == (fl_earliest or "")[:10]:
             p["prior_period_gap"] = False
-            continue
-        # Has any derived BG with period_end before this period_start?
-        has_prior = any(pe < ps for pe in derived_bg_ends)
-        p["prior_period_gap"] = not has_prior
+        else:
+            p["prior_period_gap"] = not any(pe < ps for pe in bg_ends)
+
+        if p["eligible_for_secondary"]:
+            ready_periods.append(
+                {
+                    "period_start": p["period_start"],
+                    "period_end": p["period_end"],
+                    "satisfies": ["bg+er"],
+                }
+            )
+        elif not is_annual_period:
+            monthly_periods.append(
+                {
+                    "period_start": p["period_start"],
+                    "period_end": p["period_end"],
+                    "loaded_types": p["types"],
+                }
+            )
 
     return {
         "company_nit": normalized_nit,
         "first_level_periods": sorted_periods,
+        "ready_periods": ready_periods,
+        "monthly_periods": monthly_periods,
         "derived_periods": derived_periods,
-        "journal_date_range": {"earliest": earliest, "latest": latest},
+        "is_ready": len(ready_periods) > 0,
+        "minimum_requirements": {
+            "paths": [
+                {
+                    "id": "bg+er",
+                    "label": "Balance General + Estado de Resultados (anual)",
+                    "requires": ["balance_general", "estado_resultados"],
+                    "notes": "Generados desde los asientos. NIC 7 método indirecto.",
+                }
+            ],
+            "annual_only": True,
+        },
+        "journal_date_range": {
+            "earliest": journal_earliest,
+            "latest": journal_latest,
+        },
     }

@@ -58,6 +58,103 @@ def test_build_first_level_creates_when_missing():
     assert len(result["created"]) == 4
 
 
+def test_build_first_level_forwards_frequency():
+    """The chosen period frequency must be stamped on every created row so the
+    annual gate (NIC 7) can later distinguish annual closes from monthly ones."""
+    from app.services import financial_statement_service as fss
+
+    db = MagicMock()
+    mock_stmt = MagicMock()
+    mock_stmt.id = "stmt-id-1"
+    mock_ingest = MagicMock()
+    mock_ingest.id = "ingest-id-1"
+
+    with (
+        patch.object(fss, "_first_level_type_exists", return_value=False),
+        patch.object(fss, "_create_derivation_ingest_job", return_value=mock_ingest),
+        patch.object(fss.db_service, "get_balance_sheet", return_value={}),
+        patch.object(fss.db_service, "get_pnl", return_value={}),
+        patch.object(fss.db_service, "get_general_ledger", return_value=[]),
+        patch.object(fss.db_service, "get_journal_entry_lines", return_value=[]),
+        patch.object(
+            fss.db_service, "create_financial_statement", return_value=mock_stmt
+        ) as mock_create,
+    ):
+        fss.build_first_level_from_journal_entries(
+            db,
+            company_nit="800999888",
+            period_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            period_end=datetime(2025, 12, 31, tzinfo=timezone.utc),
+            frequency="annual",
+        )
+
+    assert mock_create.call_count == 4
+    assert all(
+        call.kwargs.get("frequency") == "annual" for call in mock_create.call_args_list
+    )
+
+
+def test_derive_prefers_annual_row_when_mixed():
+    """When both a monthly and an annual row exist in the window, the annual one
+    must be used as the source so a monthly row can't poison NIC 7 derivation."""
+    from app.services import financial_statement_service as fss
+
+    annual_bg = MagicMock()
+    annual_bg.data = {"tag": "annual-bg"}
+    annual_bg.frequency = "annual"
+    annual_bg.period_start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    annual_bg.period_end = datetime(2025, 12, 31, tzinfo=timezone.utc)
+    monthly_bg = MagicMock()
+    monthly_bg.data = {"tag": "monthly-bg"}
+    monthly_bg.frequency = "monthly"
+    monthly_bg.period_start = datetime(2025, 12, 1, tzinfo=timezone.utc)
+    monthly_bg.period_end = datetime(2025, 12, 31, tzinfo=timezone.utc)
+
+    annual_er = MagicMock()
+    annual_er.data = {"tag": "annual-er"}
+    annual_er.frequency = "annual"
+    annual_er.period_start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    annual_er.period_end = datetime(2025, 12, 31, tzinfo=timezone.utc)
+
+    def _by_type(*_, statement_type=None, **__):
+        if statement_type == "balance_general":
+            # DESC by period_end would put the monthly row first without the sort.
+            return [monthly_bg, annual_bg]
+        if statement_type == "estado_resultados":
+            return [annual_er]
+        return []
+
+    captured = {}
+
+    def _capture_cash_flow(*, bg_data, **__):
+        captured["bg_data"] = bg_data
+        return {"tipo": "flujo_de_caja"}
+
+    with (
+        patch.object(fss.db_service, "get_financial_statements", side_effect=_by_type),
+        patch.object(fss, "SessionLocal", return_value=MagicMock()),
+        patch.object(fss, "_first_level_type_exists", return_value=False),
+        patch.object(fss, "_load_prior_balance", return_value=MagicMock(data={})),
+        patch.object(
+            fss, "_compute_cash_flow_indirect", side_effect=_capture_cash_flow
+        ),
+        patch.object(fss, "_compute_equity_changes", return_value={}),
+        patch.object(fss, "_compute_notes", return_value={}),
+        patch.object(fss, "_create_derivation_ingest_job", return_value=MagicMock()),
+        patch.object(
+            fss.db_service, "create_financial_statement", return_value=MagicMock()
+        ),
+        patch.object(fss.db_service, "create_financial_statement_lineage"),
+    ):
+        fss.derive_financial_statements(
+            company_nit="800999888",
+            period_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            period_end=datetime(2025, 12, 31, tzinfo=timezone.utc),
+        )
+
+    assert captured["bg_data"] == {"tag": "annual-bg"}
+
+
 # ─── v3 derivation helpers ────────────────────────────────────────────────────
 
 

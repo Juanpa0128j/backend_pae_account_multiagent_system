@@ -381,11 +381,17 @@ def build_first_level_from_journal_entries(
     company_nit: str,
     period_start: datetime,
     period_end: datetime,
+    frequency: str | None = None,
 ) -> dict[str, Any]:
     """Build and persist first-level FinancialStatement records from JournalEntryLines.
 
     Creates balance_general, estado_resultados, libro_auxiliar, libro_diario records
     with source_mode='derived_from_journal'. Idempotent: skips any type already present.
+
+    ``frequency`` ('monthly' | 'quarterly' | 'annual' | 'custom') is stamped on every
+    row so the annual gate (NIC 7) can distinguish a manually-generated annual close
+    from a monthly one. When None, the row's frequency is left NULL and downstream
+    ``is_annual`` falls back to span inference.
     """
     normalized_nit = normalize_nit(company_nit)
     created: dict[str, str] = {}
@@ -420,6 +426,7 @@ def build_first_level_from_journal_entries(
                 period_start=period_start,
                 period_end=period_end,
                 source_mode="derived_from_journal",
+                frequency=frequency,
                 data=bg_data,
                 commit=True,
             )
@@ -485,6 +492,7 @@ def build_first_level_from_journal_entries(
                 period_start=period_start,
                 period_end=period_end,
                 source_mode="derived_from_journal",
+                frequency=frequency,
                 data=er_data,
                 commit=True,
             )
@@ -546,6 +554,7 @@ def build_first_level_from_journal_entries(
                 period_start=period_start,
                 period_end=period_end,
                 source_mode="derived_from_journal",
+                frequency=frequency,
                 data=la_data,
                 commit=True,
             )
@@ -596,6 +605,7 @@ def build_first_level_from_journal_entries(
                 period_start=period_start,
                 period_end=period_end,
                 source_mode="derived_from_journal",
+                frequency=frequency,
                 data=ld_data,
                 commit=True,
             )
@@ -1374,6 +1384,8 @@ def derive_financial_statements(
             balance directly from cumulative journal entries (cutoff = period_start
             - 1µs). Makes derivation order-independent: no persisted prior BG
             needed. Via B keeps False and requires an uploaded balance_general_anterior.
+            Note: the annual gate applies regardless of this flag — both pathways
+            require annual inputs for NIC 7.
 
     Raises:
         BusinessRuleError: when neither path is satisfied, when the inputs
@@ -1409,6 +1421,15 @@ def derive_financial_statements(
             source_mode=input_source_mode,
         )
 
+        # ``get_financial_statements`` filters by range and orders by period_end
+        # DESC. If a company has both monthly rows and an annual row inside the
+        # requested window, prefer the annual one when we later take ``[0]`` so a
+        # monthly row can't poison an annual derivation (NIC 7 needs the annual
+        # close). Stable sort preserves the period_end ordering within each group.
+        bg_rows = sorted(bg_rows, key=lambda r: 0 if is_annual(r) else 1)
+        er_rows = sorted(er_rows, key=lambda r: 0 if is_annual(r) else 1)
+        la_rows = sorted(la_rows, key=lambda r: 0 if is_annual(r) else 1)
+
         la_is_comprehensive = bool(la_rows) and _libro_auxiliar_is_comprehensive(
             la_rows[0].data or {}
         )
@@ -1424,17 +1445,19 @@ def derive_financial_statements(
                 "(NIC 7 método indirecto / Decreto 2650/1993)"
             )
 
-        # Annual gate — Via B only. Via B uploads real documents whose periodicidad
-        # must be annual for NIC 7 indirect method. Via A builds statements from the
-        # journal for any period the user requests, so the gate does not apply.
-        if not prior_from_journal:
-            inputs_for_check = [r for r in (bg_rows + er_rows + la_rows) if r]
-            if not any(is_annual(r) for r in inputs_for_check):
-                raise BusinessRuleError(
-                    "La derivación de flujo, cambios y notas requiere estados ANUALES "
-                    "(NIC 7). Los estados mensuales sirven para reportes individuales "
-                    "pero no pueden anclar la derivación NIIF."
-                )
+        # Annual gate — applies to BOTH pathways. The NIC 7 indirect method
+        # compares two fiscal years, so flujo / cambios / notas only make sense on
+        # an annual close. Via B uploads carry an extracted periodicidad; Via A
+        # stamps frequency from the period the user chose when generating
+        # first-level statements (see build_first_level_from_journal_entries).
+        # ``is_annual`` falls back to span inference for legacy NULL-frequency rows.
+        inputs_for_check = [r for r in (bg_rows + er_rows + la_rows) if r]
+        if not any(is_annual(r) for r in inputs_for_check):
+            raise BusinessRuleError(
+                "La derivación de flujo, cambios y notas requiere estados ANUALES "
+                "(NIC 7). Los estados mensuales sirven para reportes individuales "
+                "pero no pueden anclar la derivación NIIF."
+            )
 
         # Dedup guard: skip derived types that already exist
         existing_derived = {
