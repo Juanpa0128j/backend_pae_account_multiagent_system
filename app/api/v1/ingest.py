@@ -21,7 +21,7 @@ from app.agents.graph import invoke_ingest_pipeline
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.core.database import INGEST_PIPELINE_SEMAPHORE, SessionLocal, get_db
-from app.models.database import IngestJob, IngestStatus
+from app.models.database import IngestJob, IngestStatus, UserCompany
 from app.models.document_types import (
     DocumentType,
     ParserMode,
@@ -41,6 +41,7 @@ from app.models.trace import PipelineTrace
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
 from app.workflows.dispatch import dispatch_ingest_start
+from app.core.limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -389,7 +390,9 @@ def _build_ingest_detail_response(
 @router.post(
     "/upload", response_model=IngestResponse, status_code=status.HTTP_202_ACCEPTED
 )
+@limiter.limit("10/minute")
 async def upload_file(
+    request: Request,
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     company_nit: Optional[str] = Form(
@@ -475,6 +478,13 @@ async def upload_file(
             if not file_content:
                 raise HTTPException(
                     status_code=422, detail=f"El archivo {f.filename} está vacío"
+                )
+
+            MAX_FILE_SIZE = 50 * 1024 * 1024
+            if len(file_content) > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail="El archivo excede el tamaño máximo de 50MB",
                 )
 
             _ext = Path(f.filename).suffix.lower()
@@ -698,9 +708,10 @@ async def upload_file(
     except HTTPException:
         raise
     except Exception as e:
-        first_name = files[0].filename if files else "unknown"
-        logger.error(f"Error queueing file {first_name}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error queueing file: {str(e)}")
+        logger.error(f"Error queueing file: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Error interno al procesar el archivo"
+        )
 
 
 @router.get("/merge-suggestions")
@@ -1058,7 +1069,12 @@ async def merge_ingest_jobs(
 
 
 @router.get("/{ingest_id}/trace", response_model=PipelineTrace)
-async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
+async def get_ingest_trace(
+    request: Request,
+    ingest_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Accountant-facing trace for an ingest job.
 
     Returns 404 if the job is not found.
@@ -1071,6 +1087,23 @@ async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
     job = db_service.get_ingest_job(db, ingest_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+
+    # Verify user has access to this ingest's company
+    job_company_nit = getattr(job, "company_nit", None)
+    if isinstance(job_company_nit, str) and job_company_nit:
+        user_membership = (
+            db.query(UserCompany)
+            .filter(
+                UserCompany.company_nit == job_company_nit,
+                UserCompany.user_id == str(current_user.id),
+            )
+            .first()
+        )
+        if not user_membership:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes acceso a los datos de esta empresa",
+            )
 
     # Check if job is in a terminal state
     if job.status not in (IngestStatus.COMPLETED, IngestStatus.FAILED):

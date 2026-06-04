@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Depends, HTTPException, Body
+from fastapi import APIRouter, Query, Depends, HTTPException, Body, Request
 from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.core.logger import get_logger
+from app.core.limiter import limiter
 from app.services import db_service
 from app.services.document_mappers import safe_datetime
 from app.services.nit_utils import normalize_nit, normalize_optional_nit
@@ -445,7 +446,9 @@ async def set_transaction_fecha(
 
 
 @router.delete("/{id}", status_code=204)
+@limiter.limit("30/minute")
 async def delete_transaction(
+    request: Request,
     id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),

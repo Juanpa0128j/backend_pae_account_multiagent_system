@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.models.database import (
     IngestJob,
     ProcessJob,
@@ -119,7 +120,9 @@ def _classify_process_error(
 
 
 @router.post("/accounting/{ingest_id}", response_model=ProcessResponse)
+@limiter.limit("20/minute")
 async def process_accounting(
+    request: Request,
     ingest_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),

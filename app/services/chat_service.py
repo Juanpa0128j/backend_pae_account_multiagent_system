@@ -826,9 +826,9 @@ def _compute_ratios_via_b(balance: dict | None, pnl: dict | None) -> dict:
         "roa": _pct(utilidad_neta, activos),
         "roe": _pct(utilidad_neta, patrimonio_total) if patrimonio_safe else None,
         "razon_endeudamiento": _ratio(pasivos, activos),
-        "deuda_patrimonio": _ratio(pasivos, patrimonio_total)
-        if patrimonio_safe
-        else None,
+        "deuda_patrimonio": (
+            _ratio(pasivos, patrimonio_total) if patrimonio_safe else None
+        ),
         "rotacion_activos": _ratio(ingresos, activos),
         "patrimonio_total": patrimonio_total,
         "nota": (

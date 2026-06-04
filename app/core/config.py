@@ -122,6 +122,17 @@ class Settings(BaseSettings):
                     "WORKFLOW_ENGINE=inngest in production."
                 )
 
+        if (
+            self.app_env == "production"
+            and self.workflow_engine == "inngest"
+            and self.inngest_dev
+        ):
+            raise ValueError(
+                "INNGEST_DEV must be false when APP_ENV=production and "
+                "WORKFLOW_ENGINE=inngest. Signature verification is disabled "
+                "when INNGEST_DEV=true."
+            )
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"

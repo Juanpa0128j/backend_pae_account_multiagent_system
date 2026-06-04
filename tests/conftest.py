@@ -24,6 +24,17 @@ def override_auth():
     app.dependency_overrides.pop(get_current_user, None)
 
 
+@pytest.fixture(autouse=True)
+def disable_rate_limits():
+    """Disable slowapi rate limiting for all tests so direct function calls don't fail."""
+    from app.core.limiter import limiter
+
+    original = limiter.enabled
+    limiter.enabled = False
+    yield
+    limiter.enabled = original
+
+
 def base_state(**overrides) -> dict:
     """
     Return a fully-populated AgentState dict with safe default values.
