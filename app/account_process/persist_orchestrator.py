@@ -1,24 +1,26 @@
 """Thin adapter that coordinates DB persistence for the accounting pipeline.
 
-Receives a SQLAlchemy Session and persists journal entries + derived financial
-statements. All business logic lives in JournalBuilder and StatementDeriver;
-this module only handles the DB mapping.
+Receives a SQLAlchemy Session and persists journal entries. All business logic
+lives in JournalBuilder; this module only handles the DB mapping.
+
+Financial-statement derivation from journal entries lives in
+``app.services.financial_statement_service.build_first_level_from_journal_entries``
+(the single journal→statements path) and is triggered manually via the Vía A
+derivation endpoints.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List
-from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.models.database import FinancialStatement, JournalEntryLine
+from app.models.database import JournalEntryLine
 
 
 class PersistOrchestrator:
-    """Coordinates persistence of journal entries and financial statements."""
+    """Coordinates persistence of journal entries."""
 
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -68,45 +70,6 @@ class PersistOrchestrator:
             created.append(line)
         return created
 
-    def _persist_financial_statement(
-        self,
-        *,
-        ingest_id: str,
-        statement_type: str,
-        company_nit: str,
-        period_start: datetime,
-        period_end: datetime,
-        data: Dict[str, Any],
-        source_mode: str = "derived_from_journal",
-    ) -> FinancialStatement:
-        """Create a FinancialStatement record.
-
-        Re-derivation is idempotent: each processed document re-derives the
-        whole period from the cumulative journal, so any prior
-        journal-derived row for the same (nit, type, period) is replaced
-        rather than duplicated.
-        """
-        self.db.query(FinancialStatement).filter(
-            FinancialStatement.entity_nit == company_nit,
-            FinancialStatement.statement_type == statement_type,
-            FinancialStatement.period_start == period_start,
-            FinancialStatement.period_end == period_end,
-            FinancialStatement.source_mode == source_mode,
-        ).delete(synchronize_session=False)
-
-        stmt = FinancialStatement(
-            id=str(uuid4()),
-            ingest_id=ingest_id,
-            statement_type=statement_type,
-            entity_nit=company_nit,
-            period_start=period_start,
-            period_end=period_end,
-            source_mode=source_mode,
-            data=data,
-        )
-        self.db.add(stmt)
-        return stmt
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -128,61 +91,3 @@ class PersistOrchestrator:
         )
         self.db.commit()
         return lines
-
-    def derive_and_persist_statements(
-        self,
-        entries: List[Dict[str, Any]],
-        *,
-        ingest_id: str,
-        company_nit: str,
-        period_start: datetime,
-        period_end: datetime,
-    ) -> Dict[str, FinancialStatement]:
-        """Derive financial statements from entries and persist them.
-
-        Returns a dict mapping statement_type -> FinancialStatement.
-        """
-        from app.account_process.statement_deriver import StatementDeriver
-
-        created: Dict[str, FinancialStatement] = {}
-
-        bg_data = StatementDeriver.derive_balance_general(entries)
-        bg_stmt = self._persist_financial_statement(
-            ingest_id=ingest_id,
-            statement_type="balance_general",
-            company_nit=company_nit,
-            period_start=period_start,
-            period_end=period_end,
-            data=_decimal_dict(bg_data),
-        )
-        created["balance_general"] = bg_stmt
-
-        er_data = StatementDeriver.derive_estado_resultados(entries)
-        er_stmt = self._persist_financial_statement(
-            ingest_id=ingest_id,
-            statement_type="estado_resultados",
-            company_nit=company_nit,
-            period_start=period_start,
-            period_end=period_end,
-            data=_decimal_dict(er_data),
-        )
-        created["estado_resultados"] = er_stmt
-
-        self.db.commit()
-        return created
-
-
-# ------------------------------------------------------------------
-# Private helpers
-# ------------------------------------------------------------------
-
-
-def _decimal_dict(obj: Any) -> Any:
-    """Recursively convert Decimal values to float for JSONB storage."""
-    if isinstance(obj, Decimal):
-        return float(obj)
-    if isinstance(obj, dict):
-        return {k: _decimal_dict(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_decimal_dict(v) for v in obj]
-    return obj

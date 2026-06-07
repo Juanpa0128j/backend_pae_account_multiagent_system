@@ -378,7 +378,6 @@ class TestContadorRetryLogic:
 class TestFullProcessPipeline:
     """Test complete process pipeline execution."""
 
-    @patch("app.agents.persist_node._auto_derive_statements")
     @patch("app.services.rag_service.get_rag_service")
     @patch("app.agents.auditor_agent.get_llm_client")
     @patch("app.services.db_service.get_company_settings")
@@ -393,7 +392,6 @@ class TestFullProcessPipeline:
         mock_get_company_settings,
         mock_get_auditor_client,
         mock_rag,
-        mock_auto_derive,
     ):
         """Full pipeline: staged TX → contador → validation → persist → success."""
         mock_rag.return_value.search_normativo.return_value = []
@@ -510,10 +508,7 @@ class TestFullProcessPipeline:
         mock_puc_record = Mock()
         mock_puc_check.return_value = mock_puc_record
 
-        with (
-            patch("app.agents.persist_node._auto_derive_statements"),
-            patch("app.agents.persist_node.SessionLocal") as mock_session,
-        ):
+        with patch("app.agents.persist_node.SessionLocal") as mock_session:
             mock_db = MagicMock()
             mock_session.return_value = mock_db
             mock_pending = Mock()
@@ -560,10 +555,7 @@ class TestFullProcessPipeline:
         mock_puc_record = Mock()
         mock_puc_check.return_value = mock_puc_record
 
-        with (
-            patch("app.agents.persist_node._auto_derive_statements"),
-            patch("app.agents.persist_node.SessionLocal") as mock_session,
-        ):
+        with patch("app.agents.persist_node.SessionLocal") as mock_session:
             mock_db = MagicMock()
             mock_session.return_value = mock_db
             mock_pending = Mock()
