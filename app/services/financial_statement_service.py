@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -730,7 +730,11 @@ def _load_prior_balance(
 
 
 def _load_prior_libro_auxiliar(
-    db: Session, company_nit: str, period_start: datetime
+    db: Session,
+    company_nit: str,
+    period_start: datetime,
+    *,
+    via_a: bool = False,
 ) -> "FinancialStatement | None":
     """Fallback for ``_load_prior_balance`` when only a LA is on file.
 
@@ -738,15 +742,19 @@ def _load_prior_libro_auxiliar(
     for a prior balance_general because summing class 1-3 movements yields the
     same closing position. This lets us compute working-capital variations
     even when the user only uploaded LAs for both years.
+
+    via_a=True  — accepts derived_from_journal (Via A prior periods)
+    via_a=False — only direct (Via B uploaded ledgers)
     """
     from app.models.database import FinancialStatement
 
+    allowed_modes = ["direct", "derived_from_journal"] if via_a else ["direct"]
     return (
         db.query(FinancialStatement)
         .filter(
             FinancialStatement.entity_nit == company_nit,
             FinancialStatement.statement_type == "libro_auxiliar",
-            FinancialStatement.source_mode == "direct",
+            FinancialStatement.source_mode.in_(allowed_modes),
             FinancialStatement.period_end < period_start,
         )
         .order_by(FinancialStatement.period_end.desc())
@@ -1492,38 +1500,40 @@ def derive_financial_statements(
         la = (la_rows[0].data or {}) if la_rows else None
 
         # NIC 7 indirect method needs a prior-period BG to compute working-capital
-        # variations and opening cash.
-        # Via A: compute prior BG directly from the cumulative journal (order-independent).
-        # Via B: require an uploaded prior BG or prior LA (uploaded as balance_general_anterior).
-        if prior_from_journal:
-            prior_cutoff = period_start - timedelta(microseconds=1)
-            prior_bg = _build_bg_data_from_journal(
-                db,
-                company_nit=normalized_nit,
-                cutoff_date=prior_cutoff,
-                period_start=prior_cutoff,
-                period_end=prior_cutoff,
+        # variations and opening cash. BOTH pathways now require the prior period's
+        # first-level statement to already exist — you cannot derive a cash flow
+        # from a single period.
+        #   Via A: the prior must be a GENERATED first-level close
+        #          (source_mode='derived_from_journal'); we use those two balances
+        #          rather than recomputing the opening from the raw journal.
+        #   Via B: the prior must be an uploaded BG (or LA) — balance_general_anterior.
+        prior_bg_row = _load_prior_balance(
+            db, normalized_nit, period_start, via_a=prior_from_journal
+        )
+        prior_la_row = (
+            None
+            if prior_bg_row
+            else _load_prior_libro_auxiliar(
+                db, normalized_nit, period_start, via_a=prior_from_journal
             )
-            prior_bg_row = None
-            prior_la_row = None
-        else:
-            prior_bg_row = _load_prior_balance(db, normalized_nit, period_start)
-            prior_la_row = (
-                None
-                if prior_bg_row
-                else _load_prior_libro_auxiliar(db, normalized_nit, period_start)
-            )
-            if prior_bg_row is None and prior_la_row is None:
+        )
+        if prior_bg_row is None and prior_la_row is None:
+            if prior_from_journal:
                 raise BusinessRuleError(
-                    "Para derivar flujo de caja según NIC 7 método indirecto se requiere "
-                    "el balance general (o libro auxiliar anual) del período anterior. "
-                    "Sube el cierre del año previo para esta empresa y vuelve a intentar."
+                    "Para derivar el flujo de caja (NIC 7) necesitas el cierre del "
+                    "período anterior. Genera primero los estados de primer nivel del "
+                    "período anterior y vuelve a intentar."
                 )
-            prior_bg = (
-                (prior_bg_row.data or {})
-                if prior_bg_row
-                else synthesize_balance_from_libro_auxiliar(prior_la_row.data or {})
+            raise BusinessRuleError(
+                "Para derivar flujo de caja según NIC 7 método indirecto se requiere "
+                "el balance general (o libro auxiliar anual) del período anterior. "
+                "Sube el cierre del año previo para esta empresa y vuelve a intentar."
             )
+        prior_bg = (
+            (prior_bg_row.data or {})
+            if prior_bg_row
+            else synthesize_balance_from_libro_auxiliar(prior_la_row.data or {})
+        )
 
         # Capture which source rows actually back this derivation, so lineage
         # links only point to documents that exist. Synthesized BG/ER don't

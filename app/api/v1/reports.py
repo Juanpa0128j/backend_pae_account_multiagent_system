@@ -1711,7 +1711,6 @@ async def get_derivation_status_via_a(
     # Group first-level statements (source_mode="derived_from_journal") by period.
     first_level_by_period: dict[str, dict] = {}
     derived_by_period_end: dict[str, list[str]] = {}
-    fl_earliest: str | None = None
 
     for row in all_rows:
         st = row.get("statement_type")
@@ -1728,8 +1727,6 @@ async def get_derivation_status_via_a(
                     "frequency": row.get("frequency"),
                 }
             first_level_by_period[key]["types"].append(st)
-            if fl_earliest is None or (ps and ps < fl_earliest):
-                fl_earliest = ps
 
         if st in _DERIVED_TARGETS and pe and row.get("source_mode") == "derived":
             derived_by_period_end.setdefault(pe, []).append(st)
@@ -1769,13 +1766,16 @@ async def get_derivation_status_via_a(
         # Annual gate: only annual periods can anchor NIC 7 secondary derivation.
         is_annual_period = p.get("frequency") == "annual"
         has_bg_er = {"balance_general", "estado_resultados"}.issubset(set(p["types"]))
-        p["eligible_for_secondary"] = bool(is_annual_period and has_bg_er)
 
-        # First period ever → no prior expected.
-        if not ps or ps == (fl_earliest or "")[:10]:
-            p["prior_period_gap"] = False
-        else:
-            p["prior_period_gap"] = not any(pe < ps for pe in bg_ends)
+        # Prior-period requirement: NIC 7 compares two fiscal years, so a period
+        # is only derivable when a first-level BG for an EARLIER period exists.
+        # The earliest period has no prior → gap (it cannot be derived). This
+        # mirrors the hard gate in derive_financial_statements.
+        p["prior_period_gap"] = not ps or not any(pe < ps for pe in bg_ends)
+
+        p["eligible_for_secondary"] = bool(
+            is_annual_period and has_bg_er and not p["prior_period_gap"]
+        )
 
         if p["eligible_for_secondary"]:
             ready_periods.append(

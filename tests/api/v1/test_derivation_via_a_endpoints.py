@@ -148,24 +148,25 @@ class TestRunSecondaryViaA:
         assert "ANUALES" in rsp.json()["detail"]
 
 
+def _annual_bg_er(year):
+    return [
+        {
+            "statement_type": st,
+            "period_start": f"{year}-01-01T00:00:00+00:00",
+            "period_end": f"{year}-12-31T23:59:59+00:00",
+            "source_mode": "derived_from_journal",
+            "frequency": "annual",
+        }
+        for st in ("balance_general", "estado_resultados")
+    ]
+
+
 class TestStatusViaA:
-    def test_surfaces_journal_range_and_eligibility(self):
-        # One annual first-level period (BG+ER) → eligible; one monthly → not.
+    def test_annual_with_prior_is_eligible_first_year_is_not(self):
+        # 2024 (earliest, no prior) + 2025 (has 2024 as prior) + a 2025 monthly.
         rows = [
-            {
-                "statement_type": "balance_general",
-                "period_start": "2025-01-01T00:00:00+00:00",
-                "period_end": "2025-12-31T23:59:59+00:00",
-                "source_mode": "derived_from_journal",
-                "frequency": "annual",
-            },
-            {
-                "statement_type": "estado_resultados",
-                "period_start": "2025-01-01T00:00:00+00:00",
-                "period_end": "2025-12-31T23:59:59+00:00",
-                "source_mode": "derived_from_journal",
-                "frequency": "annual",
-            },
+            *_annual_bg_er(2024),
+            *_annual_bg_er(2025),
             {
                 "statement_type": "balance_general",
                 "period_start": "2025-06-01T00:00:00+00:00",
@@ -175,10 +176,43 @@ class TestStatusViaA:
             },
         ]
 
-        mock_db = MagicMock()
         with (
             patch("app.api.v1.reports.list_financial_statements", return_value=rows),
-            patch("app.api.v1.reports.SessionLocal", return_value=mock_db),
+            patch("app.api.v1.reports.SessionLocal", return_value=MagicMock()),
+            patch(
+                "app.services.db_service.get_journal_entry_period",
+                return_value=(
+                    __import__("datetime").datetime(2024, 1, 1),
+                    __import__("datetime").datetime(2025, 12, 31),
+                ),
+            ),
+        ):
+            rsp = client.get(f"{BASE}/status-via-a", params={"company_nit": NIT})
+
+        assert rsp.status_code == 200
+        body = rsp.json()
+        assert body["journal_date_range"]["earliest"] is not None
+        # Only 2025 is ready (2024 is the earliest → no prior → gap → not eligible).
+        assert body["is_ready"] is True
+        assert len(body["ready_periods"]) == 1
+        assert body["ready_periods"][0]["period_start"].startswith("2025-01-01")
+
+        by_start = {p["period_start"][:10]: p for p in body["first_level_periods"]}
+        assert by_start["2025-01-01"]["eligible_for_secondary"] is True
+        assert by_start["2025-01-01"]["prior_period_gap"] is False
+        # First year: no prior generated → not eligible.
+        assert by_start["2024-01-01"]["eligible_for_secondary"] is False
+        assert by_start["2024-01-01"]["prior_period_gap"] is True
+        assert body["minimum_requirements"]["annual_only"] is True
+
+    def test_single_annual_period_without_prior_is_not_ready(self):
+        # A lone annual period with no earlier BG → cannot derive (no prior).
+        with (
+            patch(
+                "app.api.v1.reports.list_financial_statements",
+                return_value=_annual_bg_er(2025),
+            ),
+            patch("app.api.v1.reports.SessionLocal", return_value=MagicMock()),
             patch(
                 "app.services.db_service.get_journal_entry_period",
                 return_value=(
@@ -189,18 +223,10 @@ class TestStatusViaA:
         ):
             rsp = client.get(f"{BASE}/status-via-a", params={"company_nit": NIT})
 
-        assert rsp.status_code == 200
         body = rsp.json()
-        assert body["journal_date_range"]["earliest"] is not None
-        assert body["is_ready"] is True
-        assert len(body["ready_periods"]) == 1
-        assert len(body["monthly_periods"]) == 1
-        # The annual period is flagged eligible; the monthly one is not.
-        annual = next(
-            p for p in body["first_level_periods"] if p["frequency"] == "annual"
-        )
-        assert annual["eligible_for_secondary"] is True
-        assert body["minimum_requirements"]["annual_only"] is True
+        assert body["is_ready"] is False
+        assert body["ready_periods"] == []
+        assert body["first_level_periods"][0]["prior_period_gap"] is True
 
     def test_empty_company_still_returns_journal_range(self):
         with (
