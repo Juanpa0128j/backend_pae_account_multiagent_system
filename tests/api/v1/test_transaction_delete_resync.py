@@ -90,6 +90,13 @@ class TestResyncDerivedStatements:
             stmt_type="estado_resultados",
             source_mode="derived_from_journal",
         )
+        # A NIC 7 secondary derived from the journal — must also be purged.
+        _add_statement(
+            db_session,
+            stmt_id="sec-flujo",
+            stmt_type="flujo_de_caja",
+            source_mode="derived",
+        )
         _add_statement(
             db_session,
             stmt_id="direct-bg",
@@ -101,7 +108,7 @@ class TestResyncDerivedStatements:
         _resync_derived_statements(db_session, COMPANY_NIT)
 
         ids = {s.id for s in db_session.query(FinancialStatement).all()}
-        # Journal-derived BG + ER purged; the direct (Vía B) one survives.
+        # Journal-derived first-level + secondary purged; the direct (Vía B) survives.
         assert ids == {"direct-bg"}
 
     def test_journal_remaining_refreshes_in_place(self, db_session, monkeypatch):

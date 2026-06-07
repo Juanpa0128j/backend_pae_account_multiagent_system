@@ -372,10 +372,14 @@ def _resync_derived_statements(db: Session, company_nit: Optional[str]) -> None:
             .first()
         )
         if remaining is None:
-            # No journal left — purge derived statements so reports go empty.
+            # No journal left — purge ALL journal-derived statements so reports go
+            # empty: both first-level (derived_from_journal) AND the NIC 7
+            # secondaries derived from them (derived). Otherwise stale flujo /
+            # cambios / notas would keep showing for periods whose journal is gone.
+            # Vía B uploads (source_mode='direct') are left untouched.
             db.query(FinancialStatement).filter(
                 FinancialStatement.entity_nit == company_nit,
-                FinancialStatement.source_mode == "derived_from_journal",
+                FinancialStatement.source_mode.in_(("derived_from_journal", "derived")),
             ).delete(synchronize_session=False)
             db.commit()
             return

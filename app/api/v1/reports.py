@@ -1645,9 +1645,10 @@ async def run_derivation_via_a(
     """Step 2 — derive secondary statements (flujo de caja / cambios patrimonio /
     notas) for a Vía A company. Annual only (NIC 7 indirect method).
 
-    Requires that step 1 already generated the first-level annual statements for the
-    period. The opening balance for NIC 7 is recomputed from the cumulative journal
-    on every call, so derivation is order-independent."""
+    Requires step 1 to have generated the first-level annual statements for BOTH
+    this period AND the prior period: NIC 7 compares two fiscal years, so the prior
+    period's generated balance_general is used as the opening balance. Deriving year
+    Y therefore needs Y-1 generated first; without it the call returns 409."""
     try:
         normalized_nit = normalize_nit(body.company_nit)
     except ValueError as e:
@@ -1661,7 +1662,7 @@ async def run_derivation_via_a(
             period_start=period_start,
             period_end=period_end,
             input_source_mode="derived_from_journal",  # Via A: only journal-built statements
-            prior_from_journal=True,  # Via A: opening balance computed from journal cutoff
+            prior_from_journal=True,  # Via A: opening = prior generated first-level BG
         )
     except BusinessRuleError as exc:
         raise HTTPException(status_code=409, detail=str(exc))

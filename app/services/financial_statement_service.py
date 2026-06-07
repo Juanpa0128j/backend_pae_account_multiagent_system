@@ -1388,12 +1388,14 @@ def derive_financial_statements(
             passes "derived_from_journal" (only journal-built statements). Enforces
             pathway separation: Via B cannot use Via A statements as inputs and
             vice versa.
-        prior_from_journal: Via A passes True — computes the prior-period opening
-            balance directly from cumulative journal entries (cutoff = period_start
-            - 1µs). Makes derivation order-independent: no persisted prior BG
-            needed. Via B keeps False and requires an uploaded balance_general_anterior.
-            Note: the annual gate applies regardless of this flag — both pathways
-            require annual inputs for NIC 7.
+        prior_from_journal: selects which source_mode the prior-period opening
+            balance is loaded from. Via A passes True → the prior is a GENERATED
+            first-level close (source_mode='derived_from_journal'); Via B keeps
+            False → an uploaded prior balance_general_anterior (source_mode='direct').
+            BOTH pathways now REQUIRE the prior period's first-level statement to
+            already exist and use it as the opening balance — there is no journal
+            recompute. Deriving year Y therefore needs Y-1 generated first
+            (order-dependent). The annual gate applies regardless of this flag.
 
     Raises:
         BusinessRuleError: when neither path is satisfied, when the inputs
