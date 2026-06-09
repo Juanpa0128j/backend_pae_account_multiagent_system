@@ -110,7 +110,10 @@ if settings.allowed_origins:
     origins.extend(env_origins)
     logger.info("CORS allowed_origins configured: %s", env_origins)
 else:
-    logger.warning("ALLOWED_ORIGINS not set — only local dev origins enabled")
+    logger.warning(
+        "ALLOWED_ORIGINS not set — only local dev origins enabled. "
+        "Set ALLOWED_ORIGINS env var for production deployments on Render or DO."
+    )
 
 # Configure CORS
 app.add_middleware(

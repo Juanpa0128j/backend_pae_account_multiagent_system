@@ -505,6 +505,21 @@ alembic downgrade -1
 
 ---
 
+## Deployment
+
+The backend is deployed on **DigitalOcean App Platform**. Supabase continues to host the PostgreSQL database, authentication, and pgvector RAG layer.
+
+### DigitalOcean App Platform
+
+1. Ensure `app.yaml` is at repo root and configured with your GitHub repo.
+2. Set environment variables in the DO Dashboard (see [Environment Variables](#environment-variables)).
+3. Deploy via dashboard or `doctl apps create --spec app.yaml`.
+4. Migrations run automatically via the `PRE_DEPLOY` job.
+
+See [`MIGRATION.md`](MIGRATION.md) for a full migration guide from Render.
+
+---
+
 ## Key Dependencies
 
 | Package | Purpose |
