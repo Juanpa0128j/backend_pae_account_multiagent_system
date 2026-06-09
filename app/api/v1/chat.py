@@ -109,7 +109,9 @@ async def chat_stream(
 
 
 @router.get("/sessions", response_model=list[SessionSummary])
+@limiter.limit("60/minute")
 async def get_sessions(
+    request: Request,
     company_nit: str | None = Query(None, description="Filter by company NIT"),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -124,8 +126,11 @@ async def get_sessions(
 
 
 @router.get("/sessions/{session_id}/messages")
+@limiter.limit("60/minute")
 async def get_session_messages(
-    session_id: str, current_user: CurrentUser = Depends(get_current_user)
+    request: Request,
+    session_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Get all messages for a chat session."""
     messages = chat_service.get_session_messages(session_id)
@@ -137,8 +142,11 @@ async def get_session_messages(
 
 
 @router.delete("/sessions/{session_id}")
+@limiter.limit("30/minute")
 async def remove_session(
-    session_id: str, current_user: CurrentUser = Depends(get_current_user)
+    request: Request,
+    session_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Delete a chat session and all its messages."""
     deleted = chat_service.delete_session(session_id)

@@ -101,7 +101,9 @@ def _reassociate_memberships(
 
 
 @router.get("/companies", response_model=List[UserCompanyResponse])
+@limiter.limit("60/minute")
 def list_user_companies(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> List[UserCompany]:
@@ -178,7 +180,9 @@ def join_company(
 
 
 @router.delete("/companies/{nit}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("30/minute")
 def leave_company(
+    request: Request,
     nit: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),

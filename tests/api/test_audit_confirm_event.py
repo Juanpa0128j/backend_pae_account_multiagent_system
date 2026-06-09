@@ -38,6 +38,7 @@ async def test_audit_confirm_emits_event_when_inngest() -> None:
     ):
         # Act
         result = await process_mod.confirm_audit_review(
+            request=MagicMock(),
             process_id="p1",
             db=db,
             current_user=SimpleNamespace(id="u1"),
@@ -73,6 +74,7 @@ async def test_audit_confirm_dispatches_when_inline() -> None:
     ):
         # Act
         await process_mod.confirm_audit_review(
+            request=MagicMock(),
             process_id="p1",
             db=db,
             current_user=SimpleNamespace(id="u1"),
@@ -112,6 +114,7 @@ async def test_audit_confirm_guarded_update_blocks_non_pending() -> None:
         # Act / Assert
         with pytest.raises(HTTPException):
             await process_mod.confirm_audit_review(
+                request=MagicMock(),
                 process_id="p1",
                 db=db,
                 current_user=SimpleNamespace(id="u1"),
@@ -141,6 +144,7 @@ async def test_audit_confirm_guarded_update_filters_by_pending_status() -> None:
     ):
         # Act
         await process_mod.confirm_audit_review(
+            request=MagicMock(),
             process_id="p1",
             db=db,
             current_user=SimpleNamespace(id="u1"),

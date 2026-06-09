@@ -12,10 +12,11 @@ import logging
 from decimal import Decimal
 from datetime import date as date_type
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.limiter import limiter
 from app.core.database import get_db
 from app.core.llm_client import get_llm_client
 from app.models.database import CompanyPucConfig
@@ -47,7 +48,9 @@ _TASA_RETEFUENTE_ARRENDAMIENTO = 0.035
 
 
 @router.get("/company/{nit}", response_model=CompanySettingsResponse)
+@limiter.limit("60/minute")
 def get_company_settings(
+    request: Request,
     nit: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -64,23 +67,31 @@ def get_company_settings(
 
 
 @router.get("/companies", response_model=list[CompanySettingsResponse])
+@limiter.limit("60/minute")
 def list_companies(
-    db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Return all registered companies (used for the frontend company selector)."""
     return db_service.list_companies(db)
 
 
 @router.get("/municipios", response_model=list[str])
+@limiter.limit("60/minute")
 def list_municipios(
-    db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Return sorted municipios that have ReteICA tariff data."""
     return db_service.get_municipios(db)
 
 
 @router.delete("/company/{nit}", status_code=204)
+@limiter.limit("30/minute")
 def delete_company(
+    request: Request,
     nit: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -93,7 +104,9 @@ def delete_company(
 
 
 @router.put("/company/{nit}", response_model=CompanySettingsResponse)
+@limiter.limit("30/minute")
 def upsert_company_settings(
+    request: Request,
     nit: str,
     body: CompanySettingsRequest,
     db: Session = Depends(get_db),
@@ -115,7 +128,9 @@ def upsert_company_settings(
 
 
 @router.post("/company/{nit}/setup", response_model=CompanySettingsResponse)
+@limiter.limit("30/minute")
 def setup_company_tax_profile(
+    request: Request,
     nit: str,
     body: CompanyProfileSetupRequest,
     db: Session = Depends(get_db),
@@ -254,7 +269,9 @@ def setup_company_tax_profile(
 
 
 @router.get("/national-rates", response_model=list[NationalRateResponse])
+@limiter.limit("60/minute")
 async def list_national_rates_endpoint(
+    request: Request,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[NationalRateResponse]:
@@ -267,7 +284,9 @@ async def list_national_rates_endpoint(
     "/national-rates/{code}",
     response_model=NationalRateResponse,
 )
+@limiter.limit("30/minute")
 async def update_national_rate_endpoint(
+    request: Request,
     code: str,
     body: NationalRateUpdateRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -299,7 +318,9 @@ async def update_national_rate_endpoint(
 
 
 @router.get("/company/{nit}/puc", response_model=list[CompanyPucEntryResponse])
+@limiter.limit("60/minute")
 async def list_company_puc(
+    request: Request,
     nit: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -346,7 +367,9 @@ async def list_company_puc(
     "/company/{nit}/puc/{codigo}",
     response_model=CompanyPucEntryResponse,
 )
+@limiter.limit("30/minute")
 async def toggle_company_puc(
+    request: Request,
     nit: str,
     codigo: str,
     body: CompanyPucToggleRequest,
@@ -395,7 +418,9 @@ async def toggle_company_puc(
     "/company/{nit}/rates",
     response_model=list[EffectiveRateResponse],
 )
+@limiter.limit("60/minute")
 async def list_company_rates(
+    request: Request,
     nit: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -414,7 +439,9 @@ async def list_company_rates(
     "/company/{nit}/rates/{code}",
     response_model=EffectiveRateResponse,
 )
+@limiter.limit("30/minute")
 async def upsert_company_rate(
+    request: Request,
     nit: str,
     code: str,
     body: CompanyRateOverrideRequest,

@@ -715,7 +715,9 @@ async def upload_file(
 
 
 @router.get("/merge-suggestions")
+@limiter.limit("60/minute")
 async def get_merge_suggestions(
+    request: Request,
     company_nit: str = Query(..., description="Company NIT"),
     time_window_minutes: int = Query(5, ge=1, le=60),
     db: Session = Depends(get_db),
@@ -730,9 +732,10 @@ async def get_merge_suggestions(
 
 
 @router.get("/{ingest_id}", response_model=IngestDetailResponse)
+@limiter.limit("60/minute")
 async def get_ingest_status(
-    ingest_id: str,
     request: Request,
+    ingest_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -745,11 +748,12 @@ async def get_ingest_status(
 
 
 @router.patch("/{ingest_id}/classification", response_model=IngestDetailResponse)
+@limiter.limit("30/minute")
 async def update_ingest_classification(
+    request: Request,
     ingest_id: str,
     payload: ClassificationReviewUpdateRequest,
     background_tasks: BackgroundTasks,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -819,10 +823,11 @@ async def update_ingest_classification(
     response_model=IngestDetailResponse,
     status_code=status.HTTP_200_OK,
 )
+@limiter.limit("30/minute")
 async def update_ingest_period(
+    request: Request,
     ingest_id: str,
     body: PeriodReviewUpdateRequest,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -940,9 +945,10 @@ async def update_ingest_period(
     response_model=IngestDetailResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit("30/minute")
 async def cancel_ingest(
-    ingest_id: str,
     request: Request,
+    ingest_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -978,9 +984,11 @@ async def cancel_ingest(
 
 
 @router.patch("/{ingest_id}/merge", response_model=IngestDetailResponse)
+@limiter.limit("30/minute")
 async def merge_ingest_jobs(
+    request: Request,
     ingest_id: str,
-    request: MergeIngestRequest,
+    body: MergeIngestRequest,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -989,7 +997,7 @@ async def merge_ingest_jobs(
     - Concatenates raw_data from both TransactionPending rows
     - Marks source job as CANCELLED
     """
-    if ingest_id == request.source_ingest_id:
+    if ingest_id == body.source_ingest_id:
         raise HTTPException(
             status_code=400,
             detail="Source and target ingest jobs must be different",
@@ -1001,11 +1009,11 @@ async def merge_ingest_jobs(
             status_code=404, detail=f"Target ingest job {ingest_id} not found"
         )
 
-    source = db_service.get_ingest_job(db, request.source_ingest_id)
+    source = db_service.get_ingest_job(db, body.source_ingest_id)
     if not source:
         raise HTTPException(
             status_code=404,
-            detail=f"Source ingest job {request.source_ingest_id} not found",
+            detail=f"Source ingest job {body.source_ingest_id} not found",
         )
 
     if target.company_nit != source.company_nit:
@@ -1027,7 +1035,7 @@ async def merge_ingest_jobs(
 
     # Merge raw_data from TransactionPending rows
     target_txns = db_service.get_transactions_by_ingest(db, ingest_id)
-    source_txns = db_service.get_transactions_by_ingest(db, request.source_ingest_id)
+    source_txns = db_service.get_transactions_by_ingest(db, body.source_ingest_id)
 
     if target_txns and source_txns:
         source_raw_list: list = []
@@ -1059,7 +1067,7 @@ async def merge_ingest_jobs(
     existing_errors = source.extraction_errors or []
     db_service.update_ingest_job(
         db,
-        request.source_ingest_id,
+        body.source_ingest_id,
         IngestStatus.CANCELLED,
         extraction_errors=existing_errors + [f"Merged into {ingest_id}"],
     )
@@ -1069,6 +1077,7 @@ async def merge_ingest_jobs(
 
 
 @router.get("/{ingest_id}/trace", response_model=PipelineTrace)
+@limiter.limit("60/minute")
 async def get_ingest_trace(
     request: Request,
     ingest_id: str,
