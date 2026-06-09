@@ -23,7 +23,7 @@ from app.core.database import DB_WRITE_SEMAPHORE, SessionLocal
 from app.core.logger import get_logger
 from app.models.database import IngestStatus, ProcessStatus, TransactionPending
 from app.services import db_service
-from app.services.db_service import financial_statements_exist, get_journal_entry_period
+from app.services.db_service import financial_statements_exist
 from app.account_process.journal_builder import JournalBuilder
 from app.account_process.persist_orchestrator import PersistOrchestrator
 from app.services.financial_statement_service import (
@@ -178,82 +178,6 @@ def _db_persist_inner_with_cleanup(state: AgentState) -> AgentState:
     """Run persistence with full error cleanup; used when retry loop is exhausted/skipped."""
     _run_persist(state)
     return state
-
-
-def _auto_derive_statements(
-    db, company_nit: str, *, ingest_id: str = ""
-) -> Optional[bool]:
-    """Derive financial statements from all journal entries for the company/period.
-
-    Non-fatal: logs warnings on failure but never raises.
-    """
-    if not company_nit:
-        return None
-
-    period = get_journal_entry_period(db, company_nit=company_nit)
-    if period is None:
-        logger.warning(
-            "[persist] No JournalEntryLines for %s — skipping statement derivation",
-            company_nit,
-        )
-        return None
-
-    min_fecha, max_fecha = period
-
-    # Guard: ensure period values are real datetimes (not Mock objects from tests)
-    if not isinstance(min_fecha, datetime) or not isinstance(max_fecha, datetime):
-        logger.warning(
-            "[persist] Unexpected period type (%s, %s) — skipping derivation",
-            type(min_fecha).__name__,
-            type(max_fecha).__name__,
-        )
-        return None
-
-    # Expand the min/max journal dates to full calendar-month boundaries so the
-    # derived BG/ER cover the natural accounting period the documents belong to
-    # (e.g. a PILA dated 2026-01-06 yields a period 2026-01-01 → 2026-01-31).
-    from app.services.date_utils import first_of_month, last_of_month
-
-    period_start = first_of_month(min_fecha)
-    period_end = last_of_month(max_fecha)
-
-    logger.info(
-        "[persist] Deriving statements for %s (%s -> %s)",
-        company_nit,
-        period_start.date(),
-        period_end.date(),
-    )
-
-    try:
-        entries = db_service.get_journal_entry_lines(
-            db,
-            company_nit=company_nit,
-            start_date=period_start,
-            end_date=period_end,
-        )
-        mapped = [
-            {
-                "fecha": e.get("fecha"),
-                "cuenta": e.get("cuenta_puc", ""),
-                "descripcion": e.get("descripcion", ""),
-                "tercero_nit": e.get("tercero_nit", ""),
-                "detalle": e.get("descripcion", ""),
-                "debito": e.get("debito", "0"),
-                "credito": e.get("credito", "0"),
-            }
-            for e in entries
-        ]
-        PersistOrchestrator(db).derive_and_persist_statements(
-            mapped,
-            ingest_id=ingest_id,
-            company_nit=company_nit,
-            period_start=period_start,
-            period_end=period_end,
-        )
-    except Exception as exc:
-        logger.warning("[persist] derive failed (non-fatal): %s", exc, exc_info=True)
-        return False
-    return True
 
 
 def _try_via_b_auto_derive(
@@ -1040,27 +964,10 @@ def _run_persist(state: AgentState) -> AgentState:
                     pathway=pathway_value,
                 )
 
-        # Auto-derive financial statements after process completes (non-fatal)
-        if mode == "process" and company_nit:
-            derive_result = _auto_derive_statements(
-                db, company_nit, ingest_id=ingest_id
-            )
-            if derive_result is False:
-                from app.agents.audit_utils import append_finding
-                from app.models.audit import AuditFinding, AuditTarget, Severity
-
-                append_finding(
-                    state,
-                    AuditFinding(
-                        target=AuditTarget.PRE_PERSIST,
-                        rule_id="PERS-STATEMENT-DERIVATION-FAIL",
-                        severity=Severity.WARNING,
-                        fixable=False,
-                        responsible_agent="persist",
-                        technical_message="Financial statement derivation failed after persist.",
-                        user_message_es="No se pudieron generar los estados financieros automáticamente. Puede generarlos manualmente.",
-                    ),
-                )
+        # Financial-statement derivation is now a MANUAL Vía A action (period
+        # picker + explicit "Generar"), mirroring Vía B. The process pipeline no
+        # longer auto-derives BG/ER here — it only persists journal entries. See
+        # POST /api/v1/reports/derivation/build-first-level-via-a.
 
         state["db_result"] = {
             "ingest_id": ingest_id,

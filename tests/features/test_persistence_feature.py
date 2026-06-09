@@ -130,9 +130,7 @@ def _build_ingest_state_missing_receptor() -> dict:
 @patch("app.agents.persist_node.db_service.update_ingest_job")
 @patch("app.agents.persist_node.db_service.get_ingest_job")
 @patch("app.agents.persist_node.SessionLocal")
-@patch("app.agents.persist_node._auto_derive_statements")
 def test_db_persist_maps_tributario_taxes_to_posted_transaction(
-    mock_auto_derive,
     mock_session_local,
     mock_get_ingest_job,
     mock_update_ingest,
@@ -145,7 +143,6 @@ def test_db_persist_maps_tributario_taxes_to_posted_transaction(
 ):
     """db_persist_node should persist retefuente/reteica/iva values computed by tributario."""
     _ = (
-        mock_auto_derive,
         mock_update_ingest,
         mock_check_duplicates,
         mock_find_duplicate,
@@ -309,11 +306,9 @@ def test_build_preview_is_doc_type_aware_when_concept_missing():
 @patch("app.agents.persist_node.db_service.update_ingest_job")
 @patch("app.agents.persist_node.db_service.get_ingest_job")
 @patch("app.agents.persist_node.SessionLocal")
-@patch("app.agents.persist_node._auto_derive_statements")
 @patch("app.agents.auditors.pre_persist_auditor.run")
 def test_db_persist_refuses_when_pre_persist_blocker_present(
     mock_pre_persist_run,
-    mock_auto_derive,
     mock_session_local,
     mock_get_ingest_job,
     mock_update_ingest,
@@ -324,7 +319,6 @@ def test_db_persist_refuses_when_pre_persist_blocker_present(
     mock_update_process,
 ):
     _ = (
-        mock_auto_derive,
         mock_update_ingest,
         mock_check_duplicates,
         mock_validate_puc,
