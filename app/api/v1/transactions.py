@@ -147,7 +147,9 @@ def _build_raw_data(payload: CreateTransactionPayload) -> dict:
 
 
 @router.post("/", status_code=201)
+@limiter.limit("30/minute")
 async def create_transaction(
+    request: Request,
     payload: CreateTransactionPayload,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -675,7 +677,9 @@ async def set_transaction_fecha(
 
 
 @router.patch("/{id}")
+@limiter.limit("30/minute")
 async def update_transaction(
+    request: Request,
     id: str,
     payload: UpdateTransactionPayload = Body(...),
     db: Session = Depends(get_db),
@@ -796,7 +800,9 @@ class ReprocessResponse(BaseModel):
 
 
 @router.post("/{id}/reprocess", status_code=201, response_model=ReprocessResponse)
+@limiter.limit("30/minute")
 async def reprocess_transaction(
+    request: Request,
     id: str,
     payload: Optional[CreateTransactionPayload] = Body(None),
     db: Session = Depends(get_db),
