@@ -16,13 +16,14 @@ import logging
 from datetime import datetime
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.models.database import CompanySettings, UserCompany
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,9 @@ def _reassociate_memberships(
 
 
 @router.get("/companies", response_model=List[UserCompanyResponse])
+@limiter.limit("60/minute")
 def list_user_companies(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> List[UserCompany]:
@@ -117,7 +120,9 @@ def list_user_companies(
     response_model=UserCompanyResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("10/minute")
 def join_company(
+    request: Request,
     body: JoinCompanyRequest,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -175,7 +180,9 @@ def join_company(
 
 
 @router.delete("/companies/{nit}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("30/minute")
 def leave_company(
+    request: Request,
     nit: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),

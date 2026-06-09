@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from typing import Optional, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.services import db_service, via_b_service
 from app.services.nit_utils import normalize_nit
 from app.services.parse_utils import safe_float
@@ -96,7 +97,9 @@ def _via_a_balance_as_rows(balance: dict) -> list[dict]:
 
 
 @router.get("/")
+@limiter.limit("60/minute")
 async def get_books(
+    request: Request,
     tipo: str = Query(..., description="diario, mayor, auxiliar, or balance"),
     fecha_inicio: Optional[str] = None,
     fecha_fin: Optional[str] = None,

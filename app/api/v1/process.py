@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.models.database import (
     IngestJob,
     ProcessJob,
@@ -119,7 +120,9 @@ def _classify_process_error(
 
 
 @router.post("/accounting/{ingest_id}", response_model=ProcessResponse)
+@limiter.limit("20/minute")
 async def process_accounting(
+    request: Request,
     ingest_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -197,9 +200,10 @@ async def process_accounting(
 
 
 @router.get("/status/{process_id}", response_model=ProcessStatusResponse)
+@limiter.limit("60/minute")
 async def get_process_status(
-    process_id: str,
     request: Request,
+    process_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -272,6 +276,7 @@ def _enum_value(status) -> str:
 
 
 @router.get("/pending-review", response_model=list[ProcessStatusResponse])
+@limiter.limit("60/minute")
 async def list_pending_review(
     request: Request,
     company_nit: str = Query(...),
@@ -321,7 +326,9 @@ async def list_pending_review(
 
 
 @router.post("/{process_id}/audit-confirm", status_code=202)
+@limiter.limit("30/minute")
 async def confirm_audit_review(
+    request: Request,
     process_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -390,7 +397,9 @@ async def confirm_audit_review(
 
 
 @router.post("/{process_id}/cancel", response_model=ProcessCancelResponse)
+@limiter.limit("30/minute")
 async def cancel_process(
+    request: Request,
     process_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -456,7 +465,9 @@ async def cancel_process(
 
 
 @router.get("/{process_id}/trace", response_model=PipelineTrace)
+@limiter.limit("60/minute")
 async def get_process_trace(
+    request: Request,
     process_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -475,7 +486,9 @@ async def get_process_trace(
 
 
 @router.get("/result/{process_id}", response_model=ProcessResultResponse)
+@limiter.limit("60/minute")
 async def get_process_result(
+    request: Request,
     process_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),

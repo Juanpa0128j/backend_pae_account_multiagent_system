@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Depends, HTTPException, Body
+from fastapi import APIRouter, Query, Depends, HTTPException, Body, Request
 from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.core.logger import get_logger
+from app.core.limiter import limiter
 from app.services import db_service
 from app.services.document_mappers import safe_datetime
 from app.services.nit_utils import normalize_nit, normalize_optional_nit
@@ -89,7 +90,9 @@ def _libro_auxiliar_lines_as_transactions(
 
 
 @router.get("/", response_model=List[TransactionListItem])
+@limiter.limit("60/minute")
 async def list_transactions(
+    request: Request,
     status: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
@@ -148,7 +151,9 @@ async def list_transactions(
 
 
 @router.get("/search")
+@limiter.limit("60/minute")
 async def search_transactions(
+    request: Request,
     nit: Optional[str] = None,
     fecha_inicio: Optional[str] = None,
     fecha_fin: Optional[str] = None,
@@ -199,7 +204,9 @@ async def search_transactions(
 
 
 @router.get("/{id}")
+@limiter.limit("60/minute")
 async def get_transaction(
+    request: Request,
     id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -480,7 +487,9 @@ class SetFechaPayload(BaseModel):
 
 
 @router.patch("/{id}/fecha")
+@limiter.limit("30/minute")
 async def set_transaction_fecha(
+    request: Request,
     id: str,
     payload: SetFechaPayload = Body(...),
     db: Session = Depends(get_db),
@@ -537,7 +546,9 @@ async def set_transaction_fecha(
 
 
 @router.delete("/{id}", status_code=204)
+@limiter.limit("30/minute")
 async def delete_transaction(
+    request: Request,
     id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -549,7 +560,9 @@ async def delete_transaction(
 
 
 @router.delete("/by-ingest/{ingest_id}", status_code=200)
+@limiter.limit("30/minute")
 async def delete_transactions_by_ingest(
+    request: Request,
     ingest_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),

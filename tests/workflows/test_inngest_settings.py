@@ -54,6 +54,7 @@ def test_prod_inngest_with_keys_ok(monkeypatch):
     monkeypatch.setenv("WORKFLOW_ENGINE", "inngest")
     monkeypatch.setenv("INNGEST_EVENT_KEY", "evt-key")
     monkeypatch.setenv("INNGEST_SIGNING_KEY", "sign-key")
+    monkeypatch.setenv("INNGEST_DEV", "false")
 
     # Act
     settings = Settings(_env_file=None)  # type: ignore[call-arg]

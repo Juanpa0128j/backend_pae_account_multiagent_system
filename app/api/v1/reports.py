@@ -1,11 +1,12 @@
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.limiter import limiter
 from app.agents.graph import invoke_reporting_pipeline
 from app.core.database import SessionLocal
 from app.models.agent_outputs import BalanceSheetOutput, CashFlowOutput, PnLOutput
@@ -653,7 +654,9 @@ def _build_attachment_headers(
 
 
 @router.get("/balance", response_model=BalanceSheetOutput)
+@limiter.limit("30/minute")
 async def get_balance_report(
+    request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(
         None, description="End date YYYY-MM-DD (default: today)"
@@ -670,7 +673,9 @@ async def get_balance_report(
 
 
 @router.get("/pnl", response_model=PnLOutput)
+@limiter.limit("30/minute")
 async def get_pnl_report(
+    request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(
         None, description="End date YYYY-MM-DD (default: today)"
@@ -687,7 +692,9 @@ async def get_pnl_report(
 
 
 @router.get("/cashflow", response_model=CashFlowOutput)
+@limiter.limit("30/minute")
 async def get_cashflow_report(
+    request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(
         None, description="End date YYYY-MM-DD (default: today)"
@@ -712,7 +719,9 @@ async def get_cashflow_report(
 
 
 @router.get("/libro_diario")
+@limiter.limit("30/minute")
 async def get_libro_diario_report(
+    request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
@@ -727,7 +736,9 @@ async def get_libro_diario_report(
 
 
 @router.get("/libro_auxiliar")
+@limiter.limit("30/minute")
 async def get_libro_auxiliar_report(
+    request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
@@ -743,7 +754,9 @@ async def get_libro_auxiliar_report(
 
 
 @router.get("/cambios_patrimonio")
+@limiter.limit("30/minute")
 async def get_cambios_patrimonio_report(
+    request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
@@ -760,7 +773,9 @@ async def get_cambios_patrimonio_report(
 
 
 @router.get("/notas_estados_financieros")
+@limiter.limit("30/minute")
 async def get_notas_eeff_report(
+    request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
@@ -774,7 +789,9 @@ async def get_notas_eeff_report(
 
 
 @router.get("/analysis")
+@limiter.limit("30/minute")
 async def get_analysis_report(
+    request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
@@ -790,7 +807,9 @@ async def get_analysis_report(
 
 
 @router.get("/statements")
+@limiter.limit("30/minute")
 async def get_financial_statements(
+    request: Request,
     company_nit: str = Query(..., description="Company NIT"),
     statement_type: Optional[str] = Query(
         None, description="Filter by type (e.g. flujo_de_caja)"
@@ -841,7 +860,9 @@ async def get_financial_statements(
 
 
 @router.get("/statements/{statement_id}")
+@limiter.limit("30/minute")
 async def get_financial_statement_by_id(
+    request: Request,
     statement_id: str,
     company_nit: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
@@ -885,7 +906,9 @@ async def get_financial_statement_by_id(
 
 
 @router.get("/balance/download/pdf")
+@limiter.limit("30/minute")
 async def download_balance_pdf(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
@@ -917,7 +940,9 @@ async def download_balance_pdf(
 
 
 @router.get("/balance/download/excel")
+@limiter.limit("30/minute")
 async def download_balance_excel(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
@@ -949,7 +974,9 @@ async def download_balance_excel(
 
 
 @router.get("/pnl/download/pdf")
+@limiter.limit("30/minute")
 async def download_pnl_pdf(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
@@ -981,7 +1008,9 @@ async def download_pnl_pdf(
 
 
 @router.get("/pnl/download/excel")
+@limiter.limit("30/minute")
 async def download_pnl_excel(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
@@ -1013,7 +1042,9 @@ async def download_pnl_excel(
 
 
 @router.get("/cashflow/download/pdf")
+@limiter.limit("30/minute")
 async def download_cashflow_pdf(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
@@ -1045,7 +1076,9 @@ async def download_cashflow_pdf(
 
 
 @router.get("/cashflow/download/excel")
+@limiter.limit("30/minute")
 async def download_cashflow_excel(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
@@ -1077,7 +1110,9 @@ async def download_cashflow_excel(
 
 
 @router.get("/libro_diario/download/pdf")
+@limiter.limit("30/minute")
 async def download_libro_diario_pdf(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
@@ -1109,7 +1144,9 @@ async def download_libro_diario_pdf(
 
 
 @router.get("/libro_diario/download/excel")
+@limiter.limit("30/minute")
 async def download_libro_diario_excel(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
@@ -1141,7 +1178,9 @@ async def download_libro_diario_excel(
 
 
 @router.get("/libro_auxiliar/download/pdf")
+@limiter.limit("30/minute")
 async def download_libro_auxiliar_pdf(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
@@ -1173,7 +1212,9 @@ async def download_libro_auxiliar_pdf(
 
 
 @router.get("/libro_auxiliar/download/excel")
+@limiter.limit("30/minute")
 async def download_libro_auxiliar_excel(
+    request: Request,
     statement_id: Optional[str] = Query(
         None, description="Load from stored statement (same data as ojito)"
     ),
