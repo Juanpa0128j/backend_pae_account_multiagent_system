@@ -100,12 +100,17 @@ origins = [
     "http://127.0.0.1:5174",
 ]
 
-# Add production origins from environment variable if present
-env_origins = os.getenv("ALLOWED_ORIGINS", "")
-if env_origins:
-    origins.extend(
-        [origin.strip() for origin in env_origins.split(",") if origin.strip()]
-    )
+# Add production origins from settings (env var or .env file)
+if settings.allowed_origins:
+    env_origins = [
+        origin.strip()
+        for origin in settings.allowed_origins.split(",")
+        if origin.strip()
+    ]
+    origins.extend(env_origins)
+    logger.info("CORS allowed_origins configured: %s", env_origins)
+else:
+    logger.warning("ALLOWED_ORIGINS not set — only local dev origins enabled")
 
 # Configure CORS
 app.add_middleware(

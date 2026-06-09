@@ -47,6 +47,7 @@ class DocumentType(str, Enum):
     CUENTA_COBRO = "cuenta_cobro"
     PLANILLA_SEGURIDAD_SOCIAL = "planilla_seguridad_social"
     RECIBO_PAGO_IMPUESTO = "recibo_pago_impuesto"
+    MANUAL_ENTRY = "manual_entry"
 
     # Vía B — Existing financial statements (use for derived reports)
     BALANCE_GENERAL = "balance_general"
@@ -94,6 +95,7 @@ PATHWAY_MAP: dict[DocumentType, IngestPathway] = {
     DocumentType.CUENTA_COBRO: IngestPathway.BUILD_FROM_SCRATCH,
     DocumentType.PLANILLA_SEGURIDAD_SOCIAL: IngestPathway.BUILD_FROM_SCRATCH,
     DocumentType.RECIBO_PAGO_IMPUESTO: IngestPathway.BUILD_FROM_SCRATCH,
+    DocumentType.MANUAL_ENTRY: IngestPathway.BUILD_FROM_SCRATCH,
     # Vía B — existing financial statements
     DocumentType.BALANCE_GENERAL: IngestPathway.WORK_WITH_EXISTING,
     DocumentType.BALANCE_GENERAL_ANTERIOR: IngestPathway.WORK_WITH_EXISTING,
@@ -136,6 +138,7 @@ DOCUMENT_TYPE_LABELS: dict[DocumentType, str] = {
     DocumentType.CUENTA_COBRO: "Cuenta de cobro",
     DocumentType.PLANILLA_SEGURIDAD_SOCIAL: "Planilla seguridad social",
     DocumentType.RECIBO_PAGO_IMPUESTO: "Recibo de pago de impuesto",
+    DocumentType.MANUAL_ENTRY: "Entrada manual",
     DocumentType.BALANCE_GENERAL: "Balance general",
     DocumentType.BALANCE_GENERAL_ANTERIOR: "Balance general anterior",
     DocumentType.ESTADO_RESULTADOS: "Estado de resultados",
