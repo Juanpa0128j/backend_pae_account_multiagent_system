@@ -1,0 +1,141 @@
+name: pae-backend
+region: nyc
+
+services:
+  - name: api
+    environment_slug: python
+    github:
+      repo: Juanpa0128j/backend_pae_account_multiagent_system
+      branch: main
+      deploy_on_push: true
+    http_port: 8080
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+    run_command: gunicorn -k uvicorn.workers.UvicornWorker --worker-tmp-dir /dev/shm --bind 0.0.0.0:8080 main:app
+    health_check:
+      http_path: /health
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: SUPABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: SUPABASE_JWT_SECRET
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: GEMINI_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: GEMINI_MODEL
+        scope: RUN_TIME
+        type: GENERAL
+        value: "gemini-2.5-flash"
+      - key: HUGGINGFACE_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: LLAMA_CLOUD_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: OPENAI_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: GROQ_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: APP_ENV
+        scope: RUN_TIME
+        type: GENERAL
+        value: "production"
+      - key: LOG_LEVEL
+        scope: RUN_TIME
+        type: GENERAL
+        value: "INFO"
+      - key: ALLOWED_ORIGINS
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: SECRET_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: ALGORITHM
+        scope: RUN_TIME
+        type: GENERAL
+        value: "HS256"
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        scope: RUN_TIME
+        type: GENERAL
+        value: "30"
+      - key: WORKFLOW_ENGINE
+        scope: RUN_TIME
+        type: GENERAL
+        value: "inline"
+      - key: INNGEST_EVENT_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: INNGEST_SIGNING_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: INNGEST_DEV
+        scope: RUN_TIME
+        type: GENERAL
+        value: "false"
+      - key: INNGEST_IS_PRODUCTION
+        scope: RUN_TIME
+        type: GENERAL
+        value: "false"
+      - key: LANGSMITH_TRACING
+        scope: RUN_TIME
+        type: GENERAL
+        value: "false"
+      - key: LANGSMITH_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: LANGSMITH_PROJECT
+        scope: RUN_TIME
+        type: GENERAL
+        value: "PAE Agentes"
+      - key: LANGCHAIN_PROJECT
+        scope: RUN_TIME
+        type: GENERAL
+        value: "PAE Agentes"
+      - key: UPLOAD_FOLDER
+        scope: RUN_TIME
+        type: GENERAL
+        value: "/tmp/storage/uploads"
+
+jobs:
+  - name: db-migrate
+    kind: PRE_DEPLOY
+    github:
+      repo: Juanpa0128j/backend_pae_account_multiagent_system
+      branch: main
+      deploy_on_push: true
+    environment_slug: python
+    run_command: alembic upgrade head
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: APP_ENV
+        scope: RUN_TIME
+        type: GENERAL
+        value: "production"
+      - key: LOG_LEVEL
+        scope: RUN_TIME
+        type: GENERAL
+        value: "INFO"
