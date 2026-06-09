@@ -21,7 +21,7 @@ from app.agents.graph import invoke_ingest_pipeline
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
 from app.core.database import INGEST_PIPELINE_SEMAPHORE, SessionLocal, get_db
-from app.models.database import IngestJob, IngestStatus
+from app.models.database import IngestJob, IngestStatus, UserCompany
 from app.models.document_types import (
     DocumentType,
     ParserMode,
@@ -41,6 +41,7 @@ from app.models.trace import PipelineTrace
 from app.services import db_service
 from app.services.nit_utils import normalize_nit
 from app.workflows.dispatch import dispatch_ingest_start
+from app.core.limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -389,7 +390,9 @@ def _build_ingest_detail_response(
 @router.post(
     "/upload", response_model=IngestResponse, status_code=status.HTTP_202_ACCEPTED
 )
+@limiter.limit("10/minute")
 async def upload_file(
+    request: Request,
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     company_nit: Optional[str] = Form(
@@ -475,6 +478,13 @@ async def upload_file(
             if not file_content:
                 raise HTTPException(
                     status_code=422, detail=f"El archivo {f.filename} está vacío"
+                )
+
+            MAX_FILE_SIZE = 50 * 1024 * 1024
+            if len(file_content) > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail="El archivo excede el tamaño máximo de 50MB",
                 )
 
             _ext = Path(f.filename).suffix.lower()
@@ -698,13 +708,16 @@ async def upload_file(
     except HTTPException:
         raise
     except Exception as e:
-        first_name = files[0].filename if files else "unknown"
-        logger.error(f"Error queueing file {first_name}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error queueing file: {str(e)}")
+        logger.error(f"Error queueing file: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Error interno al procesar el archivo"
+        )
 
 
 @router.get("/merge-suggestions")
+@limiter.limit("60/minute")
 async def get_merge_suggestions(
+    request: Request,
     company_nit: str = Query(..., description="Company NIT"),
     time_window_minutes: int = Query(5, ge=1, le=60),
     db: Session = Depends(get_db),
@@ -719,9 +732,10 @@ async def get_merge_suggestions(
 
 
 @router.get("/{ingest_id}", response_model=IngestDetailResponse)
+@limiter.limit("60/minute")
 async def get_ingest_status(
-    ingest_id: str,
     request: Request,
+    ingest_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -734,11 +748,12 @@ async def get_ingest_status(
 
 
 @router.patch("/{ingest_id}/classification", response_model=IngestDetailResponse)
+@limiter.limit("30/minute")
 async def update_ingest_classification(
+    request: Request,
     ingest_id: str,
     payload: ClassificationReviewUpdateRequest,
     background_tasks: BackgroundTasks,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -808,10 +823,11 @@ async def update_ingest_classification(
     response_model=IngestDetailResponse,
     status_code=status.HTTP_200_OK,
 )
+@limiter.limit("30/minute")
 async def update_ingest_period(
+    request: Request,
     ingest_id: str,
     body: PeriodReviewUpdateRequest,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -929,9 +945,10 @@ async def update_ingest_period(
     response_model=IngestDetailResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit("30/minute")
 async def cancel_ingest(
-    ingest_id: str,
     request: Request,
+    ingest_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -967,9 +984,11 @@ async def cancel_ingest(
 
 
 @router.patch("/{ingest_id}/merge", response_model=IngestDetailResponse)
+@limiter.limit("30/minute")
 async def merge_ingest_jobs(
+    request: Request,
     ingest_id: str,
-    request: MergeIngestRequest,
+    body: MergeIngestRequest,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -978,7 +997,7 @@ async def merge_ingest_jobs(
     - Concatenates raw_data from both TransactionPending rows
     - Marks source job as CANCELLED
     """
-    if ingest_id == request.source_ingest_id:
+    if ingest_id == body.source_ingest_id:
         raise HTTPException(
             status_code=400,
             detail="Source and target ingest jobs must be different",
@@ -990,11 +1009,11 @@ async def merge_ingest_jobs(
             status_code=404, detail=f"Target ingest job {ingest_id} not found"
         )
 
-    source = db_service.get_ingest_job(db, request.source_ingest_id)
+    source = db_service.get_ingest_job(db, body.source_ingest_id)
     if not source:
         raise HTTPException(
             status_code=404,
-            detail=f"Source ingest job {request.source_ingest_id} not found",
+            detail=f"Source ingest job {body.source_ingest_id} not found",
         )
 
     if target.company_nit != source.company_nit:
@@ -1016,7 +1035,7 @@ async def merge_ingest_jobs(
 
     # Merge raw_data from TransactionPending rows
     target_txns = db_service.get_transactions_by_ingest(db, ingest_id)
-    source_txns = db_service.get_transactions_by_ingest(db, request.source_ingest_id)
+    source_txns = db_service.get_transactions_by_ingest(db, body.source_ingest_id)
 
     if target_txns and source_txns:
         source_raw_list: list = []
@@ -1048,7 +1067,7 @@ async def merge_ingest_jobs(
     existing_errors = source.extraction_errors or []
     db_service.update_ingest_job(
         db,
-        request.source_ingest_id,
+        body.source_ingest_id,
         IngestStatus.CANCELLED,
         extraction_errors=existing_errors + [f"Merged into {ingest_id}"],
     )
@@ -1058,7 +1077,13 @@ async def merge_ingest_jobs(
 
 
 @router.get("/{ingest_id}/trace", response_model=PipelineTrace)
-async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
+@limiter.limit("60/minute")
+async def get_ingest_trace(
+    request: Request,
+    ingest_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Accountant-facing trace for an ingest job.
 
     Returns 404 if the job is not found.
@@ -1071,6 +1096,23 @@ async def get_ingest_trace(ingest_id: str, db: Session = Depends(get_db)):
     job = db_service.get_ingest_job(db, ingest_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+
+    # Verify user has access to this ingest's company
+    job_company_nit = getattr(job, "company_nit", None)
+    if isinstance(job_company_nit, str) and job_company_nit:
+        user_membership = (
+            db.query(UserCompany)
+            .filter(
+                UserCompany.company_nit == job_company_nit,
+                UserCompany.user_id == str(current_user.id),
+            )
+            .first()
+        )
+        if not user_membership:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes acceso a los datos de esta empresa",
+            )
 
     # Check if job is in a terminal state
     if job.status not in (IngestStatus.COMPLETED, IngestStatus.FAILED):

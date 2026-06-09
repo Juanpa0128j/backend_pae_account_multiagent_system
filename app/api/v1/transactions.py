@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Depends, HTTPException, Body
+from fastapi import APIRouter, Query, Depends, HTTPException, Body, Request
 from decimal import Decimal
 from typing import List, Optional
 
@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.core.logger import get_logger
+from app.core.limiter import limiter
 from app.services import db_service
 from app.services.document_mappers import safe_datetime
 from app.services.nit_utils import normalize_nit, normalize_optional_nit
@@ -218,7 +219,9 @@ async def create_transaction(
 
 
 @router.get("/", response_model=List[TransactionListItem])
+@limiter.limit("60/minute")
 async def list_transactions(
+    request: Request,
     status: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
@@ -277,7 +280,9 @@ async def list_transactions(
 
 
 @router.get("/search")
+@limiter.limit("60/minute")
 async def search_transactions(
+    request: Request,
     nit: Optional[str] = None,
     fecha_inicio: Optional[str] = None,
     fecha_fin: Optional[str] = None,
@@ -328,7 +333,9 @@ async def search_transactions(
 
 
 @router.get("/{id}")
+@limiter.limit("60/minute")
 async def get_transaction(
+    request: Request,
     id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -469,15 +476,22 @@ def _delete_transaction_cascade(db: Session, txn_id: str) -> Optional[str]:
 
 
 def _resync_derived_statements(db: Session, company_nit: Optional[str]) -> None:
-    """Refresh (or clear) journal-derived FinancialStatement rows after a delete.
+    """Refresh-in-place (or clear) journal-derived statements after a delete.
 
-    - If journal entries remain for the company: re-derive via the same path
-      ``_auto_derive_statements`` uses. The derivation is idempotent (replaces
-      the prior ``derived_from_journal`` rows for the same period span).
-    - If NO journal entries remain: delete every ``derived_from_journal``
-      FinancialStatement (BG + ER) for that NIT so the Reports tab shows empty
-      instead of a stale pre-delete snapshot. Vía B uploads / user-provided
-      statements (source_mode ``direct`` / ``derived``) are left untouched.
+    Vía A derivation is manual (the user picks a period and generates first-level
+    statements, then derives NIC 7 secondaries). A transaction delete invalidates
+    whatever the user already generated, so we refresh ONLY the periods that
+    already have ``derived_from_journal`` rows — keeping their original period
+    bounds and ``frequency`` — instead of inventing new periods.
+
+    - If journal entries remain: for each distinct (period_start, period_end)
+      among existing first-level rows, delete that period's derived rows
+      (first-level ``derived_from_journal`` + secondary ``derived``), rebuild
+      first-level with the preserved frequency, and re-derive the NIC 7
+      secondaries if that period had them before.
+    - If NO journal entries remain: purge every ``derived_from_journal`` row for
+      the NIT so reports go empty instead of showing a stale snapshot. Vía B
+      uploads (source_mode ``direct`` / ``derived``) are left untouched.
 
     Non-fatal: logs a warning and never raises. Transaction deletion must
     succeed even if the resync fails.
@@ -493,17 +507,102 @@ def _resync_derived_statements(db: Session, company_nit: Optional[str]) -> None:
             .filter(JournalEntryLine.company_nit == company_nit)
             .first()
         )
-        if remaining is not None:
-            # Journal entries still exist — re-derive (idempotent replace).
-            from app.agents.persist_node import _auto_derive_statements
-
-            _auto_derive_statements(db, company_nit, ingest_id="")
-        else:
-            # No journal left — purge derived statements so reports go empty.
+        if remaining is None:
+            # No journal left — purge ALL journal-derived statements so reports go
+            # empty: both first-level (derived_from_journal) AND the NIC 7
+            # secondaries derived from them (derived). Otherwise stale flujo /
+            # cambios / notas would keep showing for periods whose journal is gone.
+            # Vía B uploads (source_mode='direct') are left untouched.
             db.query(FinancialStatement).filter(
                 FinancialStatement.entity_nit == company_nit,
-                FinancialStatement.source_mode == "derived_from_journal",
+                FinancialStatement.source_mode.in_(("derived_from_journal", "derived")),
             ).delete(synchronize_session=False)
+            db.commit()
+            return
+
+        # Journal remains — refresh in place only the periods the user already
+        # generated, preserving each period's frequency.
+        first_level_rows = (
+            db.query(
+                FinancialStatement.period_start,
+                FinancialStatement.period_end,
+                FinancialStatement.frequency,
+            )
+            .filter(
+                FinancialStatement.entity_nit == company_nit,
+                FinancialStatement.source_mode == "derived_from_journal",
+            )
+            .all()
+        )
+        # Distinct (period_start, period_end) → frequency (first non-null wins).
+        periods: dict[tuple, Optional[str]] = {}
+        for ps, pe, freq in first_level_rows:
+            if ps is None or pe is None:
+                continue
+            key = (ps, pe)
+            if key not in periods or (periods[key] is None and freq is not None):
+                periods[key] = freq
+
+        if not periods:
+            return
+
+        from app.services.financial_statement_service import (
+            BusinessRuleError,
+            build_first_level_from_journal_entries,
+            derive_financial_statements,
+        )
+
+        for (ps, pe), freq in periods.items():
+            # Did this period already have NIC 7 secondaries?
+            had_secondary = (
+                db.query(FinancialStatement.id)
+                .filter(
+                    FinancialStatement.entity_nit == company_nit,
+                    FinancialStatement.source_mode == "derived",
+                    FinancialStatement.period_start == ps,
+                    FinancialStatement.period_end == pe,
+                )
+                .first()
+                is not None
+            )
+            # Delete this period's derived rows (build_first_level skips existing
+            # types, so we must clear before rebuilding to truly refresh).
+            db.query(FinancialStatement).filter(
+                FinancialStatement.entity_nit == company_nit,
+                FinancialStatement.source_mode.in_(("derived_from_journal", "derived")),
+                FinancialStatement.period_start == ps,
+                FinancialStatement.period_end == pe,
+            ).delete(synchronize_session=False)
+            db.commit()
+
+            build_first_level_from_journal_entries(
+                db,
+                company_nit=company_nit,
+                period_start=ps,
+                period_end=pe,
+                frequency=freq,
+            )
+            db.commit()
+
+            if had_secondary:
+                try:
+                    derive_financial_statements(
+                        company_nit=company_nit,
+                        period_start=ps,
+                        period_end=pe,
+                        input_source_mode="derived_from_journal",
+                        prior_from_journal=True,
+                    )
+                except BusinessRuleError as exc:
+                    # e.g. the period is no longer annual-eligible after the delete.
+                    logger.warning(
+                        "transactions: secondary re-derivation skipped for %s "
+                        "%s..%s (non-fatal): %s",
+                        company_nit,
+                        ps,
+                        pe,
+                        exc,
+                    )
     except Exception as exc:  # pragma: no cover - non-fatal guard
         logger.warning(
             "transactions: derived-statement resync failed for %s (non-fatal): %s",
@@ -517,7 +616,9 @@ class SetFechaPayload(BaseModel):
 
 
 @router.patch("/{id}/fecha")
+@limiter.limit("30/minute")
 async def set_transaction_fecha(
+    request: Request,
     id: str,
     payload: SetFechaPayload = Body(...),
     db: Session = Depends(get_db),
@@ -771,7 +872,9 @@ async def reprocess_transaction(
 
 
 @router.delete("/{id}", status_code=204)
+@limiter.limit("30/minute")
 async def delete_transaction(
+    request: Request,
     id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -783,7 +886,9 @@ async def delete_transaction(
 
 
 @router.delete("/by-ingest/{ingest_id}", status_code=200)
+@limiter.limit("30/minute")
 async def delete_transactions_by_ingest(
+    request: Request,
     ingest_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),

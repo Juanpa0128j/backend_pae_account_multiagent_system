@@ -14,9 +14,10 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.limiter import limiter
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool
 
@@ -45,8 +46,11 @@ def _normalize_request_nit(request: ChatRequest) -> ChatRequest:
 
 
 @router.post("", response_model=ChatResponse)
+@limiter.limit("30/minute")
 async def chat(
-    request: ChatRequest, current_user: CurrentUser = Depends(get_current_user)
+    request: Request,
+    chat_request: ChatRequest,
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Non-streaming chat endpoint.
@@ -54,9 +58,9 @@ async def chat(
     Classifies the user's question, gathers relevant financial data,
     and returns a conversational response with optional structured data cards.
     """
-    request = _normalize_request_nit(request)
+    chat_request = _normalize_request_nit(chat_request)
     try:
-        return chat_service.handle_chat_message(request)
+        return chat_service.handle_chat_message(chat_request)
     except Exception as exc:
         logger.error("Chat endpoint error: %s", exc, exc_info=True)
         raise HTTPException(
@@ -65,8 +69,11 @@ async def chat(
 
 
 @router.post("/stream")
+@limiter.limit("30/minute")
 async def chat_stream(
-    request: ChatRequest, current_user: CurrentUser = Depends(get_current_user)
+    request: Request,
+    chat_request: ChatRequest,
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     SSE streaming chat endpoint.
@@ -78,12 +85,12 @@ async def chat_stream(
 
     Frontend should use EventSource or fetch with ReadableStream.
     """
-    request = _normalize_request_nit(request)
+    chat_request_arg = _normalize_request_nit(chat_request)
 
     async def event_generator():
         try:
             async for event in iterate_in_threadpool(
-                chat_service.handle_chat_stream(request)
+                chat_service.handle_chat_stream(chat_request_arg)
             ):
                 yield event
         except Exception as exc:
@@ -102,7 +109,9 @@ async def chat_stream(
 
 
 @router.get("/sessions", response_model=list[SessionSummary])
+@limiter.limit("60/minute")
 async def get_sessions(
+    request: Request,
     company_nit: str | None = Query(None, description="Filter by company NIT"),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -117,8 +126,11 @@ async def get_sessions(
 
 
 @router.get("/sessions/{session_id}/messages")
+@limiter.limit("60/minute")
 async def get_session_messages(
-    session_id: str, current_user: CurrentUser = Depends(get_current_user)
+    request: Request,
+    session_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Get all messages for a chat session."""
     messages = chat_service.get_session_messages(session_id)
@@ -130,8 +142,11 @@ async def get_session_messages(
 
 
 @router.delete("/sessions/{session_id}")
+@limiter.limit("30/minute")
 async def remove_session(
-    session_id: str, current_user: CurrentUser = Depends(get_current_user)
+    request: Request,
+    session_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Delete a chat session and all its messages."""
     deleted = chat_service.delete_session(session_id)

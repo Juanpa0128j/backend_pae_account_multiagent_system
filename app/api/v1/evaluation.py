@@ -6,9 +6,10 @@ and RAG collection status.
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.limiter import limiter
 from pydantic import BaseModel, Field
 
 from app.services.validation_engine import get_validator
@@ -59,7 +60,11 @@ class EvaluationResponse(BaseModel):
 
 
 @router.get("/run", response_model=EvaluationResponse)
-async def run_evaluation(current_user: CurrentUser = Depends(get_current_user)):
+@limiter.limit("30/minute")
+async def run_evaluation(
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Return live validation metrics from the OutputValidator."""
     validator = get_validator()
     metrics = validator.get_metrics()
@@ -67,7 +72,11 @@ async def run_evaluation(current_user: CurrentUser = Depends(get_current_user)):
 
 
 @router.get("/schema-compliance", response_model=SchemaComplianceMetrics)
-async def schema_compliance(current_user: CurrentUser = Depends(get_current_user)):
+@limiter.limit("30/minute")
+async def schema_compliance(
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Detailed Schema Compliance Rate report."""
     validator = get_validator()
     raw = validator.get_metrics()
@@ -84,7 +93,11 @@ async def schema_compliance(current_user: CurrentUser = Depends(get_current_user
 
 
 @router.post("/reset-metrics")
-async def reset_metrics(current_user: CurrentUser = Depends(get_current_user)):
+@limiter.limit("30/minute")
+async def reset_metrics(
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """Reset all validation metrics (for testing)."""
     validator = get_validator()
     validator.reset_metrics()
@@ -115,7 +128,11 @@ class RAGStatusResponse(BaseModel):
 
 
 @router.get("/rag-status", response_model=RAGStatusResponse)
-async def rag_status(current_user: CurrentUser = Depends(get_current_user)):
+@limiter.limit("30/minute")
+async def rag_status(
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """
     Return the status of all ChromaDB vector collections.
 

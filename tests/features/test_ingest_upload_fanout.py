@@ -66,6 +66,7 @@ async def test_fanout_documents_mode_inngest_creates_n_jobs(fake_files) -> None:
 
         # Act
         response = await ingest_mod.upload_file(
+            request=MagicMock(),
             background_tasks=MagicMock(),
             files=files,
             company_nit="900123456",
@@ -126,6 +127,7 @@ async def test_pages_mode_does_not_fanout(fake_files) -> None:
 
         # Act
         await ingest_mod.upload_file(
+            request=MagicMock(),
             background_tasks=mock_bg,
             files=files,
             company_nit="900123456",
@@ -185,6 +187,7 @@ async def test_inline_engine_does_not_fanout_even_in_documents_mode(fake_files) 
 
         # Act
         await ingest_mod.upload_file(
+            request=MagicMock(),
             background_tasks=mock_bg,
             files=files,
             company_nit="900123456",
@@ -195,7 +198,7 @@ async def test_inline_engine_does_not_fanout_even_in_documents_mode(fake_files) 
             current_user=SimpleNamespace(id="u1"),
         )
 
-    # Assert
+        # Assert
     assert len(created_jobs) == 1
     mock_dispatch.assert_not_called()
     mock_bg.add_task.assert_called_once()
@@ -264,6 +267,7 @@ async def test_fanout_partial_dispatch_failure_marks_only_failed_job(
 
         # Act
         response = await ingest_mod.upload_file(
+            request=MagicMock(),
             background_tasks=MagicMock(),
             files=files,
             company_nit="900123456",

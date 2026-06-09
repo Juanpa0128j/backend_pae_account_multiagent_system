@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
 from pydantic import BaseModel
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from app.agents.tributario_agent import (
     calc_period_renta_provision,
 )
 from app.core.auth import CurrentUser, get_current_user
+from app.core.limiter import limiter
 from app.core.database import get_db
 from app.models.agent_outputs import IVAOutput, WithholdingsOutput
 from app.models.schemas import (
@@ -231,7 +232,9 @@ def _empty_renta(end_date: date, available_periods: List[str]) -> dict:
 
 
 @router.get("/iva", response_model=IVAOutput)
+@limiter.limit("60/minute")
 async def get_iva_report(
+    request: Request,
     period_start: Optional[date] = Query(
         None,
         description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
@@ -272,7 +275,9 @@ async def get_iva_report(
 
 
 @router.get("/withholdings", response_model=WithholdingsOutput)
+@limiter.limit("60/minute")
 async def get_withholdings_report(
+    request: Request,
     period_start: Optional[date] = Query(
         None,
         description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
@@ -308,7 +313,9 @@ async def get_withholdings_report(
 
 
 @router.get("/ica", response_model=ICADeclaracionOutput)
+@limiter.limit("60/minute")
 async def get_ica_declaration(
+    request: Request,
     period_start: Optional[date] = Query(
         None,
         description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
@@ -405,7 +412,9 @@ async def get_ica_declaration(
 
 
 @router.get("/renta-provision", response_model=RentaProvisionOutput)
+@limiter.limit("60/minute")
 async def get_renta_provision(
+    request: Request,
     period_start: Optional[date] = Query(
         None,
         description="Inicio del período YYYY-MM-DD (default: primer día del mes actual)",
@@ -511,7 +520,9 @@ class UpdateFieldRequest(BaseModel):
     response_model=PreflightResponse,
     summary="Pre-flight validation before generating a DIAN declaration draft",
 )
+@limiter.limit("60/minute")
 def api_declarations_preflight(
+    request: Request,
     company_nit: str = Query(..., min_length=1),
     form_type: str = Query(..., description="F300 | F350 | F110 | F2516 | ICA"),
     period_start: date = Query(...),
@@ -556,7 +567,9 @@ def api_declarations_preflight(
 @router.post(
     "/declarations/generate", summary="Generate pre-filled DIAN declaration draft"
 )
+@limiter.limit("30/minute")
 def api_generate_draft(
+    request: Request,
     body: GenerateDraftRequest,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -607,7 +620,9 @@ def api_generate_draft(
 
 
 @router.get("/declarations/{draft_id}", summary="Get a declaration draft")
+@limiter.limit("60/minute")
 def api_get_draft(
+    request: Request,
     draft_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -635,7 +650,9 @@ def api_get_draft(
 @router.patch(
     "/declarations/{draft_id}/fields", summary="Update a requires_review field"
 )
+@limiter.limit("30/minute")
 def api_update_draft_field(
+    request: Request,
     draft_id: str,
     body: UpdateFieldRequest,
     db: Session = Depends(get_db),
@@ -702,7 +719,9 @@ def _draft_to_dict(draft: Any) -> Dict[str, Any]:
     "/declarations/{draft_id}/review",
     summary="Mark declaration draft as reviewed",
 )
+@limiter.limit("30/minute")
 def api_review_draft(
+    request: Request,
     draft_id: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -746,7 +765,9 @@ def api_review_draft(
     "/declarations/{draft_id}/file",
     summary="Mark reviewed declaration as filed with DIAN",
 )
+@limiter.limit("30/minute")
 def api_file_draft(
+    request: Request,
     draft_id: str,
     body: FileDraftRequest,
     db: Session = Depends(get_db),
@@ -777,7 +798,9 @@ def api_file_draft(
     "/declarations/{draft_id}/reopen",
     summary="Reopen a reviewed or filed declaration for editing",
 )
+@limiter.limit("30/minute")
 def api_reopen_draft(
+    request: Request,
     draft_id: str,
     body: ReopenDraftRequest,
     db: Session = Depends(get_db),
@@ -822,7 +845,9 @@ def api_reopen_draft(
 
 
 @router.get("/calendar", summary="DIAN 2026 tax calendar with deadlines")
+@limiter.limit("60/minute")
 def api_tax_calendar(
+    request: Request,
     nit: str = Query(..., description="Company NIT (without DV)"),
     year: int = Query(2026, description="Tax year"),
     iva_regime: str = Query("bimestral", description="bimestral | cuatrimestral"),
@@ -887,7 +912,9 @@ def api_tax_calendar(
     "/certificates/f220",
     summary="Generate F220 retention certificates for all terceros",
 )
+@limiter.limit("30/minute")
 def api_generate_f220(
+    request: Request,
     company_nit: str = Query(..., description="Company NIT (retenedor)"),
     year: int = Query(..., description="Tax year (e.g. 2025)"),
     db: Session = Depends(get_db),
@@ -923,7 +950,9 @@ _EXOGENA_GENERATORS = {
     "/exogena/{formato}",
     summary="Generate DIAN exógena (medios magnéticos) data",
 )
+@limiter.limit("60/minute")
 def api_exogena(
+    request: Request,
     formato: str,
     company_nit: str = Query(..., description="Reporting company NIT"),
     year: int = Query(..., description="Tax year (e.g. 2025)"),
@@ -971,7 +1000,9 @@ def api_exogena(
 
 
 @router.get("/reteica-tarifas", response_model=list[ReteicaTarifaResponse])
+@limiter.limit("60/minute")
 async def list_reteica_tarifas_endpoint(
+    request: Request,
     municipio: Optional[str] = Query(
         None, description="Filter by city name (lowercase)"
     ),
@@ -984,7 +1015,9 @@ async def list_reteica_tarifas_endpoint(
 
 
 @router.put("/reteica-tarifas", response_model=ReteicaTarifaResponse)
+@limiter.limit("30/minute")
 async def upsert_reteica_tarifa_endpoint(
+    request: Request,
     body: ReteicaTarifaUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1015,7 +1048,9 @@ async def upsert_reteica_tarifa_endpoint(
 
 
 @router.delete("/reteica-tarifas/{row_id}", status_code=204)
+@limiter.limit("30/minute")
 async def delete_reteica_tarifa_endpoint(
+    request: Request,
     row_id: int,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1033,7 +1068,9 @@ async def delete_reteica_tarifa_endpoint(
 
 
 @router.get("/constants", response_model=TaxConstantsResponse)
+@limiter.limit("60/minute")
 async def get_tax_constants(
+    request: Request,
     year: int = Query(..., ge=2000, le=2100, description="Fiscal year, e.g. 2026"),
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1049,7 +1086,9 @@ async def get_tax_constants(
 
 
 @router.put("/constants/uvt", response_model=dict)
+@limiter.limit("30/minute")
 async def upsert_uvt_value(
+    request: Request,
     body: UvtUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1070,7 +1109,9 @@ async def upsert_uvt_value(
 
 
 @router.put("/constants/base-minima", response_model=dict)
+@limiter.limit("30/minute")
 async def upsert_base_minima(
+    request: Request,
     body: BaseMinimaUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1108,7 +1149,9 @@ async def upsert_base_minima(
     response_model=list[PerdidaFiscalResponse],
     summary="Listar pérdidas fiscales acumuladas",
 )
+@limiter.limit("60/minute")
 async def list_perdidas_acumuladas(
+    request: Request,
     nit: str = Query(..., description="Company NIT"),
     year: Optional[int] = Query(
         None,
@@ -1158,7 +1201,9 @@ async def list_perdidas_acumuladas(
     summary="Crear o actualizar pérdida fiscal acumulada",
     status_code=201,
 )
+@limiter.limit("30/minute")
 async def upsert_perdida_acumulada(
+    request: Request,
     body: PerdidaFiscalUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1194,7 +1239,9 @@ async def upsert_perdida_acumulada(
     status_code=204,
     summary="Eliminar pérdida fiscal acumulada",
 )
+@limiter.limit("30/minute")
 async def delete_perdida_acumulada(
+    request: Request,
     perdida_id: int,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1225,7 +1272,9 @@ async def delete_perdida_acumulada(
     response_model=list[TarifaRentaResponse],
     summary="Listar tarifas de renta PJ por régimen",
 )
+@limiter.limit("60/minute")
 async def list_tarifas_renta(
+    request: Request,
     year: Optional[int] = Query(
         None,
         description="Si se envía, filtra sólo las tarifas vigentes para ese año fiscal",
@@ -1247,7 +1296,9 @@ async def list_tarifas_renta(
     status_code=201,
     summary="Crear o actualizar tarifa de renta PJ",
 )
+@limiter.limit("30/minute")
 async def upsert_tarifa_renta(
+    request: Request,
     body: TarifaRentaUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1286,7 +1337,9 @@ async def upsert_tarifa_renta(
     status_code=204,
     summary="Eliminar tarifa de renta PJ",
 )
+@limiter.limit("30/minute")
 async def delete_tarifa_renta(
+    request: Request,
     tarifa_id: int,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1313,7 +1366,9 @@ async def delete_tarifa_renta(
     response_model=list[TaxConceptResponse],
     summary="Listar conceptos de retención F350",
 )
+@limiter.limit("60/minute")
 async def list_tax_concepts_endpoint(
+    request: Request,
     activo: Optional[bool] = Query(
         None,
         description="True = solo activos; False = solo inactivos; null (default) = todos",
@@ -1332,7 +1387,9 @@ async def list_tax_concepts_endpoint(
     status_code=200,
     summary="Crear o actualizar concepto de retención",
 )
+@limiter.limit("30/minute")
 async def upsert_tax_concept_endpoint(
+    request: Request,
     body: TaxConceptUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1380,7 +1437,9 @@ async def upsert_tax_concept_endpoint(
     status_code=204,
     summary="Soft delete (activo=False) concepto de retención",
 )
+@limiter.limit("30/minute")
 async def delete_tax_concept_endpoint(
+    request: Request,
     code: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1417,7 +1476,9 @@ def _ajuste_to_response(row) -> AjusteFiscalResponse:
     response_model=list[AjusteFiscalResponse],
     summary="Listar ajustes fiscales para F2516",
 )
+@limiter.limit("60/minute")
 async def list_ajustes_fiscales(
+    request: Request,
     company_nit: str = Query(..., description="Company NIT"),
     year: int = Query(..., ge=1990, le=2100),
     seccion: Optional[str] = Query(
@@ -1441,7 +1502,9 @@ async def list_ajustes_fiscales(
     response_model=AjusteFiscalResponse,
     summary="Crear o actualizar un ajuste fiscal (F2516)",
 )
+@limiter.limit("30/minute")
 async def upsert_ajuste_fiscal(
+    request: Request,
     body: AjusteFiscalUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1470,7 +1533,9 @@ async def upsert_ajuste_fiscal(
     status_code=204,
     summary="Eliminar un ajuste fiscal",
 )
+@limiter.limit("30/minute")
 async def delete_ajuste_fiscal(
+    request: Request,
     ajuste_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),

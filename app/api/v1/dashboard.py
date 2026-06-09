@@ -7,13 +7,14 @@ import logging
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.limiter import limiter
 from app.core.database import get_db
 from app.models.database import (
     TransactionPending,
@@ -116,7 +117,9 @@ class DashboardFinancialSummaryResponse(BaseModel):
 
 
 @router.get("/stats", response_model=DashboardStatsResponse)
+@limiter.limit("30/minute")
 async def get_dashboard_stats(
+    request: Request,
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
     current_user: CurrentUser = Depends(get_current_user),
@@ -261,7 +264,9 @@ async def get_dashboard_stats(
 
 
 @router.get("/financial-summary", response_model=DashboardFinancialSummaryResponse)
+@limiter.limit("30/minute")
 async def get_financial_summary(
+    request: Request,
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
     current_user: CurrentUser = Depends(get_current_user),
@@ -355,7 +360,9 @@ async def get_financial_summary(
 
 
 @router.get("/monthly-trend", response_model=MonthlyTrendResponse)
+@limiter.limit("30/minute")
 async def get_monthly_trend(
+    request: Request,
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
     months: int = Query(6, ge=1, le=24, description="Number of months to look back"),

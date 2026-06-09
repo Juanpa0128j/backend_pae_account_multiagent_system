@@ -6,6 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
 from app.api.v1 import (
     ingest,
     process,
@@ -21,6 +24,7 @@ from app.api.v1 import (
     auth as auth_router_mod,
 )
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.core.database import check_db_connection
 from app.core.exceptions import PAEException, DatabaseException
 
@@ -82,6 +86,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Rate limiter setup
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Base development origins
 origins = [
     "http://localhost:3000",  # Next.js dev server
@@ -109,8 +117,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 

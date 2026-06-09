@@ -11,10 +11,11 @@ Endpoints:
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.limiter import limiter
 from app.core.database import get_db
 from app.models.database import CuentaPUC
 from app.models.schemas import CuentaPUCRequest, CuentaPUCResponse
@@ -25,7 +26,9 @@ router = APIRouter()
 
 
 @router.get("", response_model=list[CuentaPUCResponse])
+@limiter.limit("60/minute")
 def list_puc(
+    request: Request,
     search: str = "",
     include_inactive: bool = False,
     limit: int = 200,
@@ -43,7 +46,9 @@ def list_puc(
 
 
 @router.get("/{codigo}", response_model=CuentaPUCResponse)
+@limiter.limit("60/minute")
 def get_puc(
+    request: Request,
     codigo: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -56,7 +61,9 @@ def get_puc(
 
 
 @router.post("", response_model=CuentaPUCResponse, status_code=201)
+@limiter.limit("30/minute")
 def create_puc(
+    request: Request,
     body: CuentaPUCRequest,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -73,7 +80,9 @@ def create_puc(
 
 
 @router.put("/{codigo}", response_model=CuentaPUCResponse)
+@limiter.limit("30/minute")
 def update_puc(
+    request: Request,
     codigo: str,
     body: CuentaPUCRequest,
     db: Session = Depends(get_db),
@@ -94,7 +103,9 @@ def update_puc(
 
 
 @router.delete("/{codigo}", status_code=204)
+@limiter.limit("30/minute")
 def delete_puc(
+    request: Request,
     codigo: str,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
