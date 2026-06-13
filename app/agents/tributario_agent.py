@@ -97,33 +97,50 @@ CUENTA_RETEFTE_RECIBIDA_ALT = "135518"  # Anticipo impuesto renta (alternativa)
 CUENTA_RETEICA_RECIBIDA = "135517"  # ReteICA a favor (activo)
 
 
-# Doc types where the company is the SELLER. Buyer-side doc types fall through to compra defaults.
+# Doc types where the company is the SELLER. Buyer-side doc types fall through to
+# compra defaults. recibo_caja is NOT here: it is routed by ``tipo_recibo`` — a
+# 'cobro_cartera' is tax-neutral (the original factura already booked the taxes),
+# only a 'venta_directa' is treated as a sale (see the node body).
 _VENTA_DOC_TYPES = frozenset(
     {
         "factura_venta",
         "nota_debito_venta",
         "nota_credito_venta",
-        "recibo_caja",
     }
 )
 
 
-def _tax_accounts_for(doc_type: str, cuenta_ica_propio: str | None = None) -> dict:
+def _tax_accounts_for(
+    doc_type: str,
+    cuenta_ica_propio: str | None = None,
+    *,
+    is_venta: bool | None = None,
+) -> dict:
     """Return PUC accounts + movement direction for the given doc_type.
+
+    ``is_venta`` overrides the direction when the caller already resolved it
+    (e.g. recibo_caja venta_directa, which is seller-side but not a member of
+    ``_VENTA_DOC_TYPES``). When None, falls back to ``_VENTA_DOC_TYPES``.
 
     For VENTA (the company is the seller):
       - IVA generado is a CREDIT to 240805 (pasivo).
       - Retenciones practicadas by the buyer are DEBITED to 135515/135517 (activo,
         anticipos a favor de la empresa frente a DIAN / municipio).
-      - ICA gasto/por_pagar NOT injected automatically — handled at declaration time.
 
     For COMPRA-like (default, the company is the buyer):
-      - IVA descontable is a DEBIT to 240802 (activo recuperable).
+      - IVA descontable is a DEBIT to 240802 — NOT an asset: it is a contra of the
+        IVA payable (menor valor del IVA por pagar, grupo 2408 del pasivo).
       - Retenciones practicadas a proveedores son CRÉDITOS a 2365/2368 (pasivo a DIAN).
-      - ICA gasto/por_pagar applied when the line has ingreso credits (legacy).
+
+    ICA gasto/por_pagar is NEVER injected per transaction (CPA review): ICA is a
+    municipal tax on the company's OWN gross income, settled in the ICA
+    declaration (``_build_ica``) — it does not belong on purchase invoices,
+    cuentas de cobro, documentos soporte, nor on individual sales. ``ReteICA
+    retenida`` (the buyer's withholding to 2368) is a separate concept and stays.
     """
     ica_pasivo = cuenta_ica_propio or CUENTA_RETEICA
-    if doc_type in _VENTA_DOC_TYPES:
+    venta = is_venta if is_venta is not None else (doc_type in _VENTA_DOC_TYPES)
+    if venta:
         return {
             "iva": (CUENTA_IVA_GENERADO, "credito"),
             "iva_nombre": "IVA Generado",
@@ -140,19 +157,17 @@ def _tax_accounts_for(doc_type: str, cuenta_ica_propio: str | None = None) -> di
     return {
         "iva": (CUENTA_IVA_DESCONTABLE, "debito"),
         "iva_nombre": "IVA Descontable",
-        "iva_detalle": "IVA descontable",
+        "iva_detalle": "IVA descontable — menor valor del IVA por pagar (grupo 2408)",
         "retefuente": (CUENTA_RETEFUENTE, "credito"),
         "retefuente_nombre": "Retención en la Fuente por Pagar",
         "retefuente_detalle": "Retención en la fuente por pagar — Artículo 365 ET",
         "reteica": (ica_pasivo, "credito"),
         "reteica_nombre": "Retención ICA por Pagar",
         "reteica_detalle": "Retención ICA por pagar — Decreto 2048/1992",
-        "ica_gasto": ("511505", "debito"),
-        "ica_gasto_nombre": "Gasto ICA",
-        "ica_gasto_detalle": "Gasto ICA — Ley 14/1983, Art. 342 Ley 1955/2019",
-        "ica_por_pagar": (ica_pasivo, "credito"),
-        "ica_por_pagar_nombre": "ICA por Pagar",
-        "ica_por_pagar_detalle": "ICA por Pagar — Decreto 1333/1986",
+        # ICA-gasto is NOT a per-transaction account — settled in the municipal
+        # ICA declaration over gross income (CPA review). Always None.
+        "ica_gasto": None,
+        "ica_por_pagar": None,
     }
 
 
@@ -274,22 +289,6 @@ def _has_iva_in_asientos(asientos: list[dict]) -> tuple[bool, Decimal]:
 # ---------------------------------------------------------------------------
 # Deterministic tax calculators
 # ---------------------------------------------------------------------------
-
-
-def _has_income_accounts(asientos: list[dict]) -> tuple[bool, Decimal]:
-    """
-    Returns (True, total_ingresos_brutos) if any CREDIT entry has a PUC 4xxx code.
-    Income accounts (ingresos) are credits in the Colombian PUC. Triggers ICA calculation.
-    """
-    total = Decimal("0")
-    found = False
-    for a in asientos:
-        if (a.get("tipo_movimiento") or "").lower() == "credito":
-            puc = str(a.get("cuenta_puc", "")).strip()
-            if puc.isdigit() and PUC_INGRESOS_START <= int(puc) <= PUC_INGRESOS_END:
-                found = True
-                total += Decimal(str(a.get("valor", 0)))
-    return found, total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _calc_retefuente(base: Decimal, tipo: str) -> Decimal:
@@ -577,25 +576,53 @@ def tributario_node(state: AgentState) -> AgentState:
         "libro_diario",
     }
     doc_type = (state.get("document_classification") or {}).get("doc_type", "")
-    if doc_type in _TAX_DECLARATION_TYPES:
+
+    # recibo_caja: route by tipo_recibo. A 'cobro_cartera' (or unspecified) only
+    # moves cash vs cuentas por cobrar — the original factura de venta already
+    # booked IVA/retenciones, so re-applying them here would double-count (CPA
+    # review). Only 'venta_directa' (a sale without a prior invoice) is taxable.
+    recibo_tipo = ""
+    if doc_type == "recibo_caja":
+        _sd = state.get("source_document") or {}
+        recibo_tipo = str(_sd.get("tipo_recibo") or "").strip().lower()
+        if not recibo_tipo:
+            for _tx in state.get("raw_transactions") or []:
+                if isinstance(_tx, dict) and _tx.get("tipo_recibo"):
+                    recibo_tipo = str(_tx["tipo_recibo"]).strip().lower()
+                    break
+    recibo_caja_neutral = doc_type == "recibo_caja" and recibo_tipo != "venta_directa"
+
+    if doc_type in _TAX_DECLARATION_TYPES or recibo_caja_neutral:
         logger.info(
-            "Tributario: doc_type=%s is a tax declaration — skipping tax application",
+            "Tributario: doc_type=%s%s — skipping tax application",
             doc_type,
+            (
+                f" (tipo_recibo={recibo_tipo or 'sin especificar'})"
+                if recibo_caja_neutral
+                else " is a tax declaration"
+            ),
         )
         documento_ref = (
             (state.get("contador_output") or {}).get("descripcion_general", doc_type)
             or doc_type
         )[:100]
+        observaciones = (
+            "Recibo de caja por cobro de cartera: solo registra el ingreso de "
+            "efectivo contra la cuenta por cobrar. El IVA y las retenciones se "
+            "causaron en la factura de venta original; no se aplican aquí."
+            if recibo_caja_neutral
+            else (
+                f"Documento tipo {doc_type}: los asientos del contador ya registran "
+                "el pago/liquidación del impuesto. No se aplican impuestos adicionales."
+            )
+        )
         state["tributario_output"] = {
             "fecha_analisis": date.today().isoformat(),
             "documento_referencia": documento_ref,
             "aplica_impuestos": False,
             "impuestos": [],
             "total_impuestos": "0.00",
-            "observaciones": (
-                f"Documento tipo {doc_type}: los asientos del contador ya registran "
-                "el pago/liquidación del impuesto. No se aplican impuestos adicionales."
-            ),
+            "observaciones": observaciones,
             "referencias_legales": [],
             "asientos_enriquecidos": (state.get("contador_output") or {}).get(
                 "asientos", []
@@ -605,7 +632,10 @@ def tributario_node(state: AgentState) -> AgentState:
         state["current_agent"] = "tributario"
         state["current_stage"] = "tributario_complete"
         append_log(
-            state, "tributario", "skipped_tax_declaration", {"doc_type": doc_type}
+            state,
+            "tributario",
+            "skipped_tax_declaration",
+            {"doc_type": doc_type, "recibo_tipo": recibo_tipo or None},
         )
         return state
 
@@ -646,7 +676,9 @@ def tributario_node(state: AgentState) -> AgentState:
         return state
 
     # Route tax accounts (IVA, retenciones, ICA) by document direction (venta vs compra-like).
-    is_venta = doc_type in _VENTA_DOC_TYPES
+    # A recibo_caja reaches this point only as 'venta_directa' (cobro_cartera returned
+    # tax-neutral above), so it is seller-side.
+    is_venta = doc_type in _VENTA_DOC_TYPES or doc_type == "recibo_caja"
     logger.info(
         "Tributario: doc_type=%s → routing %s",
         doc_type or "<empty>",
@@ -949,7 +981,9 @@ def tributario_node(state: AgentState) -> AgentState:
         cuenta_ica_propio = (
             company_config.get("cuenta_ica_propio") if company_config else None
         )
-        accounts = _tax_accounts_for(doc_type, cuenta_ica_propio=cuenta_ica_propio)
+        accounts = _tax_accounts_for(
+            doc_type, cuenta_ica_propio=cuenta_ica_propio, is_venta=is_venta
+        )
 
         # ------------------------------------------------------------------
         # Step 2 — Determine transaction type from PUC codes
@@ -1060,9 +1094,22 @@ def tributario_node(state: AgentState) -> AgentState:
 
         # IVA: priority order — (1) already in asientos, (2) source doc total_iva, (3) computed
         iva_presente, iva_val_existente = _has_iva_in_asientos(asientos)
+        documento_soporte_iva_sospechoso = False
         if iva_presente:
             iva_val = iva_val_existente
             logger.info("Tributario: IVA found in asientos = %s", iva_val)
+        elif doc_type == "documento_soporte":
+            # Documento soporte = compra a proveedor NO obligado a facturar
+            # (régimen simple / no responsable de IVA). No hay IVA descontable.
+            # Si el documento muestra IVA, es un dato sospechoso → no se descuenta
+            # y se marca para revisión del contador (CPA review).
+            iva_val = Decimal("0.00")
+            if source_taxes.get("total_iva"):
+                documento_soporte_iva_sospechoso = True
+            logger.info(
+                "Tributario: IVA descontable no aplica en documento_soporte "
+                "(proveedor no responsable de IVA)"
+            )
         elif not iva_responsable:
             iva_val = Decimal("0.00")
             logger.info("Tributario: IVA skipped — company is not IVA responsable")
@@ -1077,16 +1124,11 @@ def tributario_node(state: AgentState) -> AgentState:
             )
             logger.info("Tributario: IVA calculated = %s", iva_val)
 
-        # ICA — applies when transaction contains income credits (PUC 4xxx)
-        has_income, ingresos_brutos = _has_income_accounts(asientos)
+        # ICA is NOT accrued per transaction (CPA review): it is a municipal tax on
+        # the company's OWN gross income, settled in the ICA declaration
+        # (_build_ica). It is never emitted on individual invoices/receipts here —
+        # neither on purchases (it is not an expense per transaction) nor on sales.
         ica_val = Decimal("0.00")
-        if has_income:
-            ica_val = _calc_ica(ingresos_brutos, tasa_ica_efectiva)
-            logger.info(
-                f"Tributario: ICA calculated = {ica_val} on ingresos {ingresos_brutos}"
-            )
-        else:
-            logger.info("Tributario: ICA skipped — no PUC 4xxx credit entries detected")
 
         logger.info(
             f"Tributario: retefuente={retefuente_val}, reteica={reteica_val}, "
@@ -1147,6 +1189,12 @@ def tributario_node(state: AgentState) -> AgentState:
             )
         referencias = justification.referencias
         observaciones = justification.justificacion
+        if documento_soporte_iva_sospechoso:
+            observaciones = (
+                f"{observaciones} | REVISAR: el documento soporte muestra IVA, pero "
+                "los proveedores no responsables de IVA no generan IVA descontable; "
+                "no se descontó. Verifique el régimen del proveedor."
+            )
 
         append_log(
             state,
@@ -1196,19 +1244,8 @@ def tributario_node(state: AgentState) -> AgentState:
                 }
             )
 
-        # ICA is only emitted as a separate tax line on COMPRA-like documents.
-        # For VENTA the ICA gasto/por pagar belongs to the municipal declaration,
-        # not to each individual invoice. _tax_accounts_for() returns None there.
-        if ica_val > Decimal("0") and accounts.get("ica_por_pagar") is not None:
-            impuestos.append(
-                {
-                    "tipo_impuesto": "ica",
-                    "base_gravable": str(ingresos_brutos),
-                    "tarifa_porcentaje": str(tasa_ica_efectiva * 100),
-                    "valor_impuesto": str(ica_val),
-                    "cuenta_puc": accounts["ica_por_pagar"][0],
-                }
-            )
+        # ICA is never emitted as a per-transaction tax line — it is settled in the
+        # municipal ICA declaration (_build_ica) over gross income (CPA review).
 
         total_impuestos = sum(
             (Decimal(i["valor_impuesto"]) for i in impuestos),
@@ -1375,33 +1412,10 @@ def tributario_node(state: AgentState) -> AgentState:
                 }
             )
 
-        # ICA — Impuesto de Industria y Comercio. Only emitted on compra-like docs.
-        # In venta, ICA is settled at municipal-declaration time, not per invoice.
-        if (
-            ica_val > Decimal("0")
-            and accounts.get("ica_gasto") is not None
-            and accounts.get("ica_por_pagar") is not None
-        ):
-            ica_gasto_acct, ica_gasto_mov = accounts["ica_gasto"]
-            ica_pagar_acct, ica_pagar_mov = accounts["ica_por_pagar"]
-            asientos_enriquecidos.append(
-                {
-                    "cuenta_puc": ica_gasto_acct,
-                    "nombre_cuenta": accounts["ica_gasto_nombre"],
-                    "descripcion": accounts["ica_gasto_detalle"],
-                    "tipo_movimiento": ica_gasto_mov,
-                    "valor": str(ica_val),
-                }
-            )
-            asientos_enriquecidos.append(
-                {
-                    "cuenta_puc": ica_pagar_acct,
-                    "nombre_cuenta": accounts["ica_por_pagar_nombre"],
-                    "descripcion": accounts["ica_por_pagar_detalle"],
-                    "tipo_movimiento": ica_pagar_mov,
-                    "valor": str(ica_val),
-                }
-            )
+        # ICA — Impuesto de Industria y Comercio is NOT booked per transaction.
+        # It is a municipal tax on the company's own gross income, settled in the
+        # ICA declaration (_build_ica), not on individual invoices/receipts/CC/DS
+        # (CPA review). No ICA lines are added to the journal entry here.
 
         # ------------------------------------------------------------------
         # Step 7 — Build TributarioOutput-compatible dict

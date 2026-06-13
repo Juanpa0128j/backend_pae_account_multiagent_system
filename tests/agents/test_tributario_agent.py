@@ -609,7 +609,10 @@ INCOME_CONTADOR_OUTPUT = {
 
 @patch("app.agents.tributario_agent.get_rag_service")
 @patch("app.agents.tributario_agent.get_llm_client")
-def test_ica_applied_for_income_transaction(mock_llm_fn, mock_rag_cls):
+def test_ica_not_applied_per_transaction(mock_llm_fn, mock_rag_cls):
+    """ICA is never accrued per transaction (CPA review): it is a municipal tax on
+    the company's own gross income, settled only in the ICA declaration. No 'ica'
+    tax line nor 511505 'gasto ICA' should appear on any individual movement."""
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(INCOME_CONTADOR_OUTPUT)
     result = tributario_node(state)
@@ -619,16 +622,127 @@ def test_ica_applied_for_income_transaction(mock_llm_fn, mock_rag_cls):
     ica_entry = next(
         (i for i in trib["impuestos"] if i["tipo_impuesto"] == "ica"), None
     )
-    assert ica_entry is not None, "ICA entry missing from impuestos"
-    assert Decimal(ica_entry["valor_impuesto"]) > Decimal("0")
+    assert ica_entry is None, "ICA must NOT be emitted per transaction"
 
     puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
-    assert "511505" in puc_codes, (
-        "Gasto ICA admin (511505) missing from asientos_enriquecidos"
+    assert "511505" not in puc_codes, (
+        "Gasto ICA (511505) must NOT be injected per transaction"
     )
-    assert "2368" in puc_codes, (
-        "ICA por Pagar (2368) missing from asientos_enriquecidos"
+
+
+RECIBO_CAJA_CONTADOR_OUTPUT = {
+    "fecha_registro": "2026-03-07",
+    "tipo_documento": "recibo_caja",
+    "descripcion_general": "Recibo de caja RC-001",
+    "asientos": [
+        {
+            "cuenta_puc": "1110",
+            "nombre_cuenta": "Bancos",
+            "tipo_movimiento": "debito",
+            "valor": 1000000,
+            "descripcion": "Recaudo",
+        },
+        {
+            "cuenta_puc": "130505",
+            "nombre_cuenta": "Clientes",
+            "tipo_movimiento": "credito",
+            "valor": 1000000,
+            "descripcion": "Cancelación factura",
+        },
+    ],
+    "total_debitos": 1000000,
+    "total_creditos": 1000000,
+}
+
+
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.get_llm_client")
+def test_recibo_caja_cobro_cartera_is_tax_neutral(mock_llm_fn, mock_rag_cls):
+    """A recibo de caja cobro_cartera only collects an existing invoice — IVA and
+    retenciones were booked on the original factura, so none are applied here."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(RECIBO_CAJA_CONTADOR_OUTPUT)
+    state["document_classification"] = {"doc_type": "recibo_caja"}
+    state["source_document"] = {"tipo_recibo": "cobro_cartera"}
+
+    result = tributario_node(state)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    assert trib["aplica_impuestos"] is False
+    assert trib["impuestos"] == []
+    puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
+    assert "240805" not in puc_codes  # no IVA generado
+    assert "135515" not in puc_codes  # no retefuente recibida
+
+
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.get_llm_client")
+def test_recibo_caja_venta_directa_applies_sale_taxes(mock_llm_fn, mock_rag_cls):
+    """A recibo de caja venta_directa is a sale without a prior invoice → seller-side
+    taxes (IVA generado) apply."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(INCOME_CONTADOR_OUTPUT)
+    state["document_classification"] = {"doc_type": "recibo_caja"}
+    state["source_document"] = {"tipo_recibo": "venta_directa"}
+
+    result = tributario_node(state)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    assert trib["aplica_impuestos"] is True
+    iva = next(
+        (i for i in trib["impuestos"] if i["tipo_impuesto"].lower() == "iva"), None
     )
+    assert iva is not None and iva["cuenta_puc"] == "240805"  # IVA generado (venta)
+
+
+DOC_SOPORTE_CONTADOR_OUTPUT = {
+    "fecha_registro": "2026-03-07",
+    "tipo_documento": "documento_soporte",
+    "descripcion_general": "Documento soporte servicios",
+    "asientos": [
+        {
+            "cuenta_puc": "511525",
+            "nombre_cuenta": "Servicios técnicos",
+            "tipo_movimiento": "debito",
+            "valor": 1000000,
+            "descripcion": "Servicio",
+        },
+        {
+            "cuenta_puc": "220505",
+            "nombre_cuenta": "Proveedores",
+            "tipo_movimiento": "credito",
+            "valor": 1000000,
+            "descripcion": "CxP",
+        },
+    ],
+    "total_debitos": 1000000,
+    "total_creditos": 1000000,
+}
+
+
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.get_llm_client")
+def test_documento_soporte_no_iva_descontable(mock_llm_fn, mock_rag_cls):
+    """Documento soporte providers are not IVA-responsible → no IVA descontable
+    (240802), even if the doc shows IVA; the output flags it for review."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(DOC_SOPORTE_CONTADOR_OUTPUT)
+    state["document_classification"] = {"doc_type": "documento_soporte"}
+    state["source_document"] = {"totales": {"total_iva": 190000}}
+
+    result = tributario_node(state)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    iva = next(
+        (i for i in trib["impuestos"] if i["tipo_impuesto"].lower() == "iva"), None
+    )
+    assert iva is None, "documento_soporte must not produce IVA descontable"
+    puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
+    assert "240802" not in puc_codes
+    assert "REVISAR" in trib["observaciones"]
 
 
 @patch("app.services.db_service.get_company_settings")

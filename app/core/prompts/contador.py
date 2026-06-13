@@ -69,7 +69,9 @@ _DOC_GUIDANCE: dict[str, str] = {
         "- 510530 Aportes ARP    - 510533 Aportes pensión    - 511505 Honorarios\n"
         "- 511510 Comisiones     - 511525 Servicios técnicos - 511595 Otros honorarios\n"
         "- 513025 Combustibles   - 513540 Servicios públicos - 514505 Mantenimiento\n"
-        "- 519520 Cuotas afiliación - 521505 ICA gasto ventas - 529505 Diversos\n"
+        "- 519520 Cuotas afiliación - 529505 Diversos\n"
+        "  (NO uses cuentas de gasto ICA por transacción: el ICA propio se liquida "
+        "en la declaración municipal, no por documento)\n"
         "- 143005 Inventario     - 152405 Equipo cómputo     - 152805 Equipo oficina\n"
         "CLUBES DEPORTIVOS/SOCIALES (sostenimiento, cuotas extraordinarias, fomento "
         "deportivo, country clubs): usa 519520 Cuotas afiliación o 511595 Otros "
@@ -113,7 +115,9 @@ _DOC_GUIDANCE: dict[str, str] = {
         "- 510530 Aportes ARP    - 510533 Aportes pensión    - 511505 Honorarios\n"
         "- 511510 Comisiones     - 511525 Servicios técnicos - 511595 Otros honorarios\n"
         "- 513025 Combustibles   - 513540 Servicios públicos - 514505 Mantenimiento\n"
-        "- 519520 Cuotas afiliación - 521505 ICA gasto ventas - 529505 Diversos\n"
+        "- 519520 Cuotas afiliación - 529505 Diversos\n"
+        "  (NO uses cuentas de gasto ICA por transacción: el ICA propio se liquida "
+        "en la declaración municipal, no por documento)\n"
         "SOLO usa 5195 si el concepto es realmente ambiguo (último recurso)."
     ),
     "declaracion_iva": (
@@ -167,10 +171,11 @@ _DOC_GUIDANCE: dict[str, str] = {
         "- Validación: Σdébitos == Σcréditos == total del recibo."
     ),
     "documento_soporte": (
-        "REGLA DOCUMENTO SOPORTE: Pago a proveedor NO obligado a facturar. "
-        "Si el doc trae IVA explícito (totales.total_iva > 0), incluye D 240802 "
-        "(IVA descontable). Si el doc trae IVA=0 (régimen R-99-PN / responsabilidad ZZ), "
-        "NO incluyas 240802. Cuenta gasto según concepto:\n"
+        "REGLA DOCUMENTO SOPORTE: Pago a proveedor NO obligado a facturar y NO "
+        "responsable de IVA. NUNCA incluyas D 240802 (IVA descontable) — estos "
+        "proveedores no generan IVA descontable. Si el documento muestra un IVA, NO "
+        "lo descuentes (es dato sospechoso; el tributario lo marca para revisión). "
+        "Cuenta gasto según concepto:\n"
         "  - Administración de propiedad horizontal / edificios → 511595 o 511525\n"
         "  - Servicios técnicos especializados → 511525\n"
         "  - Honorarios profesionales → 511505\n"
