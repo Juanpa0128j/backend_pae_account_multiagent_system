@@ -276,6 +276,14 @@ _DOC_GUIDANCE: dict[str, str] = {
         "Si el total es positivo y nit_emisor == company_nit, clasificar como INGRESO. "
         "Usar la descripción del concepto y los items para elegir la cuenta PUC."
     ),
+    "nota_ajuste_contable": (
+        "NOTA DE AJUSTE CONTABLE: Preserve las cuentas PUC exactamente como aparecen en el "
+        "documento. No reclasifiques ni sustituyas ningún código. Valida que el asiento cuadre "
+        "(Σdébitos == Σcréditos). Si el documento trae `asientos_documento` o líneas con "
+        "cuenta_puc + tipo_movimiento + valor, transcríbelas tal cual. "
+        "Descripcion = concepto del ajuste indicado por el contador. "
+        "NUNCA inferir una cuenta diferente a la indicada en el documento fuente."
+    ),
 }
 
 

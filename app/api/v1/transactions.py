@@ -925,4 +925,164 @@ async def delete_transactions_by_ingest(
         _resync_derived_statements(db, company_nit)
 
     db.commit()
-    return {"deleted": len(txn_ids)}
+
+
+# ─── Manual nota de ajuste contable ──────────────────────────────────────────
+
+
+class AjusteLineRequest(BaseModel):
+    cuenta_puc: str
+    tipo_movimiento: str  # "debito" | "credito"
+    valor: float
+    descripcion: str = ""
+
+
+class ManualAjusteRequest(BaseModel):
+    company_nit: str
+    fecha: str  # ISO date string, e.g. "2026-06-13"
+    concepto: str
+    lines: List[AjusteLineRequest]
+
+
+class ManualAjusteResponse(BaseModel):
+    transaction_id: str
+    lines_created: int
+
+
+@router.post("/manual-ajuste", status_code=201, response_model=ManualAjusteResponse)
+@limiter.limit("60/minute")
+async def create_manual_ajuste(
+    request: Request,
+    body: ManualAjusteRequest,
+    db: Session = Depends(get_db),
+):
+    """Persist a CPA-prepared nota de ajuste contable directly to journal_entry_lines.
+
+    Validates double-entry balance (Σdébitos == Σcréditos) and requires at least
+    two lines. Skips the LLM pipeline entirely — accounts are trusted as-is.
+    """
+    from decimal import Decimal as D
+    import uuid
+    from datetime import datetime, timezone
+
+    from app.models.database import (
+        JournalEntryLine,
+        TransactionPosted,
+        TransactionPending,
+        TransactionStatus,
+    )
+    from app.services.nit_utils import normalize_nit
+
+    # ── validation ──────────────────────────────────────────────────────────
+    if len(body.lines) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="Una nota de ajuste requiere al menos dos líneas contables.",
+        )
+
+    total_debito = sum(
+        D(str(ln.valor)) for ln in body.lines if ln.tipo_movimiento == "debito"
+    )
+    total_credito = sum(
+        D(str(ln.valor)) for ln in body.lines if ln.tipo_movimiento == "credito"
+    )
+
+    if total_debito != total_credito:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"El asiento no cuadra: Σdébitos={total_debito} ≠ Σcréditos={total_credito}. "
+                "Corrija los valores antes de registrar."
+            ),
+        )
+
+    # ── parse fecha ─────────────────────────────────────────────────────────
+    try:
+        fecha_dt = datetime.fromisoformat(body.fecha).replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Fecha inválida: '{body.fecha}'. Use formato ISO (YYYY-MM-DD).",
+        )
+
+    company_nit_clean = normalize_nit(body.company_nit)
+    ajuste_id = str(uuid.uuid4())
+    pending_id = str(uuid.uuid4())
+
+    # ── create a synthetic TransactionPending stub (required FK) ─────────────
+    pending = TransactionPending(
+        id=pending_id,
+        company_nit=company_nit_clean,
+        nit_emisor=company_nit_clean,
+        nit_receptor=company_nit_clean,
+        total=float(total_debito),
+        descripcion=body.concepto,
+        status=TransactionStatus.POSTED,
+        raw_data={
+            "doc_type": "nota_ajuste_contable",
+            "concepto": body.concepto,
+            "manual_entry": True,
+        },
+    )
+    db.add(pending)
+
+    # ── create TransactionPosted ─────────────────────────────────────────────
+    # Use first debit account as the primary PUC for the posted record.
+    primary_cuenta = next(
+        (ln.cuenta_puc for ln in body.lines if ln.tipo_movimiento == "debito"),
+        body.lines[0].cuenta_puc,
+    )
+    posted = TransactionPosted(
+        id=ajuste_id,
+        transaction_pending_id=pending_id,
+        company_nit=company_nit_clean,
+        cuenta_puc=primary_cuenta,
+        puc_descripcion=body.concepto,
+        retefuente=D("0"),
+        reteica=D("0"),
+        iva=D("0"),
+        ica=D("0"),
+        provision_renta=D("0"),
+        neto_a_pagar=total_debito,
+        status=TransactionStatus.POSTED,
+        journal_entries_json=[
+            {
+                "cuenta_puc": ln.cuenta_puc,
+                "tipo_movimiento": ln.tipo_movimiento,
+                "valor": ln.valor,
+                "descripcion": ln.descripcion,
+            }
+            for ln in body.lines
+        ],
+    )
+    db.add(posted)
+
+    # ── create JournalEntryLines ─────────────────────────────────────────────
+    for ln in body.lines:
+        debito_val = D(str(ln.valor)) if ln.tipo_movimiento == "debito" else D("0")
+        credito_val = D(str(ln.valor)) if ln.tipo_movimiento == "credito" else D("0")
+        jel = JournalEntryLine(
+            transaction_posted_id=ajuste_id,
+            fecha=fecha_dt,
+            company_nit=company_nit_clean,
+            comprobante=f"NA-{ajuste_id[:8].upper()}",
+            cuenta_puc=ln.cuenta_puc,
+            descripcion=ln.descripcion or body.concepto,
+            debito=debito_val,
+            credito=credito_val,
+        )
+        db.add(jel)
+
+    db.commit()
+
+    logger.info(
+        "manual-ajuste: created transaction %s with %d lines for NIT %s",
+        ajuste_id,
+        len(body.lines),
+        company_nit_clean,
+    )
+
+    return ManualAjusteResponse(
+        transaction_id=ajuste_id,
+        lines_created=len(body.lines),
+    )
