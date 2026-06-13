@@ -32,6 +32,8 @@ from app.models.database import (
     ProcessStatus,
     ReteicaTarifa,
     PerdidaFiscalAcumulada,
+    SpecialTax,
+    SpecialTaxAccumulator,
     TarifaRenta,
     TaxBaseMinima,
     TaxConcept,
@@ -2955,6 +2957,7 @@ def upsert_national_rate(
     descripcion: str,
     norma_referencia: str,
     vigente_desde: date,
+    vigente_hasta: date | None = None,
 ) -> NationalRate:
     """Insert or update a NationalRate row keyed by code."""
     row = db.query(NationalRate).filter(NationalRate.code == code).first()
@@ -2965,6 +2968,7 @@ def upsert_national_rate(
             descripcion=descripcion,
             norma_referencia=norma_referencia,
             vigente_desde=vigente_desde,
+            vigente_hasta=vigente_hasta,
         )
         db.add(row)
     else:
@@ -2972,6 +2976,7 @@ def upsert_national_rate(
         row.descripcion = descripcion
         row.norma_referencia = norma_referencia
         row.vigente_desde = vigente_desde
+        row.vigente_hasta = vigente_hasta
     db.commit()
     db.refresh(row)
     return row
@@ -3014,6 +3019,7 @@ def upsert_company_rate_override(
     value: Decimal,
     norma_referencia: str | None,
     vigente_desde: date,
+    vigente_hasta: date | None = None,
     commit: bool = True,
 ) -> CompanyRateOverride:
     """Upsert a company-specific rate override."""
@@ -3028,6 +3034,226 @@ def upsert_company_rate_override(
     row.value = value
     row.norma_referencia = norma_referencia
     row.vigente_desde = vigente_desde
+    row.vigente_hasta = vigente_hasta
     _commit_or_flush(db, commit)
     db.refresh(row)
     return row
+
+
+# ── Special Taxes (Estampilla / Impuestos Especiales) ────────────────────────
+
+
+def create_special_tax(
+    db: Session,
+    company_nit: str,
+    code: str,
+    nombre: str,
+    rate: Decimal,
+    base_calc: str,
+    cuenta_gasto: str,
+    cuenta_por_pagar: str,
+    descripcion: str | None = None,
+    base_calc_formula: str | None = None,
+    applies_to_doc_types: list[str] | None = None,
+    es_entidad_publica_only: bool = False,
+    settlement: str = "per_transaction",
+    norma_referencia: str | None = None,
+    vigente_desde: date | None = None,
+    vigente_hasta: date | None = None,
+    activo: bool = True,
+    commit: bool = True,
+) -> SpecialTax:
+    """Create a new special tax configuration for the given company."""
+    row = SpecialTax(
+        company_nit=company_nit,
+        code=code,
+        nombre=nombre,
+        rate=rate,
+        base_calc=base_calc,
+        cuenta_gasto=cuenta_gasto,
+        cuenta_por_pagar=cuenta_por_pagar,
+        descripcion=descripcion,
+        base_calc_formula=base_calc_formula,
+        applies_to_doc_types=applies_to_doc_types or [],
+        es_entidad_publica_only=es_entidad_publica_only,
+        settlement=settlement,
+        norma_referencia=norma_referencia,
+        vigente_desde=vigente_desde,
+        vigente_hasta=vigente_hasta,
+        activo=activo,
+    )
+    db.add(row)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def list_active_special_taxes(
+    db: Session,
+    company_nit: str,
+    doc_type: str | None = None,
+    as_of_date: date | None = None,
+) -> list[SpecialTax]:
+    """Return active special taxes for a company, filtered by doc_type and date."""
+    today = as_of_date or date.today()
+    from sqlalchemy import or_
+
+    q = db.query(SpecialTax).filter(
+        SpecialTax.company_nit == company_nit,
+        SpecialTax.activo.is_(True),
+        or_(SpecialTax.vigente_desde.is_(None), SpecialTax.vigente_desde <= today),
+        or_(SpecialTax.vigente_hasta.is_(None), SpecialTax.vigente_hasta >= today),
+    )
+    rows = q.all()
+    if doc_type:
+        rows = [
+            r
+            for r in rows
+            if not r.applies_to_doc_types or doc_type in r.applies_to_doc_types
+        ]
+    return rows
+
+
+def get_special_tax(db: Session, special_tax_id: str) -> SpecialTax | None:
+    """Return a SpecialTax by id, or None."""
+    return db.query(SpecialTax).filter(SpecialTax.id == special_tax_id).first()
+
+
+def list_special_taxes(db: Session, company_nit: str) -> list[SpecialTax]:
+    """Return all special taxes for a company (active and inactive)."""
+    return (
+        db.query(SpecialTax)
+        .filter(SpecialTax.company_nit == company_nit)
+        .order_by(SpecialTax.code)
+        .all()
+    )
+
+
+def update_special_tax(
+    db: Session,
+    special_tax_id: str,
+    commit: bool = True,
+    **fields,
+) -> SpecialTax | None:
+    """Update fields on an existing SpecialTax. Returns None if not found."""
+    row = db.query(SpecialTax).filter(SpecialTax.id == special_tax_id).first()
+    if row is None:
+        return None
+    for key, val in fields.items():
+        setattr(row, key, val)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def delete_special_tax(db: Session, special_tax_id: str) -> bool:
+    """Soft-delete by setting activo=False. Returns True if found."""
+    row = db.query(SpecialTax).filter(SpecialTax.id == special_tax_id).first()
+    if row is None:
+        return False
+    row.activo = False
+    db.commit()
+    return True
+
+
+def get_or_create_accumulator(
+    db: Session,
+    special_tax_id,
+    company_nit: str,
+    year: int,
+    month: int,
+    commit: bool = True,
+) -> SpecialTaxAccumulator:
+    """Return the accumulator for the given period, creating it if absent."""
+    row = (
+        db.query(SpecialTaxAccumulator)
+        .filter_by(
+            special_tax_id=special_tax_id,
+            company_nit=company_nit,
+            period_year=year,
+            period_month=month,
+        )
+        .first()
+    )
+    if row is None:
+        row = SpecialTaxAccumulator(
+            special_tax_id=special_tax_id,
+            company_nit=company_nit,
+            period_year=year,
+            period_month=month,
+            accumulated_base=Decimal("0"),
+            accumulated_tax=Decimal("0"),
+            liquidated=False,
+        )
+        db.add(row)
+        _commit_or_flush(db, commit)
+        db.refresh(row)
+    return row
+
+
+def add_to_accumulator(
+    db: Session,
+    special_tax_id,
+    company_nit: str,
+    year: int,
+    month: int,
+    base_amount: Decimal,
+    tax_amount: Decimal,
+) -> SpecialTaxAccumulator:
+    """Add base and tax amounts to the period accumulator."""
+    row = get_or_create_accumulator(
+        db, special_tax_id, company_nit, year, month, commit=False
+    )
+    row.accumulated_base = Decimal(str(row.accumulated_base)) + Decimal(
+        str(base_amount)
+    )
+    row.accumulated_tax = Decimal(str(row.accumulated_tax)) + Decimal(str(tax_amount))
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def liquidate_accumulator(
+    db: Session,
+    special_tax_id,
+    company_nit: str,
+    year: int,
+    month: int,
+) -> SpecialTaxAccumulator | None:
+    """Mark accumulator as liquidated. Returns None if not found or already liquidated."""
+    from datetime import datetime as _dt
+
+    row = (
+        db.query(SpecialTaxAccumulator)
+        .filter_by(
+            special_tax_id=special_tax_id,
+            company_nit=company_nit,
+            period_year=year,
+            period_month=month,
+        )
+        .first()
+    )
+    if row is None or row.liquidated:
+        return row
+    row.liquidated = True
+    row.liquidated_at = _dt.now(tz=timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_accumulators(
+    db: Session,
+    special_tax_id,
+    company_nit: str,
+    only_unliquidated: bool = False,
+) -> list[SpecialTaxAccumulator]:
+    """List all accumulator periods for a special tax."""
+    q = db.query(SpecialTaxAccumulator).filter_by(
+        special_tax_id=special_tax_id, company_nit=company_nit
+    )
+    if only_unliquidated:
+        q = q.filter(SpecialTaxAccumulator.liquidated.is_(False))
+    return q.order_by(
+        SpecialTaxAccumulator.period_year, SpecialTaxAccumulator.period_month
+    ).all()

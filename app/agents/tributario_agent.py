@@ -23,6 +23,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.llm_client import get_llm_client
+from app.services import db_service
 from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
@@ -604,6 +605,140 @@ def _extract_source_taxes(source_doc: dict) -> dict:
     return result
 
 
+def _apply_special_taxes(
+    db,
+    special_taxes: list,
+    base_gravable: "Decimal",
+    total_pago: "Decimal",
+    es_entidad_publica: bool,
+    transaction_date: "date",
+    company_nit: str,
+) -> "tuple[list[dict], list[dict]]":
+    """
+    Apply configured special taxes (estampilla, timbre, etc.) to a transaction.
+
+    Returns:
+        (impuestos, journal_lines) — impuestos for TributarioOutput.impuestos,
+        journal_lines to append to asientos_enriquecidos (only for per_transaction).
+        For periodic settlement, accumulates in SpecialTaxAccumulator — no lines.
+    """
+    result_impuestos: list[dict] = []
+    result_lines: list[dict] = []
+
+    for tax in special_taxes:
+        # Skip if this tax only applies to public entities and this is not one
+        if tax.es_entidad_publica_only and not es_entidad_publica:
+            logger.debug(
+                "Tributario: skipping special tax %s — es_entidad_publica=False",
+                tax.code,
+            )
+            continue
+
+        # Compute base
+        if tax.base_calc == "total_pago":
+            base = total_pago
+        elif tax.base_calc == "base_gravable":
+            base = base_gravable
+        elif tax.base_calc == "custom" and tax.base_calc_formula:
+            try:
+                # Restricted eval: only arithmetic on two numeric variables
+                allowed_names = {
+                    "total_pago": float(total_pago),
+                    "base_gravable": float(base_gravable),
+                }
+                base = Decimal(
+                    str(
+                        eval(  # noqa: S307  # restricted — no builtins, no imports
+                            tax.base_calc_formula,
+                            {"__builtins__": {}},
+                            allowed_names,
+                        )
+                    )
+                )
+            except Exception as formula_err:
+                logger.warning(
+                    "Tributario: special tax %s formula eval failed (%s), using total_pago",
+                    tax.code,
+                    formula_err,
+                )
+                base = total_pago
+        else:
+            base = total_pago
+
+        tax_amount = (base * Decimal(str(tax.rate))).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+        if tax_amount <= Decimal("0"):
+            continue
+
+        if tax.settlement == "per_transaction":
+            result_impuestos.append(
+                {
+                    "tipo_impuesto": tax.code.lower(),
+                    "nombre": tax.nombre,
+                    "base_gravable": str(base),
+                    "tarifa_porcentaje": str(Decimal(str(tax.rate)) * 100),
+                    "valor_impuesto": str(tax_amount),
+                    "cuenta_puc": tax.cuenta_gasto,
+                    "norma_referencia": tax.norma_referencia,
+                }
+            )
+            # Debit gasto
+            result_lines.append(
+                {
+                    "cuenta_puc": tax.cuenta_gasto,
+                    "nombre_cuenta": tax.nombre,
+                    "descripcion": f"{tax.nombre} — {tax.norma_referencia or 'impuesto especial'}",
+                    "tipo_movimiento": "debito",
+                    "valor": str(tax_amount),
+                }
+            )
+            # Credit por pagar
+            result_lines.append(
+                {
+                    "cuenta_puc": tax.cuenta_por_pagar,
+                    "nombre_cuenta": f"{tax.nombre} por pagar",
+                    "descripcion": f"{tax.nombre} por pagar",
+                    "tipo_movimiento": "credito",
+                    "valor": str(tax_amount),
+                }
+            )
+            logger.info(
+                "Tributario: special tax %s (per_transaction) = %s on base %s",
+                tax.code,
+                tax_amount,
+                base,
+            )
+        elif tax.settlement == "periodic":
+            try:
+                db_service.add_to_accumulator(
+                    db,
+                    tax.id,
+                    company_nit,
+                    transaction_date.year,
+                    transaction_date.month,
+                    base,
+                    tax_amount,
+                )
+                logger.info(
+                    "Tributario: special tax %s (periodic) accumulated %s for %s-%02d",
+                    tax.code,
+                    tax_amount,
+                    transaction_date.year,
+                    transaction_date.month,
+                )
+            except Exception as acc_err:
+                logger.warning(
+                    "Tributario: failed to accumulate special tax %s: %s",
+                    tax.code,
+                    acc_err,
+                )
+            # No journal lines for periodic settlement
+
+    return result_impuestos, result_lines
+
+
 def tributario_node(state: AgentState) -> AgentState:
     """
     Tributario worker node — replaces Sprint-12 stub.
@@ -650,6 +785,8 @@ def tributario_node(state: AgentState) -> AgentState:
         "extracto_bancario",
         # Journal book — entries pre-exist; tributario must not double-apply taxes
         "libro_diario",
+        # Adjustment notes — CPA pre-structured entries; no new tax events
+        "nota_ajuste_contable",
     }
     doc_type = (state.get("document_classification") or {}).get("doc_type", "")
 
@@ -1502,6 +1639,65 @@ def tributario_node(state: AgentState) -> AgentState:
         # It is a municipal tax on the company's own gross income, settled in the
         # ICA declaration (_build_ica), not on individual invoices/receipts/CC/DS
         # (CPA review). No ICA lines are added to the journal entry here.
+
+        # ------------------------------------------------------------------
+        # Step 6b — Special taxes (estampilla, timbre, etc.)
+        # ------------------------------------------------------------------
+        _special_impuestos: list[dict] = []
+        _special_lines: list[dict] = []
+        try:
+            _es_entidad_publica = bool(
+                state.get("es_entidad_publica")
+                or (state.get("source_document") or {}).get("es_entidad_publica")
+            )
+            _tx_date_raw = state.get("period_start")
+            if _tx_date_raw and isinstance(_tx_date_raw, str):
+                try:
+                    from datetime import datetime as _dtt
+
+                    _tx_date = _dtt.fromisoformat(_tx_date_raw[:10]).date()
+                except (ValueError, TypeError):
+                    _tx_date = date.today()
+            elif isinstance(_tx_date_raw, date):
+                _tx_date = _tx_date_raw
+            else:
+                _tx_date = date.today()
+
+            _db_st = SessionLocal()
+            try:
+                _active_special_taxes = db_service.list_active_special_taxes(
+                    _db_st,
+                    company_nit or "",
+                    doc_type=doc_type,
+                    as_of_date=_tx_date,
+                )
+                if _active_special_taxes:
+                    _special_impuestos, _special_lines = _apply_special_taxes(
+                        db=_db_st,
+                        special_taxes=_active_special_taxes,
+                        base_gravable=base_gravable,
+                        total_pago=base_gravable,
+                        es_entidad_publica=_es_entidad_publica,
+                        transaction_date=_tx_date,
+                        company_nit=company_nit or "",
+                    )
+            finally:
+                _db_st.close()
+        except Exception as _st_err:
+            logger.warning(
+                "Tributario: special taxes lookup failed (%s), continuing without",
+                _st_err,
+            )
+
+        if _special_impuestos:
+            impuestos.extend(_special_impuestos)
+            logger.info(
+                "Tributario: %d special tax(es) applied totalling %s",
+                len(_special_impuestos),
+                sum(Decimal(i["valor_impuesto"]) for i in _special_impuestos),
+            )
+        if _special_lines:
+            asientos_enriquecidos.extend(_special_lines)
 
         # ------------------------------------------------------------------
         # Step 7 — Build TributarioOutput-compatible dict

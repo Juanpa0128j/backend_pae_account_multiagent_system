@@ -22,6 +22,7 @@ from app.api.v1 import (
     chat,
     puc as puc_router_mod,
     auth as auth_router_mod,
+    special_taxes as special_taxes_router_mod,
 )
 from app.core.config import settings
 from app.core.limiter import limiter
@@ -177,6 +178,11 @@ app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboar
 app.include_router(books.router, prefix="/api/v1/books", tags=["Libros"])
 app.include_router(
     settings_router_mod.router, prefix="/api/v1/settings", tags=["Configuración"]
+)
+app.include_router(
+    special_taxes_router_mod.router,
+    prefix="/api/v1/settings",
+    tags=["Impuestos Especiales"],
 )
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat Financiero"])
 app.include_router(puc_router_mod.router, prefix="/api/v1/puc", tags=["PUC"])
