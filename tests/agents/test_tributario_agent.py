@@ -264,6 +264,23 @@ def test_non_nota_returns_none():
     assert _nota_is_venta(st) is None
 
 
+def test_nota_is_venta_does_not_use_nit_receptor_as_tenant():
+    # state["company_nit"] is None; nit_receptor="900111222" is the counterpart NIT,
+    # nit_emisor="800999888" is the supplier. Without a real company_nit fallback,
+    # direction must be None (indeterminate) — the bug would wrongly treat
+    # nit_receptor as the tenant and return False (compra).
+    st = _make_state(VALID_CONTADOR_OUTPUT)
+    st["document_classification"] = {"doc_type": "nota_credito"}
+    st["source_document"] = {
+        "nit_emisor": "800999888",
+        "nit_receptor": "900111222",
+    }
+    st["company_nit"] = None
+    # No raw_transactions with company_nit either — truly unknown tenant.
+    st["raw_transactions"] = [{"nit_receptor": "900111222", "monto": 100}]
+    assert _nota_is_venta(st) is None
+
+
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
 def test_nota_credito_venta_routes_iva_generado(mock_rag_cls, mock_llm_fn):

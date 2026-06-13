@@ -145,7 +145,7 @@ def _nota_is_venta(state: AgentState) -> bool | None:
     if tenant_nit is None:
         for tx in state.get("raw_transactions") or []:
             if isinstance(tx, dict):
-                tenant_nit = _root(tx.get("company_nit") or tx.get("nit_receptor"))
+                tenant_nit = _root(tx.get("company_nit"))
                 if tenant_nit:
                     break
 
