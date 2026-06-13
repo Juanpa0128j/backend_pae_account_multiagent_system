@@ -852,6 +852,13 @@ def api_tax_calendar(
     year: int = Query(2026, description="Tax year"),
     iva_regime: str = Query("bimestral", description="bimestral | cuatrimestral"),
     alert_days: int = Query(30, description="Days-until threshold for alert flag"),
+    ica_periodicidad: Optional[str] = Query(
+        None,
+        description=(
+            "ICA municipal opcional: None | anual | bimestral. Fechas ESTIMADAS "
+            "(confirme calendario municipal)."
+        ),
+    ),
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
@@ -885,6 +892,7 @@ def api_tax_calendar(
             iva_regime=iva_regime,
             alert_days=alert_days,
             today=today,
+            ica_periodicidad=ica_periodicidad,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

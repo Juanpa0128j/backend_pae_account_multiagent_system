@@ -98,16 +98,64 @@ CUENTA_RETEICA_RECIBIDA = "135517"  # ReteICA a favor (activo)
 
 
 # Doc types where the company is the SELLER. Buyer-side doc types fall through to
-# compra defaults. recibo_caja is NOT here: it is routed by ``tipo_recibo`` — a
-# 'cobro_cartera' is tax-neutral (the original factura already booked the taxes),
-# only a 'venta_directa' is treated as a sale (see the node body).
+# compra defaults. Notes:
+#   - recibo_caja is NOT here: routed by ``tipo_recibo`` (cobro_cartera tax-neutral,
+#     venta_directa = sale). See the node body.
+#   - nota_credito / nota_debito are NOT here either: a credit/debit note can adjust
+#     a SALE or a PURCHASE, so direction is resolved per-document by comparing the
+#     emisor/receptor NIT to the tenant's NIT (``_nota_is_venta``), not by doc_type.
 _VENTA_DOC_TYPES = frozenset(
     {
         "factura_venta",
-        "nota_debito_venta",
-        "nota_credito_venta",
     }
 )
+
+_NOTA_DOC_TYPES = frozenset({"nota_credito", "nota_debito"})
+
+
+def _nota_is_venta(state: AgentState) -> bool | None:
+    """Resolve whether a nota crédito/débito adjusts a SALE (True) or PURCHASE (False).
+
+    A credit/debit note inherits the direction of the invoice it adjusts. We
+    detect it by comparing the document's emisor/receptor NIT to the tenant's
+    NIT (the company that owns the upload):
+      - emisor == tenant  → the company issued the note → VENTA
+      - receptor == tenant → the company received the note → COMPRA
+    Returns ``None`` when the doc is not a nota or the direction is undeterminable
+    (caller then falls back to the conservative COMPRA default).
+    """
+    from app.services.nit_utils import normalize_optional_nit
+
+    def _root(value: str | None) -> str | None:
+        # Normalize + drop the verification digit so "900123456" == "900123456-7".
+        normalized = normalize_optional_nit(value)
+        return normalized.split("-", 1)[0] if normalized else None
+
+    doc_type = (state.get("document_classification") or {}).get("doc_type", "")
+    if doc_type not in _NOTA_DOC_TYPES:
+        return None
+
+    src = state.get("source_document") or {}
+    emisor = src.get("emisor") if isinstance(src.get("emisor"), dict) else {}
+    receptor = src.get("receptor") if isinstance(src.get("receptor"), dict) else {}
+    emisor_nit = _root(src.get("nit_emisor") or (emisor or {}).get("nit"))
+    receptor_nit = _root(src.get("nit_receptor") or (receptor or {}).get("nit"))
+
+    tenant_nit = _root(state.get("company_nit"))
+    if tenant_nit is None:
+        for tx in state.get("raw_transactions") or []:
+            if isinstance(tx, dict):
+                tenant_nit = _root(tx.get("company_nit") or tx.get("nit_receptor"))
+                if tenant_nit:
+                    break
+
+    if tenant_nit is None:
+        return None
+    if emisor_nit is not None and emisor_nit == tenant_nit:
+        return True
+    if receptor_nit is not None and receptor_nit == tenant_nit:
+        return False
+    return None
 
 
 def _tax_accounts_for(
@@ -705,11 +753,17 @@ def tributario_node(state: AgentState) -> AgentState:
 
     # Route tax accounts (IVA, retenciones, ICA) by document direction (venta vs compra-like).
     # A recibo_caja reaches this point only as 'venta_directa' (cobro_cartera returned
-    # tax-neutral above), so it is seller-side.
-    is_venta = doc_type in _VENTA_DOC_TYPES or doc_type == "recibo_caja"
+    # tax-neutral above), so it is seller-side. A nota crédito/débito adjusts either a
+    # sale or a purchase — its direction is resolved per-document by NIT comparison.
+    nota_venta = _nota_is_venta(state)
+    if nota_venta is not None:
+        is_venta = nota_venta
+    else:
+        is_venta = doc_type in _VENTA_DOC_TYPES or doc_type == "recibo_caja"
     logger.info(
-        "Tributario: doc_type=%s → routing %s",
+        "Tributario: doc_type=%s%s → routing %s",
         doc_type or "<empty>",
+        " (nota dir resuelta por NIT)" if nota_venta is not None else "",
         "VENTA" if is_venta else "COMPRA",
     )
 

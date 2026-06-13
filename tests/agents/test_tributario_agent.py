@@ -28,6 +28,7 @@ from app.agents.tributario_agent import (
     _calc_reteica,
     _calc_iva,
     _has_iva_in_asientos,
+    _nota_is_venta,
 )
 from app.agents.state import AgentState
 from app.models.llm_schemas import TaxJustification
@@ -220,6 +221,64 @@ def test_detect_transaction_type_honorarios_by_keyword():
         )
         == "honorarios"
     )
+
+
+# ─── #6 Notas crédito/débito: dirección venta vs compra ───────────────────────
+
+
+def _nota_state(doc_type, *, emisor_nit=None, receptor_nit=None, company_nit=None):
+    st = _make_state(VALID_CONTADOR_OUTPUT)
+    st["document_classification"] = {"doc_type": doc_type}
+    st["source_document"] = {"nit_emisor": emisor_nit, "nit_receptor": receptor_nit}
+    st["company_nit"] = company_nit
+    return st
+
+
+def test_nota_credito_emisor_is_tenant_is_venta():
+    # The company issued the credit note (emisor == tenant) → adjusts a SALE.
+    st = _nota_state("nota_credito", emisor_nit="900123456-7", company_nit="900123456")
+    assert _nota_is_venta(st) is True
+
+
+def test_nota_debito_receptor_is_tenant_is_compra():
+    # The company received the debit note from a supplier → adjusts a PURCHASE.
+    st = _nota_state(
+        "nota_debito",
+        emisor_nit="800111222",
+        receptor_nit="900123456",
+        company_nit="900123456-7",
+    )
+    assert _nota_is_venta(st) is False
+
+
+def test_nota_direction_unknown_returns_none():
+    # Neither emisor nor receptor matches the tenant → undeterminable.
+    st = _nota_state(
+        "nota_credito", emisor_nit="111", receptor_nit="222", company_nit="900123456"
+    )
+    assert _nota_is_venta(st) is None
+
+
+def test_non_nota_returns_none():
+    st = _nota_state("factura_venta", emisor_nit="900123456", company_nit="900123456")
+    assert _nota_is_venta(st) is None
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_nota_credito_venta_routes_iva_generado(mock_rag_cls, mock_llm_fn):
+    """A sale-side credit note routes IVA to 240805 (generado), not 240802."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(VALID_CONTADOR_OUTPUT)
+    state["document_classification"] = {"doc_type": "nota_credito"}
+    state["source_document"] = {"nit_emisor": "900123456", "nit_receptor": "800111222"}
+    state["company_nit"] = "900123456"
+    result = tributario_node(state)
+
+    impuestos = result["tributario_output"]["impuestos"]
+    iva = next((i for i in impuestos if i["tipo_impuesto"] == "IVA"), None)
+    assert iva is not None
+    assert iva["cuenta_puc"] == "240805"
 
 
 def test_detect_transaction_type_arrendamiento():
