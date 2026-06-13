@@ -1140,6 +1140,34 @@ def tributario_node(state: AgentState) -> AgentState:
         else:
             _fiscal_year = date.today().year
 
+        # DB overlay: apply get_effective_rate for each retefuente key.
+        # Runs after _as_of_date is resolved so temporal windows are respected.
+        # Allows national_rates / company_rate_overrides to supersede hardcoded constants.
+        try:
+            _db4 = SessionLocal()
+            try:
+                for _rate_tipo in (
+                    "servicios",
+                    "bienes",
+                    "arrendamiento",
+                    "honorarios",
+                ):
+                    _db_rate = _db_svc.get_effective_rate(
+                        _db4,
+                        f"retefuente_{_rate_tipo}",
+                        company_nit,
+                        _as_of_date,
+                    )
+                    if _db_rate is not None:
+                        tasa_retefuente_efectiva[_rate_tipo] = _db_rate
+            finally:
+                _db4.close()
+        except Exception as _rate_err:
+            logger.warning(
+                "Tributario: get_effective_rate DB lookup failed (%s), keeping current rates",
+                _rate_err,
+            )
+
         _uvt_value: Decimal = UVT_FALLBACK
         _base_minima_retefuente: dict[str, Decimal] = dict(BASE_MINIMA_RETEFUENTE_UVT)
         _base_minima_reteica: Decimal = BASE_MINIMA_RETEICA_UVT

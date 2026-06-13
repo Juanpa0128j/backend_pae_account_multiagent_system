@@ -936,3 +936,154 @@ def test_process_mode_without_taxes_does_not_crash(
     assert Decimal(str(result["tributario_output"].get("total_impuestos"))) == Decimal(
         "0"
     )
+
+
+# ─── Phase B: get_effective_rate DB overlay in tributario ─────────────────────
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.db_service.get_effective_rate")
+@patch("app.services.db_service.get_company_settings")
+@patch("app.core.database.SessionLocal")
+def test_retefuente_uses_db_rate_when_available(
+    mock_session_local,
+    mock_get_settings,
+    mock_get_effective_rate,
+    mock_rag_cls,
+    mock_llm_fn,
+):
+    """get_effective_rate returns 6% → retefuente computed at 6%, not 4%."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_settings.return_value = SimpleNamespace(
+        tasa_retefuente_servicios=Decimal("0.04"),
+        tasa_retefuente_bienes=Decimal("0.025"),
+        tasa_retefuente_arrendamiento=Decimal("0.035"),
+        tasa_reteica=Decimal("0.0069"),
+        tasa_iva_general=Decimal("0.19"),
+        iva_responsable=True,
+        tasa_ica=Decimal("0.0069"),
+        tasa_renta=Decimal("0.35"),
+    )
+    # Return 6% for honorarios (VALID_CONTADOR_OUTPUT uses PUC 5110 = honorarios),
+    # None for everything else
+    mock_get_effective_rate.side_effect = lambda db, code, nit, as_of: (
+        Decimal("0.06") if code == "retefuente_honorarios" else None
+    )
+
+    estado = _make_state(VALID_CONTADOR_OUTPUT)
+    estado["company_nit"] = "800999888"
+    estado["raw_transactions"] = [{"nit_receptor": "800999888", "fecha": "2026-06-01"}]
+    estado["period_start"] = "2026-06-01"
+
+    result = tributario_node(estado)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    retefuente = next(
+        (i for i in trib["impuestos"] if "retefuente" in i["tipo_impuesto"].lower()),
+        None,
+    )
+    assert retefuente is not None
+    base = Decimal(str(VALID_CONTADOR_OUTPUT["asientos"][0]["valor"]))
+    expected = (base * Decimal("0.06")).quantize(Decimal("0.01"))
+    assert Decimal(str(retefuente["valor_impuesto"])) == expected
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.db_service.get_effective_rate")
+@patch("app.services.db_service.get_company_settings")
+@patch("app.core.database.SessionLocal")
+def test_retefuente_falls_back_to_constant_when_db_returns_none(
+    mock_session_local,
+    mock_get_settings,
+    mock_get_effective_rate,
+    mock_rag_cls,
+    mock_llm_fn,
+):
+    """get_effective_rate returns None → falls back to honorarios constant 11%."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_settings.return_value = SimpleNamespace(
+        tasa_retefuente_servicios=Decimal("0.04"),
+        tasa_retefuente_bienes=Decimal("0.025"),
+        tasa_retefuente_arrendamiento=Decimal("0.035"),
+        tasa_reteica=Decimal("0.0069"),
+        tasa_iva_general=Decimal("0.19"),
+        iva_responsable=True,
+        tasa_ica=Decimal("0.0069"),
+        tasa_renta=Decimal("0.35"),
+    )
+    mock_get_effective_rate.return_value = None
+
+    estado = _make_state(VALID_CONTADOR_OUTPUT)
+    estado["company_nit"] = "800999888"
+    estado["raw_transactions"] = [{"nit_receptor": "800999888", "fecha": "2026-06-01"}]
+    estado["period_start"] = "2026-06-01"
+
+    result = tributario_node(estado)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    retefuente = next(
+        (i for i in trib["impuestos"] if "retefuente" in i["tipo_impuesto"].lower()),
+        None,
+    )
+    assert retefuente is not None
+    base = Decimal(str(VALID_CONTADOR_OUTPUT["asientos"][0]["valor"]))
+    # VALID_CONTADOR_OUTPUT uses PUC 5110 (honorarios) → constant 11% when DB returns None
+    expected = (base * Decimal("0.11")).quantize(Decimal("0.01"))
+    assert Decimal(str(retefuente["valor_impuesto"])) == expected
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.db_service.get_effective_rate")
+@patch("app.services.db_service.get_company_settings")
+@patch("app.core.database.SessionLocal")
+def test_retefuente_passes_transaction_fecha_as_as_of_date(
+    mock_session_local,
+    mock_get_settings,
+    mock_get_effective_rate,
+    mock_rag_cls,
+    mock_llm_fn,
+):
+    """get_effective_rate must be called with as_of_date = parsed period_start date."""
+    from datetime import date as _date
+
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_settings.return_value = SimpleNamespace(
+        tasa_retefuente_servicios=Decimal("0.04"),
+        tasa_retefuente_bienes=Decimal("0.025"),
+        tasa_retefuente_arrendamiento=Decimal("0.035"),
+        tasa_reteica=Decimal("0.0069"),
+        tasa_iva_general=Decimal("0.19"),
+        iva_responsable=True,
+        tasa_ica=Decimal("0.0069"),
+        tasa_renta=Decimal("0.35"),
+    )
+    mock_get_effective_rate.return_value = None
+
+    estado = _make_state(VALID_CONTADOR_OUTPUT)
+    estado["company_nit"] = "800999888"
+    estado["raw_transactions"] = [{"nit_receptor": "800999888", "fecha": "2026-06-01"}]
+    estado["period_start"] = "2026-06-01"
+
+    tributario_node(estado)
+
+    # Confirm at least one call used as_of_date = date(2026, 6, 1)
+    calls = mock_get_effective_rate.call_args_list
+    assert len(calls) > 0
+    as_of_dates = [
+        c.args[3] if len(c.args) > 3 else c.kwargs.get("as_of_date") for c in calls
+    ]
+    assert _date(2026, 6, 1) in as_of_dates

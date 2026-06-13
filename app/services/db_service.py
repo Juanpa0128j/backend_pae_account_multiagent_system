@@ -2940,6 +2940,7 @@ def list_national_rates(db: Session) -> list[dict]:
             "descripcion": r.descripcion,
             "norma_referencia": r.norma_referencia,
             "vigente_desde": r.vigente_desde.isoformat() if r.vigente_desde else None,
+            "vigente_hasta": r.vigente_hasta.isoformat() if r.vigente_hasta else None,
         }
         for r in rows
     ]
@@ -2998,7 +2999,10 @@ def get_effective_rates(db: Session, company_nit: str) -> list[dict]:
         .filter(CompanyRateOverride.company_nit == company_nit)
         .all()
     )
-    result = {code: {**data, "overridden": False} for code, data in nationals.items()}
+    result = {
+        code: {**data, "overridden": False, "vigente_hasta": None}
+        for code, data in nationals.items()
+    }
     for ov in overrides:
         if ov.rate_code in result:
             result[ov.rate_code].update(
@@ -3006,10 +3010,64 @@ def get_effective_rates(db: Session, company_nit: str) -> list[dict]:
                     "value": float(ov.value),
                     "norma_referencia": ov.norma_referencia
                     or result[ov.rate_code]["norma_referencia"],
+                    "vigente_desde": (
+                        ov.vigente_desde.isoformat()
+                        if ov.vigente_desde
+                        else result[ov.rate_code]["vigente_desde"]
+                    ),
+                    "vigente_hasta": (
+                        ov.vigente_hasta.isoformat() if ov.vigente_hasta else None
+                    ),
                     "overridden": True,
                 }
             )
     return list(result.values())
+
+
+def get_effective_rate(
+    db: Session,
+    code: str,
+    company_nit: str | None,
+    as_of_date: "date | None",
+) -> "Decimal | None":
+    """Return effective rate for code on as_of_date.
+
+    Resolution order:
+    1. CompanyRateOverride for (company_nit, code) if date window matches
+    2. NationalRate for code if date window matches
+    3. None — caller falls back to hardcoded constant
+
+    Date window: vigente_desde <= as_of_date AND (vigente_hasta IS NULL OR
+    vigente_hasta >= as_of_date).
+    If as_of_date is None, only open-ended rows (vigente_hasta IS NULL) qualify.
+    """
+
+    def _in_window(row_desde: "date | None", row_hasta: "date | None") -> bool:
+        if as_of_date is None:
+            # Only open-ended rows match when date unknown
+            return row_hasta is None
+        if row_desde is not None and row_desde > as_of_date:
+            return False
+        if row_hasta is not None and row_hasta < as_of_date:
+            return False
+        return True
+
+    # 1. Company override
+    if company_nit:
+        ov = (
+            db.query(CompanyRateOverride)
+            .filter_by(company_nit=company_nit, rate_code=code)
+            .first()
+        )
+        if ov is not None and _in_window(ov.vigente_desde, ov.vigente_hasta):
+            return Decimal(str(ov.value))
+
+    # 2. National rate
+    nr = db.query(NationalRate).filter(NationalRate.code == code).first()
+    if nr is not None and _in_window(nr.vigente_desde, nr.vigente_hasta):
+        return Decimal(str(nr.value))
+
+    return None
 
 
 def upsert_company_rate_override(
