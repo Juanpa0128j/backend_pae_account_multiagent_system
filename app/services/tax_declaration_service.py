@@ -640,15 +640,14 @@ def _build_f110(
       f110_rentas_exentas           Rentas exentas (manual)
       72  Renta líquida gravable = max(0, RLO - pérdidas - exentas)
       80  Impuesto básico = 72 × tasa_renta
-      86_donaciones Descuento donaciones (Art. 257)
-      86_iva_capital Descuento IVA bienes capital (Art. 258-1)
-      86_educacion  Descuento inversión educación/innovación (Art. 256)
-      86_otros      Otros descuentos tributarios
-      86  Total descuentos tributarios
+      86_*  Descuentos tributarios itemizados (Art. 254/255/256/256-1/257/257-2/258-1/ZOMAC/otros)
+      86  Total descuentos tributarios = Σ renglones 86_*
       88  Impuesto neto = max(0, 80-86)
       92  Retenciones del año (135515+135518)
       93  Saldo a pagar / saldo a favor = 88 - 92
-      95  Anticipo año siguiente = max(0, 88×0.75 - retenciones_año_anterior)
+      95_metodo1  Anticipo método 1 = max(0, 88×0.75 - retenciones_año_anterior)
+      95_metodo2  Anticipo método 2 = max(0, promedio(88_año, 88_año-1)×0.75 - retenciones_año_anterior)
+      95  Anticipo año siguiente (Art. 807 ET) = mayor(método 1, método 2)
       96  Saldo final = 93 + 95
       97  Sanciones (manual)
     """
@@ -893,51 +892,42 @@ def _build_f110(
         )
     )
 
+    # Descuentos tributarios itemizados (Estatuto Tributario). El CPA anota que
+    # "los descuentos son bastantes": se exponen los principales renglones
+    # estatutarios como campos manuales (requieren revisión del contador) y el
+    # total (renglón 86) se calcula como la SUMA de ellos, de modo que cualquier
+    # valor que el contador capture fluya al impuesto neto. ICA NO es descuento
+    # (Ley 2277/2022 Art. 19 lo convirtió en deducción 100% — Art. 115 ET — y ya
+    # fluye por la clase 5 a gastos; ver renglón 63).
+    _DESCUENTO_ITEMS: list[tuple[str, str]] = [
+        ("86_exterior", "Descuento impuestos pagados en el exterior (Art. 254)"),
+        ("86_medioambiente", "Descuento inversiones medio ambiente (Art. 255)"),
+        ("86_educacion", "Descuento inversión educación / innovación (Art. 256)"),
+        ("86_investigacion", "Descuento inversión ciencia/tecnología (Art. 256-1)"),
+        ("86_donaciones", "Descuento donaciones ESAL / Art. 257"),
+        (
+            "86_donaciones_red",
+            "Descuento donaciones red nacional bibliotecas (Art. 257-2)",
+        ),
+        ("86_iva_capital", "Descuento IVA bienes de capital (Art. 258-1)"),
+        ("86_zomac_zese", "Descuento ZOMAC / ZESE / obras por impuestos"),
+        ("86_otros", "Otros descuentos tributarios"),
+    ]
     fields.extend(
-        [
-            # ICA NOT a descuento — Ley 2277/2022 Art. 19 converted it to deducción 100%
-            # (Art. 115 ET). Already flows via class 5 PUC 511505/521505 into gastos.
-            DraftField(
-                "86_donaciones",
-                "Descuento donaciones (Art. 257)",
-                0.0,
-                "input_manual",
-                "low",
-                True,
-            ),
-            DraftField(
-                "86_iva_capital",
-                "Descuento IVA bienes de capital (Art. 258-1)",
-                0.0,
-                "input_manual",
-                "low",
-                True,
-            ),
-            DraftField(
-                "86_educacion",
-                "Descuento inversión educación / innovación (Art. 256)",
-                0.0,
-                "input_manual",
-                "low",
-                True,
-            ),
-            DraftField(
-                "86_otros",
-                "Otros descuentos tributarios",
-                0.0,
-                "input_manual",
-                "low",
-                True,
-            ),
-        ]
+        DraftField(renglon, label, 0.0, "input_manual", "low", True)
+        for renglon, label in _DESCUENTO_ITEMS
     )
 
-    total_descuentos = 0.0  # ICA removed as descuento per Ley 2277/2022 Art. 19
+    # Total = suma de los renglones itemizados (todos 0.0 por defecto → 0.0).
+    total_descuentos = round(
+        sum(f.value for f in fields if f.renglon in {r for r, _ in _DESCUENTO_ITEMS}),
+        2,
+    )
     fields.append(
         DraftField(
             "86",
-            "Total descuentos tributarios",
-            round(total_descuentos, 2),
+            "Total descuentos tributarios (Σ renglones 86_*)",
+            total_descuentos,
             "calculado",
             "medium",
             True,
@@ -1002,9 +992,19 @@ def _build_f110(
         )
 
     # ── Anticipo año siguiente (Art. 807 ET) ─────────────────────────────────
-    # anticipo = max(0, impuesto_neto × 0.75 - retenciones_año_anterior)
+    # El Art. 807 admite DOS bases para liquidar el anticipo y el contribuyente
+    # puede optar por cualquiera. Por criterio del CPA tomamos la MAYOR de las dos
+    # y, a ambas, se les resta la retención del año (inciso 2.º):
+    #   Método 1: impuesto_neto del año                       × porcentaje
+    #   Método 2: promedio(impuesto_neto año, año anterior)   × porcentaje
+    # El porcentaje es 75% para declarantes con 3+ años; 25%/50% el 1.º/2.º año
+    # (no se infiere automáticamente — el contador debe ajustarlo). Ambos campos
+    # quedan visibles (95_metodo1 / 95_metodo2) y el renglón 95 requiere revisión.
+    ANTICIPO_PORCENTAJE = 0.75
+
     retenciones_anio_anterior = 0.0
     retenciones_anterior_warning = None
+    impuesto_neto_anterior: float | None = None
     if db is not None and year is not None and company_nit is not None:
         ret_ant_dec = db_service.sum_retenciones_anio(db, company_nit, year - 1)
         retenciones_anio_anterior = float(ret_ant_dec)
@@ -1013,12 +1013,54 @@ def _build_f110(
                 f"No se encontraron retenciones para el año {year - 1}. "
                 "Anticipo calculado asumiendo retenciones anteriores = $0."
             )
+        neto_ant = db_service.get_impuesto_neto_anio(db, company_nit, year - 1)
+        if neto_ant is not None:
+            impuesto_neto_anterior = float(neto_ant)
 
-    anticipo = max(0.0, impuesto_neto * 0.75 - retenciones_anio_anterior)
+    # Método 1 — base = impuesto neto del año.
+    anticipo_metodo1 = max(
+        0.0, impuesto_neto * ANTICIPO_PORCENTAJE - retenciones_anio_anterior
+    )
+    fields.append(
+        DraftField(
+            "95_metodo1",
+            "Anticipo método 1 (impuesto neto del año × 75%)",
+            round(anticipo_metodo1, 2),
+            "calculado",
+            "medium",
+            False,
+        )
+    )
+
+    # Método 2 — base = promedio del impuesto neto del año y del año anterior.
+    # Solo disponible si existe declaración de renta del año anterior.
+    anticipo_metodo2: float | None = None
+    if impuesto_neto_anterior is not None:
+        promedio_neto = (impuesto_neto + impuesto_neto_anterior) / 2
+        anticipo_metodo2 = max(
+            0.0, promedio_neto * ANTICIPO_PORCENTAJE - retenciones_anio_anterior
+        )
+        fields.append(
+            DraftField(
+                "95_metodo2",
+                "Anticipo método 2 (promedio 2 años × 75%)",
+                round(anticipo_metodo2, 2),
+                "calculado",
+                "medium",
+                False,
+            )
+        )
+
+    # Renglón final = la MAYOR de las dos (criterio CPA); método 1 si no hay año previo.
+    anticipo = (
+        max(anticipo_metodo1, anticipo_metodo2)
+        if anticipo_metodo2 is not None
+        else anticipo_metodo1
+    )
     fields.append(
         DraftField(
             "95",
-            "Anticipo año siguiente (Art. 807 ET)",
+            "Anticipo año siguiente (Art. 807 ET) — mayor de los dos métodos",
             round(anticipo, 2),
             "calculado",
             "medium",
@@ -1028,6 +1070,26 @@ def _build_f110(
 
     if retenciones_anterior_warning:
         warnings.append(DraftWarning("95", retenciones_anterior_warning))
+    if anticipo_metodo2 is None:
+        warnings.append(
+            DraftWarning(
+                "95",
+                "Método 2 (promedio de los dos últimos años, Art. 807) no disponible: "
+                "falta la declaración de renta del año anterior. Se usó el método 1. "
+                "Verifique además el porcentaje de anticipo (25%/50%/75% según los años "
+                "como declarante).",
+            )
+        )
+    else:
+        warnings.append(
+            DraftWarning(
+                "95",
+                f"Art. 807 permite optar por la base mayor o menor; se tomó la MAYOR "
+                f"(${anticipo:,.2f}). Método 1=${anticipo_metodo1:,.2f}, "
+                f"Método 2=${anticipo_metodo2:,.2f}. Confirme con el contador la base "
+                "y el porcentaje (25%/50%/75%).",
+            )
+        )
 
     # ── Saldo final ──────────────────────────────────────────────────────────
     saldo_final = saldo + anticipo

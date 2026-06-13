@@ -203,6 +203,25 @@ def test_detect_transaction_type_bienes():
     assert _detect_transaction_type(asientos) == "bienes"
 
 
+def test_detect_transaction_type_honorarios_by_puc():
+    # PUC 5110/511505/511510 → honorarios (11%), not servicios (4%).
+    for puc in ("5110", "511505", "511510"):
+        asientos = [{"cuenta_puc": puc, "tipo_movimiento": "debito"}]
+        assert _detect_transaction_type(asientos) == "honorarios", puc
+
+
+def test_detect_transaction_type_honorarios_by_keyword():
+    # factura_compra with an asesoría concept and no expense line yet → honorarios.
+    assert (
+        _detect_transaction_type(
+            [],
+            doc_type="factura_compra",
+            descripcion_general="Asesoría jurídica externa",
+        )
+        == "honorarios"
+    )
+
+
 def test_detect_transaction_type_arrendamiento():
     asientos = [
         {
@@ -247,10 +266,47 @@ def test_node_replaces_stub(mock_rag_cls, mock_llm_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_retefuente_servicios_11_percent(mock_rag_cls, mock_llm_fn):
-    """Retefuente = 11% for PUC 5xxx (servicios), base 1,500,000."""
+def test_retefuente_honorarios_11_percent(mock_rag_cls, mock_llm_fn):
+    """Retefuente = 11% for PUC 5110 (honorarios), base 1,500,000 → 165,000.
+
+    Honorarios (PUC 5110/511505/511510) are withheld at 11% (Art. 392 ET), NOT
+    the 4% servicios rate. No base mínima applies — retención desde el 1.er peso.
+    """
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
+    result = tributario_node(state)
+
+    impuestos = result["tributario_output"]["impuestos"]
+    retefuente = next(i for i in impuestos if i["tipo_impuesto"] == "retefuente")
+    assert Decimal(retefuente["valor_impuesto"]) == Decimal("165000.00")
+    assert retefuente["cuenta_puc"] == "2365"
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_retefuente_servicios_4_percent(mock_rag_cls, mock_llm_fn):
+    """Retefuente = 4% for a genuine servicios PUC (511525 servicios técnicos)."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    contador = {
+        **VALID_CONTADOR_OUTPUT,
+        "asientos": [
+            {
+                "cuenta_puc": "511525",
+                "nombre_cuenta": "Servicios técnicos",
+                "tipo_movimiento": "debito",
+                "valor": 1500000,
+                "descripcion": "Servicio técnico",
+            },
+            {
+                "cuenta_puc": "1110",
+                "nombre_cuenta": "Bancos",
+                "tipo_movimiento": "credito",
+                "valor": 1500000,
+                "descripcion": "Pago",
+            },
+        ],
+    }
+    state = _make_state(contador)
     result = tributario_node(state)
 
     impuestos = result["tributario_output"]["impuestos"]
@@ -507,10 +563,11 @@ def test_agent_log_entries_written(mock_rag_cls, mock_llm_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_smoke_1500000_servicios(mock_rag_cls, mock_llm_fn):
+def test_smoke_1500000_honorarios(mock_rag_cls, mock_llm_fn):
     """
-    Smoke test: $1,500,000 servicios.
-    Expected: retefuente=60,000 (4%), reteica=10,350 (0.69%), iva=285,000 (19%), total=355,350
+    Smoke test: $1,500,000 honorarios (PUC 5110).
+    Expected: retefuente=165,000 (11%), reteica=10,350 (0.69%), iva=285,000 (19%),
+    total=460,350.
     """
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
@@ -521,10 +578,10 @@ def test_smoke_1500000_servicios(mock_rag_cls, mock_llm_fn):
         i["tipo_impuesto"]: Decimal(i["valor_impuesto"]) for i in output["impuestos"]
     }
 
-    assert impuestos["retefuente"] == Decimal("60000.00")
+    assert impuestos["retefuente"] == Decimal("165000.00")
     assert impuestos["reteica"] == Decimal("10350.00")
     assert impuestos["IVA"] == Decimal("285000.00")
-    assert Decimal(output["total_impuestos"]) == Decimal("355350.00")
+    assert Decimal(output["total_impuestos"]) == Decimal("460350.00")
 
 
 @patch("app.services.db_service.get_company_settings", return_value=None)
@@ -771,7 +828,29 @@ def test_process_mode_without_taxes_does_not_crash(
         tasa_renta=Decimal("0.350000"),
     )
 
-    state = _make_state(VALID_CONTADOR_OUTPUT)
+    # Use a configurable servicios account (511525): honorarios (5110) is a
+    # statutory 11% and cannot be zeroed via company_config, so it would not
+    # exercise the no-tax path this test guards.
+    contador = {
+        **VALID_CONTADOR_OUTPUT,
+        "asientos": [
+            {
+                "cuenta_puc": "511525",
+                "nombre_cuenta": "Servicios técnicos",
+                "tipo_movimiento": "debito",
+                "valor": 1500000,
+                "descripcion": "Servicio técnico",
+            },
+            {
+                "cuenta_puc": "1110",
+                "nombre_cuenta": "Bancos",
+                "tipo_movimiento": "credito",
+                "valor": 1500000,
+                "descripcion": "Pago",
+            },
+        ],
+    }
+    state = _make_state(contador)
     state["raw_transactions"] = [{"nit_receptor": "800999888"}]
 
     result = tributario_node(state)

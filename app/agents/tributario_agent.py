@@ -176,15 +176,20 @@ def _tax_accounts_for(
 # ---------------------------------------------------------------------------
 
 
+# Honorarios / comisiones — Art. 392 ET, 11% (vs servicios generales 4%). Kept
+# separate from _SERVICIOS_KEYWORDS so the detector can pick the higher tarifa.
+_HONORARIOS_KEYWORDS = (
+    "honorar",
+    "comision",
+    "asesor",
+    "consultor",
+    "interventor",
+)
 _SERVICIOS_KEYWORDS = (
     "servicio",
     "sostenim",
-    "asesor",
-    "consultor",
     "club",
     "administr",
-    "honorar",
-    "comision",
     "mantenim",
     "limpieza",
     "vigilan",
@@ -199,6 +204,14 @@ _SERVICIOS_KEYWORDS = (
     "hospedaj",
 )
 _ARRENDAMIENTO_KEYWORDS = ("arrendam", "alquiler", "renta ", "leasing")
+
+# Categoria (from PUC prefix) → retefuente tipo key in TASA_RETEFUENTE.
+_CATEGORIA_TO_TIPO_RETEFUENTE: dict[str, str] = {
+    "honorarios": "honorarios",
+    "servicios": "servicios",
+    "arrendamiento": "arrendamiento",
+    "compras": "bienes",
+}
 _BIENES_KEYWORDS = (
     "compra de ",
     "insumo",
@@ -219,26 +232,39 @@ def _detect_transaction_type(
     descripcion_general: str | None = None,
 ) -> str:
     """
-    Infer transaction type from debit PUC codes, falling back to doc_type +
-    item/descripcion keywords when no 5xxx debit is present yet (e.g. when the
+    Infer the retefuente tipo from debit PUC codes, falling back to doc_type +
+    item/descripcion keywords when no expense debit is present yet (e.g. when the
     detector runs before contador injected the expense line).
 
-    Returns 'servicios', 'bienes', or 'arrendamiento'.
+    Returns 'honorarios', 'servicios', 'bienes', or 'arrendamiento'. The concept
+    is resolved by PUC prefix first (``categoria_retencion_from_puc`` — so 5110/
+    511505/511510 honorarios get 11% instead of being lumped into servicios 4%),
+    then by keywords.
     """
+    from app.services.tax_constants import categoria_retencion_from_puc
+
     for asiento in asientos:
         if (asiento.get("tipo_movimiento") or "").lower() == "debito":
             puc_raw = str(asiento.get("cuenta_puc", "")).strip()
-            if puc_raw.isdigit():
-                puc_int = int(puc_raw)
-                if PUC_SERVICIOS_START <= puc_int <= PUC_SERVICIOS_END:
-                    desc = (asiento.get("descripcion") or "").lower()
-                    if any(kw in desc for kw in _ARRENDAMIENTO_KEYWORDS):
-                        return "arrendamiento"
-                    return "servicios"
+            desc = (asiento.get("descripcion") or "").lower()
+            # An explicit arrendamiento description always wins (most specific).
+            if any(kw in desc for kw in _ARRENDAMIENTO_KEYWORDS):
+                return "arrendamiento"
+            # Precise concept by PUC prefix (honorarios 11% / servicios 4% /
+            # arrendamiento 3.5% / compras 2.5%).
+            categoria = categoria_retencion_from_puc(puc_raw)
+            if categoria is not None:
+                return _CATEGORIA_TO_TIPO_RETEFUENTE.get(categoria, "servicios")
+            # No specific prefix but a clase-5 expense debit → servicios default.
+            if (
+                puc_raw.isdigit()
+                and PUC_SERVICIOS_START <= int(puc_raw) <= PUC_SERVICIOS_END
+            ):
+                return "servicios"
 
-    # Fallback: no 5xxx debit detected. Use doc_type + item/descripcion keywords
-    # so the rate table picks the right tarifa even when contador has not yet
-    # injected the expense line.
+    # Fallback: no expense debit detected. Use doc_type + item/descripcion
+    # keywords so the rate table picks the right tarifa even when contador has
+    # not yet injected the expense line.
     if (doc_type or "").lower() == "factura_compra":
         haystack_parts: list[str] = []
         if descripcion_general:
@@ -253,6 +279,8 @@ def _detect_transaction_type(
         if haystack:
             if any(kw in haystack for kw in _ARRENDAMIENTO_KEYWORDS):
                 return "arrendamiento"
+            if any(kw in haystack for kw in _HONORARIOS_KEYWORDS):
+                return "honorarios"
             if any(kw in haystack for kw in _SERVICIOS_KEYWORDS):
                 return "servicios"
             if any(kw in haystack for kw in _BIENES_KEYWORDS):
@@ -851,6 +879,10 @@ def tributario_node(state: AgentState) -> AgentState:
                 if company_config
                 else TASA_RETEFUENTE["arrendamiento"]
             ),
+            # Honorarios/comisiones — 11% (Art. 392 ET). Statutory rate; not a
+            # per-company setting, so it always comes from the constant table.
+            # Honorarios has no base mínima (retención desde el primer peso).
+            "honorarios": TASA_RETEFUENTE["honorarios"],
         }
         # ReteICA: attempt municipal tarifa + base_minima_uvt DB lookup
         # base_minima_uvt is per-municipio (Fix 4: Decreto 572 does NOT apply to ReteICA).

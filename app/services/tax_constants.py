@@ -194,6 +194,24 @@ def infer_tipo_persona_from_nit(nit: str | None) -> str | None:
     return TIPO_PERSONA_PN
 
 
+def categoria_retencion_from_puc(cuenta_puc: str | None) -> str | None:
+    """Map a PUC code to a retención categoria via longest-prefix match.
+
+    Returns ``'honorarios' | 'servicios' | 'arrendamiento' | 'compras'`` or
+    ``None`` when no prefix matches. Shared by the tributario agent (to pick the
+    correct retefuente tarifa — honorarios 11% vs servicios 4% vs compras 2.5%)
+    and by :func:`infer_concepto_retencion`.
+    """
+    if not cuenta_puc:
+        return None
+    cuenta_puc = str(cuenta_puc)
+    # Longest-prefix wins (e.g. 511505 honorarios before 5115 servicios).
+    for prefix in sorted(_PUC_PREFIX_TO_CATEGORIA.keys(), key=len, reverse=True):
+        if cuenta_puc.startswith(prefix):
+            return _PUC_PREFIX_TO_CATEGORIA[prefix]
+    return None
+
+
 def infer_concepto_retencion(
     cuenta_puc: str | None,
     tipo_persona: str | None,
@@ -211,12 +229,7 @@ def infer_concepto_retencion(
     if not cuenta_puc:
         return None
     cuenta_puc = str(cuenta_puc)
-    categoria: str | None = None
-    # Longest-prefix wins.
-    for prefix in sorted(_PUC_PREFIX_TO_CATEGORIA.keys(), key=len, reverse=True):
-        if cuenta_puc.startswith(prefix):
-            categoria = _PUC_PREFIX_TO_CATEGORIA[prefix]
-            break
+    categoria: str | None = categoria_retencion_from_puc(cuenta_puc)
 
     desc_lower = (descripcion or "").lower()
     if categoria is None:

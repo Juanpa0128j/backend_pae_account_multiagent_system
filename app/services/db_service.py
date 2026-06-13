@@ -2503,6 +2503,34 @@ def get_latest_f2516_reviewed(
     )
 
 
+def get_impuesto_neto_anio(db: Session, company_nit: str, year: int) -> Decimal | None:
+    """Return renglón 88 (impuesto neto de renta) of the latest F110 draft for `year`.
+
+    Used by the Art. 807 anticipo "promedio de los dos últimos años" method
+    (método 2). Returns ``None`` when no F110 draft exists for that year or the
+    renglón is missing/unparseable — the caller then falls back to método 1.
+    """
+    draft = (
+        db.query(TaxDeclarationDraft)
+        .filter(
+            TaxDeclarationDraft.company_nit == company_nit,
+            TaxDeclarationDraft.form_type == "F110",
+            TaxDeclarationDraft.year == year,
+        )
+        .order_by(TaxDeclarationDraft.created_at.desc())
+        .first()
+    )
+    if draft is None:
+        return None
+    for fld in draft.fields_json or []:
+        if fld.get("renglon") == "88":
+            try:
+                return Decimal(str(fld.get("value")))
+            except (TypeError, ValueError, ArithmeticError):
+                return None
+    return None
+
+
 # ---------------------------------------------------------------------------
 # TarifaRenta helpers — Colombian Renta PJ regulatory rate table
 # ---------------------------------------------------------------------------
