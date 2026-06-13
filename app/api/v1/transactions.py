@@ -925,6 +925,7 @@ async def delete_transactions_by_ingest(
         _resync_derived_statements(db, company_nit)
 
     db.commit()
+    return {"deleted": len(txn_ids)}
 
 
 # ─── Manual nota de ajuste contable ──────────────────────────────────────────
