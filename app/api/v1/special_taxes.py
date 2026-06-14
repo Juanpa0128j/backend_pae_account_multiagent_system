@@ -232,7 +232,7 @@ def get_special_tax(
     """Get a single special tax by id."""
     row = db_service.get_special_tax(db, tax_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Special tax not found")
+        raise HTTPException(status_code=404, detail="Impuesto especial no encontrado.")
     return _tax_to_response(row)
 
 
@@ -249,7 +249,7 @@ def update_special_tax(
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
     row = db_service.update_special_tax(db, tax_id, **fields)
     if row is None:
-        raise HTTPException(status_code=404, detail="Special tax not found")
+        raise HTTPException(status_code=404, detail="Impuesto especial no encontrado.")
     return _tax_to_response(row)
 
 
@@ -264,7 +264,7 @@ def delete_special_tax(
     """Soft-delete a special tax (sets activo=False)."""
     found = db_service.delete_special_tax(db, tax_id)
     if not found:
-        raise HTTPException(status_code=404, detail="Special tax not found")
+        raise HTTPException(status_code=404, detail="Impuesto especial no encontrado.")
 
 
 @router.get(
@@ -307,6 +307,6 @@ def liquidar_special_tax(
     if acc is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Accumulator not found for {body.year}-{body.month:02d}",
+            detail=f"Acumulador no encontrado para {body.year}-{body.month:02d}.",
         )
     return _acc_to_dict(acc)

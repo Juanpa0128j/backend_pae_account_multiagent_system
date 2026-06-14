@@ -56,7 +56,9 @@ def get_puc(
     """Get a single PUC account by code."""
     row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
     if not row:
-        raise HTTPException(status_code=404, detail=f"PUC code '{codigo}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"El código PUC '{codigo}' no fue encontrado."
+        )
     return row
 
 
@@ -97,7 +99,9 @@ def update_puc(
 
     row = db_service.update_puc(db, codigo, body.model_dump())
     if not row:
-        raise HTTPException(status_code=404, detail=f"PUC code '{codigo}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"El código PUC '{codigo}' no fue encontrado."
+        )
     logger.info(f"PUC updated: {codigo}")
     return row
 
@@ -113,7 +117,9 @@ def delete_puc(
     """Soft-delete a PUC account (sets deleted_at). Returns 404 if not found."""
     found = db_service.soft_delete_cuenta_puc(db, codigo)
     if not found:
-        raise HTTPException(status_code=404, detail=f"PUC code '{codigo}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"El código PUC '{codigo}' no fue encontrado."
+        )
     logger.info(f"PUC soft-deleted: {codigo}")
     return Response(status_code=204)
 

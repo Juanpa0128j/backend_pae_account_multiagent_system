@@ -60,8 +60,7 @@ def get_company_settings(
     if not row:
         raise HTTPException(
             status_code=404,
-            detail=f"No tax settings found for NIT '{nit}'. "
-            "Use PUT to set rates manually or POST /setup to compute them automatically.",
+            detail=f"No se encontró configuración tributaria para el NIT '{nit}'.",
         )
     return row
 
@@ -99,7 +98,9 @@ def delete_company(
     """Permanently delete a company and its tax settings."""
     deleted = db_service.delete_company(db, nit)
     if not deleted:
-        raise HTTPException(status_code=404, detail=f"Company '{nit}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Empresa con NIT '{nit}' no encontrada."
+        )
     return Response(status_code=204)
 
 
@@ -395,7 +396,7 @@ async def toggle_company_puc(
     if not account:
         raise HTTPException(
             status_code=404,
-            detail=f"PUC account {codigo} not found",
+            detail=f"Cuenta PUC {codigo} no encontrada.",
         )
     # Get the config we just upserted
     config = (
@@ -468,6 +469,6 @@ async def upsert_company_rate(
     if not rate:
         raise HTTPException(
             status_code=404,
-            detail=f"Rate code {code} not found",
+            detail=f"Código de tarifa {code} no encontrado.",
         )
     return EffectiveRateResponse(**rate)

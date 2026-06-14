@@ -38,7 +38,9 @@ def _normalize_request_nit(request: ChatRequest) -> ChatRequest:
         try:
             request.company_nit = normalize_nit(request.company_nit)
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+            )
     return request
 
 
@@ -123,7 +125,9 @@ async def get_sessions(
         try:
             nit = normalize_nit(company_nit)
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+            )
     return chat_service.list_sessions(nit)
 
 
@@ -138,7 +142,7 @@ async def get_session_messages(
     messages = chat_service.get_session_messages(session_id)
     if not messages:
         raise HTTPException(
-            status_code=404, detail=f"Session {session_id} not found or empty"
+            status_code=404, detail=f"Sesión {session_id} no encontrada o vacía."
         )
     return messages
 
@@ -154,7 +158,9 @@ async def remove_session(
     """Soft-delete a chat session."""
     found = db_service.soft_delete_chat_session(db, session_id)
     if not found:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Sesión {session_id} no encontrada."
+        )
     return {"status": "deleted", "session_id": session_id}
 
 

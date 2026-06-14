@@ -142,7 +142,7 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
             normalized_company_nit = normalize_nit(company_nit)
         except ValueError as nit_err:
             raise HTTPException(
-                status_code=422, detail=f"Invalid company_nit: {nit_err}"
+                status_code=422, detail=f"El NIT de la empresa no es válido: {nit_err}"
             )
 
     stored = _try_stored_statement(report_type, params, normalized_company_nit)
@@ -574,7 +574,7 @@ def _resolve_report(
             normalized_company_nit = normalize_nit(company_nit)
         except ValueError as nit_err:
             raise HTTPException(
-                status_code=422, detail=f"Invalid company_nit: {nit_err}"
+                status_code=422, detail=f"El NIT de la empresa no es válido: {nit_err}"
             )
 
         db = SessionLocal()
@@ -586,7 +586,8 @@ def _resolve_report(
             )
             if stmt is None:
                 raise HTTPException(
-                    status_code=404, detail=f"Statement {statement_id} not found"
+                    status_code=404,
+                    detail=f"Estado financiero {statement_id} no encontrado.",
                 )
 
             expected_types = _REPORT_TYPE_ALIASES.get(report_type, {report_type})
@@ -834,7 +835,9 @@ async def get_financial_statements(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     period_start = (
         datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc)
@@ -877,7 +880,8 @@ async def get_financial_statement_by_id(
         )
         if stmt is None:
             raise HTTPException(
-                status_code=404, detail=f"Statement {statement_id} not found"
+                status_code=404,
+                detail=f"Estado financiero {statement_id} no encontrado.",
             )
         if company_nit is not None and stmt.company_nit != normalize_optional_nit(
             company_nit
@@ -928,7 +932,7 @@ async def download_balance_pdf(
     try:
         pdf_bytes = BalanceSheetExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -962,7 +966,7 @@ async def download_balance_excel(
     try:
         excel_bytes = BalanceSheetExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -996,7 +1000,7 @@ async def download_pnl_pdf(
     try:
         pdf_bytes = PnLExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1030,7 +1034,7 @@ async def download_pnl_excel(
     try:
         excel_bytes = PnLExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1064,7 +1068,7 @@ async def download_cashflow_pdf(
     try:
         pdf_bytes = CashFlowExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1098,7 +1102,7 @@ async def download_cashflow_excel(
     try:
         excel_bytes = CashFlowExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1132,7 +1136,7 @@ async def download_libro_diario_pdf(
     try:
         pdf_bytes = LibroDiarioExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1166,7 +1170,7 @@ async def download_libro_diario_excel(
     try:
         excel_bytes = LibroDiarioExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1200,7 +1204,7 @@ async def download_libro_auxiliar_pdf(
     try:
         pdf_bytes = LibroAuxiliarExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1234,7 +1238,7 @@ async def download_libro_auxiliar_excel(
     try:
         excel_bytes = LibroAuxiliarExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1266,7 +1270,7 @@ async def download_cambios_patrimonio_pdf(
     try:
         pdf_bytes = CambiosPatrimonioExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1298,7 +1302,7 @@ async def download_cambios_patrimonio_excel(
     try:
         excel_bytes = CambiosPatrimonioExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1330,7 +1334,7 @@ async def download_notas_pdf(
     try:
         pdf_bytes = NotasEstadosFinancierosExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1362,7 +1366,7 @@ async def download_notas_excel(
     try:
         excel_bytes = NotasEstadosFinancierosExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1402,7 +1406,9 @@ async def get_derivation_status(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     sources: dict[str, list[dict]] = {t: [] for t in _REQUIRED_SOURCE_TYPES}
     rows = list_financial_statements(
@@ -1564,7 +1570,9 @@ async def run_derivation(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     period_start = datetime(
         start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc
@@ -1635,7 +1643,9 @@ async def build_first_level_via_a(
     try:
         normalized_nit = normalize_nit(body.company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     period_start, period_end = _period_bounds_utc(body.period_start, body.period_end)
 
@@ -1693,7 +1703,9 @@ async def run_derivation_via_a(
     try:
         normalized_nit = normalize_nit(body.company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     period_start, period_end = _period_bounds_utc(body.period_start, body.period_end)
 
@@ -1729,7 +1741,9 @@ async def get_derivation_status_via_a(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     all_rows = list_financial_statements(
         company_nit=normalized_nit,

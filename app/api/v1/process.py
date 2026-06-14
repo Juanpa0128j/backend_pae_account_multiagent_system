@@ -139,7 +139,9 @@ async def process_accounting(
     """
     ingest_job = db_service.get_ingest_job(db, ingest_id)
     if not ingest_job:
-        raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Trabajo de ingesta {ingest_id} no encontrado."
+        )
 
     staged = db_service.get_transactions_by_ingest(db, ingest_id)
     if not staged:
@@ -211,7 +213,8 @@ async def get_process_status(
     process_job = db_service.get_process_job(db, process_id)
     if not process_job:
         raise HTTPException(
-            status_code=404, detail=f"Process job {process_id} not found"
+            status_code=404,
+            detail=f"Trabajo de procesamiento {process_id} no encontrado.",
         )
 
     error_category, error_code, remediation = _classify_process_error(
@@ -418,7 +421,8 @@ async def cancel_process(
     process_job = db_service.get_process_job(db, process_id)
     if not process_job:
         raise HTTPException(
-            status_code=404, detail=f"Process job {process_id} not found"
+            status_code=404,
+            detail=f"Trabajo de procesamiento {process_id} no encontrado.",
         )
 
     status = process_job.status
@@ -480,7 +484,8 @@ async def get_process_trace(
     trace = build_trace(process_id, db)
     if trace is None:
         raise HTTPException(
-            status_code=404, detail=f"Process job {process_id} not found"
+            status_code=404,
+            detail=f"Trabajo de procesamiento {process_id} no encontrado.",
         )
     return trace
 
@@ -497,7 +502,8 @@ async def get_process_result(
     process_job = db_service.get_process_job(db, process_id)
     if not process_job:
         raise HTTPException(
-            status_code=404, detail=f"Process job {process_id} not found"
+            status_code=404,
+            detail=f"Trabajo de procesamiento {process_id} no encontrado.",
         )
 
     if process_job.status == ProcessStatus.FAILED:

@@ -194,7 +194,7 @@ async def create_transaction(
     if parsed_fecha is None:
         raise HTTPException(
             status_code=422,
-            detail=f"Could not parse fecha '{payload.fecha}'. Use YYYY-MM-DD or DD/MM/YYYY.",
+            detail=f"La fecha '{payload.fecha}' no pudo ser interpretada. Use el formato YYYY-MM-DD o DD/MM/YYYY.",
         )
 
     # Create pending transaction
@@ -316,7 +316,7 @@ async def search_transactions(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid status value: {status}",
+                detail=f"El valor de estado no es válido: {status}",
             )
 
     txns = db_service.search_transactions(db, nit, fi, ff, txn_status, limit)
@@ -358,7 +358,7 @@ async def get_transaction(
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
 
     posted = (
         db.query(TransactionPosted)
@@ -449,7 +449,9 @@ def _delete_transaction_cascade(db: Session, txn_id: str) -> Optional[str]:
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {txn_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Transacción {txn_id} no encontrada."
+        )
 
     # Re-processed transactions may have multiple posted rows for a single
     # pending (see get_transaction's order_by created_at.desc()). Delete every
@@ -635,7 +637,7 @@ async def set_transaction_fecha(
     """
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
 
     # Once the transaction has been posted, its fecha is already replicated to
     # JournalEntryLine.fecha and into the derived FinancialStatement periods.
@@ -657,8 +659,8 @@ async def set_transaction_fecha(
         raise HTTPException(
             status_code=422,
             detail=(
-                f"Could not parse fecha '{payload.fecha}'. Use YYYY-MM-DD, "
-                "YYYY-MM, or DD/MM/YYYY."
+                f"La fecha '{payload.fecha}' no pudo ser interpretada. Use el formato YYYY-MM-DD, "
+                "YYYY-MM o DD/MM/YYYY."
             ),
         )
 
@@ -690,7 +692,7 @@ async def update_transaction(
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
 
     if txn.status == TransactionStatus.POSTED:
         raise HTTPException(
@@ -751,7 +753,7 @@ async def update_transaction(
         if parsed is None:
             raise HTTPException(
                 status_code=422,
-                detail=f"Could not parse fecha '{payload.fecha}'. Use YYYY-MM-DD or DD/MM/YYYY.",
+                detail=f"La fecha '{payload.fecha}' no pudo ser interpretada. Use el formato YYYY-MM-DD o DD/MM/YYYY.",
             )
         update_kwargs["fecha"] = parsed
         raw_data["fecha"] = payload.fecha
@@ -811,7 +813,7 @@ async def reprocess_transaction(
     """Delete a posted transaction and recreate it as pending for re-processing."""
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
 
     if txn.status != TransactionStatus.POSTED:
         raise HTTPException(
@@ -928,7 +930,8 @@ async def delete_transactions_by_ingest(
     ]
     if not txn_ids:
         raise HTTPException(
-            status_code=404, detail=f"No transactions found for ingest {ingest_id}"
+            status_code=404,
+            detail=f"No se encontraron transacciones para el trabajo de ingesta {ingest_id}.",
         )
 
     deleted_count = 0

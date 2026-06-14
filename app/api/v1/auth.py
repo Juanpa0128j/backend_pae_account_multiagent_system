@@ -159,7 +159,7 @@ def join_company(
     if not company:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Company with NIT '{body.nit}' not found.",
+            detail=f"Empresa con NIT '{body.nit}' no encontrada.",
         )
 
     user_id = str(current_user.id)
@@ -196,7 +196,7 @@ def join_company(
             return _enrich_with_razon_social(db, [existing])[0]
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"User is already a member of company '{body.nit}'.",
+            detail=f"El usuario ya es miembro de la empresa '{body.nit}'.",
         )
 
     membership = UserCompany(user_id=user_id, company_nit=body.nit, user_email=email)
@@ -235,7 +235,7 @@ def leave_company(
     if not membership:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Membership for NIT '{nit}' not found.",
+            detail=f"Membresía para el NIT '{nit}' no encontrada.",
         )
 
     # Re-associate orphan before soft-deleting so the FK matches.
@@ -247,7 +247,7 @@ def leave_company(
     if not found:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Membership for NIT '{nit}' not found.",
+            detail=f"Membresía para el NIT '{nit}' no encontrada.",
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
