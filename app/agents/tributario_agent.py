@@ -1529,66 +1529,69 @@ def tributario_node(state: AgentState) -> AgentState:
         asientos_enriquecidos = [dict(a) for a in asientos]  # copy from contador
 
         total_retenciones = retefuente_val + reteica_val
+        # iva_to_add gates whether a SEPARATE IVA line (240802/240805) is inserted
+        # below — only when the contador did not already book one.
         iva_to_add = iva_val if not iva_presente else Decimal("0")
         target_movement = "debito" if is_venta else "credito"
 
-        # Sanity: contador may have booked the largest credit/debit as
-        # total_factura (IVA already embedded) without emitting a separate
-        # 240802/240805 IVA line. In that case _has_iva_in_asientos returned
-        # False so iva_to_add > 0 — but adding IVA again would double-count.
-        # Detect by comparing the largest target line to source totales.total_factura
-        # (or total_a_pagar / total). When they match within $1, subtract IVA
-        # from that line BEFORE applying retenciones, and let the separate
-        # IVA descontable / IVA generado line be inserted downstream.
-        if iva_to_add > 0:
+        # IVA folded into the counterparty line (proveedor credit in compra /
+        # cliente debit in venta):
+        #   - COMPRA: the contador credits the proveedor with the BASE (sin IVA)
+        #     and books a separate IVA descontable DEBIT, so the FULL IVA must be
+        #     folded into the proveedor credit (the buyer owes base+IVA). Using
+        #     only iva_to_add (0 when the IVA line is present) left the IVA debit
+        #     without a credit counterpart → partida doble mismatch.
+        #   - VENTA: the contador already debits CxC with the gross (base+IVA), so
+        #     only the newly-added IVA (iva_to_add) applies — preserve prior behavior.
+        iva_counterparty = iva_val if not is_venta else iva_to_add
+
+        # The contador may also have booked the counterparty line as the GROSS
+        # (base+IVA already embedded). Detect that and strip the IVA first so the
+        # net_adjustment below does not double-count. References for "gross":
+        # base_gravable + IVA (base_gravable excludes PUC 2xxx, reliable in compra)
+        # and the source document total (reliable in venta, where CxC = gross).
+        if iva_counterparty > 0:
+            gross_refs: list[Decimal] = []
+            if base_gravable > 0:
+                gross_refs.append(base_gravable + iva_counterparty)
             totales_src = (
                 source_doc.get("totales") if isinstance(source_doc, dict) else None
             ) or {}
-            total_factura_src = Decimal("0")
             for key in ("total_factura", "total_a_pagar", "total"):
                 val = totales_src.get(key)
                 if val is not None:
                     try:
-                        total_factura_src = Decimal(str(val))
-                        if total_factura_src > 0:
+                        d = Decimal(str(val))
+                        if d > 0:
+                            gross_refs.append(d)
                             break
                     except Exception:
                         pass
-            if total_factura_src > 0:
-                cand = [
-                    Decimal(str(e.get("valor", 0)))
-                    for e in asientos_enriquecidos
-                    if e.get("tipo_movimiento", "").lower() == target_movement
-                ]
-                largest_now = max(cand) if cand else Decimal("0")
-                if largest_now > 0 and abs(largest_now - total_factura_src) < Decimal(
-                    "1.00"
+            cand = [
+                (i, Decimal(str(e.get("valor", 0))))
+                for i, e in enumerate(asientos_enriquecidos)
+                if e.get("tipo_movimiento", "").lower() == target_movement
+            ]
+            if cand and gross_refs:
+                largest_idx, largest_val = max(cand, key=lambda x: x[1])
+                if largest_val > 0 and any(
+                    abs(largest_val - g) < Decimal("1.00") for g in gross_refs
                 ):
-                    logger.info(
-                        "Tributario: %s %s = %s ≈ source total_factura %s — "
-                        "IVA already embedded; subtracting IVA from line and "
-                        "inserting separate IVA descontable",
-                        target_movement,
-                        "largest",
-                        largest_now,
-                        total_factura_src,
+                    stripped = (largest_val - iva_counterparty).quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP
                     )
-                    # Find that largest entry and subtract IVA from it so the
-                    # downstream net_adjustment math operates on the pre-IVA base.
-                    for entry in asientos_enriquecidos:
-                        if (
-                            entry.get("tipo_movimiento", "").lower() == target_movement
-                            and Decimal(str(entry.get("valor", 0))) == largest_now
-                        ):
-                            new_val = (largest_now - iva_to_add).quantize(
-                                Decimal("0.01"), rounding=ROUND_HALF_UP
-                            )
-                            entry["valor"] = str(new_val)
-                            break
+                    asientos_enriquecidos[largest_idx]["valor"] = str(stripped)
+                    logger.info(
+                        "Tributario: %s line %s ≈ gross — stripped IVA to %s "
+                        "before re-applying net adjustment",
+                        target_movement,
+                        largest_val,
+                        stripped,
+                    )
 
-        net_adjustment = iva_to_add - total_retenciones
+        net_adjustment = iva_counterparty - total_retenciones
 
-        if total_retenciones > 0 or iva_to_add > 0:
+        if total_retenciones > 0 or iva_counterparty > 0:
             candidate_entries = [
                 (i, e)
                 for i, e in enumerate(asientos_enriquecidos)
@@ -1617,12 +1620,12 @@ def tributario_node(state: AgentState) -> AgentState:
                 asientos_enriquecidos[largest_idx]["valor"] = str(adjusted_valor)
                 logger.info(
                     "Tributario: adjusted %s %s from %s to %s "
-                    "(iva_new=%s, retenciones=%s)",
+                    "(iva_counterparty=%s, retenciones=%s)",
                     target_movement,
                     largest_entry.get("cuenta_puc"),
                     original_valor,
                     adjusted_valor,
-                    iva_to_add,
+                    iva_counterparty,
                     total_retenciones,
                 )
 

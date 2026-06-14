@@ -223,6 +223,97 @@ def test_detect_transaction_type_honorarios_by_keyword():
     )
 
 
+# ─── factura_compra con IVA: partida doble debe cuadrar ──────────────────────
+
+
+def _compra_iva_contador(proveedor_credito):
+    """Contador output for a factura_compra: gasto + IVA descontable debit, and a
+    proveedor credit of `proveedor_credito` (base sin IVA, or gross con IVA)."""
+    return {
+        "fecha_registro": "2026-06-01",
+        "tipo_documento": "factura",
+        "descripcion_general": "Servicios técnicos con IVA",
+        "asientos": [
+            {
+                "cuenta_puc": "511525",
+                "nombre_cuenta": "Servicios técnicos",
+                "tipo_movimiento": "debito",
+                "valor": 2100000,
+                "descripcion": "Servicio técnico",
+            },
+            {
+                "cuenta_puc": "240802",
+                "nombre_cuenta": "IVA descontable",
+                "tipo_movimiento": "debito",
+                "valor": 399000,
+                "descripcion": "IVA 19%",
+            },
+            {
+                "cuenta_puc": "220505",
+                "nombre_cuenta": "Proveedores nacionales",
+                "tipo_movimiento": "credito",
+                "valor": proveedor_credito,
+                "descripcion": "Proveedor",
+            },
+        ],
+        "total_debitos": 2499000,
+        "total_creditos": 2100000 if proveedor_credito == 2100000 else 2499000,
+    }
+
+
+def _assert_balanced(result):
+    asientos = result["tributario_output"]["asientos_enriquecidos"]
+    deb = sum(
+        Decimal(str(a["valor"]))
+        for a in asientos
+        if (a.get("tipo_movimiento") or "").lower() == "debito"
+    )
+    cred = sum(
+        Decimal(str(a["valor"]))
+        for a in asientos
+        if (a.get("tipo_movimiento") or "").lower() == "credito"
+    )
+    assert result.get("error") is None
+    assert deb == cred, f"partida doble: débitos {deb} != créditos {cred}"
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_factura_compra_iva_base_credit_balances(mock_rag_cls, mock_llm_fn):
+    """Bug: contador credits proveedor with the BASE (sin IVA) + separate IVA
+    descontable debit → the IVA must be folded into the proveedor credit so the
+    journal entry balances. Source total available."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(_compra_iva_contador(2100000))
+    state["document_classification"] = {"doc_type": "factura_compra"}
+    state["source_document"] = {"totales": {"total_factura": 2499000}}
+    _assert_balanced(tributario_node(state))
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_factura_compra_iva_base_credit_balances_no_source_total(
+    mock_rag_cls, mock_llm_fn
+):
+    """Same, but no source totales → relies on base_gravable (excludes PUC 2xxx)."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(_compra_iva_contador(2100000))
+    state["document_classification"] = {"doc_type": "factura_compra"}
+    _assert_balanced(tributario_node(state))
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_factura_compra_iva_gross_credit_balances(mock_rag_cls, mock_llm_fn):
+    """Contador credits proveedor with the GROSS (base+IVA) + separate IVA line →
+    tributario must strip the embedded IVA, not double-count."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(_compra_iva_contador(2499000))
+    state["document_classification"] = {"doc_type": "factura_compra"}
+    state["source_document"] = {"totales": {"total_factura": 2499000}}
+    _assert_balanced(tributario_node(state))
+
+
 # ─── #6 Notas crédito/débito: dirección venta vs compra ───────────────────────
 
 
