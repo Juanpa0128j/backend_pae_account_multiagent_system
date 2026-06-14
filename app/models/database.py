@@ -1256,7 +1256,7 @@ class UserCompany(Base):
 
     __tablename__ = "user_company"
 
-    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     company_nit: Mapped[str] = mapped_column(
         String, ForeignKey("company_settings.nit", ondelete="CASCADE"), primary_key=True
     )
