@@ -24,6 +24,17 @@ _TABLES = [
 ]
 
 
+def _table_exists(bind, table: str) -> bool:
+    return (
+        bind.exec_driver_sql(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name=%s",
+            (table,),
+        ).first()
+        is not None
+    )
+
+
 def _column_exists(bind, table: str, column: str) -> bool:
     return (
         bind.exec_driver_sql(
@@ -49,6 +60,9 @@ def upgrade() -> None:
     bind = op.get_bind()
 
     for table in _TABLES:
+        if not _table_exists(bind, table):
+            continue
+
         if not _column_exists(bind, table, "deleted_at"):
             op.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TIMESTAMPTZ NULL")
 
@@ -61,6 +75,9 @@ def downgrade() -> None:
     bind = op.get_bind()
 
     for table in reversed(_TABLES):
+        if not _table_exists(bind, table):
+            continue
+
         index_name = f"ix_{table}_deleted_at"
         if _index_exists(bind, index_name):
             op.execute(f"DROP INDEX {index_name}")
