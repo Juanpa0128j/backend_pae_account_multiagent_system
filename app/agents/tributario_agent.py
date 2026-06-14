@@ -646,6 +646,8 @@ def _apply_special_taxes(
             base = base_gravable
         elif tax.base_calc == "custom" and tax.base_calc_formula:
             try:
+                if len(tax.base_calc_formula) > 200:
+                    raise ValueError("formula too long")
                 # Restricted eval: only arithmetic on two numeric variables
                 allowed_names = {
                     "total_pago": float(total_pago),

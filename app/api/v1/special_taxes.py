@@ -40,7 +40,9 @@ class SpecialTaxCreate(BaseModel):
     descripcion: Optional[str] = None
     rate: Decimal = Field(..., gt=0, le=1)
     base_calc: str = Field(..., pattern="^(total_pago|base_gravable|custom)$")
-    base_calc_formula: Optional[str] = None
+    base_calc_formula: Optional[str] = Field(
+        None, max_length=200, pattern=r"^[0-9+\-*/().\s_a-z]+$"
+    )
     applies_to_doc_types: list[str] = Field(default_factory=list)
     es_entidad_publica_only: bool = False
     settlement: str = Field(
@@ -59,7 +61,9 @@ class SpecialTaxUpdate(BaseModel):
     descripcion: Optional[str] = None
     rate: Optional[Decimal] = None
     base_calc: Optional[str] = None
-    base_calc_formula: Optional[str] = None
+    base_calc_formula: Optional[str] = Field(
+        None, max_length=200, pattern=r"^[0-9+\-*/().\s_a-z]+$"
+    )
     applies_to_doc_types: Optional[list[str]] = None
     es_entidad_publica_only: Optional[bool] = None
     settlement: Optional[str] = None
@@ -210,7 +214,10 @@ def create_special_tax(
         )
     except Exception as exc:
         logger.error("create_special_tax failed: %s", exc)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo guardar el impuesto especial. Verifique los datos e intente de nuevo.",
+        ) from exc
     return _tax_to_response(row)
 
 

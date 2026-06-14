@@ -3160,7 +3160,7 @@ def list_active_special_taxes(
         SpecialTax.company_nit == company_nit,
         SpecialTax.activo.is_(True),
         or_(SpecialTax.vigente_desde.is_(None), SpecialTax.vigente_desde <= today),
-        or_(SpecialTax.vigente_hasta.is_(None), SpecialTax.vigente_hasta >= today),
+        or_(SpecialTax.vigente_hasta.is_(None), SpecialTax.vigente_hasta > today),
     )
     rows = q.all()
     if doc_type:
