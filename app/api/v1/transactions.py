@@ -1010,9 +1010,19 @@ async def create_manual_ajuste(
     ajuste_id = str(uuid.uuid4())
     pending_id = str(uuid.uuid4())
 
+    # ── synthetic ingest job ─────────────────────────────────────────────────
+    # transactions_pending.ingest_id is NOT NULL (FK → ingest_jobs.id), so a
+    # manual ajuste needs a backing ingest job just like create_manual_transaction.
+    # commit=False keeps it in this request's transaction (flushed, not committed).
+    ingest_job = db_service.create_manual_ingest_job(
+        db, company_nit=company_nit_clean, commit=False
+    )
+
     # ── create a synthetic TransactionPending stub (required FK) ─────────────
     pending = TransactionPending(
         id=pending_id,
+        ingest_id=ingest_job.id,
+        fecha=fecha_dt,
         company_nit=company_nit_clean,
         nit_emisor=company_nit_clean,
         nit_receptor=company_nit_clean,

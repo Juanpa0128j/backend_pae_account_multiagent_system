@@ -150,3 +150,37 @@ def test_manual_ajuste_balanced_creates_journal_lines(client):
     assert "transaction_id" in body
     assert "lines_created" in body
     assert body["lines_created"] == 2
+
+
+def test_manual_ajuste_pending_has_ingest_id(client):
+    """Regression: transactions_pending.ingest_id is NOT NULL (FK → ingest_jobs).
+
+    The endpoint must create a backing ingest job and set ingest_id on the
+    TransactionPending, otherwise the real-DB commit fails with NotNullViolation
+    (the mocked happy-path test does not enforce the constraint). Also asserts
+    fecha is populated.
+    """
+    from main import app
+    from app.core.database import get_db
+    from app.models.database import TransactionPending
+
+    payload = _ajuste_payload()
+    mock_db = _mock_db()
+
+    def _override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        resp = client.post("/api/v1/transactions/manual-ajuste", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 201
+    added = [c.args[0] for c in mock_db.add.call_args_list if c.args]
+    pendings = [o for o in added if isinstance(o, TransactionPending)]
+    assert len(pendings) == 1, "expected exactly one TransactionPending"
+    assert pendings[0].ingest_id, (
+        "TransactionPending.ingest_id must be set (NOT NULL FK)"
+    )
+    assert pendings[0].fecha is not None, "TransactionPending.fecha must be set"
