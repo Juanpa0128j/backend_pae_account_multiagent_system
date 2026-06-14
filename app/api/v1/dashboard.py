@@ -132,7 +132,9 @@ async def get_dashboard_stats(
         try:
             company_nit = normalize_nit(company_nit)
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+            )
 
     # Detect pathway so we can branch to Vía B-aware figures.
     pathway: Optional[str] = None
@@ -279,7 +281,9 @@ async def get_financial_summary(
         try:
             company_nit = normalize_nit(company_nit)
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+            )
 
     balance = db_service.get_balance_sheet(db, company_nit=company_nit)
     ledger = db_service.get_general_ledger(db, company_nit=company_nit)
@@ -380,7 +384,9 @@ async def get_monthly_trend(
         try:
             company_nit = normalize_nit(company_nit)
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+            )
 
         try:
             pathway = db_service.get_company_locked_pathway(db, company_nit)

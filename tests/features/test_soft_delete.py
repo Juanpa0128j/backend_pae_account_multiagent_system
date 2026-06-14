@@ -233,7 +233,7 @@ def test_soft_delete_puc(db):
         codigo=codigo,
         nombre="Cuenta Test Soft Delete",
         clase=5,
-        naturaleza=NaturalezaCuenta.debito,
+        naturaleza=NaturalezaCuenta.DEBITO,
     )
     db.add(puc)
     db.flush()

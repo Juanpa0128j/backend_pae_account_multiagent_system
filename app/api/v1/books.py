@@ -122,7 +122,9 @@ async def get_books(
         try:
             normalized_company_nit = normalize_nit(company_nit)
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+            )
 
     valid_tipos = {"diario", "mayor", "auxiliar", "balance"}
     if tipo not in valid_tipos:

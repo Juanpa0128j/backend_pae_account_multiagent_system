@@ -124,7 +124,7 @@ def test_resolve_report_rejects_invalid_company_nit_with_statement_id():
         )
 
     assert exc.value.status_code == 422
-    assert "Invalid company_nit" in str(exc.value.detail)
+    assert "El NIT" in str(exc.value.detail)
 
 
 def test_resolve_report_rejects_cross_tenant_statement(monkeypatch):
@@ -216,7 +216,7 @@ def test_balance_download_returns_422_on_export_failure(monkeypatch):
     )
 
     assert response.status_code == 422
-    assert "Export failed" in response.json()["detail"]
+    assert "exportación falló" in response.json()["detail"].lower()
 
 
 def test_run_report_backfills_period_end_when_stored_statement_has_none(monkeypatch):
