@@ -885,10 +885,28 @@ async def delete_transaction(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Delete a single transaction and all its associated records."""
-    company_nit = _delete_transaction_cascade(db, id)
-    _resync_derived_statements(db, company_nit)
-    db.commit()
+    """Soft-delete a single transaction (marks deleted_at on the posted record)."""
+    found = db_service.soft_delete_transaction_posted(db, id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Transacción no encontrada.")
+
+
+@router.post("/{id}/restore", status_code=200)
+@limiter.limit("30/minute")
+async def restore_transaction(
+    request: Request,
+    id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Restore a soft-deleted transaction."""
+    row = db_service.restore_transaction_posted(db, id)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Transacción no encontrada o ya restaurada.",
+        )
+    return {"id": row.id, "status": "restored"}
 
 
 @router.delete("/by-ingest/{ingest_id}", status_code=200)
@@ -899,7 +917,7 @@ async def delete_transactions_by_ingest(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Delete all transactions belonging to a specific ingest document."""
+    """Soft-delete all transactions belonging to a specific ingest document."""
     from app.models.database import TransactionPending
 
     txn_ids = [
@@ -913,19 +931,12 @@ async def delete_transactions_by_ingest(
             status_code=404, detail=f"No transactions found for ingest {ingest_id}"
         )
 
-    affected_nits: set[str] = set()
+    deleted_count = 0
     for txn_id in txn_ids:
-        company_nit = _delete_transaction_cascade(db, txn_id)
-        if company_nit:
-            affected_nits.add(company_nit)
+        if db_service.soft_delete_transaction_posted(db, txn_id):
+            deleted_count += 1
 
-    # Resync each affected company once (not per-transaction) so the derived
-    # statements reflect the post-delete journal state.
-    for company_nit in affected_nits:
-        _resync_derived_statements(db, company_nit)
-
-    db.commit()
-    return {"deleted": len(txn_ids)}
+    return {"deleted": deleted_count}
 
 
 # ─── Manual nota de ajuste contable ──────────────────────────────────────────

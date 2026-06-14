@@ -252,4 +252,7 @@ def test_leave_company_can_remove_orphan_by_email(
 
     resp = client.delete(f"/api/v1/auth/companies/{TEST_NIT}")
     assert resp.status_code == 204
-    assert db.query(UserCompany).count() == 0
+    db.expire_all()
+    row = db.query(UserCompany).filter(UserCompany.company_nit == TEST_NIT).first()
+    assert row is not None
+    assert row.deleted_at is not None

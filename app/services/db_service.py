@@ -18,6 +18,7 @@ from app.core.logger import get_logger
 from app.models.database import (
     AjusteFiscal,
     AuditLog,
+    ChatSession,
     CompanyPucConfig,
     CompanyRateOverride,
     CompanySettings,
@@ -297,7 +298,10 @@ def get_transactions_by_nit(
     return (
         db.query(TransactionPosted)
         .join(TransactionPending)
-        .filter(TransactionPending.nit_emisor == nit)
+        .filter(
+            TransactionPending.nit_emisor == nit,
+            TransactionPosted.deleted_at.is_(None),
+        )
         .order_by(TransactionPosted.created_at.desc())
         .limit(limit)
         .all()
@@ -885,6 +889,7 @@ def find_duplicate_posted(
             TransactionPending.fecha >= day_start,
             TransactionPending.fecha <= day_end,
             TransactionPending.total == total,
+            TransactionPosted.deleted_at.is_(None),
         )
         .first()
     )
@@ -904,7 +909,7 @@ def get_all_puc(db: Session) -> List[CuentaPUC]:
     """Get all active PUC accounts."""
     return (
         db.query(CuentaPUC)
-        .filter(CuentaPUC.activa == True)  # noqa: E712
+        .filter(CuentaPUC.activa == True, CuentaPUC.deleted_at.is_(None))  # noqa: E712
         .order_by(CuentaPUC.codigo)
         .all()
     )
@@ -916,7 +921,8 @@ def search_puc(
     """Search PUC accounts by code or name. Optionally include inactive accounts."""
     query = db.query(CuentaPUC).filter(
         (CuentaPUC.codigo.ilike(f"%{search_term}%"))
-        | (CuentaPUC.nombre.ilike(f"%{search_term}%"))
+        | (CuentaPUC.nombre.ilike(f"%{search_term}%")),
+        CuentaPUC.deleted_at.is_(None),
     )
     if not include_inactive:
         query = query.filter(CuentaPUC.activa)
@@ -994,7 +1000,11 @@ def get_puc_for_company(db: Session, company_nit: str) -> List[CuentaPUC]:
     )
     return (
         db.query(CuentaPUC)
-        .filter(CuentaPUC.activa, ~CuentaPUC.codigo.in_(deactivated))
+        .filter(
+            CuentaPUC.activa,
+            ~CuentaPUC.codigo.in_(deactivated),
+            CuentaPUC.deleted_at.is_(None),
+        )
         .order_by(CuentaPUC.codigo)
         .all()
     )
@@ -3315,3 +3325,136 @@ def list_accumulators(
     return q.order_by(
         SpecialTaxAccumulator.period_year, SpecialTaxAccumulator.period_month
     ).all()
+
+
+# ─── Soft-delete / Restore ────────────────────────────────────────────────────
+
+
+def soft_delete_transaction_posted(db: Session, transaction_id: str) -> bool:
+    """Marcar una TransactionPosted como eliminada (soft-delete). Retorna True si se encontró."""
+    row = (
+        db.query(TransactionPosted)
+        .filter(TransactionPosted.id == transaction_id)
+        .first()
+    )
+    if row is None:
+        return False
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def restore_transaction_posted(
+    db: Session, transaction_id: str
+) -> Optional[TransactionPosted]:
+    """Restaurar una TransactionPosted eliminada (deleted_at → None). Retorna el registro o None."""
+    row = (
+        db.query(TransactionPosted)
+        .filter(TransactionPosted.id == transaction_id)
+        .first()
+    )
+    if row is None:
+        return None
+    row.deleted_at = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def soft_delete_chat_session(db: Session, session_id: str) -> bool:
+    """Marcar una ChatSession como eliminada (soft-delete). Retorna True si se encontró."""
+    row = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if row is None:
+        return False
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def restore_chat_session(db: Session, session_id: str) -> Optional[ChatSession]:
+    """Restaurar una ChatSession eliminada (deleted_at → None). Retorna el registro o None."""
+    row = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if row is None:
+        return None
+    row.deleted_at = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_chat_sessions(
+    db: Session, company_nit: Optional[str] = None
+) -> list[ChatSession]:
+    """Listar sesiones de chat activas (excluye eliminadas). Filtra por NIT si se indica."""
+    q = db.query(ChatSession).filter(ChatSession.deleted_at.is_(None))
+    if company_nit is not None:
+        q = q.filter(ChatSession.company_nit == company_nit)
+    return q.order_by(ChatSession.updated_at.desc()).all()
+
+
+def soft_delete_cuenta_puc(db: Session, codigo: str) -> bool:
+    """Marcar una CuentaPUC como eliminada (soft-delete). Retorna True si se encontró."""
+    row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
+    if row is None:
+        return False
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def restore_cuenta_puc(db: Session, codigo: str) -> Optional[CuentaPUC]:
+    """Restaurar una CuentaPUC eliminada (deleted_at → None). Retorna el registro o None."""
+    row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
+    if row is None:
+        return None
+    row.deleted_at = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def soft_delete_user_company(db: Session, user_id: str, company_nit: str) -> bool:
+    """Marcar un UserCompany como eliminado (soft-delete). Retorna True si se encontró."""
+    row = (
+        db.query(UserCompany)
+        .filter(
+            UserCompany.user_id == user_id,
+            UserCompany.company_nit == company_nit,
+        )
+        .first()
+    )
+    if row is None:
+        return False
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def restore_user_company(
+    db: Session, user_id: str, company_nit: str
+) -> Optional[UserCompany]:
+    """Restaurar un UserCompany eliminado (deleted_at → None). Retorna el registro o None."""
+    row = (
+        db.query(UserCompany)
+        .filter(
+            UserCompany.user_id == user_id,
+            UserCompany.company_nit == company_nit,
+        )
+        .first()
+    )
+    if row is None:
+        return None
+    row.deleted_at = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_user_companies(
+    db: Session, company_nit: Optional[str] = None
+) -> list[UserCompany]:
+    """Listar asociaciones UserCompany activas (excluye eliminadas). Filtra por NIT si se indica."""
+    q = db.query(UserCompany).filter(UserCompany.deleted_at.is_(None))
+    if company_nit is not None:
+        q = q.filter(UserCompany.company_nit == company_nit)
+    return q.all()

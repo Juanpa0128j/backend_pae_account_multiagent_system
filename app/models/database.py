@@ -370,6 +370,7 @@ class CuentaPUC(Base):
     activa = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     def __repr__(self):
         return f"<CuentaPUC(codigo={self.codigo}, nombre={self.nombre})>"
@@ -553,6 +554,7 @@ class TransactionPosted(Base):
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     # Relationships
     transaction_pending = relationship(
@@ -790,6 +792,7 @@ class ChatSession(Base):
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     messages = relationship(
         "ChatMessageRecord", back_populates="session", cascade="all, delete-orphan"
@@ -1262,6 +1265,9 @@ class UserCompany(Base):
     )
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
     )
 
     def __repr__(self):

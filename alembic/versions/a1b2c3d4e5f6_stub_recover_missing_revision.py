@@ -1,30 +1,69 @@
-"""stub: recover missing revision a1b2c3d4e5f6
+"""add soft-delete deleted_at column to transactions_posted, chat_sessions, cuentas_puc, user_company
 
-This migration was applied to the production database but the original
-file was lost. This stub re-introduces the revision ID into the chain so
-that `alembic upgrade head` can proceed from this point.
+Idempotent: column and index existence checked before applying.
 
 Revision ID: a1b2c3d4e5f6
 Revises: 8fb1b0855393
-Create Date: 2026-04-11
-
+Create Date: 2026-06-14 00:00:00.000000
 """
 
 from typing import Sequence, Union
 
-# revision identifiers, used by Alembic.
+from alembic import op
+
 revision: str = "a1b2c3d4e5f6"
 down_revision: Union[str, Sequence[str], None] = "8fb1b0855393"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+_TABLES = [
+    "transactions_posted",
+    "chat_sessions",
+    "cuentas_puc",
+    "user_company",
+]
+
+
+def _column_exists(bind, table: str, column: str) -> bool:
+    return (
+        bind.exec_driver_sql(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name=%s AND column_name=%s",
+            (table, column),
+        ).first()
+        is not None
+    )
+
+
+def _index_exists(bind, index_name: str) -> bool:
+    return (
+        bind.exec_driver_sql(
+            "SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname=%s",
+            (index_name,),
+        ).first()
+        is not None
+    )
+
 
 def upgrade() -> None:
-    # No-op: schema changes from the original migration are already
-    # present in the production database. This stub only restores
-    # the revision record so Alembic can continue upgrading.
-    pass
+    bind = op.get_bind()
+
+    for table in _TABLES:
+        if not _column_exists(bind, table, "deleted_at"):
+            op.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TIMESTAMPTZ NULL")
+
+        index_name = f"ix_{table}_deleted_at"
+        if not _index_exists(bind, index_name):
+            op.execute(f"CREATE INDEX {index_name} ON {table} (deleted_at)")
 
 
 def downgrade() -> None:
-    pass
+    bind = op.get_bind()
+
+    for table in reversed(_TABLES):
+        index_name = f"ix_{table}_deleted_at"
+        if _index_exists(bind, index_name):
+            op.execute(f"DROP INDEX {index_name}")
+
+        if _column_exists(bind, table, "deleted_at"):
+            op.execute(f"ALTER TABLE {table} DROP COLUMN deleted_at")

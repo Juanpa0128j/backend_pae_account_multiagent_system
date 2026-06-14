@@ -25,6 +25,7 @@ from app.core.auth import CurrentUser, get_current_user
 from app.core.database import get_db
 from app.core.limiter import limiter
 from app.models.database import CompanySettings, UserCompany
+from app.services import db_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -37,6 +38,7 @@ class UserCompanyResponse(BaseModel):
     user_id: str
     company_nit: str
     joined_at: datetime
+    razon_social: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -100,19 +102,44 @@ def _reassociate_memberships(
 # ─── Endpoints ───────────────────────────────────────────────────
 
 
+def _enrich_with_razon_social(
+    db: Session, memberships: List[UserCompany]
+) -> List[UserCompanyResponse]:
+    """Attach razon_social from CompanySettings to a list of memberships."""
+    nits = [m.company_nit for m in memberships]
+    settings_map: dict[str, str | None] = {}
+    if nits:
+        rows = (
+            db.query(CompanySettings.nit, CompanySettings.nombre)
+            .filter(CompanySettings.nit.in_(nits))
+            .all()
+        )
+        settings_map = {row.nit: row.nombre for row in rows}
+    return [
+        UserCompanyResponse(
+            user_id=m.user_id,
+            company_nit=m.company_nit,
+            joined_at=m.joined_at,
+            razon_social=settings_map.get(m.company_nit),
+        )
+        for m in memberships
+    ]
+
+
 @router.get("/companies", response_model=List[UserCompanyResponse])
 @limiter.limit("60/minute")
 def list_user_companies(
     request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-) -> List[UserCompany]:
+) -> List[UserCompanyResponse]:
     """Return all companies the current user belongs to.
 
     Re-associates orphaned rows (matching email but stale user_id) on the fly,
     so a user signing back up with the same email recovers their memberships.
     """
-    return _reassociate_memberships(db, current_user)
+    memberships = _reassociate_memberships(db, current_user)
+    return _enrich_with_razon_social(db, memberships)
 
 
 @router.post(
@@ -126,7 +153,7 @@ def join_company(
     body: JoinCompanyRequest,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-) -> UserCompany:
+) -> UserCompanyResponse:
     """Join a company by NIT. 404 if NIT unknown, 409 if already member."""
     company = db.query(CompanySettings).filter(CompanySettings.nit == body.nit).first()
     if not company:
@@ -166,7 +193,7 @@ def join_company(
                 raise
             db.refresh(existing)
         if recovered:
-            return existing
+            return _enrich_with_razon_social(db, [existing])[0]
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"User is already a member of company '{body.nit}'.",
@@ -176,7 +203,7 @@ def join_company(
     db.add(membership)
     db.commit()
     db.refresh(membership)
-    return membership
+    return _enrich_with_razon_social(db, [membership])[0]
 
 
 @router.delete("/companies/{nit}", status_code=status.HTTP_204_NO_CONTENT)
@@ -187,10 +214,15 @@ def leave_company(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Response:
-    """Leave a company. 404 if membership not found."""
+    """Leave a company (soft-delete). 404 if membership not found.
+
+    Supports email-based orphan re-association: if a row with the same email
+    but a stale user_id is found, it is re-linked and then soft-deleted.
+    """
     user_id = str(current_user.id)
     email = _normalize_email(current_user.email)
 
+    # Resolve the actual user_id owning this membership (handles email orphans).
     query = db.query(UserCompany).filter(UserCompany.company_nit == nit)
     if email:
         query = query.filter(
@@ -206,6 +238,34 @@ def leave_company(
             detail=f"Membership for NIT '{nit}' not found.",
         )
 
-    db.delete(membership)
-    db.commit()
+    # Re-associate orphan before soft-deleting so the FK matches.
+    if membership.user_id != user_id:
+        membership.user_id = user_id
+        db.commit()
+
+    found = db_service.soft_delete_user_company(db, user_id, nit)
+    if not found:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Membership for NIT '{nit}' not found.",
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/companies/{nit}/restore", status_code=status.HTTP_200_OK)
+@limiter.limit("30/minute")
+def restore_company_membership(
+    request: Request,
+    nit: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> UserCompanyResponse:
+    """Restore a soft-deleted company membership."""
+    user_id = str(current_user.id)
+    membership = db_service.restore_user_company(db, user_id, nit)
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Membresía no encontrada o ya activa.",
+        )
+    return _enrich_with_razon_social(db, [membership])[0]

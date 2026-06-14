@@ -21,9 +21,11 @@ from app.core.limiter import limiter
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool
 
+from app.core.database import get_db
 from app.models.chat_schemas import ChatRequest, ChatResponse, SessionSummary
-from app.services import chat_service
+from app.services import chat_service, db_service
 from app.services.nit_utils import normalize_nit
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -146,10 +148,29 @@ async def get_session_messages(
 async def remove_session(
     request: Request,
     session_id: str,
+    db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Delete a chat session and all its messages."""
-    deleted = chat_service.delete_session(session_id)
-    if not deleted:
+    """Soft-delete a chat session."""
+    found = db_service.soft_delete_chat_session(db, session_id)
+    if not found:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     return {"status": "deleted", "session_id": session_id}
+
+
+@router.post("/sessions/{session_id}/restore")
+@limiter.limit("30/minute")
+async def restore_session(
+    request: Request,
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Restore a soft-deleted chat session."""
+    row = db_service.restore_chat_session(db, session_id)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Sesión no encontrada o ya activa.",
+        )
+    return {"status": "restored", "session_id": session_id}
