@@ -389,6 +389,155 @@ def test_nota_credito_venta_routes_iva_generado(mock_rag_cls, mock_llm_fn):
     assert iva["cuenta_puc"] == "240805"
 
 
+def _line(asientos, cuenta):
+    return next((a for a in asientos if a.get("cuenta_puc") == cuenta), None)
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_nota_credito_venta_reverses_iva_generado(mock_rag_cls, mock_llm_fn):
+    """NC de venta = reverso: IVA generado 240805 al DÉBITO (no al crédito)."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    contador = {
+        "fecha_registro": "2026-06-01",
+        "tipo_documento": "nota_credito",
+        "descripcion_general": "Devolución parcial de venta",
+        "asientos": [
+            {
+                "cuenta_puc": "4135",
+                "nombre_cuenta": "Ingresos",
+                "tipo_movimiento": "debito",
+                "valor": 800000,
+                "descripcion": "Reversión ingreso",
+            },
+            {
+                "cuenta_puc": "130505",
+                "nombre_cuenta": "Clientes",
+                "tipo_movimiento": "credito",
+                "valor": 800000,
+                "descripcion": "Reversión CxC",
+            },
+        ],
+        "total_debitos": 800000,
+        "total_creditos": 800000,
+    }
+    state = _make_state(contador)
+    state["document_classification"] = {"doc_type": "nota_credito"}
+    state["source_document"] = {
+        "nit_emisor": "312645645",
+        "nit_receptor": "900111222",
+        "totales": {"total_iva": 152000, "total": 952000},
+    }
+    state["company_nit"] = "312645645"
+    result = tributario_node(state)
+    _assert_balanced(result)
+    asientos = result["tributario_output"]["asientos_enriquecidos"]
+    iva = _line(asientos, "240805")
+    assert iva is not None, "falta IVA generado 240805"
+    assert iva["tipo_movimiento"] == "debito", (
+        "NC venta: 240805 debe ir al DÉBITO (reverso)"
+    )
+    assert _line(asientos, "240802") is None, "NC venta no debe usar IVA descontable"
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_nota_credito_compra_reverses_iva_y_retenciones(mock_rag_cls, mock_llm_fn):
+    """NC de compra = reverso: IVA descontable 240802 al CRÉDITO y retenciones al DÉBITO."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    contador = {
+        "fecha_registro": "2026-06-01",
+        "tipo_documento": "nota_credito",
+        "descripcion_general": "Devolución parcial de compra",
+        "asientos": [
+            {
+                "cuenta_puc": "220505",
+                "nombre_cuenta": "Proveedores",
+                "tipo_movimiento": "debito",
+                "valor": 2000000,
+                "descripcion": "Reversión CxP",
+            },
+            {
+                "cuenta_puc": "519595",
+                "nombre_cuenta": "Gasto",
+                "tipo_movimiento": "credito",
+                "valor": 2000000,
+                "descripcion": "Reversión gasto",
+            },
+        ],
+        "total_debitos": 2000000,
+        "total_creditos": 2000000,
+    }
+    state = _make_state(contador)
+    state["document_classification"] = {"doc_type": "nota_credito"}
+    state["source_document"] = {
+        "nit_emisor": "900111222",
+        "nit_receptor": "312645645",
+        "totales": {"total_iva": 380000, "total": 2380000},
+    }
+    state["company_nit"] = "312645645"
+    result = tributario_node(state)
+    _assert_balanced(result)
+    asientos = result["tributario_output"]["asientos_enriquecidos"]
+    iva = _line(asientos, "240802")
+    assert iva is not None, "falta IVA descontable 240802"
+    assert iva["tipo_movimiento"] == "credito", (
+        "NC compra: 240802 debe ir al CRÉDITO (reverso)"
+    )
+    assert _line(asientos, "240805") is None, "NC compra no debe usar IVA generado"
+    for ret in ("2365", "2368"):
+        line = _line(asientos, ret)
+        if line is not None:
+            assert line["tipo_movimiento"] == "debito", (
+                f"NC compra: retención {ret} debe ir al DÉBITO (reverso)"
+            )
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_nota_debito_venta_no_reversa(mock_rag_cls, mock_llm_fn):
+    """ND de venta = cargo adicional (NO reverso): IVA generado 240805 al CRÉDITO."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    contador = {
+        "fecha_registro": "2026-06-01",
+        "tipo_documento": "nota_debito",
+        "descripcion_general": "Mayor valor de venta",
+        "asientos": [
+            {
+                "cuenta_puc": "130505",
+                "nombre_cuenta": "Clientes",
+                "tipo_movimiento": "debito",
+                "valor": 500000,
+                "descripcion": "Mayor CxC",
+            },
+            {
+                "cuenta_puc": "4135",
+                "nombre_cuenta": "Ingresos",
+                "tipo_movimiento": "credito",
+                "valor": 500000,
+                "descripcion": "Mayor ingreso",
+            },
+        ],
+        "total_debitos": 500000,
+        "total_creditos": 500000,
+    }
+    state = _make_state(contador)
+    state["document_classification"] = {"doc_type": "nota_debito"}
+    state["source_document"] = {
+        "nit_emisor": "312645645",
+        "nit_receptor": "900111222",
+        "totales": {"total_iva": 95000, "total": 595000},
+    }
+    state["company_nit"] = "312645645"
+    result = tributario_node(state)
+    _assert_balanced(result)
+    asientos = result["tributario_output"]["asientos_enriquecidos"]
+    iva = _line(asientos, "240805")
+    assert iva is not None and iva["tipo_movimiento"] == "credito", (
+        "ND venta: 240805 al CRÉDITO (no es reverso)"
+    )
+
+
 def test_detect_transaction_type_arrendamiento():
     asientos = [
         {

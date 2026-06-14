@@ -114,6 +114,11 @@ _VENTA_DOC_TYPES = frozenset(
 _NOTA_DOC_TYPES = frozenset({"nota_credito", "nota_debito"})
 
 
+def _flip_movimiento(mov: str) -> str:
+    """Swap debito↔credito. Used to reverse tax movements on a nota crédito."""
+    return "credito" if (mov or "").lower() == "debito" else "debito"
+
+
 def _nota_is_venta(state: AgentState) -> bool | None:
     """Resolve whether a nota crédito/débito adjusts a SALE (True) or PURCHASE (False).
 
@@ -901,11 +906,17 @@ def tributario_node(state: AgentState) -> AgentState:
         is_venta = nota_venta
     else:
         is_venta = doc_type in _VENTA_DOC_TYPES or doc_type == "recibo_caja"
+    # A nota crédito REVERSES the original invoice: IVA, retenciones and the
+    # counterparty movement all land on the opposite side (an income/IVA/payable
+    # that was credited on a sale is debited on its credit note, and vice versa).
+    # A nota débito is an ADDITIONAL charge — same direction as the invoice.
+    is_reversal = doc_type == "nota_credito"
     logger.info(
-        "Tributario: doc_type=%s%s → routing %s",
+        "Tributario: doc_type=%s%s → routing %s%s",
         doc_type or "<empty>",
         " (nota dir resuelta por NIT)" if nota_venta is not None else "",
         "VENTA" if is_venta else "COMPRA",
+        " + REVERSO (nota crédito)" if is_reversal else "",
     )
 
     # Extract explicit tax values from the source document (ingest pipeline output)
@@ -1239,6 +1250,14 @@ def tributario_node(state: AgentState) -> AgentState:
         accounts = _tax_accounts_for(
             doc_type, cuenta_ica_propio=cuenta_ica_propio, is_venta=is_venta
         )
+        # nota crédito = reversal: flip the movement of every tax line so an IVA
+        # generado that is credited on a sale is debited on its credit note, etc.
+        if is_reversal:
+            for _key in ("iva", "retefuente", "reteica"):
+                pair = accounts.get(_key)
+                if pair:
+                    _acct, _mov = pair
+                    accounts[_key] = (_acct, _flip_movimiento(_mov))
 
         # ------------------------------------------------------------------
         # Step 2 — Determine transaction type from PUC codes
@@ -1532,7 +1551,11 @@ def tributario_node(state: AgentState) -> AgentState:
         # iva_to_add gates whether a SEPARATE IVA line (240802/240805) is inserted
         # below — only when the contador did not already book one.
         iva_to_add = iva_val if not iva_presente else Decimal("0")
+        # On a reversal (nota crédito) the counterparty (CxC en venta / CxP en
+        # compra) also moves to the opposite side, so flip the target movement.
         target_movement = "debito" if is_venta else "credito"
+        if is_reversal:
+            target_movement = _flip_movimiento(target_movement)
 
         # IVA folded into the counterparty line (proveedor credit in compra /
         # cliente debit in venta):
