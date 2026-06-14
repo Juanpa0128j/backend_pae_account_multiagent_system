@@ -16,6 +16,7 @@ Unified 10-node graph — all pipelines routed via supervisor FSM:
 """
 
 import logging
+from functools import lru_cache
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -141,6 +142,26 @@ def create_agent_graph() -> Any:
     return compiled
 
 
+@lru_cache(maxsize=1)
+def get_compiled_agent_graph() -> Any:
+    """
+    Return the process-wide singleton compiled agent graph.
+
+    The graph topology is fully static and every node is a module-level
+    function with signature ``node(state) -> state``. No per-request data
+    (company_nit, period, db Session, user, …) is captured at build time —
+    all request state flows in exclusively via ``graph.invoke(state)`` and
+    each node opens its own ``SessionLocal()`` per invocation. LangGraph's
+    compiled graphs are immutable and thread-safe, and nothing in this
+    codebase mutates the returned object (call sites only call ``.invoke()``).
+
+    Therefore the compile result is safe to cache and share across requests
+    and tenants without cross-tenant state bleed. Caching eliminates the
+    repeated build+compile cost previously paid on every pipeline invocation.
+    """
+    return create_agent_graph()
+
+
 def _base_state() -> AgentState:
     """Return a fully-initialised default AgentState (all fields populated)."""
     return {
@@ -210,7 +231,7 @@ def invoke_ingest_pipeline(
     Returns:
         Result dict with status, data, validation_history, agent_log, db_result.
     """
-    graph = create_agent_graph()
+    graph = get_compiled_agent_graph()
 
     state = _base_state()
     state["file_path"] = file_path
@@ -270,7 +291,7 @@ def invoke_accounting_pipeline(
             load tax settings (must be the tenant, not nit_receptor which is the
             customer in sales invoices).
     """
-    graph = create_agent_graph()
+    graph = get_compiled_agent_graph()
 
     state = _base_state()
     state["mode"] = "process"
@@ -324,7 +345,7 @@ def invoke_reporting_pipeline(
             - error: error message (on failure)
             - agent_log: execution timeline
     """
-    graph = create_agent_graph()
+    graph = get_compiled_agent_graph()
 
     state = _base_state()
     state["mode"] = "reporting"
