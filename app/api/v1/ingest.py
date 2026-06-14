@@ -110,9 +110,11 @@ def _run_ingest_pipeline(
                     ingest_id,
                     IngestStatus.FAILED,
                     extraction_errors=[
-                        classify_exception(Exception(pipeline_error))
-                        if pipeline_error
-                        else classify_exception(Exception("pipeline error"))
+                        (
+                            classify_exception(Exception(pipeline_error))
+                            if pipeline_error
+                            else classify_exception(Exception("pipeline error"))
+                        )
                     ],
                 )
             except Exception as status_err:

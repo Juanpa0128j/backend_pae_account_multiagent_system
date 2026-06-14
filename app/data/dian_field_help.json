@@ -1,0 +1,20 @@
+{
+  "42": "Ingresos brutos operacionales del período fiscal",
+  "43": "Ingresos brutos no operacionales",
+  "44": "Devoluciones, rebajas y descuentos en ventas",
+  "45": "Renta líquida del ejercicio (42 + 43 - 44)",
+  "47": "Costos y gastos de nómina",
+  "48": "Aportes al sistema de seguridad social",
+  "51": "Gastos operacionales de administración",
+  "52": "Gastos operacionales de ventas",
+  "59": "Total costos y gastos (suma de anteriores)",
+  "63": "Renta líquida ordinaria del ejercicio (45 - 59)",
+  "64": "Pérdida líquida del ejercicio (59 - 45)",
+  "76": "Renta líquida gravable",
+  "88": "Impuesto neto de renta",
+  "89": "Descuentos tributarios",
+  "96": "Total impuesto a cargo",
+  "97": "Anticipo renta año gravable siguiente",
+  "98": "Saldo a pagar por impuesto",
+  "99": "Saldo a favor"
+}

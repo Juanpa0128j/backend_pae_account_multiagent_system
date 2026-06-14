@@ -26,9 +26,11 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -44,6 +46,12 @@ from app.services.tax_constants import (
     TIPO_IVA_NO_GRAVADO,
 )
 
+_HELP_TEXTS: dict[str, str] = json.loads(
+    (Path(__file__).parent.parent / "data" / "dian_field_help.json").read_text(
+        encoding="utf-8"
+    )
+)
+
 # ---------------------------------------------------------------------------
 # Internal data structures
 # ---------------------------------------------------------------------------
@@ -57,6 +65,7 @@ class DraftField:
     source: str
     confidence: str  # "high" | "medium" | "low"
     requires_review: bool
+    help_text: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -66,6 +75,7 @@ class DraftField:
             "source": self.source,
             "confidence": self.confidence,
             "requires_review": self.requires_review,
+            "help_text": self.help_text,
         }
 
 
@@ -227,6 +237,7 @@ def _build_f300(
             "tipo_iva=gravado_19",
             "high" if bucket_totals["gravado_19"] > 0 else "medium",
             False,
+            help_text=_HELP_TEXTS.get("26"),
         )
     )
     fields.append(
@@ -237,6 +248,7 @@ def _build_f300(
             "tipo_iva=gravado_5",
             "high" if bucket_totals["gravado_5"] > 0 else "medium",
             False,
+            help_text=_HELP_TEXTS.get("27"),
         )
     )
     fields.append(
@@ -247,6 +259,7 @@ def _build_f300(
             "tipo_iva=exento",
             "high" if bucket_totals["exento"] > 0 else "medium",
             False,
+            help_text=_HELP_TEXTS.get("28"),
         )
     )
     fields.append(
@@ -257,6 +270,7 @@ def _build_f300(
             "tipo_iva=excluido",
             "high" if bucket_totals["excluido"] > 0 else "medium",
             False,
+            help_text=_HELP_TEXTS.get("29"),
         )
     )
     fields.append(
@@ -267,6 +281,7 @@ def _build_f300(
             "tipo_iva=exportacion",
             "high" if bucket_totals["exportacion"] > 0 else "medium",
             False,
+            help_text=_HELP_TEXTS.get("30"),
         )
     )
 
@@ -278,6 +293,7 @@ def _build_f300(
             "cuenta_240805",
             "high",
             False,
+            help_text=_HELP_TEXTS.get("42"),
         )
     )
     fields.append(
@@ -288,6 +304,7 @@ def _build_f300(
             "cuenta_240807",
             "high" if iva_generado_5 > 0 else "medium",
             False,
+            help_text=_HELP_TEXTS.get("43"),
         )
     )
     fields.append(
@@ -298,6 +315,7 @@ def _build_f300(
             "calculado",
             "high",
             False,
+            help_text=_HELP_TEXTS.get("54"),
         )
     )
     fields.append(
@@ -308,6 +326,7 @@ def _build_f300(
             "cuenta_240802",
             "high",
             False,
+            help_text=_HELP_TEXTS.get("66"),
         )
     )
     fields.append(
@@ -318,6 +337,7 @@ def _build_f300(
             "calculado",
             "high",
             operaciones_mixtas,
+            help_text=_HELP_TEXTS.get("67"),
         )
     )
     if operaciones_mixtas:
@@ -359,6 +379,7 @@ def _build_f300(
             "declaracion_anterior",
             "low",
             True,
+            help_text=_HELP_TEXTS.get("84"),
         )
     )
     label_89 = (
@@ -374,6 +395,7 @@ def _build_f300(
             "calculado",
             "high",
             False,
+            help_text=_HELP_TEXTS.get("89"),
         )
     )
     if iva_neto < 0:
@@ -385,7 +407,15 @@ def _build_f300(
             )
         )
     fields.append(
-        DraftField("97", "Sanciones (si aplica)", 0.0, "input_manual", "low", True)
+        DraftField(
+            "97",
+            "Sanciones (si aplica)",
+            0.0,
+            "input_manual",
+            "low",
+            True,
+            help_text=_HELP_TEXTS.get("97"),
+        )
     )
 
     warnings.append(
@@ -523,6 +553,7 @@ def _build_f350(
                     "transactions_posted",
                     "low",
                     True,
+                    help_text=_HELP_TEXTS.get("_sin_clasificar"),
                 )
             )
             warnings.append(
@@ -551,6 +582,7 @@ def _build_f350(
                 "cuenta_2368",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("76"),
             )
         )
 
@@ -563,6 +595,7 @@ def _build_f350(
             "nomina_no_disponible",
             "low",
             True,
+            help_text=_HELP_TEXTS.get("50"),
         )
     )
     fields.append(
@@ -573,10 +606,19 @@ def _build_f350(
             "input_manual",
             "low",
             True,
+            help_text=_HELP_TEXTS.get("75"),
         )
     )
     fields.append(
-        DraftField("97", "Sanciones (si aplica)", 0.0, "input_manual", "low", True)
+        DraftField(
+            "97",
+            "Sanciones (si aplica)",
+            0.0,
+            "input_manual",
+            "low",
+            True,
+            help_text=_HELP_TEXTS.get("97"),
+        )
     )
 
     # ── 5. Total auto-calc ──────────────────────────────────────────────────
@@ -593,6 +635,7 @@ def _build_f350(
             "auto_calc",
             "high",
             False,
+            help_text=_HELP_TEXTS.get("_total_retenciones"),
         )
     )
 
@@ -693,10 +736,22 @@ def _build_f110(
     fields.extend(
         [
             DraftField(
-                "26", "Total activos", round(activos, 2), activos_source, "high", False
+                "26",
+                "Total activos",
+                round(activos, 2),
+                activos_source,
+                "high",
+                False,
+                help_text=_HELP_TEXTS.get("26"),
             ),
             DraftField(
-                "27", "Total pasivos", round(pasivos, 2), pasivos_source, "high", False
+                "27",
+                "Total pasivos",
+                round(pasivos, 2),
+                pasivos_source,
+                "high",
+                False,
+                help_text=_HELP_TEXTS.get("27"),
             ),
             DraftField(
                 "29",
@@ -705,6 +760,7 @@ def _build_f110(
                 "calculated" if not patrimonio_source_from_f2516 else "f2516:290",
                 "high" if patrimonio_source_from_f2516 else "medium",
                 not patrimonio_source_from_f2516,
+                help_text=_HELP_TEXTS.get("29"),
             ),
         ]
     )
@@ -723,6 +779,7 @@ def _build_f110(
                 "clase_4_puc",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("40"),
             ),
             DraftField(
                 "52",
@@ -731,6 +788,7 @@ def _build_f110(
                 "clase_6_puc",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("52"),
             ),
             DraftField(
                 "60",
@@ -739,6 +797,7 @@ def _build_f110(
                 "clase_5_puc",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("60"),
             ),
         ]
     )
@@ -771,6 +830,7 @@ def _build_f110(
             rlo_source,
             "high" if rlo_source == "f2516" else "medium",
             rlo_requires_review,
+            help_text=_HELP_TEXTS.get("f110_renta_liquida_ordinaria"),
         )
     )
 
@@ -799,6 +859,7 @@ def _build_f110(
             "perdidas_fiscales_acumuladas" if perdidas_sum > 0 else "journal",
             "high" if perdidas_sum > 0 else "medium",
             perdidas_requires_review,
+            help_text=_HELP_TEXTS.get("f110_perdidas_compensar"),
         )
     )
 
@@ -811,6 +872,7 @@ def _build_f110(
             "input_manual",
             "low",
             True,
+            help_text=_HELP_TEXTS.get("f110_rentas_exentas"),
         )
     )
 
@@ -828,6 +890,7 @@ def _build_f110(
             "calculado",
             "medium",
             True,
+            help_text=_HELP_TEXTS.get("72"),
         )
     )
 
@@ -872,6 +935,7 @@ def _build_f110(
             "calculado" if tarifa_info is None else f"tarifas_renta:{base_legal_label}",
             "medium",
             True,
+            help_text=_HELP_TEXTS.get("80"),
         )
     )
 
@@ -889,6 +953,7 @@ def _build_f110(
             "cuentas_511505_521505",
             "high",
             False,
+            help_text=_HELP_TEXTS.get("63"),
         )
     )
 
@@ -914,7 +979,15 @@ def _build_f110(
         ("86_otros", "Otros descuentos tributarios"),
     ]
     fields.extend(
-        DraftField(renglon, label, 0.0, "input_manual", "low", True)
+        DraftField(
+            renglon,
+            label,
+            0.0,
+            "input_manual",
+            "low",
+            True,
+            help_text=_HELP_TEXTS.get(renglon),
+        )
         for renglon, label in _DESCUENTO_ITEMS
     )
 
@@ -931,6 +1004,7 @@ def _build_f110(
             "calculado",
             "medium",
             True,
+            help_text=_HELP_TEXTS.get("86"),
         )
     )
 
@@ -944,6 +1018,7 @@ def _build_f110(
             "calculado",
             "medium",
             True,
+            help_text=_HELP_TEXTS.get("88"),
         )
     )
 
@@ -966,6 +1041,7 @@ def _build_f110(
             "cuentas_135518_135515",
             "high",
             False,
+            help_text=_HELP_TEXTS.get("92"),
         )
     )
 
@@ -979,6 +1055,7 @@ def _build_f110(
             "calculado",
             "medium",
             True,
+            help_text=_HELP_TEXTS.get("93"),
         )
     )
 
@@ -1029,6 +1106,7 @@ def _build_f110(
             "calculado",
             "medium",
             False,
+            help_text=_HELP_TEXTS.get("95_metodo1"),
         )
     )
 
@@ -1048,6 +1126,7 @@ def _build_f110(
                 "calculado",
                 "medium",
                 False,
+                help_text=_HELP_TEXTS.get("95_metodo2"),
             )
         )
 
@@ -1065,6 +1144,7 @@ def _build_f110(
             "calculado",
             "medium",
             True,
+            help_text=_HELP_TEXTS.get("95"),
         )
     )
 
@@ -1101,12 +1181,21 @@ def _build_f110(
             "calculado",
             "medium",
             True,
+            help_text=_HELP_TEXTS.get("96"),
         )
     )
 
     # ── Sanciones ────────────────────────────────────────────────────────────
     fields.append(
-        DraftField("97", "Sanciones (si aplica)", 0.0, "input_manual", "low", True)
+        DraftField(
+            "97",
+            "Sanciones (si aplica)",
+            0.0,
+            "input_manual",
+            "low",
+            True,
+            help_text=_HELP_TEXTS.get("97"),
+        )
     )
 
     # ── Standard warnings ────────────────────────────────────────────────────
@@ -1171,6 +1260,7 @@ def _build_ica(
                 "clase_4_puc",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("1"),
             ),
             DraftField(
                 "2",
@@ -1179,6 +1269,7 @@ def _build_ica(
                 "calculado",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("2"),
             ),
             DraftField(
                 "3",
@@ -1187,9 +1278,16 @@ def _build_ica(
                 "calculado",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("3"),
             ),
             DraftField(
-                "4", "Sobretasa bomberil", 0.0, "municipio_especifico", "low", True
+                "4",
+                "Sobretasa bomberil",
+                0.0,
+                "municipio_especifico",
+                "low",
+                True,
+                help_text=_HELP_TEXTS.get("4"),
             ),
             DraftField(
                 "5",
@@ -1198,9 +1296,16 @@ def _build_ica(
                 "cuenta_2368",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("5"),
             ),
             DraftField(
-                "6", "Anticipo período anterior", 0.0, "requiere_historico", "low", True
+                "6",
+                "Anticipo período anterior",
+                0.0,
+                "requiere_historico",
+                "low",
+                True,
+                help_text=_HELP_TEXTS.get("6"),
             ),
             DraftField(
                 "10",
@@ -1213,6 +1318,7 @@ def _build_ica(
                 "calculado",
                 "medium",
                 True,
+                help_text=_HELP_TEXTS.get("10"),
             ),
         ]
     )
@@ -1322,6 +1428,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("100"),
             ),
             DraftField(
                 "130",
@@ -1330,6 +1437,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("130"),
             ),
             DraftField(
                 "150",
@@ -1338,6 +1446,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("150"),
             ),
             DraftField(
                 "160",
@@ -1346,6 +1455,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("160"),
             ),
             DraftField(
                 "180",
@@ -1354,6 +1464,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("180"),
             ),
         ]
     )
@@ -1371,6 +1482,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("190"),
             ),
             DraftField(
                 "191",
@@ -1379,6 +1491,7 @@ def _build_f2516(
                 "ajustes_fiscales" if _has_ajustes("ESF_ACTIVO") else "calculated",
                 "high" if _has_ajustes("ESF_ACTIVO") else "low",
                 not _has_ajustes("ESF_ACTIVO"),
+                help_text=_HELP_TEXTS.get("191"),
             ),
             DraftField(
                 "199",
@@ -1387,6 +1500,7 @@ def _build_f2516(
                 "calculated",
                 "medium",
                 False,
+                help_text=_HELP_TEXTS.get("199"),
             ),
         ]
     )
@@ -1417,6 +1531,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("200"),
             ),
             DraftField(
                 "220",
@@ -1425,6 +1540,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("220"),
             ),
             DraftField(
                 "240",
@@ -1433,6 +1549,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("240"),
             ),
             DraftField(
                 "241",
@@ -1441,6 +1558,7 @@ def _build_f2516(
                 "ajustes_fiscales" if _has_ajustes("ESF_PASIVO") else "calculated",
                 "high" if _has_ajustes("ESF_PASIVO") else "low",
                 not _has_ajustes("ESF_PASIVO"),
+                help_text=_HELP_TEXTS.get("241"),
             ),
             DraftField(
                 "249",
@@ -1449,6 +1567,7 @@ def _build_f2516(
                 "calculated",
                 "medium",
                 False,
+                help_text=_HELP_TEXTS.get("249"),
             ),
         ]
     )
@@ -1462,6 +1581,7 @@ def _build_f2516(
             "calculated",
             "medium",
             False,
+            help_text=_HELP_TEXTS.get("290"),
         )
     )
 
@@ -1481,6 +1601,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("300"),
             ),
             DraftField(
                 "310",
@@ -1489,6 +1610,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("310"),
             ),
             DraftField(
                 "320",
@@ -1497,6 +1619,7 @@ def _build_f2516(
                 "ajustes_fiscales" if _has_ajustes("ERI_INGRESO") else "calculated",
                 "high" if _has_ajustes("ERI_INGRESO") else "low",
                 not _has_ajustes("ERI_INGRESO"),
+                help_text=_HELP_TEXTS.get("320"),
             ),
             DraftField(
                 "329",
@@ -1505,6 +1628,7 @@ def _build_f2516(
                 "calculated",
                 "medium",
                 False,
+                help_text=_HELP_TEXTS.get("329"),
             ),
         ]
     )
@@ -1522,6 +1646,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("400"),
             ),
             DraftField(
                 "410",
@@ -1530,6 +1655,7 @@ def _build_f2516(
                 "ajustes_fiscales" if _has_ajustes("ERI_COSTO") else "calculated",
                 "high" if _has_ajustes("ERI_COSTO") else "low",
                 not _has_ajustes("ERI_COSTO"),
+                help_text=_HELP_TEXTS.get("410"),
             ),
             DraftField(
                 "419",
@@ -1538,6 +1664,7 @@ def _build_f2516(
                 "calculated",
                 "medium",
                 False,
+                help_text=_HELP_TEXTS.get("419"),
             ),
         ]
     )
@@ -1557,6 +1684,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("500"),
             ),
             DraftField(
                 "510",
@@ -1565,6 +1693,7 @@ def _build_f2516(
                 "journal_entries",
                 "high",
                 False,
+                help_text=_HELP_TEXTS.get("510"),
             ),
             DraftField(
                 "520",
@@ -1573,6 +1702,7 @@ def _build_f2516(
                 "ajustes_fiscales" if _has_ajustes("ERI_GASTO") else "calculated",
                 "high" if _has_ajustes("ERI_GASTO") else "low",
                 not _has_ajustes("ERI_GASTO"),
+                help_text=_HELP_TEXTS.get("520"),
             ),
             DraftField(
                 "529",
@@ -1581,6 +1711,7 @@ def _build_f2516(
                 "calculated",
                 "medium",
                 False,
+                help_text=_HELP_TEXTS.get("529"),
             ),
         ]
     )
@@ -1596,6 +1727,7 @@ def _build_f2516(
             "calculated",
             "medium",
             False,
+            help_text=_HELP_TEXTS.get("600"),
         )
     )
 
@@ -1624,6 +1756,7 @@ def _build_f2516(
                 "ajustes_fiscales" if ajustes_by_seccion else "calculated",
                 "high" if ajustes_by_seccion else "low",
                 not ajustes_by_seccion,
+                help_text=_HELP_TEXTS.get("700"),
             ),
             DraftField(
                 "710",
@@ -1632,6 +1765,7 @@ def _build_f2516(
                 "ajustes_fiscales" if ajustes_by_seccion else "calculated",
                 "high" if ajustes_by_seccion else "low",
                 not ajustes_by_seccion,
+                help_text=_HELP_TEXTS.get("710"),
             ),
             DraftField(
                 "720",
@@ -1640,6 +1774,7 @@ def _build_f2516(
                 "ajustes_fiscales" if ajustes_by_seccion else "calculated",
                 "high" if ajustes_by_seccion else "low",
                 not ajustes_by_seccion,
+                help_text=_HELP_TEXTS.get("720"),
             ),
             DraftField(
                 "730",
@@ -1648,6 +1783,7 @@ def _build_f2516(
                 "calculated",
                 "medium",
                 True,
+                help_text=_HELP_TEXTS.get("730"),
             ),
         ]
     )
@@ -1661,6 +1797,7 @@ def _build_f2516(
             "calculated" if not ajustes_by_seccion else "ajustes_fiscales",
             "medium" if not ajustes_by_seccion else "high",
             not ajustes_by_seccion,
+            help_text=_HELP_TEXTS.get("4"),
         )
     )
 
