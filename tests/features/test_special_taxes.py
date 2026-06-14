@@ -317,54 +317,40 @@ def _make_special_tax_mock(
 
 
 def test_tributario_applies_per_transaction_special_tax():
-    """Per-transaction special tax adds debit+credit journal lines."""
-    from app.agents import tributario_agent
+    """Per-transaction special tax adds debit+credit journal lines and a
+    schema-valid impuesto entry.
 
-    _make_state(doc_type="factura_compra", es_entidad_publica=False)
+    Regression: special taxes use arbitrary user-defined codes which are NOT in
+    the DetalleImpuesto.tipo_impuesto enum. The entry must map to "otro" (keeping
+    the real code in `code`), otherwise the tributario output fails validation
+    and the pipeline aborts.
+    """
+    from app.agents import tributario_agent
+    from app.models.agent_outputs import DetalleImpuesto
+
     mock_tax = _make_special_tax_mock(
         settlement="per_transaction", es_entidad_publica_only=False
     )
 
-    with patch("app.agents.tributario_agent._apply_special_taxes") as mock_apply:
-        # We test _apply_special_taxes directly to avoid full pipeline mock complexity
-        mock_apply.return_value = (
-            [
-                {
-                    "tipo_impuesto": "estampilla_test",
-                    "valor_impuesto": "5000.00",
-                    "cuenta_puc": "519505",
-                }
-            ],
-            [
-                {
-                    "cuenta_puc": "519505",
-                    "nombre_cuenta": "Estampilla",
-                    "descripcion": "Estampilla Test",
-                    "tipo_movimiento": "debito",
-                    "valor": "5000.00",
-                },
-                {
-                    "cuenta_puc": "236801",
-                    "nombre_cuenta": "Estampilla por pagar",
-                    "descripcion": "Estampilla Test",
-                    "tipo_movimiento": "credito",
-                    "valor": "5000.00",
-                },
-            ],
-        )
-
-        result_impuestos, result_lines = tributario_agent._apply_special_taxes(
-            db=MagicMock(),
-            special_taxes=[mock_tax],
-            base_gravable=Decimal("1000000"),
-            total_pago=Decimal("1000000"),
-            es_entidad_publica=False,
-            transaction_date=date(2026, 6, 1),
-            company_nit="800999888",
-        )
+    # Call the REAL function (no patching) — rate 0.005 × base 1,000,000 = 5,000.
+    result_impuestos, result_lines = tributario_agent._apply_special_taxes(
+        db=MagicMock(),
+        special_taxes=[mock_tax],
+        base_gravable=Decimal("1000000"),
+        total_pago=Decimal("1000000"),
+        es_entidad_publica=False,
+        transaction_date=date(2026, 6, 1),
+        company_nit="800999888",
+    )
 
     assert len(result_impuestos) == 1
-    assert result_impuestos[0]["tipo_impuesto"] == "estampilla_test"
+    imp = result_impuestos[0]
+    # Must validate against the tributario output schema (the bug that aborted
+    # the pipeline was an out-of-enum tipo_impuesto).
+    DetalleImpuesto.model_validate(imp)
+    assert imp["tipo_impuesto"] == "otro"
+    assert imp["code"] == "ESTAMPILLA_TEST"
+    assert imp["valor_impuesto"] == "5000.00"
     cuentas = [line["cuenta_puc"] for line in result_lines]
     assert "519505" in cuentas
     assert "236801" in cuentas

@@ -675,7 +675,11 @@ def _apply_special_taxes(
         if tax.settlement == "per_transaction":
             result_impuestos.append(
                 {
-                    "tipo_impuesto": tax.code.lower(),
+                    # Special taxes use arbitrary user-defined codes, which are NOT
+                    # in the DetalleImpuesto.tipo_impuesto enum. Map to the "otro"
+                    # catch-all and keep the real identity in `code`/`nombre`.
+                    "tipo_impuesto": "otro",
+                    "code": tax.code,
                     "nombre": tax.nombre,
                     "base_gravable": str(base),
                     "tarifa_porcentaje": str(Decimal(str(tax.rate)) * 100),
