@@ -118,7 +118,7 @@ class DashboardFinancialSummaryResponse(BaseModel):
 
 @router.get("/stats", response_model=DashboardStatsResponse)
 @limiter.limit("30/minute")
-async def get_dashboard_stats(
+def get_dashboard_stats(
     request: Request,
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
@@ -267,7 +267,7 @@ async def get_dashboard_stats(
 
 @router.get("/financial-summary", response_model=DashboardFinancialSummaryResponse)
 @limiter.limit("30/minute")
-async def get_financial_summary(
+def get_financial_summary(
     request: Request,
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
@@ -365,7 +365,7 @@ async def get_financial_summary(
 
 @router.get("/monthly-trend", response_model=MonthlyTrendResponse)
 @limiter.limit("30/minute")
-async def get_monthly_trend(
+def get_monthly_trend(
     request: Request,
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),

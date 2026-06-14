@@ -656,7 +656,7 @@ def _build_attachment_headers(
 
 @router.get("/balance", response_model=BalanceSheetOutput)
 @limiter.limit("30/minute")
-async def get_balance_report(
+def get_balance_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(
@@ -675,7 +675,7 @@ async def get_balance_report(
 
 @router.get("/pnl", response_model=PnLOutput)
 @limiter.limit("30/minute")
-async def get_pnl_report(
+def get_pnl_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(
@@ -694,7 +694,7 @@ async def get_pnl_report(
 
 @router.get("/cashflow", response_model=CashFlowOutput)
 @limiter.limit("30/minute")
-async def get_cashflow_report(
+def get_cashflow_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(
@@ -721,7 +721,7 @@ async def get_cashflow_report(
 
 @router.get("/libro_diario")
 @limiter.limit("30/minute")
-async def get_libro_diario_report(
+def get_libro_diario_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
@@ -738,7 +738,7 @@ async def get_libro_diario_report(
 
 @router.get("/libro_auxiliar")
 @limiter.limit("30/minute")
-async def get_libro_auxiliar_report(
+def get_libro_auxiliar_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
@@ -756,7 +756,7 @@ async def get_libro_auxiliar_report(
 
 @router.get("/cambios_patrimonio")
 @limiter.limit("30/minute")
-async def get_cambios_patrimonio_report(
+def get_cambios_patrimonio_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
@@ -775,7 +775,7 @@ async def get_cambios_patrimonio_report(
 
 @router.get("/notas_estados_financieros")
 @limiter.limit("30/minute")
-async def get_notas_eeff_report(
+def get_notas_eeff_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
@@ -791,7 +791,7 @@ async def get_notas_eeff_report(
 
 @router.get("/analysis")
 @limiter.limit("30/minute")
-async def get_analysis_report(
+def get_analysis_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),

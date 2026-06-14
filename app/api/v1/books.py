@@ -98,7 +98,7 @@ def _via_a_balance_as_rows(balance: dict) -> list[dict]:
 
 @router.get("/")
 @limiter.limit("60/minute")
-async def get_books(
+def get_books(
     request: Request,
     tipo: str = Query(..., description="diario, mayor, auxiliar, or balance"),
     fecha_inicio: Optional[str] = None,

@@ -51,7 +51,7 @@ def _normalize_request_nit(request: ChatRequest) -> ChatRequest:
 
 @router.post("", response_model=ChatResponse)
 @limiter.limit("30/minute")
-async def chat(
+def chat(
     request: Request,
     chat_request: ChatRequest,
     current_user: CurrentUser = Depends(get_current_user),

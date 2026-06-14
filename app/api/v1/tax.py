@@ -235,7 +235,7 @@ def _empty_renta(end_date: date, available_periods: List[str]) -> dict:
 
 @router.get("/iva", response_model=IVAOutput)
 @limiter.limit("60/minute")
-async def get_iva_report(
+def get_iva_report(
     request: Request,
     period_start: Optional[date] = Query(
         None,
@@ -278,7 +278,7 @@ async def get_iva_report(
 
 @router.get("/withholdings", response_model=WithholdingsOutput)
 @limiter.limit("60/minute")
-async def get_withholdings_report(
+def get_withholdings_report(
     request: Request,
     period_start: Optional[date] = Query(
         None,
