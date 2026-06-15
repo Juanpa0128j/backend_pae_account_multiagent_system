@@ -596,7 +596,7 @@ class TestGetRentaProvisionReport:
         assert result["provision_renta"] == 0.0  # clamped
 
 
-class TestGetMonthlyTrend:
+class TestGetMonthlyTrendLegacy:
     def test_returns_none_when_fewer_than_two_pnls(self):
         from app.services import via_b_service
 
@@ -892,3 +892,281 @@ class TestLatestCommonPeriodAnnualOnly:
             assert via_b_service.latest_common_period(
                 MagicMock(), "800999888", annual_only=True
             ) == _date(2025, 12, 31)
+
+
+# ---------------------------------------------------------------------------
+# get_monthly_trend — libro_auxiliar fallback
+# ---------------------------------------------------------------------------
+
+
+def _libro_auxiliar_stmt(lines: list) -> MagicMock:
+    """Build a mock libro_auxiliar FinancialStatement with given lines."""
+    return _stmt(statement_type="libro_auxiliar", data={"lines": lines})
+
+
+def _er_stmt(month_year: tuple, ingresos: float, gastos: float) -> MagicMock:
+    """Build a mock estado_resultados statement for a given (year, month)."""
+    year, month = month_year
+    import calendar
+
+    last_day = calendar.monthrange(year, month)[1]
+    return _stmt(
+        statement_type="estado_resultados",
+        data={"total_ingresos": ingresos, "total_gastos": gastos},
+        period_end=datetime(year, month, last_day, tzinfo=timezone.utc),
+    )
+
+
+class TestGetMonthlyTrend:
+    """get_monthly_trend: estado_resultados path + libro_auxiliar fallback."""
+
+    # ------------------------------------------------------------------ #
+    # Helpers                                                              #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _patch_statements(er_rows: list, libro_rows: list):
+        """Patch _statements so each type returns its own list."""
+        from unittest.mock import patch as _patch
+
+        rows_by_type = {
+            "estado_resultados": er_rows,
+            "libro_auxiliar": libro_rows,
+        }
+
+        def _stub(_db, _nit, stype):
+            return rows_by_type.get(stype, [])
+
+        return _patch("app.services.via_b_service._statements", side_effect=_stub)
+
+    # ------------------------------------------------------------------ #
+    # (a) 0 estado_resultados → fallback to libro_auxiliar                 #
+    # ------------------------------------------------------------------ #
+
+    def test_returns_data_from_libro_auxiliar_when_zero_estado_resultados(self):
+        from unittest.mock import MagicMock
+
+        from app.services import via_b_service
+
+        lines = [
+            {
+                "fecha": "2026-01-15",
+                "cuenta_puc": "410505",
+                "debito": 0.0,
+                "credito": 500_000.0,
+            },
+            {
+                "fecha": "2026-01-20",
+                "cuenta_puc": "510101",
+                "debito": 200_000.0,
+                "credito": 0.0,
+            },
+            {
+                "fecha": "2026-02-10",
+                "cuenta_puc": "411010",
+                "debito": 0.0,
+                "credito": 300_000.0,
+            },
+            {
+                "fecha": "2026-02-15",
+                "cuenta_puc": "511010",
+                "debito": 100_000.0,
+                "credito": 0.0,
+            },
+        ]
+        libro = _libro_auxiliar_stmt(lines)
+
+        with self._patch_statements(er_rows=[], libro_rows=[libro]):
+            result = via_b_service.get_monthly_trend(MagicMock(), "800999888", months=6)
+
+        assert result is not None
+        assert "data" in result
+        months_data = result["data"]
+        assert len(months_data) == 2
+        jan = next(m for m in months_data if m["month"] == "2026-01")
+        feb = next(m for m in months_data if m["month"] == "2026-02")
+        assert jan["ingresos"] == pytest.approx(500_000.0)
+        assert jan["gastos"] == pytest.approx(200_000.0)
+        assert feb["ingresos"] == pytest.approx(300_000.0)
+        assert feb["gastos"] == pytest.approx(100_000.0)
+
+    # ------------------------------------------------------------------ #
+    # (b) 1 estado_resultados → fallback to libro_auxiliar                 #
+    # ------------------------------------------------------------------ #
+
+    def test_returns_data_from_libro_auxiliar_when_one_estado_resultados(self):
+        from unittest.mock import MagicMock
+
+        from app.services import via_b_service
+
+        lines = [
+            {
+                "fecha": "2025-11-05",
+                "cuenta_puc": "410505",
+                "debito": 0.0,
+                "credito": 800_000.0,
+            },
+            {
+                "fecha": "2025-11-10",
+                "cuenta_puc": "510505",
+                "debito": 350_000.0,
+                "credito": 0.0,
+            },
+        ]
+        libro = _libro_auxiliar_stmt(lines)
+        one_er = _er_stmt((2026, 3), 900_000.0, 400_000.0)
+
+        with self._patch_statements(er_rows=[one_er], libro_rows=[libro]):
+            result = via_b_service.get_monthly_trend(MagicMock(), "800999888", months=6)
+
+        assert result is not None
+        months_data = result["data"]
+        assert any(m["month"] == "2025-11" for m in months_data)
+
+    # ------------------------------------------------------------------ #
+    # (c) >= 2 estado_resultados → existing path unchanged                 #
+    # ------------------------------------------------------------------ #
+
+    def test_estado_resultados_path_unchanged_with_two_or_more_rows(self):
+        from unittest.mock import MagicMock
+
+        from app.services import via_b_service
+
+        er1 = _er_stmt((2026, 1), 1_000_000.0, 600_000.0)
+        er2 = _er_stmt((2026, 2), 1_200_000.0, 700_000.0)
+
+        with self._patch_statements(er_rows=[er2, er1], libro_rows=[]):
+            result = via_b_service.get_monthly_trend(MagicMock(), "800999888", months=6)
+
+        assert result is not None
+        months_data = result["data"]
+        assert len(months_data) == 2
+        jan = next(m for m in months_data if m["month"] == "2026-01")
+        feb = next(m for m in months_data if m["month"] == "2026-02")
+        assert jan["ingresos"] == pytest.approx(1_000_000.0)
+        assert feb["gastos"] == pytest.approx(700_000.0)
+
+    # ------------------------------------------------------------------ #
+    # (d) no libro_auxiliar and < 2 estado_resultados → None               #
+    # ------------------------------------------------------------------ #
+
+    def test_returns_none_when_no_libro_and_no_estado_resultados(self):
+        from unittest.mock import MagicMock
+
+        from app.services import via_b_service
+
+        with self._patch_statements(er_rows=[], libro_rows=[]):
+            result = via_b_service.get_monthly_trend(MagicMock(), "800999888")
+
+        assert result is None
+
+    def test_returns_none_when_no_libro_and_one_estado_resultados(self):
+        from unittest.mock import MagicMock
+
+        from app.services import via_b_service
+
+        one_er = _er_stmt((2026, 1), 500_000.0, 200_000.0)
+
+        with self._patch_statements(er_rows=[one_er], libro_rows=[]):
+            result = via_b_service.get_monthly_trend(MagicMock(), "800999888")
+
+        assert result is None
+
+    # ------------------------------------------------------------------ #
+    # (e) only months with class 4 or 5 activity included                  #
+    # ------------------------------------------------------------------ #
+
+    def test_excludes_months_with_no_class_4_or_5_activity(self):
+        from unittest.mock import MagicMock
+
+        from app.services import via_b_service
+
+        lines = [
+            # Jan: class 4 only
+            {
+                "fecha": "2026-01-10",
+                "cuenta_puc": "410505",
+                "debito": 0.0,
+                "credito": 400_000.0,
+            },
+            # Feb: class 1 only (should be excluded)
+            {
+                "fecha": "2026-02-10",
+                "cuenta_puc": "110505",
+                "debito": 100_000.0,
+                "credito": 0.0,
+            },
+        ]
+        libro = _libro_auxiliar_stmt(lines)
+
+        with self._patch_statements(er_rows=[], libro_rows=[libro]):
+            result = via_b_service.get_monthly_trend(MagicMock(), "800999888")
+
+        assert result is not None
+        months_data = result["data"]
+        assert len(months_data) == 1
+        assert months_data[0]["month"] == "2026-01"
+
+    # ------------------------------------------------------------------ #
+    # (f) returns None when libro_auxiliar has no class 4/5 lines          #
+    # ------------------------------------------------------------------ #
+
+    def test_returns_none_when_libro_has_no_class_4_or_5_lines(self):
+        from unittest.mock import MagicMock
+
+        from app.services import via_b_service
+
+        lines = [
+            {
+                "fecha": "2026-01-10",
+                "cuenta_puc": "110505",
+                "debito": 50_000.0,
+                "credito": 0.0,
+            },
+            {
+                "fecha": "2026-01-15",
+                "cuenta_puc": "220101",
+                "debito": 0.0,
+                "credito": 30_000.0,
+            },
+        ]
+        libro = _libro_auxiliar_stmt(lines)
+
+        with self._patch_statements(er_rows=[], libro_rows=[libro]):
+            result = via_b_service.get_monthly_trend(MagicMock(), "800999888")
+
+        assert result is None
+
+    # ------------------------------------------------------------------ #
+    # (g) unparseable dates skipped without crashing                       #
+    # ------------------------------------------------------------------ #
+
+    def test_skips_lines_with_unparseable_dates(self):
+        from unittest.mock import MagicMock
+
+        from app.services import via_b_service
+
+        lines = [
+            {
+                "fecha": "NOT_A_DATE",
+                "cuenta_puc": "410505",
+                "debito": 0.0,
+                "credito": 999_000.0,
+            },
+            {
+                "fecha": "2026-03-20",
+                "cuenta_puc": "410505",
+                "debito": 0.0,
+                "credito": 600_000.0,
+            },
+        ]
+        libro = _libro_auxiliar_stmt(lines)
+
+        with self._patch_statements(er_rows=[], libro_rows=[libro]):
+            result = via_b_service.get_monthly_trend(MagicMock(), "800999888")
+
+        assert result is not None
+        months_data = result["data"]
+        assert len(months_data) == 1
+        assert months_data[0]["month"] == "2026-03"
+        assert months_data[0]["ingresos"] == pytest.approx(600_000.0)
