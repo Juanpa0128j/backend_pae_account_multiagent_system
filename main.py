@@ -70,6 +70,11 @@ async def lifespan(app: FastAPI):
         os.environ["LANGSMITH_ENDPOINT"] = settings.langsmith_endpoint
         logger.info(f"LangSmith tracing enabled (project={settings.langsmith_project})")
     logger.info(f"Starting PAE Backend (env={settings.app_env})")
+    # PERF FIX B1: the analysis response cache is in-process and single-worker
+    # only. Warn loudly if env hints at >1 worker (cache would go inconsistent).
+    from app.core.response_cache import warn_if_multi_worker
+
+    warn_if_multi_worker()
     db_ok = check_db_connection()
     if db_ok:
         logger.info("Database connection verified")

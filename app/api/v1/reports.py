@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core import response_cache as _response_cache
 from app.core.limiter import limiter
 from app.agents.graph import invoke_reporting_pipeline
 from app.core.database import SessionLocal
@@ -796,6 +797,9 @@ def get_analysis_report(
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    refresh: bool = Query(
+        False, description="Bypass the response cache and force a fresh run"
+    ),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
@@ -803,8 +807,40 @@ def get_analysis_report(
     detection, 3-month predictions, LLM-narrated executive summary. Previously
     only reachable via the chat `intent=analysis` flow; now exposed as REST
     so the frontend Reportes tab can render it directly.
+
+    This is the only report endpoint that ALWAYS drives an LLM, so it is wrapped
+    in a 180s in-process TTL cache (PERF FIX B1). ``?refresh=true`` bypasses the
+    cache and re-runs the pipeline. See app/core/response_cache.py for the
+    single-worker consistency assumption.
     """
-    return _run_report("analysis", _build_params(start_date, end_date), company_nit)
+    # Cache key = the complete set of inputs that change the analysis result:
+    # normalized company NIT + the resolved period (start/end). report_type is
+    # constant ("analysis") so it's not in the key. Vía A/B pathway is NOT in
+    # the key on purpose: for analysis the stored-statement short-circuit in
+    # _run_report never fires (no entry in _REPORT_TYPE_TO_STATEMENT_TYPE), so
+    # both pathways take the identical live-pipeline path — output does not
+    # diverge by pathway, so there's no risk of Vía-B reading Vía-A data.
+    try:
+        normalized_nit = normalize_optional_nit(company_nit)
+    except ValueError:
+        # Invalid NIT: skip the cache entirely and let _run_report raise the
+        # canonical 422 (preserves the pre-cache error contract byte-for-byte).
+        return _run_report("analysis", _build_params(start_date, end_date), company_nit)
+    cache_key = (
+        "analysis",
+        normalized_nit,
+        start_date.isoformat() if start_date else None,
+        end_date.isoformat() if end_date else None,
+    )
+
+    if not refresh:
+        cached = _response_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    result = _run_report("analysis", _build_params(start_date, end_date), company_nit)
+    _response_cache.set(cache_key, result)
+    return result
 
 
 @router.get("/statements")
