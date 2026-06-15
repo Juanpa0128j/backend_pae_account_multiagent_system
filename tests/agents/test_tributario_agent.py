@@ -28,6 +28,7 @@ from app.agents.tributario_agent import (
     _calc_reteica,
     _calc_iva,
     _has_iva_in_asientos,
+    _nota_is_venta,
 )
 from app.agents.state import AgentState
 from app.models.llm_schemas import TaxJustification
@@ -203,6 +204,340 @@ def test_detect_transaction_type_bienes():
     assert _detect_transaction_type(asientos) == "bienes"
 
 
+def test_detect_transaction_type_honorarios_by_puc():
+    # PUC 5110/511505/511510 → honorarios (11%), not servicios (4%).
+    for puc in ("5110", "511505", "511510"):
+        asientos = [{"cuenta_puc": puc, "tipo_movimiento": "debito"}]
+        assert _detect_transaction_type(asientos) == "honorarios", puc
+
+
+def test_detect_transaction_type_honorarios_by_keyword():
+    # factura_compra with an asesoría concept and no expense line yet → honorarios.
+    assert (
+        _detect_transaction_type(
+            [],
+            doc_type="factura_compra",
+            descripcion_general="Asesoría jurídica externa",
+        )
+        == "honorarios"
+    )
+
+
+# ─── factura_compra con IVA: partida doble debe cuadrar ──────────────────────
+
+
+def _compra_iva_contador(proveedor_credito):
+    """Contador output for a factura_compra: gasto + IVA descontable debit, and a
+    proveedor credit of `proveedor_credito` (base sin IVA, or gross con IVA)."""
+    return {
+        "fecha_registro": "2026-06-01",
+        "tipo_documento": "factura",
+        "descripcion_general": "Servicios técnicos con IVA",
+        "asientos": [
+            {
+                "cuenta_puc": "511525",
+                "nombre_cuenta": "Servicios técnicos",
+                "tipo_movimiento": "debito",
+                "valor": 2100000,
+                "descripcion": "Servicio técnico",
+            },
+            {
+                "cuenta_puc": "240802",
+                "nombre_cuenta": "IVA descontable",
+                "tipo_movimiento": "debito",
+                "valor": 399000,
+                "descripcion": "IVA 19%",
+            },
+            {
+                "cuenta_puc": "220505",
+                "nombre_cuenta": "Proveedores nacionales",
+                "tipo_movimiento": "credito",
+                "valor": proveedor_credito,
+                "descripcion": "Proveedor",
+            },
+        ],
+        "total_debitos": 2499000,
+        "total_creditos": 2100000 if proveedor_credito == 2100000 else 2499000,
+    }
+
+
+def _assert_balanced(result):
+    asientos = result["tributario_output"]["asientos_enriquecidos"]
+    deb = sum(
+        Decimal(str(a["valor"]))
+        for a in asientos
+        if (a.get("tipo_movimiento") or "").lower() == "debito"
+    )
+    cred = sum(
+        Decimal(str(a["valor"]))
+        for a in asientos
+        if (a.get("tipo_movimiento") or "").lower() == "credito"
+    )
+    assert result.get("error") is None
+    assert deb == cred, f"partida doble: débitos {deb} != créditos {cred}"
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_factura_compra_iva_base_credit_balances(mock_rag_cls, mock_llm_fn):
+    """Bug: contador credits proveedor with the BASE (sin IVA) + separate IVA
+    descontable debit → the IVA must be folded into the proveedor credit so the
+    journal entry balances. Source total available."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(_compra_iva_contador(2100000))
+    state["document_classification"] = {"doc_type": "factura_compra"}
+    state["source_document"] = {"totales": {"total_factura": 2499000}}
+    _assert_balanced(tributario_node(state))
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_factura_compra_iva_base_credit_balances_no_source_total(
+    mock_rag_cls, mock_llm_fn
+):
+    """Same, but no source totales → relies on base_gravable (excludes PUC 2xxx)."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(_compra_iva_contador(2100000))
+    state["document_classification"] = {"doc_type": "factura_compra"}
+    _assert_balanced(tributario_node(state))
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_factura_compra_iva_gross_credit_balances(mock_rag_cls, mock_llm_fn):
+    """Contador credits proveedor with the GROSS (base+IVA) + separate IVA line →
+    tributario must strip the embedded IVA, not double-count."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(_compra_iva_contador(2499000))
+    state["document_classification"] = {"doc_type": "factura_compra"}
+    state["source_document"] = {"totales": {"total_factura": 2499000}}
+    _assert_balanced(tributario_node(state))
+
+
+# ─── #6 Notas crédito/débito: dirección venta vs compra ───────────────────────
+
+
+def _nota_state(doc_type, *, emisor_nit=None, receptor_nit=None, company_nit=None):
+    st = _make_state(VALID_CONTADOR_OUTPUT)
+    st["document_classification"] = {"doc_type": doc_type}
+    st["source_document"] = {"nit_emisor": emisor_nit, "nit_receptor": receptor_nit}
+    st["company_nit"] = company_nit
+    return st
+
+
+def test_nota_credito_emisor_is_tenant_is_venta():
+    # The company issued the credit note (emisor == tenant) → adjusts a SALE.
+    st = _nota_state("nota_credito", emisor_nit="900123456-7", company_nit="900123456")
+    assert _nota_is_venta(st) is True
+
+
+def test_nota_debito_receptor_is_tenant_is_compra():
+    # The company received the debit note from a supplier → adjusts a PURCHASE.
+    st = _nota_state(
+        "nota_debito",
+        emisor_nit="800111222",
+        receptor_nit="900123456",
+        company_nit="900123456-7",
+    )
+    assert _nota_is_venta(st) is False
+
+
+def test_nota_direction_unknown_returns_none():
+    # Neither emisor nor receptor matches the tenant → undeterminable.
+    st = _nota_state(
+        "nota_credito", emisor_nit="111", receptor_nit="222", company_nit="900123456"
+    )
+    assert _nota_is_venta(st) is None
+
+
+def test_non_nota_returns_none():
+    st = _nota_state("factura_venta", emisor_nit="900123456", company_nit="900123456")
+    assert _nota_is_venta(st) is None
+
+
+def test_nota_is_venta_does_not_use_nit_receptor_as_tenant():
+    # state["company_nit"] is None; nit_receptor="900111222" is the counterpart NIT,
+    # nit_emisor="800999888" is the supplier. Without a real company_nit fallback,
+    # direction must be None (indeterminate) — the bug would wrongly treat
+    # nit_receptor as the tenant and return False (compra).
+    st = _make_state(VALID_CONTADOR_OUTPUT)
+    st["document_classification"] = {"doc_type": "nota_credito"}
+    st["source_document"] = {
+        "nit_emisor": "800999888",
+        "nit_receptor": "900111222",
+    }
+    st["company_nit"] = None
+    # No raw_transactions with company_nit either — truly unknown tenant.
+    st["raw_transactions"] = [{"nit_receptor": "900111222", "monto": 100}]
+    assert _nota_is_venta(st) is None
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_nota_credito_venta_routes_iva_generado(mock_rag_cls, mock_llm_fn):
+    """A sale-side credit note routes IVA to 240805 (generado), not 240802."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(VALID_CONTADOR_OUTPUT)
+    state["document_classification"] = {"doc_type": "nota_credito"}
+    state["source_document"] = {"nit_emisor": "900123456", "nit_receptor": "800111222"}
+    state["company_nit"] = "900123456"
+    result = tributario_node(state)
+
+    impuestos = result["tributario_output"]["impuestos"]
+    iva = next((i for i in impuestos if i["tipo_impuesto"] == "IVA"), None)
+    assert iva is not None
+    assert iva["cuenta_puc"] == "240805"
+
+
+def _line(asientos, cuenta):
+    return next((a for a in asientos if a.get("cuenta_puc") == cuenta), None)
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_nota_credito_venta_reverses_iva_generado(mock_rag_cls, mock_llm_fn):
+    """NC de venta = reverso: IVA generado 240805 al DÉBITO (no al crédito)."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    contador = {
+        "fecha_registro": "2026-06-01",
+        "tipo_documento": "nota_credito",
+        "descripcion_general": "Devolución parcial de venta",
+        "asientos": [
+            {
+                "cuenta_puc": "4135",
+                "nombre_cuenta": "Ingresos",
+                "tipo_movimiento": "debito",
+                "valor": 800000,
+                "descripcion": "Reversión ingreso",
+            },
+            {
+                "cuenta_puc": "130505",
+                "nombre_cuenta": "Clientes",
+                "tipo_movimiento": "credito",
+                "valor": 800000,
+                "descripcion": "Reversión CxC",
+            },
+        ],
+        "total_debitos": 800000,
+        "total_creditos": 800000,
+    }
+    state = _make_state(contador)
+    state["document_classification"] = {"doc_type": "nota_credito"}
+    state["source_document"] = {
+        "nit_emisor": "312645645",
+        "nit_receptor": "900111222",
+        "totales": {"total_iva": 152000, "total": 952000},
+    }
+    state["company_nit"] = "312645645"
+    result = tributario_node(state)
+    _assert_balanced(result)
+    asientos = result["tributario_output"]["asientos_enriquecidos"]
+    iva = _line(asientos, "240805")
+    assert iva is not None, "falta IVA generado 240805"
+    assert iva["tipo_movimiento"] == "debito", (
+        "NC venta: 240805 debe ir al DÉBITO (reverso)"
+    )
+    assert _line(asientos, "240802") is None, "NC venta no debe usar IVA descontable"
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_nota_credito_compra_reverses_iva_y_retenciones(mock_rag_cls, mock_llm_fn):
+    """NC de compra = reverso: IVA descontable 240802 al CRÉDITO y retenciones al DÉBITO."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    contador = {
+        "fecha_registro": "2026-06-01",
+        "tipo_documento": "nota_credito",
+        "descripcion_general": "Devolución parcial de compra",
+        "asientos": [
+            {
+                "cuenta_puc": "220505",
+                "nombre_cuenta": "Proveedores",
+                "tipo_movimiento": "debito",
+                "valor": 2000000,
+                "descripcion": "Reversión CxP",
+            },
+            {
+                "cuenta_puc": "519595",
+                "nombre_cuenta": "Gasto",
+                "tipo_movimiento": "credito",
+                "valor": 2000000,
+                "descripcion": "Reversión gasto",
+            },
+        ],
+        "total_debitos": 2000000,
+        "total_creditos": 2000000,
+    }
+    state = _make_state(contador)
+    state["document_classification"] = {"doc_type": "nota_credito"}
+    state["source_document"] = {
+        "nit_emisor": "900111222",
+        "nit_receptor": "312645645",
+        "totales": {"total_iva": 380000, "total": 2380000},
+    }
+    state["company_nit"] = "312645645"
+    result = tributario_node(state)
+    _assert_balanced(result)
+    asientos = result["tributario_output"]["asientos_enriquecidos"]
+    iva = _line(asientos, "240802")
+    assert iva is not None, "falta IVA descontable 240802"
+    assert iva["tipo_movimiento"] == "credito", (
+        "NC compra: 240802 debe ir al CRÉDITO (reverso)"
+    )
+    assert _line(asientos, "240805") is None, "NC compra no debe usar IVA generado"
+    for ret in ("2365", "2368"):
+        line = _line(asientos, ret)
+        if line is not None:
+            assert line["tipo_movimiento"] == "debito", (
+                f"NC compra: retención {ret} debe ir al DÉBITO (reverso)"
+            )
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_nota_debito_venta_no_reversa(mock_rag_cls, mock_llm_fn):
+    """ND de venta = cargo adicional (NO reverso): IVA generado 240805 al CRÉDITO."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    contador = {
+        "fecha_registro": "2026-06-01",
+        "tipo_documento": "nota_debito",
+        "descripcion_general": "Mayor valor de venta",
+        "asientos": [
+            {
+                "cuenta_puc": "130505",
+                "nombre_cuenta": "Clientes",
+                "tipo_movimiento": "debito",
+                "valor": 500000,
+                "descripcion": "Mayor CxC",
+            },
+            {
+                "cuenta_puc": "4135",
+                "nombre_cuenta": "Ingresos",
+                "tipo_movimiento": "credito",
+                "valor": 500000,
+                "descripcion": "Mayor ingreso",
+            },
+        ],
+        "total_debitos": 500000,
+        "total_creditos": 500000,
+    }
+    state = _make_state(contador)
+    state["document_classification"] = {"doc_type": "nota_debito"}
+    state["source_document"] = {
+        "nit_emisor": "312645645",
+        "nit_receptor": "900111222",
+        "totales": {"total_iva": 95000, "total": 595000},
+    }
+    state["company_nit"] = "312645645"
+    result = tributario_node(state)
+    _assert_balanced(result)
+    asientos = result["tributario_output"]["asientos_enriquecidos"]
+    iva = _line(asientos, "240805")
+    assert iva is not None and iva["tipo_movimiento"] == "credito", (
+        "ND venta: 240805 al CRÉDITO (no es reverso)"
+    )
+
+
 def test_detect_transaction_type_arrendamiento():
     asientos = [
         {
@@ -247,10 +582,47 @@ def test_node_replaces_stub(mock_rag_cls, mock_llm_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_retefuente_servicios_11_percent(mock_rag_cls, mock_llm_fn):
-    """Retefuente = 11% for PUC 5xxx (servicios), base 1,500,000."""
+def test_retefuente_honorarios_11_percent(mock_rag_cls, mock_llm_fn):
+    """Retefuente = 11% for PUC 5110 (honorarios), base 1,500,000 → 165,000.
+
+    Honorarios (PUC 5110/511505/511510) are withheld at 11% (Art. 392 ET), NOT
+    the 4% servicios rate. No base mínima applies — retención desde el 1.er peso.
+    """
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
+    result = tributario_node(state)
+
+    impuestos = result["tributario_output"]["impuestos"]
+    retefuente = next(i for i in impuestos if i["tipo_impuesto"] == "retefuente")
+    assert Decimal(retefuente["valor_impuesto"]) == Decimal("165000.00")
+    assert retefuente["cuenta_puc"] == "2365"
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+def test_retefuente_servicios_4_percent(mock_rag_cls, mock_llm_fn):
+    """Retefuente = 4% for a genuine servicios PUC (511525 servicios técnicos)."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    contador = {
+        **VALID_CONTADOR_OUTPUT,
+        "asientos": [
+            {
+                "cuenta_puc": "511525",
+                "nombre_cuenta": "Servicios técnicos",
+                "tipo_movimiento": "debito",
+                "valor": 1500000,
+                "descripcion": "Servicio técnico",
+            },
+            {
+                "cuenta_puc": "1110",
+                "nombre_cuenta": "Bancos",
+                "tipo_movimiento": "credito",
+                "valor": 1500000,
+                "descripcion": "Pago",
+            },
+        ],
+    }
+    state = _make_state(contador)
     result = tributario_node(state)
 
     impuestos = result["tributario_output"]["impuestos"]
@@ -507,10 +879,11 @@ def test_agent_log_entries_written(mock_rag_cls, mock_llm_fn):
 
 @patch("app.agents.tributario_agent.get_llm_client")
 @patch("app.agents.tributario_agent.get_rag_service")
-def test_smoke_1500000_servicios(mock_rag_cls, mock_llm_fn):
+def test_smoke_1500000_honorarios(mock_rag_cls, mock_llm_fn):
     """
-    Smoke test: $1,500,000 servicios.
-    Expected: retefuente=60,000 (4%), reteica=10,350 (0.69%), iva=285,000 (19%), total=355,350
+    Smoke test: $1,500,000 honorarios (PUC 5110).
+    Expected: retefuente=165,000 (11%), reteica=10,350 (0.69%), iva=285,000 (19%),
+    total=460,350.
     """
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(VALID_CONTADOR_OUTPUT)
@@ -521,10 +894,10 @@ def test_smoke_1500000_servicios(mock_rag_cls, mock_llm_fn):
         i["tipo_impuesto"]: Decimal(i["valor_impuesto"]) for i in output["impuestos"]
     }
 
-    assert impuestos["retefuente"] == Decimal("60000.00")
+    assert impuestos["retefuente"] == Decimal("165000.00")
     assert impuestos["reteica"] == Decimal("10350.00")
     assert impuestos["IVA"] == Decimal("285000.00")
-    assert Decimal(output["total_impuestos"]) == Decimal("355350.00")
+    assert Decimal(output["total_impuestos"]) == Decimal("460350.00")
 
 
 @patch("app.services.db_service.get_company_settings", return_value=None)
@@ -609,7 +982,10 @@ INCOME_CONTADOR_OUTPUT = {
 
 @patch("app.agents.tributario_agent.get_rag_service")
 @patch("app.agents.tributario_agent.get_llm_client")
-def test_ica_applied_for_income_transaction(mock_llm_fn, mock_rag_cls):
+def test_ica_not_applied_per_transaction(mock_llm_fn, mock_rag_cls):
+    """ICA is never accrued per transaction (CPA review): it is a municipal tax on
+    the company's own gross income, settled only in the ICA declaration. No 'ica'
+    tax line nor 511505 'gasto ICA' should appear on any individual movement."""
     _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
     state = _make_state(INCOME_CONTADOR_OUTPUT)
     result = tributario_node(state)
@@ -619,16 +995,127 @@ def test_ica_applied_for_income_transaction(mock_llm_fn, mock_rag_cls):
     ica_entry = next(
         (i for i in trib["impuestos"] if i["tipo_impuesto"] == "ica"), None
     )
-    assert ica_entry is not None, "ICA entry missing from impuestos"
-    assert Decimal(ica_entry["valor_impuesto"]) > Decimal("0")
+    assert ica_entry is None, "ICA must NOT be emitted per transaction"
 
     puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
-    assert "511505" in puc_codes, (
-        "Gasto ICA admin (511505) missing from asientos_enriquecidos"
+    assert "511505" not in puc_codes, (
+        "Gasto ICA (511505) must NOT be injected per transaction"
     )
-    assert "2368" in puc_codes, (
-        "ICA por Pagar (2368) missing from asientos_enriquecidos"
+
+
+RECIBO_CAJA_CONTADOR_OUTPUT = {
+    "fecha_registro": "2026-03-07",
+    "tipo_documento": "recibo_caja",
+    "descripcion_general": "Recibo de caja RC-001",
+    "asientos": [
+        {
+            "cuenta_puc": "1110",
+            "nombre_cuenta": "Bancos",
+            "tipo_movimiento": "debito",
+            "valor": 1000000,
+            "descripcion": "Recaudo",
+        },
+        {
+            "cuenta_puc": "130505",
+            "nombre_cuenta": "Clientes",
+            "tipo_movimiento": "credito",
+            "valor": 1000000,
+            "descripcion": "Cancelación factura",
+        },
+    ],
+    "total_debitos": 1000000,
+    "total_creditos": 1000000,
+}
+
+
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.get_llm_client")
+def test_recibo_caja_cobro_cartera_is_tax_neutral(mock_llm_fn, mock_rag_cls):
+    """A recibo de caja cobro_cartera only collects an existing invoice — IVA and
+    retenciones were booked on the original factura, so none are applied here."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(RECIBO_CAJA_CONTADOR_OUTPUT)
+    state["document_classification"] = {"doc_type": "recibo_caja"}
+    state["source_document"] = {"tipo_recibo": "cobro_cartera"}
+
+    result = tributario_node(state)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    assert trib["aplica_impuestos"] is False
+    assert trib["impuestos"] == []
+    puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
+    assert "240805" not in puc_codes  # no IVA generado
+    assert "135515" not in puc_codes  # no retefuente recibida
+
+
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.get_llm_client")
+def test_recibo_caja_venta_directa_applies_sale_taxes(mock_llm_fn, mock_rag_cls):
+    """A recibo de caja venta_directa is a sale without a prior invoice → seller-side
+    taxes (IVA generado) apply."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(INCOME_CONTADOR_OUTPUT)
+    state["document_classification"] = {"doc_type": "recibo_caja"}
+    state["source_document"] = {"tipo_recibo": "venta_directa"}
+
+    result = tributario_node(state)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    assert trib["aplica_impuestos"] is True
+    iva = next(
+        (i for i in trib["impuestos"] if i["tipo_impuesto"].lower() == "iva"), None
     )
+    assert iva is not None and iva["cuenta_puc"] == "240805"  # IVA generado (venta)
+
+
+DOC_SOPORTE_CONTADOR_OUTPUT = {
+    "fecha_registro": "2026-03-07",
+    "tipo_documento": "documento_soporte",
+    "descripcion_general": "Documento soporte servicios",
+    "asientos": [
+        {
+            "cuenta_puc": "511525",
+            "nombre_cuenta": "Servicios técnicos",
+            "tipo_movimiento": "debito",
+            "valor": 1000000,
+            "descripcion": "Servicio",
+        },
+        {
+            "cuenta_puc": "220505",
+            "nombre_cuenta": "Proveedores",
+            "tipo_movimiento": "credito",
+            "valor": 1000000,
+            "descripcion": "CxP",
+        },
+    ],
+    "total_debitos": 1000000,
+    "total_creditos": 1000000,
+}
+
+
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.get_llm_client")
+def test_documento_soporte_no_iva_descontable(mock_llm_fn, mock_rag_cls):
+    """Documento soporte providers are not IVA-responsible → no IVA descontable
+    (240802), even if the doc shows IVA; the output flags it for review."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+    state = _make_state(DOC_SOPORTE_CONTADOR_OUTPUT)
+    state["document_classification"] = {"doc_type": "documento_soporte"}
+    state["source_document"] = {"totales": {"total_iva": 190000}}
+
+    result = tributario_node(state)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    iva = next(
+        (i for i in trib["impuestos"] if i["tipo_impuesto"].lower() == "iva"), None
+    )
+    assert iva is None, "documento_soporte must not produce IVA descontable"
+    puc_codes = [a["cuenta_puc"] for a in trib["asientos_enriquecidos"]]
+    assert "240802" not in puc_codes
+    assert "REVISAR" in trib["observaciones"]
 
 
 @patch("app.services.db_service.get_company_settings")
@@ -657,7 +1144,29 @@ def test_process_mode_without_taxes_does_not_crash(
         tasa_renta=Decimal("0.350000"),
     )
 
-    state = _make_state(VALID_CONTADOR_OUTPUT)
+    # Use a configurable servicios account (511525): honorarios (5110) is a
+    # statutory 11% and cannot be zeroed via company_config, so it would not
+    # exercise the no-tax path this test guards.
+    contador = {
+        **VALID_CONTADOR_OUTPUT,
+        "asientos": [
+            {
+                "cuenta_puc": "511525",
+                "nombre_cuenta": "Servicios técnicos",
+                "tipo_movimiento": "debito",
+                "valor": 1500000,
+                "descripcion": "Servicio técnico",
+            },
+            {
+                "cuenta_puc": "1110",
+                "nombre_cuenta": "Bancos",
+                "tipo_movimiento": "credito",
+                "valor": 1500000,
+                "descripcion": "Pago",
+            },
+        ],
+    }
+    state = _make_state(contador)
     state["raw_transactions"] = [{"nit_receptor": "800999888"}]
 
     result = tributario_node(state)
@@ -667,3 +1176,154 @@ def test_process_mode_without_taxes_does_not_crash(
     assert Decimal(str(result["tributario_output"].get("total_impuestos"))) == Decimal(
         "0"
     )
+
+
+# ─── Phase B: get_effective_rate DB overlay in tributario ─────────────────────
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.db_service.get_effective_rate")
+@patch("app.services.db_service.get_company_settings")
+@patch("app.core.database.SessionLocal")
+def test_retefuente_uses_db_rate_when_available(
+    mock_session_local,
+    mock_get_settings,
+    mock_get_effective_rate,
+    mock_rag_cls,
+    mock_llm_fn,
+):
+    """get_effective_rate returns 6% → retefuente computed at 6%, not 4%."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_settings.return_value = SimpleNamespace(
+        tasa_retefuente_servicios=Decimal("0.04"),
+        tasa_retefuente_bienes=Decimal("0.025"),
+        tasa_retefuente_arrendamiento=Decimal("0.035"),
+        tasa_reteica=Decimal("0.0069"),
+        tasa_iva_general=Decimal("0.19"),
+        iva_responsable=True,
+        tasa_ica=Decimal("0.0069"),
+        tasa_renta=Decimal("0.35"),
+    )
+    # Return 6% for honorarios (VALID_CONTADOR_OUTPUT uses PUC 5110 = honorarios),
+    # None for everything else
+    mock_get_effective_rate.side_effect = lambda db, code, nit, as_of: (
+        Decimal("0.06") if code == "retefuente_honorarios" else None
+    )
+
+    estado = _make_state(VALID_CONTADOR_OUTPUT)
+    estado["company_nit"] = "800999888"
+    estado["raw_transactions"] = [{"nit_receptor": "800999888", "fecha": "2026-06-01"}]
+    estado["period_start"] = "2026-06-01"
+
+    result = tributario_node(estado)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    retefuente = next(
+        (i for i in trib["impuestos"] if "retefuente" in i["tipo_impuesto"].lower()),
+        None,
+    )
+    assert retefuente is not None
+    base = Decimal(str(VALID_CONTADOR_OUTPUT["asientos"][0]["valor"]))
+    expected = (base * Decimal("0.06")).quantize(Decimal("0.01"))
+    assert Decimal(str(retefuente["valor_impuesto"])) == expected
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.db_service.get_effective_rate")
+@patch("app.services.db_service.get_company_settings")
+@patch("app.core.database.SessionLocal")
+def test_retefuente_falls_back_to_constant_when_db_returns_none(
+    mock_session_local,
+    mock_get_settings,
+    mock_get_effective_rate,
+    mock_rag_cls,
+    mock_llm_fn,
+):
+    """get_effective_rate returns None → falls back to honorarios constant 11%."""
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_settings.return_value = SimpleNamespace(
+        tasa_retefuente_servicios=Decimal("0.04"),
+        tasa_retefuente_bienes=Decimal("0.025"),
+        tasa_retefuente_arrendamiento=Decimal("0.035"),
+        tasa_reteica=Decimal("0.0069"),
+        tasa_iva_general=Decimal("0.19"),
+        iva_responsable=True,
+        tasa_ica=Decimal("0.0069"),
+        tasa_renta=Decimal("0.35"),
+    )
+    mock_get_effective_rate.return_value = None
+
+    estado = _make_state(VALID_CONTADOR_OUTPUT)
+    estado["company_nit"] = "800999888"
+    estado["raw_transactions"] = [{"nit_receptor": "800999888", "fecha": "2026-06-01"}]
+    estado["period_start"] = "2026-06-01"
+
+    result = tributario_node(estado)
+
+    assert result.get("error") is None
+    trib = result["tributario_output"]
+    retefuente = next(
+        (i for i in trib["impuestos"] if "retefuente" in i["tipo_impuesto"].lower()),
+        None,
+    )
+    assert retefuente is not None
+    base = Decimal(str(VALID_CONTADOR_OUTPUT["asientos"][0]["valor"]))
+    # VALID_CONTADOR_OUTPUT uses PUC 5110 (honorarios) → constant 11% when DB returns None
+    expected = (base * Decimal("0.11")).quantize(Decimal("0.01"))
+    assert Decimal(str(retefuente["valor_impuesto"])) == expected
+
+
+@patch("app.agents.tributario_agent.get_llm_client")
+@patch("app.agents.tributario_agent.get_rag_service")
+@patch("app.agents.tributario_agent.db_service.get_effective_rate")
+@patch("app.services.db_service.get_company_settings")
+@patch("app.core.database.SessionLocal")
+def test_retefuente_passes_transaction_fecha_as_as_of_date(
+    mock_session_local,
+    mock_get_settings,
+    mock_get_effective_rate,
+    mock_rag_cls,
+    mock_llm_fn,
+):
+    """get_effective_rate must be called with as_of_date = parsed period_start date."""
+    from datetime import date as _date
+
+    _mock_llm_and_rag(mock_rag_cls, mock_llm_fn)
+
+    mock_db = MagicMock()
+    mock_session_local.return_value = mock_db
+    mock_get_settings.return_value = SimpleNamespace(
+        tasa_retefuente_servicios=Decimal("0.04"),
+        tasa_retefuente_bienes=Decimal("0.025"),
+        tasa_retefuente_arrendamiento=Decimal("0.035"),
+        tasa_reteica=Decimal("0.0069"),
+        tasa_iva_general=Decimal("0.19"),
+        iva_responsable=True,
+        tasa_ica=Decimal("0.0069"),
+        tasa_renta=Decimal("0.35"),
+    )
+    mock_get_effective_rate.return_value = None
+
+    estado = _make_state(VALID_CONTADOR_OUTPUT)
+    estado["company_nit"] = "800999888"
+    estado["raw_transactions"] = [{"nit_receptor": "800999888", "fecha": "2026-06-01"}]
+    estado["period_start"] = "2026-06-01"
+
+    tributario_node(estado)
+
+    # Confirm at least one call used as_of_date = date(2026, 6, 1)
+    calls = mock_get_effective_rate.call_args_list
+    assert len(calls) > 0
+    as_of_dates = [
+        c.args[3] if len(c.args) > 3 else c.kwargs.get("as_of_date") for c in calls
+    ]
+    assert _date(2026, 6, 1) in as_of_dates

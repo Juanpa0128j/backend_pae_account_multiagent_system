@@ -69,7 +69,9 @@ _DOC_GUIDANCE: dict[str, str] = {
         "- 510530 Aportes ARP    - 510533 Aportes pensión    - 511505 Honorarios\n"
         "- 511510 Comisiones     - 511525 Servicios técnicos - 511595 Otros honorarios\n"
         "- 513025 Combustibles   - 513540 Servicios públicos - 514505 Mantenimiento\n"
-        "- 519520 Cuotas afiliación - 521505 ICA gasto ventas - 529505 Diversos\n"
+        "- 519520 Cuotas afiliación - 529505 Diversos\n"
+        "  (NO uses cuentas de gasto ICA por transacción: el ICA propio se liquida "
+        "en la declaración municipal, no por documento)\n"
         "- 143005 Inventario     - 152405 Equipo cómputo     - 152805 Equipo oficina\n"
         "CLUBES DEPORTIVOS/SOCIALES (sostenimiento, cuotas extraordinarias, fomento "
         "deportivo, country clubs): usa 519520 Cuotas afiliación o 511595 Otros "
@@ -81,19 +83,33 @@ _DOC_GUIDANCE: dict[str, str] = {
         "esto disparará un warning en logs de auditoría."
     ),
     "nota_credito": (
-        "REGLA NOTA CREDITO: Asiento de reversión. Debita la cuenta de ingreso específica "
-        "(4135/4170/4175 según concepto) o cuentas por pagar (220505), "
-        "y acredita cuentas por cobrar (130505). NUNCA uses '4xxx' literal. "
-        "Referencia el numero de factura asociada en descripcion_general. "
-        "NO dupliques impuestos — el agente tributario los maneja."
+        "REGLA NOTA CREDITO (reversa una factura previa; puede ser de VENTA o COMPRA). "
+        "Decide la dirección comparando el emisor con la empresa.\n"
+        "IMPORTANTE — montos: registra SOLO las dos líneas base por el SUBTOTAL SIN IVA "
+        "(la BASE, NO el total con IVA). NO incluyas la línea de IVA ni retenciones: el "
+        "agente tributario agrega el IVA al lado correcto y reversa las retenciones.\n"
+        "- NC de VENTA (la empresa EMITIÓ): reversa el ingreso → DÉBITO a la cuenta de "
+        "ingreso específica (4135/4170/4175 según concepto) por la BASE y CRÉDITO a cuentas "
+        "por cobrar (130505) por la BASE.\n"
+        "- NC de COMPRA (la empresa RECIBIÓ del proveedor): reversa el costo/gasto → DÉBITO "
+        "a cuentas por pagar (2205) por la BASE y CRÉDITO a la cuenta de gasto/costo/"
+        "inventario (5xxx/6xxx/14xx) por la BASE.\n"
+        "NUNCA uses '4xxx'/'5xxx' literal. Referencia el número de factura en descripcion_general. "
+        "Validación: Σdébitos == Σcréditos == BASE (sin IVA)."
     ),
     "nota_debito": (
-        "REGLA NOTA DEBITO: Asiento de ajuste adicional. Debita cuentas por cobrar (130505) "
-        "y acredita la cuenta de ingreso específica (4135/4170/4175) según el concepto. "
-        "Si la nota corresponde a intereses moratorios, acredita la cuenta de ingresos "
-        "financieros del PUC seed (clase 42, p. ej. 4210). NUNCA uses '4xxx' o '13xxxx' literal. "
-        "Referencia el numero de factura asociada en descripcion_general. "
-        "NO dupliques impuestos — el agente tributario los maneja."
+        "REGLA NOTA DEBITO (aumenta una factura previa; misma dirección que la factura; "
+        "puede ser de VENTA o COMPRA). Decide la dirección comparando el emisor con la empresa.\n"
+        "IMPORTANTE — montos: registra SOLO las dos líneas base por el SUBTOTAL SIN IVA "
+        "(la BASE). NO incluyas la línea de IVA ni retenciones: el agente tributario las maneja.\n"
+        "- ND de VENTA (la empresa EMITIÓ): mayor valor del ingreso → DÉBITO a cuentas por "
+        "cobrar (130505) por la BASE y CRÉDITO a la cuenta de ingreso (4135/4170/4175) por la "
+        "BASE. Si son intereses moratorios, acredita ingresos financieros (clase 42, p. ej. 4210).\n"
+        "- ND de COMPRA (la empresa RECIBIÓ del proveedor): mayor valor del costo/gasto → "
+        "DÉBITO a la cuenta de gasto/costo/inventario (5xxx/6xxx/14xx) por la BASE y CRÉDITO a "
+        "cuentas por pagar (2205) por la BASE.\n"
+        "NUNCA uses '4xxx'/'5xxx'/'13xxxx' literal. Referencia el número de factura en "
+        "descripcion_general. Validación: Σdébitos == Σcréditos == BASE (sin IVA)."
     ),
     "comprobante_egreso": (
         "REGLA COMPROBANTE DE EGRESO (CE):\n"
@@ -113,7 +129,9 @@ _DOC_GUIDANCE: dict[str, str] = {
         "- 510530 Aportes ARP    - 510533 Aportes pensión    - 511505 Honorarios\n"
         "- 511510 Comisiones     - 511525 Servicios técnicos - 511595 Otros honorarios\n"
         "- 513025 Combustibles   - 513540 Servicios públicos - 514505 Mantenimiento\n"
-        "- 519520 Cuotas afiliación - 521505 ICA gasto ventas - 529505 Diversos\n"
+        "- 519520 Cuotas afiliación - 529505 Diversos\n"
+        "  (NO uses cuentas de gasto ICA por transacción: el ICA propio se liquida "
+        "en la declaración municipal, no por documento)\n"
         "SOLO usa 5195 si el concepto es realmente ambiguo (último recurso)."
     ),
     "declaracion_iva": (
@@ -167,10 +185,11 @@ _DOC_GUIDANCE: dict[str, str] = {
         "- Validación: Σdébitos == Σcréditos == total del recibo."
     ),
     "documento_soporte": (
-        "REGLA DOCUMENTO SOPORTE: Pago a proveedor NO obligado a facturar. "
-        "Si el doc trae IVA explícito (totales.total_iva > 0), incluye D 240802 "
-        "(IVA descontable). Si el doc trae IVA=0 (régimen R-99-PN / responsabilidad ZZ), "
-        "NO incluyas 240802. Cuenta gasto según concepto:\n"
+        "REGLA DOCUMENTO SOPORTE: Pago a proveedor NO obligado a facturar y NO "
+        "responsable de IVA. NUNCA incluyas D 240802 (IVA descontable) — estos "
+        "proveedores no generan IVA descontable. Si el documento muestra un IVA, NO "
+        "lo descuentes (es dato sospechoso; el tributario lo marca para revisión). "
+        "Cuenta gasto según concepto:\n"
         "  - Administración de propiedad horizontal / edificios → 511595 o 511525\n"
         "  - Servicios técnicos especializados → 511525\n"
         "  - Honorarios profesionales → 511505\n"
@@ -260,6 +279,14 @@ _DOC_GUIDANCE: dict[str, str] = {
         "Si el total es positivo y nit_receptor == company_nit, clasificar como GASTO. "
         "Si el total es positivo y nit_emisor == company_nit, clasificar como INGRESO. "
         "Usar la descripción del concepto y los items para elegir la cuenta PUC."
+    ),
+    "nota_ajuste_contable": (
+        "NOTA DE AJUSTE CONTABLE: Preserve las cuentas PUC exactamente como aparecen en el "
+        "documento. No reclasifiques ni sustituyas ningún código. Valida que el asiento cuadre "
+        "(Σdébitos == Σcréditos). Si el documento trae `asientos_documento` o líneas con "
+        "cuenta_puc + tipo_movimiento + valor, transcríbelas tal cual. "
+        "Descripcion = concepto del ajuste indicado por el contador. "
+        "NUNCA inferir una cuenta diferente a la indicada en el documento fuente."
     ),
 }
 

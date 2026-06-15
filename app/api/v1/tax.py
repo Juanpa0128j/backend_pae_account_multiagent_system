@@ -91,7 +91,7 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
             normalized_company_nit = normalize_nit(company_nit)
         except ValueError as nit_err:
             raise HTTPException(
-                status_code=422, detail=f"Invalid company_nit: {nit_err}"
+                status_code=422, detail=f"El NIT de la empresa no es válido: {nit_err}"
             )
 
     result = invoke_reporting_pipeline(
@@ -111,7 +111,9 @@ def _normalize_or_422(company_nit: Optional[str]) -> Optional[str]:
     try:
         return normalize_nit(company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
 
 def _is_via_b(db: Session, company_nit: Optional[str]) -> bool:
@@ -233,7 +235,7 @@ def _empty_renta(end_date: date, available_periods: List[str]) -> dict:
 
 @router.get("/iva", response_model=IVAOutput)
 @limiter.limit("60/minute")
-async def get_iva_report(
+def get_iva_report(
     request: Request,
     period_start: Optional[date] = Query(
         None,
@@ -276,7 +278,7 @@ async def get_iva_report(
 
 @router.get("/withholdings", response_model=WithholdingsOutput)
 @limiter.limit("60/minute")
-async def get_withholdings_report(
+def get_withholdings_report(
     request: Request,
     period_start: Optional[date] = Query(
         None,
@@ -546,7 +548,9 @@ def api_declarations_preflight(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as nit_err:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {nit_err}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {nit_err}"
+        )
 
     try:
         result = run_preflight(
@@ -630,7 +634,9 @@ def api_get_draft(
     """Retrieve a draft by ID including all pre-filled renglones and warnings."""
     draft = get_draft(db, draft_id)
     if not draft:
-        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Borrador {draft_id} no encontrado."
+        )
 
     return {
         "draft_id": draft.id,
@@ -680,7 +686,9 @@ def api_update_draft_field(
         raise HTTPException(status_code=400, detail=str(e))
 
     if not draft:
-        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Borrador {draft_id} no encontrado."
+        )
 
     return {
         "draft_id": draft.id,
@@ -733,7 +741,9 @@ def api_review_draft(
     """
     draft = get_draft(db, draft_id)
     if not draft:
-        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Borrador {draft_id} no encontrado."
+        )
 
     if draft.status != "draft":
         raise HTTPException(
@@ -776,7 +786,9 @@ def api_file_draft(
     """Transition reviewed → filed. Optionally stores the DIAN radicado (MUISCA)."""
     draft = get_draft(db, draft_id)
     if not draft:
-        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Borrador {draft_id} no encontrado."
+        )
 
     if draft.status != "reviewed":
         raise HTTPException(
@@ -816,7 +828,9 @@ def api_reopen_draft(
     """
     draft = get_draft(db, draft_id)
     if not draft:
-        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Borrador {draft_id} no encontrado."
+        )
 
     if draft.status == "draft":
         raise HTTPException(
@@ -852,6 +866,13 @@ def api_tax_calendar(
     year: int = Query(2026, description="Tax year"),
     iva_regime: str = Query("bimestral", description="bimestral | cuatrimestral"),
     alert_days: int = Query(30, description="Days-until threshold for alert flag"),
+    ica_periodicidad: Optional[str] = Query(
+        None,
+        description=(
+            "ICA municipal opcional: None | anual | bimestral. Fechas ESTIMADAS "
+            "(confirme calendario municipal)."
+        ),
+    ),
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
@@ -866,7 +887,7 @@ def api_tax_calendar(
     if year not in SUPPORTED_YEARS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported year: {year}. Supported: {sorted(SUPPORTED_YEARS)}",
+            detail=f"Año {year} no soportado. Años disponibles: {sorted(SUPPORTED_YEARS)}",
         )
     if iva_regime not in SUPPORTED_IVA_REGIMES:
         raise HTTPException(
@@ -885,6 +906,7 @@ def api_tax_calendar(
             iva_regime=iva_regime,
             alert_days=alert_days,
             today=today,
+            ica_periodicidad=ica_periodicidad,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1169,7 +1191,9 @@ async def list_perdidas_acumuladas(
     try:
         normalized_nit = normalize_nit(nit)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"El NIT ingresado no es válido: {exc}"
+        ) from exc
 
     if year is not None:
         rows = db_service.get_perdidas_disponibles(db, normalized_nit, year)
@@ -1212,7 +1236,9 @@ async def upsert_perdida_acumulada(
     try:
         normalized_nit = normalize_nit(body.company_nit)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"El NIT ingresado no es válido: {exc}"
+        ) from exc
 
     row = db_service.upsert_perdida(
         db,
@@ -1491,7 +1517,9 @@ async def list_ajustes_fiscales(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"El NIT ingresado no es válido: {exc}"
+        ) from exc
 
     rows = db_service.list_ajustes_fiscales(db, normalized_nit, year, seccion)
     return [_ajuste_to_response(r) for r in rows]
@@ -1512,7 +1540,9 @@ async def upsert_ajuste_fiscal(
     try:
         normalized_nit = normalize_nit(body.company_nit)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid NIT: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"El NIT ingresado no es válido: {exc}"
+        ) from exc
 
     row = db_service.upsert_ajuste_fiscal(
         db,

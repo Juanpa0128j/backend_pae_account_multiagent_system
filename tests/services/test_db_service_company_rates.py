@@ -210,3 +210,61 @@ class TestUpsertCompanyRateOverride:
 
         db.add.assert_called_once()
         db.commit.assert_called_once()
+
+    def test_upsert_company_rate_override_persists_vigente_hasta(self, db):
+        """vigente_hasta round-trips correctly on insert."""
+        db.query.return_value.filter_by.return_value.first.return_value = None
+        db.refresh.side_effect = lambda r: None
+
+        db_service.upsert_company_rate_override(
+            db,
+            company_nit="800999888",
+            rate_code="retefuente_servicios",
+            value=Decimal("0.035"),
+            norma_referencia="Acuerdo especial",
+            vigente_desde=date(2026, 1, 1),
+            vigente_hasta=date(2026, 12, 31),
+        )
+
+        added_row = db.add.call_args[0][0]
+        assert added_row.vigente_hasta == date(2026, 12, 31)
+
+    def test_upsert_company_rate_override_vigente_hasta_updates_existing(self, db):
+        """vigente_hasta is updated on existing row."""
+        existing = _make_override(
+            company_nit="800999888",
+            rate_code="retefuente_servicios",
+            value=0.04,
+        )
+        existing.vigente_hasta = None
+        db.query.return_value.filter_by.return_value.first.return_value = existing
+        db.refresh.side_effect = lambda r: None
+
+        db_service.upsert_company_rate_override(
+            db,
+            company_nit="800999888",
+            rate_code="retefuente_servicios",
+            value=Decimal("0.035"),
+            norma_referencia="Acuerdo especial",
+            vigente_desde=date(2026, 1, 1),
+            vigente_hasta=date(2026, 12, 31),
+        )
+
+        assert existing.vigente_hasta == date(2026, 12, 31)
+
+    def test_upsert_company_rate_override_vigente_hasta_defaults_none(self, db):
+        """vigente_hasta defaults to None when not supplied."""
+        db.query.return_value.filter_by.return_value.first.return_value = None
+        db.refresh.side_effect = lambda r: None
+
+        db_service.upsert_company_rate_override(
+            db,
+            company_nit="800999888",
+            rate_code="retefuente_servicios",
+            value=Decimal("0.035"),
+            norma_referencia=None,
+            vigente_desde=date(2026, 1, 1),
+        )
+
+        added_row = db.add.call_args[0][0]
+        assert added_row.vigente_hasta is None

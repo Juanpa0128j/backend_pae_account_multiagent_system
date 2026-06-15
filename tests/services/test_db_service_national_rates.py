@@ -101,3 +101,58 @@ class TestUpsertNationalRate:
         assert existing.value == Decimal("0.35")
         db.add.assert_not_called()
         db.commit.assert_called_once()
+
+    def test_upsert_national_rate_persists_vigente_hasta(self, db):
+        """vigente_hasta round-trips correctly on insert."""
+        db.query.return_value.filter.return_value.first.return_value = None
+        db.refresh.side_effect = lambda r: None
+
+        db_service.upsert_national_rate(
+            db,
+            code="renta_general",
+            value=Decimal("0.35"),
+            descripcion="Tarifa general renta",
+            norma_referencia="Art. 240 ET",
+            vigente_desde=date(2026, 1, 1),
+            vigente_hasta=date(2026, 12, 31),
+        )
+
+        # The newly created NationalRate should have vigente_hasta set
+        added_row = db.add.call_args[0][0]
+        assert added_row.vigente_hasta == date(2026, 12, 31)
+
+    def test_upsert_national_rate_vigente_hasta_updates_existing(self, db):
+        """vigente_hasta is updated on existing row."""
+        existing = _make_rate(code="renta_general", value=0.33)
+        existing.vigente_hasta = None
+        db.query.return_value.filter.return_value.first.return_value = existing
+        db.refresh.side_effect = lambda r: None
+
+        db_service.upsert_national_rate(
+            db,
+            code="renta_general",
+            value=Decimal("0.35"),
+            descripcion="Tarifa general renta",
+            norma_referencia="Art. 240 ET",
+            vigente_desde=date(2026, 1, 1),
+            vigente_hasta=date(2026, 12, 31),
+        )
+
+        assert existing.vigente_hasta == date(2026, 12, 31)
+
+    def test_upsert_national_rate_vigente_hasta_defaults_none(self, db):
+        """vigente_hasta defaults to None when not supplied."""
+        db.query.return_value.filter.return_value.first.return_value = None
+        db.refresh.side_effect = lambda r: None
+
+        db_service.upsert_national_rate(
+            db,
+            code="renta_general",
+            value=Decimal("0.35"),
+            descripcion="Tarifa general renta",
+            norma_referencia="Art. 240 ET",
+            vigente_desde=date(2026, 1, 1),
+        )
+
+        added_row = db.add.call_args[0][0]
+        assert added_row.vigente_hasta is None

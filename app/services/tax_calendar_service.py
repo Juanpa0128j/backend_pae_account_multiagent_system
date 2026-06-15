@@ -4,19 +4,27 @@ Calendario Tributario DIAN 2026 — Colombia
 Source: Decreto DIAN Calendario Tributario 2026 (Carolina García, H&G Abogados y Contadores)
 UVT 2026: $52.374
 
-Covers:
+Covers (DIAN nacional):
   - IVA Bimestral (F300) — 6 periods
   - IVA Cuatrimestral (F300) — 3 periods
   - Retención en la Fuente mensual (F350) — 12 months
   - Renta Personas Jurídicas (F110) — 2 installments
-  - Bogotá ICA 2026 (Resolución modificación)
-  - Santa Marta ICA 2026
+
+ICA (Industria y Comercio) is MUNICIPAL: cada municipio fija su propia
+periodicidad (bimestral / anual) y sus propias fechas. Aquí se ofrece como
+obligación OPCIONAL (parámetro ``ica_periodicidad``) con fechas ESTIMADAS y
+claramente marcadas "(estimado — confirme calendario municipal)". No reemplaza
+el calendario oficial del municipio; sirve de recordatorio para no omitir la
+obligación. Modelar las fechas exactas por municipio queda pendiente (requiere
+datos municipales).
 
 Usage:
     from app.services.tax_calendar_service import get_deadline, list_obligations
 
     entry = get_deadline("retefuente", "2026-03", nit="900123456")
     obligations = list_obligations(nit="900123456", year=2026, alert_days=30)
+    # Incluir recordatorio ICA anual estimado:
+    obligations = list_obligations(nit="900123456", ica_periodicidad="anual")
 """
 
 from __future__ import annotations
@@ -181,6 +189,25 @@ _RENTA_PJ: dict[str, tuple[int, int, tuple[int, ...]]] = {
     "2026-cuota2": (7, 2026, (9, 10, 13, 14, 15, 16, 17, 21, 22, 23)),
 }
 
+# ICA municipal — ESTIMADO. Cada municipio fija sus propias fechas; aquí se usa
+# una aproximación (mismo patrón de días que IVA/renta) sólo como recordatorio.
+# El label deja explícito que la fecha exacta debe confirmarse con el municipio.
+# Anual: ventana típica del primer semestre del año siguiente (se ancla a abril
+# como referencia conservadora). Bimestral: se reutilizan las ventanas de IVA.
+_ICA_ANUAL: dict[str, tuple[int, int, tuple[int, ...], str, str]] = {
+    "2026-anual": (
+        4,
+        2027,
+        (12, 13, 14, 15, 19, 20, 21, 22, 25, 26),
+        "2026-01-01",
+        "2026-12-31",
+    ),
+}
+_ICA_BIMESTRAL: dict[str, tuple[int, int, tuple[int, ...], str, str]] = dict(
+    _IVA_BIMESTRAL
+)
+_ICA_ESTIMADO_SUFFIX = " (estimado — confirme calendario municipal)"
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -335,11 +362,51 @@ def get_deadline(
             alert_days,
         )
 
+    if form_type == "ica_anual":
+        entry = _ICA_ANUAL.get(period)
+        if not entry:
+            return None
+        due_month, due_year, schedule, _p_start, _p_end = entry
+        label = f"ICA Anual 2026{_ICA_ESTIMADO_SUFFIX}"
+        return _make_entry(
+            "ica_anual",
+            period,
+            label,
+            due_month,
+            due_year,
+            schedule,
+            nit,
+            today,
+            alert_days,
+        )
+
+    if form_type == "ica_bimestral":
+        entry = _ICA_BIMESTRAL.get(period)
+        if not entry:
+            return None
+        due_month, due_year, schedule, p_start, p_end = entry
+        bim_num = period.split("-B")[1]
+        label = (
+            f"ICA Bimestral B{bim_num} 2026 ({p_start} → {p_end}){_ICA_ESTIMADO_SUFFIX}"
+        )
+        return _make_entry(
+            "ica_bimestral",
+            period,
+            label,
+            due_month,
+            due_year,
+            schedule,
+            nit,
+            today,
+            alert_days,
+        )
+
     return None
 
 
 SUPPORTED_YEARS = frozenset({2026})
 SUPPORTED_IVA_REGIMES = frozenset({"bimestral", "cuatrimestral"})
+SUPPORTED_ICA_PERIODICIDADES = frozenset({"anual", "bimestral"})
 
 
 def list_obligations(
@@ -348,6 +415,7 @@ def list_obligations(
     iva_regime: str = "bimestral",
     alert_days: int = 30,
     today: Optional[date] = None,
+    ica_periodicidad: Optional[str] = None,
 ) -> list[CalendarEntry]:
     """
     Return all 2026 tax obligations for a company sorted by deadline.
@@ -358,12 +426,16 @@ def list_obligations(
         iva_regime: "bimestral" | "cuatrimestral"
         alert_days: Days-until threshold for alert flag
         today: Reference date (defaults to date.today())
+        ica_periodicidad: None (default, no ICA) | "anual" | "bimestral".
+            ICA is municipal; when requested, its deadlines are ESTIMATES marked
+            "(estimado — confirme calendario municipal)" — a reminder, not the
+            authoritative municipal date.
 
     Returns:
         List of CalendarEntry sorted ascending by deadline
 
     Raises:
-        ValueError: if year or iva_regime is not supported
+        ValueError: if year, iva_regime, or ica_periodicidad is not supported
     """
     if year not in SUPPORTED_YEARS:
         raise ValueError(
@@ -375,6 +447,13 @@ def list_obligations(
         raise ValueError(
             f"Unsupported iva_regime: {iva_regime!r}. "
             f"Must be one of {sorted(SUPPORTED_IVA_REGIMES)}"
+        )
+    if ica_periodicidad is not None and ica_periodicidad not in (
+        SUPPORTED_ICA_PERIODICIDADES
+    ):
+        raise ValueError(
+            f"Unsupported ica_periodicidad: {ica_periodicidad!r}. "
+            f"Must be None or one of {sorted(SUPPORTED_ICA_PERIODICIDADES)}"
         )
 
     today = today or date.today()
@@ -406,6 +485,17 @@ def list_obligations(
         e = get_deadline("renta_pj", f"{year}-{cuota}", nit, today, alert_days)
         if e:
             entries.append(e)
+
+    # ICA municipal (opcional, fechas estimadas — ver docstring)
+    if ica_periodicidad == "anual":
+        e = get_deadline("ica_anual", f"{year}-anual", nit, today, alert_days)
+        if e:
+            entries.append(e)
+    elif ica_periodicidad == "bimestral":
+        for b in range(1, 7):
+            e = get_deadline("ica_bimestral", f"{year}-B{b}", nit, today, alert_days)
+            if e:
+                entries.append(e)
 
     entries.sort(key=lambda x: x.deadline)
     return entries

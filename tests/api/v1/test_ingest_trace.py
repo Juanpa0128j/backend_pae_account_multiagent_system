@@ -132,7 +132,7 @@ class TestIngestTraceEndpoint:
         client = TestClient(app)
         response = client.get("/api/v1/ingest/nonexistent/trace")
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert "no encontrado" in response.json()["detail"].lower()
 
     def test_trace_endpoint_returns_409_for_running_job(self, monkeypatch):
         """Endpoint should return 409 when job is still running."""

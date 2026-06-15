@@ -23,6 +23,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from app.agents.agent_utils import append_log
 from app.agents.state import AgentState
 from app.core.llm_client import get_llm_client
+from app.services import db_service
 from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
@@ -97,33 +98,103 @@ CUENTA_RETEFTE_RECIBIDA_ALT = "135518"  # Anticipo impuesto renta (alternativa)
 CUENTA_RETEICA_RECIBIDA = "135517"  # ReteICA a favor (activo)
 
 
-# Doc types where the company is the SELLER. Buyer-side doc types fall through to compra defaults.
+# Doc types where the company is the SELLER. Buyer-side doc types fall through to
+# compra defaults. Notes:
+#   - recibo_caja is NOT here: routed by ``tipo_recibo`` (cobro_cartera tax-neutral,
+#     venta_directa = sale). See the node body.
+#   - nota_credito / nota_debito are NOT here either: a credit/debit note can adjust
+#     a SALE or a PURCHASE, so direction is resolved per-document by comparing the
+#     emisor/receptor NIT to the tenant's NIT (``_nota_is_venta``), not by doc_type.
 _VENTA_DOC_TYPES = frozenset(
     {
         "factura_venta",
-        "nota_debito_venta",
-        "nota_credito_venta",
-        "recibo_caja",
     }
 )
 
+_NOTA_DOC_TYPES = frozenset({"nota_credito", "nota_debito"})
 
-def _tax_accounts_for(doc_type: str, cuenta_ica_propio: str | None = None) -> dict:
+
+def _flip_movimiento(mov: str) -> str:
+    """Swap debito↔credito. Used to reverse tax movements on a nota crédito."""
+    return "credito" if (mov or "").lower() == "debito" else "debito"
+
+
+def _nota_is_venta(state: AgentState) -> bool | None:
+    """Resolve whether a nota crédito/débito adjusts a SALE (True) or PURCHASE (False).
+
+    A credit/debit note inherits the direction of the invoice it adjusts. We
+    detect it by comparing the document's emisor/receptor NIT to the tenant's
+    NIT (the company that owns the upload):
+      - emisor == tenant  → the company issued the note → VENTA
+      - receptor == tenant → the company received the note → COMPRA
+    Returns ``None`` when the doc is not a nota or the direction is undeterminable
+    (caller then falls back to the conservative COMPRA default).
+    """
+    from app.services.nit_utils import normalize_optional_nit
+
+    def _root(value: str | None) -> str | None:
+        # Normalize + drop the verification digit so "900123456" == "900123456-7".
+        normalized = normalize_optional_nit(value)
+        return normalized.split("-", 1)[0] if normalized else None
+
+    doc_type = (state.get("document_classification") or {}).get("doc_type", "")
+    if doc_type not in _NOTA_DOC_TYPES:
+        return None
+
+    src = state.get("source_document") or {}
+    emisor = src.get("emisor") if isinstance(src.get("emisor"), dict) else {}
+    receptor = src.get("receptor") if isinstance(src.get("receptor"), dict) else {}
+    emisor_nit = _root(src.get("nit_emisor") or (emisor or {}).get("nit"))
+    receptor_nit = _root(src.get("nit_receptor") or (receptor or {}).get("nit"))
+
+    tenant_nit = _root(state.get("company_nit"))
+    if tenant_nit is None:
+        for tx in state.get("raw_transactions") or []:
+            if isinstance(tx, dict):
+                tenant_nit = _root(tx.get("company_nit"))
+                if tenant_nit:
+                    break
+
+    if tenant_nit is None:
+        return None
+    if emisor_nit is not None and emisor_nit == tenant_nit:
+        return True
+    if receptor_nit is not None and receptor_nit == tenant_nit:
+        return False
+    return None
+
+
+def _tax_accounts_for(
+    doc_type: str,
+    cuenta_ica_propio: str | None = None,
+    *,
+    is_venta: bool | None = None,
+) -> dict:
     """Return PUC accounts + movement direction for the given doc_type.
+
+    ``is_venta`` overrides the direction when the caller already resolved it
+    (e.g. recibo_caja venta_directa, which is seller-side but not a member of
+    ``_VENTA_DOC_TYPES``). When None, falls back to ``_VENTA_DOC_TYPES``.
 
     For VENTA (the company is the seller):
       - IVA generado is a CREDIT to 240805 (pasivo).
       - Retenciones practicadas by the buyer are DEBITED to 135515/135517 (activo,
         anticipos a favor de la empresa frente a DIAN / municipio).
-      - ICA gasto/por_pagar NOT injected automatically — handled at declaration time.
 
     For COMPRA-like (default, the company is the buyer):
-      - IVA descontable is a DEBIT to 240802 (activo recuperable).
+      - IVA descontable is a DEBIT to 240802 — NOT an asset: it is a contra of the
+        IVA payable (menor valor del IVA por pagar, grupo 2408 del pasivo).
       - Retenciones practicadas a proveedores son CRÉDITOS a 2365/2368 (pasivo a DIAN).
-      - ICA gasto/por_pagar applied when the line has ingreso credits (legacy).
+
+    ICA gasto/por_pagar is NEVER injected per transaction (CPA review): ICA is a
+    municipal tax on the company's OWN gross income, settled in the ICA
+    declaration (``_build_ica``) — it does not belong on purchase invoices,
+    cuentas de cobro, documentos soporte, nor on individual sales. ``ReteICA
+    retenida`` (the buyer's withholding to 2368) is a separate concept and stays.
     """
     ica_pasivo = cuenta_ica_propio or CUENTA_RETEICA
-    if doc_type in _VENTA_DOC_TYPES:
+    venta = is_venta if is_venta is not None else (doc_type in _VENTA_DOC_TYPES)
+    if venta:
         return {
             "iva": (CUENTA_IVA_GENERADO, "credito"),
             "iva_nombre": "IVA Generado",
@@ -140,19 +211,17 @@ def _tax_accounts_for(doc_type: str, cuenta_ica_propio: str | None = None) -> di
     return {
         "iva": (CUENTA_IVA_DESCONTABLE, "debito"),
         "iva_nombre": "IVA Descontable",
-        "iva_detalle": "IVA descontable",
+        "iva_detalle": "IVA descontable — menor valor del IVA por pagar (grupo 2408)",
         "retefuente": (CUENTA_RETEFUENTE, "credito"),
         "retefuente_nombre": "Retención en la Fuente por Pagar",
         "retefuente_detalle": "Retención en la fuente por pagar — Artículo 365 ET",
         "reteica": (ica_pasivo, "credito"),
         "reteica_nombre": "Retención ICA por Pagar",
         "reteica_detalle": "Retención ICA por pagar — Decreto 2048/1992",
-        "ica_gasto": ("511505", "debito"),
-        "ica_gasto_nombre": "Gasto ICA",
-        "ica_gasto_detalle": "Gasto ICA — Ley 14/1983, Art. 342 Ley 1955/2019",
-        "ica_por_pagar": (ica_pasivo, "credito"),
-        "ica_por_pagar_nombre": "ICA por Pagar",
-        "ica_por_pagar_detalle": "ICA por Pagar — Decreto 1333/1986",
+        # ICA-gasto is NOT a per-transaction account — settled in the municipal
+        # ICA declaration over gross income (CPA review). Always None.
+        "ica_gasto": None,
+        "ica_por_pagar": None,
     }
 
 
@@ -161,15 +230,20 @@ def _tax_accounts_for(doc_type: str, cuenta_ica_propio: str | None = None) -> di
 # ---------------------------------------------------------------------------
 
 
+# Honorarios / comisiones — Art. 392 ET, 11% (vs servicios generales 4%). Kept
+# separate from _SERVICIOS_KEYWORDS so the detector can pick the higher tarifa.
+_HONORARIOS_KEYWORDS = (
+    "honorar",
+    "comision",
+    "asesor",
+    "consultor",
+    "interventor",
+)
 _SERVICIOS_KEYWORDS = (
     "servicio",
     "sostenim",
-    "asesor",
-    "consultor",
     "club",
     "administr",
-    "honorar",
-    "comision",
     "mantenim",
     "limpieza",
     "vigilan",
@@ -184,6 +258,14 @@ _SERVICIOS_KEYWORDS = (
     "hospedaj",
 )
 _ARRENDAMIENTO_KEYWORDS = ("arrendam", "alquiler", "renta ", "leasing")
+
+# Categoria (from PUC prefix) → retefuente tipo key in TASA_RETEFUENTE.
+_CATEGORIA_TO_TIPO_RETEFUENTE: dict[str, str] = {
+    "honorarios": "honorarios",
+    "servicios": "servicios",
+    "arrendamiento": "arrendamiento",
+    "compras": "bienes",
+}
 _BIENES_KEYWORDS = (
     "compra de ",
     "insumo",
@@ -204,26 +286,39 @@ def _detect_transaction_type(
     descripcion_general: str | None = None,
 ) -> str:
     """
-    Infer transaction type from debit PUC codes, falling back to doc_type +
-    item/descripcion keywords when no 5xxx debit is present yet (e.g. when the
+    Infer the retefuente tipo from debit PUC codes, falling back to doc_type +
+    item/descripcion keywords when no expense debit is present yet (e.g. when the
     detector runs before contador injected the expense line).
 
-    Returns 'servicios', 'bienes', or 'arrendamiento'.
+    Returns 'honorarios', 'servicios', 'bienes', or 'arrendamiento'. The concept
+    is resolved by PUC prefix first (``categoria_retencion_from_puc`` — so 5110/
+    511505/511510 honorarios get 11% instead of being lumped into servicios 4%),
+    then by keywords.
     """
+    from app.services.tax_constants import categoria_retencion_from_puc
+
     for asiento in asientos:
         if (asiento.get("tipo_movimiento") or "").lower() == "debito":
             puc_raw = str(asiento.get("cuenta_puc", "")).strip()
-            if puc_raw.isdigit():
-                puc_int = int(puc_raw)
-                if PUC_SERVICIOS_START <= puc_int <= PUC_SERVICIOS_END:
-                    desc = (asiento.get("descripcion") or "").lower()
-                    if any(kw in desc for kw in _ARRENDAMIENTO_KEYWORDS):
-                        return "arrendamiento"
-                    return "servicios"
+            desc = (asiento.get("descripcion") or "").lower()
+            # An explicit arrendamiento description always wins (most specific).
+            if any(kw in desc for kw in _ARRENDAMIENTO_KEYWORDS):
+                return "arrendamiento"
+            # Precise concept by PUC prefix (honorarios 11% / servicios 4% /
+            # arrendamiento 3.5% / compras 2.5%).
+            categoria = categoria_retencion_from_puc(puc_raw)
+            if categoria is not None:
+                return _CATEGORIA_TO_TIPO_RETEFUENTE.get(categoria, "servicios")
+            # No specific prefix but a clase-5 expense debit → servicios default.
+            if (
+                puc_raw.isdigit()
+                and PUC_SERVICIOS_START <= int(puc_raw) <= PUC_SERVICIOS_END
+            ):
+                return "servicios"
 
-    # Fallback: no 5xxx debit detected. Use doc_type + item/descripcion keywords
-    # so the rate table picks the right tarifa even when contador has not yet
-    # injected the expense line.
+    # Fallback: no expense debit detected. Use doc_type + item/descripcion
+    # keywords so the rate table picks the right tarifa even when contador has
+    # not yet injected the expense line.
     if (doc_type or "").lower() == "factura_compra":
         haystack_parts: list[str] = []
         if descripcion_general:
@@ -238,6 +333,8 @@ def _detect_transaction_type(
         if haystack:
             if any(kw in haystack for kw in _ARRENDAMIENTO_KEYWORDS):
                 return "arrendamiento"
+            if any(kw in haystack for kw in _HONORARIOS_KEYWORDS):
+                return "honorarios"
             if any(kw in haystack for kw in _SERVICIOS_KEYWORDS):
                 return "servicios"
             if any(kw in haystack for kw in _BIENES_KEYWORDS):
@@ -274,22 +371,6 @@ def _has_iva_in_asientos(asientos: list[dict]) -> tuple[bool, Decimal]:
 # ---------------------------------------------------------------------------
 # Deterministic tax calculators
 # ---------------------------------------------------------------------------
-
-
-def _has_income_accounts(asientos: list[dict]) -> tuple[bool, Decimal]:
-    """
-    Returns (True, total_ingresos_brutos) if any CREDIT entry has a PUC 4xxx code.
-    Income accounts (ingresos) are credits in the Colombian PUC. Triggers ICA calculation.
-    """
-    total = Decimal("0")
-    found = False
-    for a in asientos:
-        if (a.get("tipo_movimiento") or "").lower() == "credito":
-            puc = str(a.get("cuenta_puc", "")).strip()
-            if puc.isdigit() and PUC_INGRESOS_START <= int(puc) <= PUC_INGRESOS_END:
-                found = True
-                total += Decimal(str(a.get("valor", 0)))
-    return found, total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _calc_retefuente(base: Decimal, tipo: str) -> Decimal:
@@ -529,6 +610,146 @@ def _extract_source_taxes(source_doc: dict) -> dict:
     return result
 
 
+def _apply_special_taxes(
+    db,
+    special_taxes: list,
+    base_gravable: "Decimal",
+    total_pago: "Decimal",
+    es_entidad_publica: bool,
+    transaction_date: "date",
+    company_nit: str,
+) -> "tuple[list[dict], list[dict]]":
+    """
+    Apply configured special taxes (estampilla, timbre, etc.) to a transaction.
+
+    Returns:
+        (impuestos, journal_lines) — impuestos for TributarioOutput.impuestos,
+        journal_lines to append to asientos_enriquecidos (only for per_transaction).
+        For periodic settlement, accumulates in SpecialTaxAccumulator — no lines.
+    """
+    result_impuestos: list[dict] = []
+    result_lines: list[dict] = []
+
+    for tax in special_taxes:
+        # Skip if this tax only applies to public entities and this is not one
+        if tax.es_entidad_publica_only and not es_entidad_publica:
+            logger.debug(
+                "Tributario: skipping special tax %s — es_entidad_publica=False",
+                tax.code,
+            )
+            continue
+
+        # Compute base
+        if tax.base_calc == "total_pago":
+            base = total_pago
+        elif tax.base_calc == "base_gravable":
+            base = base_gravable
+        elif tax.base_calc == "custom" and tax.base_calc_formula:
+            try:
+                if len(tax.base_calc_formula) > 200:
+                    raise ValueError("formula too long")
+                # Restricted eval: only arithmetic on two numeric variables
+                allowed_names = {
+                    "total_pago": float(total_pago),
+                    "base_gravable": float(base_gravable),
+                }
+                base = Decimal(
+                    str(
+                        eval(  # noqa: S307  # restricted — no builtins, no imports
+                            tax.base_calc_formula,
+                            {"__builtins__": {}},
+                            allowed_names,
+                        )
+                    )
+                )
+            except Exception as formula_err:
+                logger.warning(
+                    "Tributario: special tax %s formula eval failed (%s), using total_pago",
+                    tax.code,
+                    formula_err,
+                )
+                base = total_pago
+        else:
+            base = total_pago
+
+        tax_amount = (base * Decimal(str(tax.rate))).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+        if tax_amount <= Decimal("0"):
+            continue
+
+        if tax.settlement == "per_transaction":
+            result_impuestos.append(
+                {
+                    # Special taxes use arbitrary user-defined codes, which are NOT
+                    # in the DetalleImpuesto.tipo_impuesto enum. Map to the "otro"
+                    # catch-all and keep the real identity in `code`/`nombre`.
+                    "tipo_impuesto": "otro",
+                    "code": tax.code,
+                    "nombre": tax.nombre,
+                    "base_gravable": str(base),
+                    "tarifa_porcentaje": str(Decimal(str(tax.rate)) * 100),
+                    "valor_impuesto": str(tax_amount),
+                    "cuenta_puc": tax.cuenta_gasto,
+                    "norma_referencia": tax.norma_referencia,
+                }
+            )
+            # Debit gasto
+            result_lines.append(
+                {
+                    "cuenta_puc": tax.cuenta_gasto,
+                    "nombre_cuenta": tax.nombre,
+                    "descripcion": f"{tax.nombre} — {tax.norma_referencia or 'impuesto especial'}",
+                    "tipo_movimiento": "debito",
+                    "valor": str(tax_amount),
+                }
+            )
+            # Credit por pagar
+            result_lines.append(
+                {
+                    "cuenta_puc": tax.cuenta_por_pagar,
+                    "nombre_cuenta": f"{tax.nombre} por pagar",
+                    "descripcion": f"{tax.nombre} por pagar",
+                    "tipo_movimiento": "credito",
+                    "valor": str(tax_amount),
+                }
+            )
+            logger.info(
+                "Tributario: special tax %s (per_transaction) = %s on base %s",
+                tax.code,
+                tax_amount,
+                base,
+            )
+        elif tax.settlement == "periodic":
+            try:
+                db_service.add_to_accumulator(
+                    db,
+                    tax.id,
+                    company_nit,
+                    transaction_date.year,
+                    transaction_date.month,
+                    base,
+                    tax_amount,
+                )
+                logger.info(
+                    "Tributario: special tax %s (periodic) accumulated %s for %s-%02d",
+                    tax.code,
+                    tax_amount,
+                    transaction_date.year,
+                    transaction_date.month,
+                )
+            except Exception as acc_err:
+                logger.warning(
+                    "Tributario: failed to accumulate special tax %s: %s",
+                    tax.code,
+                    acc_err,
+                )
+            # No journal lines for periodic settlement
+
+    return result_impuestos, result_lines
+
+
 def tributario_node(state: AgentState) -> AgentState:
     """
     Tributario worker node — replaces Sprint-12 stub.
@@ -575,27 +796,57 @@ def tributario_node(state: AgentState) -> AgentState:
         "extracto_bancario",
         # Journal book — entries pre-exist; tributario must not double-apply taxes
         "libro_diario",
+        # Adjustment notes — CPA pre-structured entries; no new tax events
+        "nota_ajuste_contable",
     }
     doc_type = (state.get("document_classification") or {}).get("doc_type", "")
-    if doc_type in _TAX_DECLARATION_TYPES:
+
+    # recibo_caja: route by tipo_recibo. A 'cobro_cartera' (or unspecified) only
+    # moves cash vs cuentas por cobrar — the original factura de venta already
+    # booked IVA/retenciones, so re-applying them here would double-count (CPA
+    # review). Only 'venta_directa' (a sale without a prior invoice) is taxable.
+    recibo_tipo = ""
+    if doc_type == "recibo_caja":
+        _sd = state.get("source_document") or {}
+        recibo_tipo = str(_sd.get("tipo_recibo") or "").strip().lower()
+        if not recibo_tipo:
+            for _tx in state.get("raw_transactions") or []:
+                if isinstance(_tx, dict) and _tx.get("tipo_recibo"):
+                    recibo_tipo = str(_tx["tipo_recibo"]).strip().lower()
+                    break
+    recibo_caja_neutral = doc_type == "recibo_caja" and recibo_tipo != "venta_directa"
+
+    if doc_type in _TAX_DECLARATION_TYPES or recibo_caja_neutral:
         logger.info(
-            "Tributario: doc_type=%s is a tax declaration — skipping tax application",
+            "Tributario: doc_type=%s%s — skipping tax application",
             doc_type,
+            (
+                f" (tipo_recibo={recibo_tipo or 'sin especificar'})"
+                if recibo_caja_neutral
+                else " is a tax declaration"
+            ),
         )
         documento_ref = (
             (state.get("contador_output") or {}).get("descripcion_general", doc_type)
             or doc_type
         )[:100]
+        observaciones = (
+            "Recibo de caja por cobro de cartera: solo registra el ingreso de "
+            "efectivo contra la cuenta por cobrar. El IVA y las retenciones se "
+            "causaron en la factura de venta original; no se aplican aquí."
+            if recibo_caja_neutral
+            else (
+                f"Documento tipo {doc_type}: los asientos del contador ya registran "
+                "el pago/liquidación del impuesto. No se aplican impuestos adicionales."
+            )
+        )
         state["tributario_output"] = {
             "fecha_analisis": date.today().isoformat(),
             "documento_referencia": documento_ref,
             "aplica_impuestos": False,
             "impuestos": [],
             "total_impuestos": "0.00",
-            "observaciones": (
-                f"Documento tipo {doc_type}: los asientos del contador ya registran "
-                "el pago/liquidación del impuesto. No se aplican impuestos adicionales."
-            ),
+            "observaciones": observaciones,
             "referencias_legales": [],
             "asientos_enriquecidos": (state.get("contador_output") or {}).get(
                 "asientos", []
@@ -605,7 +856,10 @@ def tributario_node(state: AgentState) -> AgentState:
         state["current_agent"] = "tributario"
         state["current_stage"] = "tributario_complete"
         append_log(
-            state, "tributario", "skipped_tax_declaration", {"doc_type": doc_type}
+            state,
+            "tributario",
+            "skipped_tax_declaration",
+            {"doc_type": doc_type, "recibo_tipo": recibo_tipo or None},
         )
         return state
 
@@ -646,11 +900,25 @@ def tributario_node(state: AgentState) -> AgentState:
         return state
 
     # Route tax accounts (IVA, retenciones, ICA) by document direction (venta vs compra-like).
-    is_venta = doc_type in _VENTA_DOC_TYPES
+    # A recibo_caja reaches this point only as 'venta_directa' (cobro_cartera returned
+    # tax-neutral above), so it is seller-side. A nota crédito/débito adjusts either a
+    # sale or a purchase — its direction is resolved per-document by NIT comparison.
+    nota_venta = _nota_is_venta(state)
+    if nota_venta is not None:
+        is_venta = nota_venta
+    else:
+        is_venta = doc_type in _VENTA_DOC_TYPES or doc_type == "recibo_caja"
+    # A nota crédito REVERSES the original invoice: IVA, retenciones and the
+    # counterparty movement all land on the opposite side (an income/IVA/payable
+    # that was credited on a sale is debited on its credit note, and vice versa).
+    # A nota débito is an ADDITIONAL charge — same direction as the invoice.
+    is_reversal = doc_type == "nota_credito"
     logger.info(
-        "Tributario: doc_type=%s → routing %s",
+        "Tributario: doc_type=%s%s → routing %s%s",
         doc_type or "<empty>",
+        " (nota dir resuelta por NIT)" if nota_venta is not None else "",
         "VENTA" if is_venta else "COMPRA",
+        " + REVERSO (nota crédito)" if is_reversal else "",
     )
 
     # Extract explicit tax values from the source document (ingest pipeline output)
@@ -819,6 +1087,10 @@ def tributario_node(state: AgentState) -> AgentState:
                 if company_config
                 else TASA_RETEFUENTE["arrendamiento"]
             ),
+            # Honorarios/comisiones — 11% (Art. 392 ET). Statutory rate; not a
+            # per-company setting, so it always comes from the constant table.
+            # Honorarios has no base mínima (retención desde el primer peso).
+            "honorarios": TASA_RETEFUENTE["honorarios"],
         }
         # ReteICA: attempt municipal tarifa + base_minima_uvt DB lookup
         # base_minima_uvt is per-municipio (Fix 4: Decreto 572 does NOT apply to ReteICA).
@@ -885,6 +1157,34 @@ def tributario_node(state: AgentState) -> AgentState:
         else:
             _fiscal_year = date.today().year
 
+        # DB overlay: apply get_effective_rate for each retefuente key.
+        # Runs after _as_of_date is resolved so temporal windows are respected.
+        # Allows national_rates / company_rate_overrides to supersede hardcoded constants.
+        try:
+            _db4 = SessionLocal()
+            try:
+                for _rate_tipo in (
+                    "servicios",
+                    "bienes",
+                    "arrendamiento",
+                    "honorarios",
+                ):
+                    _db_rate = _db_svc.get_effective_rate(
+                        _db4,
+                        f"retefuente_{_rate_tipo}",
+                        company_nit,
+                        _as_of_date,
+                    )
+                    if _db_rate is not None:
+                        tasa_retefuente_efectiva[_rate_tipo] = _db_rate
+            finally:
+                _db4.close()
+        except Exception as _rate_err:
+            logger.warning(
+                "Tributario: get_effective_rate DB lookup failed (%s), keeping current rates",
+                _rate_err,
+            )
+
         _uvt_value: Decimal = UVT_FALLBACK
         _base_minima_retefuente: dict[str, Decimal] = dict(BASE_MINIMA_RETEFUENTE_UVT)
         _base_minima_reteica: Decimal = BASE_MINIMA_RETEICA_UVT
@@ -949,7 +1249,17 @@ def tributario_node(state: AgentState) -> AgentState:
         cuenta_ica_propio = (
             company_config.get("cuenta_ica_propio") if company_config else None
         )
-        accounts = _tax_accounts_for(doc_type, cuenta_ica_propio=cuenta_ica_propio)
+        accounts = _tax_accounts_for(
+            doc_type, cuenta_ica_propio=cuenta_ica_propio, is_venta=is_venta
+        )
+        # nota crédito = reversal: flip the movement of every tax line so an IVA
+        # generado that is credited on a sale is debited on its credit note, etc.
+        if is_reversal:
+            for _key in ("iva", "retefuente", "reteica"):
+                pair = accounts.get(_key)
+                if pair:
+                    _acct, _mov = pair
+                    accounts[_key] = (_acct, _flip_movimiento(_mov))
 
         # ------------------------------------------------------------------
         # Step 2 — Determine transaction type from PUC codes
@@ -1060,9 +1370,22 @@ def tributario_node(state: AgentState) -> AgentState:
 
         # IVA: priority order — (1) already in asientos, (2) source doc total_iva, (3) computed
         iva_presente, iva_val_existente = _has_iva_in_asientos(asientos)
+        documento_soporte_iva_sospechoso = False
         if iva_presente:
             iva_val = iva_val_existente
             logger.info("Tributario: IVA found in asientos = %s", iva_val)
+        elif doc_type == "documento_soporte":
+            # Documento soporte = compra a proveedor NO obligado a facturar
+            # (régimen simple / no responsable de IVA). No hay IVA descontable.
+            # Si el documento muestra IVA, es un dato sospechoso → no se descuenta
+            # y se marca para revisión del contador (CPA review).
+            iva_val = Decimal("0.00")
+            if source_taxes.get("total_iva"):
+                documento_soporte_iva_sospechoso = True
+            logger.info(
+                "Tributario: IVA descontable no aplica en documento_soporte "
+                "(proveedor no responsable de IVA)"
+            )
         elif not iva_responsable:
             iva_val = Decimal("0.00")
             logger.info("Tributario: IVA skipped — company is not IVA responsable")
@@ -1077,16 +1400,11 @@ def tributario_node(state: AgentState) -> AgentState:
             )
             logger.info("Tributario: IVA calculated = %s", iva_val)
 
-        # ICA — applies when transaction contains income credits (PUC 4xxx)
-        has_income, ingresos_brutos = _has_income_accounts(asientos)
+        # ICA is NOT accrued per transaction (CPA review): it is a municipal tax on
+        # the company's OWN gross income, settled in the ICA declaration
+        # (_build_ica). It is never emitted on individual invoices/receipts here —
+        # neither on purchases (it is not an expense per transaction) nor on sales.
         ica_val = Decimal("0.00")
-        if has_income:
-            ica_val = _calc_ica(ingresos_brutos, tasa_ica_efectiva)
-            logger.info(
-                f"Tributario: ICA calculated = {ica_val} on ingresos {ingresos_brutos}"
-            )
-        else:
-            logger.info("Tributario: ICA skipped — no PUC 4xxx credit entries detected")
 
         logger.info(
             f"Tributario: retefuente={retefuente_val}, reteica={reteica_val}, "
@@ -1147,6 +1465,12 @@ def tributario_node(state: AgentState) -> AgentState:
             )
         referencias = justification.referencias
         observaciones = justification.justificacion
+        if documento_soporte_iva_sospechoso:
+            observaciones = (
+                f"{observaciones} | REVISAR: el documento soporte muestra IVA, pero "
+                "los proveedores no responsables de IVA no generan IVA descontable; "
+                "no se descontó. Verifique el régimen del proveedor."
+            )
 
         append_log(
             state,
@@ -1196,19 +1520,8 @@ def tributario_node(state: AgentState) -> AgentState:
                 }
             )
 
-        # ICA is only emitted as a separate tax line on COMPRA-like documents.
-        # For VENTA the ICA gasto/por pagar belongs to the municipal declaration,
-        # not to each individual invoice. _tax_accounts_for() returns None there.
-        if ica_val > Decimal("0") and accounts.get("ica_por_pagar") is not None:
-            impuestos.append(
-                {
-                    "tipo_impuesto": "ica",
-                    "base_gravable": str(ingresos_brutos),
-                    "tarifa_porcentaje": str(tasa_ica_efectiva * 100),
-                    "valor_impuesto": str(ica_val),
-                    "cuenta_puc": accounts["ica_por_pagar"][0],
-                }
-            )
+        # ICA is never emitted as a per-transaction tax line — it is settled in the
+        # municipal ICA declaration (_build_ica) over gross income (CPA review).
 
         total_impuestos = sum(
             (Decimal(i["valor_impuesto"]) for i in impuestos),
@@ -1237,66 +1550,73 @@ def tributario_node(state: AgentState) -> AgentState:
         asientos_enriquecidos = [dict(a) for a in asientos]  # copy from contador
 
         total_retenciones = retefuente_val + reteica_val
+        # iva_to_add gates whether a SEPARATE IVA line (240802/240805) is inserted
+        # below — only when the contador did not already book one.
         iva_to_add = iva_val if not iva_presente else Decimal("0")
+        # On a reversal (nota crédito) the counterparty (CxC en venta / CxP en
+        # compra) also moves to the opposite side, so flip the target movement.
         target_movement = "debito" if is_venta else "credito"
+        if is_reversal:
+            target_movement = _flip_movimiento(target_movement)
 
-        # Sanity: contador may have booked the largest credit/debit as
-        # total_factura (IVA already embedded) without emitting a separate
-        # 240802/240805 IVA line. In that case _has_iva_in_asientos returned
-        # False so iva_to_add > 0 — but adding IVA again would double-count.
-        # Detect by comparing the largest target line to source totales.total_factura
-        # (or total_a_pagar / total). When they match within $1, subtract IVA
-        # from that line BEFORE applying retenciones, and let the separate
-        # IVA descontable / IVA generado line be inserted downstream.
-        if iva_to_add > 0:
+        # IVA folded into the counterparty line (proveedor credit in compra /
+        # cliente debit in venta):
+        #   - COMPRA: the contador credits the proveedor with the BASE (sin IVA)
+        #     and books a separate IVA descontable DEBIT, so the FULL IVA must be
+        #     folded into the proveedor credit (the buyer owes base+IVA). Using
+        #     only iva_to_add (0 when the IVA line is present) left the IVA debit
+        #     without a credit counterpart → partida doble mismatch.
+        #   - VENTA: the contador already debits CxC with the gross (base+IVA), so
+        #     only the newly-added IVA (iva_to_add) applies — preserve prior behavior.
+        iva_counterparty = iva_val if not is_venta else iva_to_add
+
+        # The contador may also have booked the counterparty line as the GROSS
+        # (base+IVA already embedded). Detect that and strip the IVA first so the
+        # net_adjustment below does not double-count. References for "gross":
+        # base_gravable + IVA (base_gravable excludes PUC 2xxx, reliable in compra)
+        # and the source document total (reliable in venta, where CxC = gross).
+        if iva_counterparty > 0:
+            gross_refs: list[Decimal] = []
+            if base_gravable > 0:
+                gross_refs.append(base_gravable + iva_counterparty)
             totales_src = (
                 source_doc.get("totales") if isinstance(source_doc, dict) else None
             ) or {}
-            total_factura_src = Decimal("0")
             for key in ("total_factura", "total_a_pagar", "total"):
                 val = totales_src.get(key)
                 if val is not None:
                     try:
-                        total_factura_src = Decimal(str(val))
-                        if total_factura_src > 0:
+                        d = Decimal(str(val))
+                        if d > 0:
+                            gross_refs.append(d)
                             break
                     except Exception:
                         pass
-            if total_factura_src > 0:
-                cand = [
-                    Decimal(str(e.get("valor", 0)))
-                    for e in asientos_enriquecidos
-                    if e.get("tipo_movimiento", "").lower() == target_movement
-                ]
-                largest_now = max(cand) if cand else Decimal("0")
-                if largest_now > 0 and abs(largest_now - total_factura_src) < Decimal(
-                    "1.00"
+            cand = [
+                (i, Decimal(str(e.get("valor", 0))))
+                for i, e in enumerate(asientos_enriquecidos)
+                if e.get("tipo_movimiento", "").lower() == target_movement
+            ]
+            if cand and gross_refs:
+                largest_idx, largest_val = max(cand, key=lambda x: x[1])
+                if largest_val > 0 and any(
+                    abs(largest_val - g) < Decimal("1.00") for g in gross_refs
                 ):
-                    logger.info(
-                        "Tributario: %s %s = %s ≈ source total_factura %s — "
-                        "IVA already embedded; subtracting IVA from line and "
-                        "inserting separate IVA descontable",
-                        target_movement,
-                        "largest",
-                        largest_now,
-                        total_factura_src,
+                    stripped = (largest_val - iva_counterparty).quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP
                     )
-                    # Find that largest entry and subtract IVA from it so the
-                    # downstream net_adjustment math operates on the pre-IVA base.
-                    for entry in asientos_enriquecidos:
-                        if (
-                            entry.get("tipo_movimiento", "").lower() == target_movement
-                            and Decimal(str(entry.get("valor", 0))) == largest_now
-                        ):
-                            new_val = (largest_now - iva_to_add).quantize(
-                                Decimal("0.01"), rounding=ROUND_HALF_UP
-                            )
-                            entry["valor"] = str(new_val)
-                            break
+                    asientos_enriquecidos[largest_idx]["valor"] = str(stripped)
+                    logger.info(
+                        "Tributario: %s line %s ≈ gross — stripped IVA to %s "
+                        "before re-applying net adjustment",
+                        target_movement,
+                        largest_val,
+                        stripped,
+                    )
 
-        net_adjustment = iva_to_add - total_retenciones
+        net_adjustment = iva_counterparty - total_retenciones
 
-        if total_retenciones > 0 or iva_to_add > 0:
+        if total_retenciones > 0 or iva_counterparty > 0:
             candidate_entries = [
                 (i, e)
                 for i, e in enumerate(asientos_enriquecidos)
@@ -1325,12 +1645,12 @@ def tributario_node(state: AgentState) -> AgentState:
                 asientos_enriquecidos[largest_idx]["valor"] = str(adjusted_valor)
                 logger.info(
                     "Tributario: adjusted %s %s from %s to %s "
-                    "(iva_new=%s, retenciones=%s)",
+                    "(iva_counterparty=%s, retenciones=%s)",
                     target_movement,
                     largest_entry.get("cuenta_puc"),
                     original_valor,
                     adjusted_valor,
-                    iva_to_add,
+                    iva_counterparty,
                     total_retenciones,
                 )
 
@@ -1375,33 +1695,69 @@ def tributario_node(state: AgentState) -> AgentState:
                 }
             )
 
-        # ICA — Impuesto de Industria y Comercio. Only emitted on compra-like docs.
-        # In venta, ICA is settled at municipal-declaration time, not per invoice.
-        if (
-            ica_val > Decimal("0")
-            and accounts.get("ica_gasto") is not None
-            and accounts.get("ica_por_pagar") is not None
-        ):
-            ica_gasto_acct, ica_gasto_mov = accounts["ica_gasto"]
-            ica_pagar_acct, ica_pagar_mov = accounts["ica_por_pagar"]
-            asientos_enriquecidos.append(
-                {
-                    "cuenta_puc": ica_gasto_acct,
-                    "nombre_cuenta": accounts["ica_gasto_nombre"],
-                    "descripcion": accounts["ica_gasto_detalle"],
-                    "tipo_movimiento": ica_gasto_mov,
-                    "valor": str(ica_val),
-                }
+        # ICA — Impuesto de Industria y Comercio is NOT booked per transaction.
+        # It is a municipal tax on the company's own gross income, settled in the
+        # ICA declaration (_build_ica), not on individual invoices/receipts/CC/DS
+        # (CPA review). No ICA lines are added to the journal entry here.
+
+        # ------------------------------------------------------------------
+        # Step 6b — Special taxes (estampilla, timbre, etc.)
+        # ------------------------------------------------------------------
+        _special_impuestos: list[dict] = []
+        _special_lines: list[dict] = []
+        try:
+            _es_entidad_publica = bool(
+                state.get("es_entidad_publica")
+                or (state.get("source_document") or {}).get("es_entidad_publica")
             )
-            asientos_enriquecidos.append(
-                {
-                    "cuenta_puc": ica_pagar_acct,
-                    "nombre_cuenta": accounts["ica_por_pagar_nombre"],
-                    "descripcion": accounts["ica_por_pagar_detalle"],
-                    "tipo_movimiento": ica_pagar_mov,
-                    "valor": str(ica_val),
-                }
+            _tx_date_raw = state.get("period_start")
+            if _tx_date_raw and isinstance(_tx_date_raw, str):
+                try:
+                    from datetime import datetime as _dtt
+
+                    _tx_date = _dtt.fromisoformat(_tx_date_raw[:10]).date()
+                except (ValueError, TypeError):
+                    _tx_date = date.today()
+            elif isinstance(_tx_date_raw, date):
+                _tx_date = _tx_date_raw
+            else:
+                _tx_date = date.today()
+
+            _db_st = SessionLocal()
+            try:
+                _active_special_taxes = db_service.list_active_special_taxes(
+                    _db_st,
+                    company_nit or "",
+                    doc_type=doc_type,
+                    as_of_date=_tx_date,
+                )
+                if _active_special_taxes:
+                    _special_impuestos, _special_lines = _apply_special_taxes(
+                        db=_db_st,
+                        special_taxes=_active_special_taxes,
+                        base_gravable=base_gravable,
+                        total_pago=base_gravable,
+                        es_entidad_publica=_es_entidad_publica,
+                        transaction_date=_tx_date,
+                        company_nit=company_nit or "",
+                    )
+            finally:
+                _db_st.close()
+        except Exception as _st_err:
+            logger.warning(
+                "Tributario: special taxes lookup failed (%s), continuing without",
+                _st_err,
             )
+
+        if _special_impuestos:
+            impuestos.extend(_special_impuestos)
+            logger.info(
+                "Tributario: %d special tax(es) applied totalling %s",
+                len(_special_impuestos),
+                sum(Decimal(i["valor_impuesto"]) for i in _special_impuestos),
+            )
+        if _special_lines:
+            asientos_enriquecidos.extend(_special_lines)
 
         # ------------------------------------------------------------------
         # Step 7 — Build TributarioOutput-compatible dict

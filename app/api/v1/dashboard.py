@@ -118,7 +118,7 @@ class DashboardFinancialSummaryResponse(BaseModel):
 
 @router.get("/stats", response_model=DashboardStatsResponse)
 @limiter.limit("30/minute")
-async def get_dashboard_stats(
+def get_dashboard_stats(
     request: Request,
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
@@ -132,7 +132,9 @@ async def get_dashboard_stats(
         try:
             company_nit = normalize_nit(company_nit)
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+            )
 
     # Detect pathway so we can branch to Vía B-aware figures.
     pathway: Optional[str] = None
@@ -265,7 +267,7 @@ async def get_dashboard_stats(
 
 @router.get("/financial-summary", response_model=DashboardFinancialSummaryResponse)
 @limiter.limit("30/minute")
-async def get_financial_summary(
+def get_financial_summary(
     request: Request,
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
@@ -279,7 +281,9 @@ async def get_financial_summary(
         try:
             company_nit = normalize_nit(company_nit)
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+            )
 
     balance = db_service.get_balance_sheet(db, company_nit=company_nit)
     ledger = db_service.get_general_ledger(db, company_nit=company_nit)
@@ -361,7 +365,7 @@ async def get_financial_summary(
 
 @router.get("/monthly-trend", response_model=MonthlyTrendResponse)
 @limiter.limit("30/minute")
-async def get_monthly_trend(
+def get_monthly_trend(
     request: Request,
     db: Session = Depends(get_db),
     company_nit: Optional[str] = Query(None, description="Filter by company NIT"),
@@ -380,7 +384,9 @@ async def get_monthly_trend(
         try:
             company_nit = normalize_nit(company_nit)
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+            )
 
         try:
             pathway = db_service.get_company_locked_pathway(db, company_nit)

@@ -39,6 +39,7 @@ from app.models.schemas import (
 from app.services.ingest_matcher import find_merge_candidates
 from app.models.trace import PipelineTrace
 from app.services import db_service
+from app.services.error_messages_es import classify_exception
 from app.services.nit_utils import normalize_nit
 from app.workflows.dispatch import dispatch_ingest_start
 from app.core.limiter import limiter
@@ -109,7 +110,11 @@ def _run_ingest_pipeline(
                     ingest_id,
                     IngestStatus.FAILED,
                     extraction_errors=[
-                        f"Background ingest pipeline error: {pipeline_error}"
+                        (
+                            classify_exception(Exception(pipeline_error))
+                            if pipeline_error
+                            else classify_exception(Exception("pipeline error"))
+                        )
                     ],
                 )
             except Exception as status_err:
@@ -148,7 +153,7 @@ def _run_ingest_pipeline(
                 db,
                 ingest_id,
                 IngestStatus.FAILED,
-                extraction_errors=[f"Background ingest error: {str(e)}"],
+                extraction_errors=[classify_exception(e)],
             )
         except Exception as status_err:
             logger.error(
@@ -425,7 +430,7 @@ async def upload_file(
     if not files:
         raise HTTPException(
             status_code=422,
-            detail="No files provided.",
+            detail="No se proporcionaron archivos.",
             headers={"error_code": "NO_FILES"},
         )
 
@@ -447,7 +452,8 @@ async def upload_file(
                 normalized_company_nit = normalize_nit(company_nit)
             except ValueError as nit_err:
                 raise HTTPException(
-                    status_code=422, detail=f"Invalid company_nit: {nit_err}"
+                    status_code=422,
+                    detail=f"El NIT de la empresa no es válido: {nit_err}",
                 )
 
         try:
@@ -508,7 +514,7 @@ async def upload_file(
                 else:
                     raise HTTPException(
                         status_code=422,
-                        detail=f"File content does not match its extension ({_ext}). The file may be corrupt or password-protected.",
+                        detail=f"El contenido del archivo no coincide con su extensión ({_ext}). El archivo puede estar corrupto o protegido con contraseña.",
                     )
 
             temp_path = save_temp_file(file_content, f.filename)
@@ -742,7 +748,9 @@ async def get_ingest_status(
     """Get the status of an ingest job."""
     job = db_service.get_ingest_job(db, ingest_id)
     if not job:
-        raise HTTPException(status_code=404, detail=f"Ingest ID {ingest_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Trabajo de ingesta {ingest_id} no encontrado."
+        )
 
     return _build_ingest_detail_response(db, job, base_url=str(request.base_url))
 
@@ -759,14 +767,16 @@ async def update_ingest_classification(
 ):
     job = db_service.get_ingest_job(db, ingest_id)
     if not job:
-        raise HTTPException(status_code=404, detail=f"Ingest ID {ingest_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Trabajo de ingesta {ingest_id} no encontrado."
+        )
 
     try:
         doc_type = DocumentType(payload.doc_type)
     except ValueError:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid doc_type '{payload.doc_type}'",
+            detail=f"El tipo de documento '{payload.doc_type}' no es válido.",
         )
 
     pathway = get_pathway(doc_type)
@@ -1000,37 +1010,39 @@ async def merge_ingest_jobs(
     if ingest_id == body.source_ingest_id:
         raise HTTPException(
             status_code=400,
-            detail="Source and target ingest jobs must be different",
+            detail="El trabajo de ingesta de origen y destino deben ser diferentes.",
         )
 
     target = db_service.get_ingest_job(db, ingest_id)
     if not target:
         raise HTTPException(
-            status_code=404, detail=f"Target ingest job {ingest_id} not found"
+            status_code=404,
+            detail=f"Trabajo de ingesta destino {ingest_id} no encontrado.",
         )
 
     source = db_service.get_ingest_job(db, body.source_ingest_id)
     if not source:
         raise HTTPException(
             status_code=404,
-            detail=f"Source ingest job {body.source_ingest_id} not found",
+            detail=f"Trabajo de ingesta origen {body.source_ingest_id} no encontrado.",
         )
 
     if target.company_nit != source.company_nit:
         raise HTTPException(
-            status_code=400, detail="Ingest jobs belong to different companies"
+            status_code=400,
+            detail="Los trabajos de ingesta pertenecen a empresas distintas.",
         )
 
     if target.status in (IngestStatus.CANCELLED, IngestStatus.FAILED):
         raise HTTPException(
             status_code=400,
-            detail="Target ingest job is already cancelled or failed",
+            detail="El trabajo de ingesta destino ya fue cancelado o ha fallado.",
         )
 
     if source.status in (IngestStatus.CANCELLED, IngestStatus.FAILED):
         raise HTTPException(
             status_code=400,
-            detail="Source ingest job is already cancelled or failed",
+            detail="El trabajo de ingesta origen ya fue cancelado o ha fallado.",
         )
 
     # Merge raw_data from TransactionPending rows
@@ -1095,7 +1107,9 @@ async def get_ingest_trace(
     # Check if job exists first
     job = db_service.get_ingest_job(db, ingest_id)
     if not job:
-        raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Trabajo de ingesta {ingest_id} no encontrado."
+        )
 
     # Verify user has access to this ingest's company
     job_company_nit = getattr(job, "company_nit", None)
@@ -1128,5 +1142,7 @@ async def get_ingest_trace(
 
     trace = build_ingest_trace(ingest_id, db)
     if trace is None:
-        raise HTTPException(status_code=404, detail=f"Ingest job {ingest_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Trabajo de ingesta {ingest_id} no encontrado."
+        )
     return trace

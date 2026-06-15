@@ -13,6 +13,7 @@ no caller needs to duplicate JSONB unwrap logic.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -858,35 +859,67 @@ def get_monthly_trend(
 ) -> Optional[Dict[str, Any]]:
     """Return monthly ingresos vs gastos for a Vía B company.
 
-    Aggregates over uploaded ``estado_resultados`` rows (one point per period
-    ending in the requested window). Returns ``None`` when the company has
-    only one P&L upload (or none) — the dashboard surfaces that as
-    ``available: false`` because a "trend" needs at least two points.
+    Primary path: aggregates over uploaded ``estado_resultados`` rows (>= 2
+    required for a meaningful trend). Falls back to ``libro_auxiliar`` when
+    fewer than 2 estado_resultados exist, grouping lines by year-month and
+    summing class-4 (ingresos) and class-5 (gastos) movements.
     """
-    rows = (
-        db.query(FinancialStatement)
-        .filter(
-            FinancialStatement.entity_nit == company_nit,
-            FinancialStatement.statement_type == "estado_resultados",
-            FinancialStatement.source_mode == "direct",
-        )
-        .order_by(FinancialStatement.period_end.desc())
-        .limit(months)
-        .all()
-    )
-    if len(rows) < 2:
+    er_rows = _statements(db, company_nit, "estado_resultados")
+    er_rows = er_rows[:months]  # _statements returns newest-first; keep most recent N
+
+    if len(er_rows) >= 2:
+        rows_chrono = list(reversed(er_rows))
+        points: List[Dict[str, Any]] = []
+        for r in rows_chrono:
+            data = r.data if isinstance(r.data, dict) else {}
+            period = r.period_end
+            ym = period.strftime("%Y-%m") if period else ""
+            points.append(
+                {
+                    "month": ym,
+                    "ingresos": safe_float(data.get("total_ingresos")),
+                    "gastos": safe_float(data.get("total_gastos")),
+                }
+            )
+        return {"data": points}
+
+    # --- fallback: aggregate from libro_auxiliar ---
+    libro_rows = _statements(db, company_nit, "libro_auxiliar")
+    if not libro_rows:
         return None
-    rows_chrono = list(reversed(rows))
-    points: List[Dict[str, Any]] = []
-    for r in rows_chrono:
-        data = r.data if isinstance(r.data, dict) else {}
-        period = r.period_end
-        ym = period.strftime("%Y-%m") if period else ""
-        points.append(
-            {
-                "month": ym,
-                "ingresos": safe_float(data.get("total_ingresos")),
-                "gastos": safe_float(data.get("total_gastos")),
-            }
-        )
-    return {"data": points}
+    libro_stmt = libro_rows[0]
+    lines = _lines(_data(libro_stmt))
+
+    ingresos_by_month: Dict[str, float] = defaultdict(float)
+    gastos_by_month: Dict[str, float] = defaultdict(float)
+
+    for line in lines:
+        fecha_raw = line.get("fecha", "")
+        try:
+            parsed = datetime.fromisoformat(
+                str(fecha_raw).replace("/", "-").replace(".", "-")
+            )
+            ym = parsed.strftime("%Y-%m")
+        except (ValueError, TypeError):
+            continue
+        cuenta = str(line.get("cuenta_puc", ""))
+        debito = safe_float(line.get("debito"))
+        credito = safe_float(line.get("credito"))
+        if cuenta.startswith("4"):
+            ingresos_by_month[ym] += credito - debito
+        elif cuenta.startswith("5"):
+            gastos_by_month[ym] += debito - credito
+
+    all_months = sorted(set(ingresos_by_month) | set(gastos_by_month))
+    points_fallback: List[Dict[str, Any]] = []
+    for ym in all_months:
+        ing = ingresos_by_month.get(ym, 0.0)
+        gas = gastos_by_month.get(ym, 0.0)
+        if ing != 0.0 or gas != 0.0:
+            points_fallback.append({"month": ym, "ingresos": ing, "gastos": gas})
+
+    if not points_fallback:
+        return None
+
+    points_fallback = points_fallback[-months:]
+    return {"data": points_fallback}

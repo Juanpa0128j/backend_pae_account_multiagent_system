@@ -100,7 +100,7 @@ class TestProcessCancel:
         self._patch_common(monkeypatch, None)
         resp = TestClient(app).post("/api/v1/process/nope/cancel")
         assert resp.status_code == 404
-        assert "not found" in resp.json()["detail"].lower()
+        assert "no encontrado" in resp.json()["detail"].lower()
 
     def test_response_body_shape(self, monkeypatch):
         job = _make_job(status=ProcessStatus.QUEUED)

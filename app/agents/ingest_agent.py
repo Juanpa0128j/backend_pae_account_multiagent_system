@@ -248,6 +248,7 @@ _EXTRACT_METHOD_MAP: dict[str, str] = {
     "cuenta_cobro": "extract_cuenta_cobro",
     "planilla_seguridad_social": "extract_planilla_seg_social",
     "recibo_pago_impuesto": "extract_recibo_pago_impuesto",
+    "nota_ajuste_contable": "extract_documento_soporte",
 }
 
 _VIA_B_STATEMENT_TYPES: set[str] = {

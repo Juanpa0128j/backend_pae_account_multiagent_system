@@ -11,13 +11,14 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import desc, distinct, extract, func, or_
+from sqlalchemy import case, desc, distinct, extract, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
 from app.models.database import (
     AjusteFiscal,
     AuditLog,
+    ChatSession,
     CompanyPucConfig,
     CompanyRateOverride,
     CompanySettings,
@@ -32,6 +33,8 @@ from app.models.database import (
     ProcessStatus,
     ReteicaTarifa,
     PerdidaFiscalAcumulada,
+    SpecialTax,
+    SpecialTaxAccumulator,
     TarifaRenta,
     TaxBaseMinima,
     TaxConcept,
@@ -295,7 +298,10 @@ def get_transactions_by_nit(
     return (
         db.query(TransactionPosted)
         .join(TransactionPending)
-        .filter(TransactionPending.nit_emisor == nit)
+        .filter(
+            TransactionPending.nit_emisor == nit,
+            TransactionPosted.deleted_at.is_(None),
+        )
         .order_by(TransactionPosted.created_at.desc())
         .limit(limit)
         .all()
@@ -698,8 +704,17 @@ def get_balance_sheet(
     auxiliaries land on the correct side of the balance sheet instead of
     deflating their parent class total.
     """
+    # Aggregate debit/credit per cuenta_puc IN SQL (func.sum + group_by) instead
+    # of materializing every journal line and summing in Python. Net result is
+    # mathematically identical: the per-line accumulation only ever rolled up to
+    # one of 6 class totals, and the per-account presentation class is a function
+    # of the account code alone, so summing per account first is equivalent.
     query = (
-        db.query(JournalEntryLine)
+        db.query(
+            JournalEntryLine.cuenta_puc.label("cuenta_puc"),
+            func.sum(JournalEntryLine.debito).label("total_debit"),
+            func.sum(JournalEntryLine.credito).label("total_credit"),
+        )
         .join(
             TransactionPosted,
             JournalEntryLine.transaction_posted_id == TransactionPosted.id,
@@ -711,11 +726,11 @@ def get_balance_sheet(
     if company_nit:
         query = query.filter(JournalEntryLine.company_nit == company_nit)
 
-    lines = query.all()
+    account_rows = query.group_by(JournalEntryLine.cuenta_puc).all()
 
     # Look up each cuenta_puc's natural balance from the catalog so we can
     # reclassify the few PUC accounts that contradict their first-digit class.
-    distinct_codes = {ln.cuenta_puc for ln in lines if ln.cuenta_puc}
+    distinct_codes = {r.cuenta_puc for r in account_rows if r.cuenta_puc}
     naturaleza_by_code: Dict[str, str] = {}
     if distinct_codes:
         # Pull the exact codes plus their 6-digit and 4-digit parents so the
@@ -768,21 +783,31 @@ def get_balance_sheet(
         6: Decimal("0"),
     }
 
-    for line in lines:
-        if not line.cuenta_puc or not line.cuenta_puc[0].isdigit():
+    for row in account_rows:
+        code = row.cuenta_puc
+        if not code or not code[0].isdigit():
             continue
-        raw_clase = int(line.cuenta_puc[0])
+        raw_clase = int(code[0])
         if raw_clase not in totals:
             continue
-        clase = _presentation_class(line.cuenta_puc, raw_clase)
+        # func.sum may surface as float (SQLite) or Decimal (Postgres); coerce to
+        # Decimal via str so accumulation matches the original per-line Decimal
+        # arithmetic exactly on both dialects.
+        debit = (
+            Decimal(str(row.total_debit))
+            if row.total_debit is not None
+            else Decimal("0")
+        )
+        credit = (
+            Decimal(str(row.total_credit))
+            if row.total_credit is not None
+            else Decimal("0")
+        )
+        clase = _presentation_class(code, raw_clase)
         if clase in (1, 5, 6):
-            totals[clase] += (line.debito or Decimal("0")) - (
-                line.credito or Decimal("0")
-            )
+            totals[clase] += debit - credit
         else:
-            totals[clase] += (line.credito or Decimal("0")) - (
-                line.debito or Decimal("0")
-            )
+            totals[clase] += credit - debit
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
     net_profit = totals[4] - totals[5] - totals[6]
@@ -883,6 +908,7 @@ def find_duplicate_posted(
             TransactionPending.fecha >= day_start,
             TransactionPending.fecha <= day_end,
             TransactionPending.total == total,
+            TransactionPosted.deleted_at.is_(None),
         )
         .first()
     )
@@ -902,7 +928,7 @@ def get_all_puc(db: Session) -> List[CuentaPUC]:
     """Get all active PUC accounts."""
     return (
         db.query(CuentaPUC)
-        .filter(CuentaPUC.activa == True)  # noqa: E712
+        .filter(CuentaPUC.activa == True, CuentaPUC.deleted_at.is_(None))  # noqa: E712
         .order_by(CuentaPUC.codigo)
         .all()
     )
@@ -914,7 +940,8 @@ def search_puc(
     """Search PUC accounts by code or name. Optionally include inactive accounts."""
     query = db.query(CuentaPUC).filter(
         (CuentaPUC.codigo.ilike(f"%{search_term}%"))
-        | (CuentaPUC.nombre.ilike(f"%{search_term}%"))
+        | (CuentaPUC.nombre.ilike(f"%{search_term}%")),
+        CuentaPUC.deleted_at.is_(None),
     )
     if not include_inactive:
         query = query.filter(CuentaPUC.activa)
@@ -992,7 +1019,11 @@ def get_puc_for_company(db: Session, company_nit: str) -> List[CuentaPUC]:
     )
     return (
         db.query(CuentaPUC)
-        .filter(CuentaPUC.activa, ~CuentaPUC.codigo.in_(deactivated))
+        .filter(
+            CuentaPUC.activa,
+            ~CuentaPUC.codigo.in_(deactivated),
+            CuentaPUC.deleted_at.is_(None),
+        )
         .order_by(CuentaPUC.codigo)
         .all()
     )
@@ -2120,9 +2151,88 @@ def get_monthly_totals_by_class(
         "3": "patrimonio",
         "11": "caja",
     }
-    result = {}
-    for prefix, name in class_map.items():
-        result[name] = get_monthly_trend(db, prefix, months, company_nit=company_nit)
+
+    # Batched aggregation: one grouped query produces every class bucket per
+    # month via conditional SUM/COUNT, replacing the previous 7 sequential
+    # per-prefix queries (one get_monthly_trend call each). Output shape and
+    # numbers are identical to calling get_monthly_trend per prefix.
+    #
+    # Exact N-month rollback — must mirror get_monthly_trend's cutoff exactly.
+    now = datetime.now(timezone.utc)
+    cutoff_year = now.year
+    cutoff_month = now.month - months
+    while cutoff_month <= 0:
+        cutoff_month += 12
+        cutoff_year -= 1
+    cutoff = now.replace(
+        year=cutoff_year,
+        month=cutoff_month,
+        day=1,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+    selects = [
+        extract("year", JournalEntryLine.fecha).label("yr"),
+        extract("month", JournalEntryLine.fecha).label("mo"),
+    ]
+    # Per prefix: summed debit, summed credit, and a presence COUNT so a month
+    # with no matching line for that prefix is OMITTED (matches get_monthly_trend,
+    # which only returns months where the prefix actually has rows).
+    for prefix in class_map:
+        match = JournalEntryLine.cuenta_puc.startswith(prefix)
+        selects.append(
+            func.sum(case((match, JournalEntryLine.debito), else_=0)).label(
+                f"d_{prefix}"
+            )
+        )
+        selects.append(
+            func.sum(case((match, JournalEntryLine.credito), else_=0)).label(
+                f"c_{prefix}"
+            )
+        )
+        selects.append(
+            func.count(case((match, JournalEntryLine.id), else_=None)).label(
+                f"n_{prefix}"
+            )
+        )
+
+    query = (
+        db.query(*selects)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(
+            TransactionPosted.status == TransactionStatus.POSTED,
+            JournalEntryLine.fecha >= cutoff,
+        )
+        .group_by("yr", "mo")
+        .order_by("yr", "mo")
+    )
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
+
+    rows = query.all()
+
+    result: Dict[str, List[Dict[str, Any]]] = {name: [] for name in class_map.values()}
+    for r in rows:
+        month_label = f"{int(r.yr)}-{int(r.mo):02d}"
+        for prefix, name in class_map.items():
+            if getattr(r, f"n_{prefix}") == 0:
+                continue
+            total_debit = float(getattr(r, f"d_{prefix}") or 0)
+            total_credit = float(getattr(r, f"c_{prefix}") or 0)
+            result[name].append(
+                {
+                    "month": month_label,
+                    "total_debit": total_debit,
+                    "total_credit": total_credit,
+                    "net": float(total_debit - total_credit),
+                }
+            )
     return result
 
 
@@ -2501,6 +2611,34 @@ def get_latest_f2516_reviewed(
         .order_by(TaxDeclarationDraft.created_at.desc())
         .first()
     )
+
+
+def get_impuesto_neto_anio(db: Session, company_nit: str, year: int) -> Decimal | None:
+    """Return renglón 88 (impuesto neto de renta) of the latest F110 draft for `year`.
+
+    Used by the Art. 807 anticipo "promedio de los dos últimos años" method
+    (método 2). Returns ``None`` when no F110 draft exists for that year or the
+    renglón is missing/unparseable — the caller then falls back to método 1.
+    """
+    draft = (
+        db.query(TaxDeclarationDraft)
+        .filter(
+            TaxDeclarationDraft.company_nit == company_nit,
+            TaxDeclarationDraft.form_type == "F110",
+            TaxDeclarationDraft.year == year,
+        )
+        .order_by(TaxDeclarationDraft.created_at.desc())
+        .first()
+    )
+    if draft is None:
+        return None
+    for fld in draft.fields_json or []:
+        if fld.get("renglon") == "88":
+            try:
+                return Decimal(str(fld.get("value")))
+            except (TypeError, ValueError, ArithmeticError):
+                return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -2910,6 +3048,7 @@ def list_national_rates(db: Session) -> list[dict]:
             "descripcion": r.descripcion,
             "norma_referencia": r.norma_referencia,
             "vigente_desde": r.vigente_desde.isoformat() if r.vigente_desde else None,
+            "vigente_hasta": r.vigente_hasta.isoformat() if r.vigente_hasta else None,
         }
         for r in rows
     ]
@@ -2927,6 +3066,7 @@ def upsert_national_rate(
     descripcion: str,
     norma_referencia: str,
     vigente_desde: date,
+    vigente_hasta: date | None = None,
 ) -> NationalRate:
     """Insert or update a NationalRate row keyed by code."""
     row = db.query(NationalRate).filter(NationalRate.code == code).first()
@@ -2937,6 +3077,7 @@ def upsert_national_rate(
             descripcion=descripcion,
             norma_referencia=norma_referencia,
             vigente_desde=vigente_desde,
+            vigente_hasta=vigente_hasta,
         )
         db.add(row)
     else:
@@ -2944,6 +3085,7 @@ def upsert_national_rate(
         row.descripcion = descripcion
         row.norma_referencia = norma_referencia
         row.vigente_desde = vigente_desde
+        row.vigente_hasta = vigente_hasta
     db.commit()
     db.refresh(row)
     return row
@@ -2965,7 +3107,10 @@ def get_effective_rates(db: Session, company_nit: str) -> list[dict]:
         .filter(CompanyRateOverride.company_nit == company_nit)
         .all()
     )
-    result = {code: {**data, "overridden": False} for code, data in nationals.items()}
+    result = {
+        code: {**data, "overridden": False, "vigente_hasta": None}
+        for code, data in nationals.items()
+    }
     for ov in overrides:
         if ov.rate_code in result:
             result[ov.rate_code].update(
@@ -2973,10 +3118,64 @@ def get_effective_rates(db: Session, company_nit: str) -> list[dict]:
                     "value": float(ov.value),
                     "norma_referencia": ov.norma_referencia
                     or result[ov.rate_code]["norma_referencia"],
+                    "vigente_desde": (
+                        ov.vigente_desde.isoformat()
+                        if ov.vigente_desde
+                        else result[ov.rate_code]["vigente_desde"]
+                    ),
+                    "vigente_hasta": (
+                        ov.vigente_hasta.isoformat() if ov.vigente_hasta else None
+                    ),
                     "overridden": True,
                 }
             )
     return list(result.values())
+
+
+def get_effective_rate(
+    db: Session,
+    code: str,
+    company_nit: str | None,
+    as_of_date: "date | None",
+) -> "Decimal | None":
+    """Return effective rate for code on as_of_date.
+
+    Resolution order:
+    1. CompanyRateOverride for (company_nit, code) if date window matches
+    2. NationalRate for code if date window matches
+    3. None — caller falls back to hardcoded constant
+
+    Date window: vigente_desde <= as_of_date AND (vigente_hasta IS NULL OR
+    vigente_hasta >= as_of_date).
+    If as_of_date is None, only open-ended rows (vigente_hasta IS NULL) qualify.
+    """
+
+    def _in_window(row_desde: "date | None", row_hasta: "date | None") -> bool:
+        if as_of_date is None:
+            # Only open-ended rows match when date unknown
+            return row_hasta is None
+        if row_desde is not None and row_desde > as_of_date:
+            return False
+        if row_hasta is not None and row_hasta < as_of_date:
+            return False
+        return True
+
+    # 1. Company override
+    if company_nit:
+        ov = (
+            db.query(CompanyRateOverride)
+            .filter_by(company_nit=company_nit, rate_code=code)
+            .first()
+        )
+        if ov is not None and _in_window(ov.vigente_desde, ov.vigente_hasta):
+            return Decimal(str(ov.value))
+
+    # 2. National rate
+    nr = db.query(NationalRate).filter(NationalRate.code == code).first()
+    if nr is not None and _in_window(nr.vigente_desde, nr.vigente_hasta):
+        return Decimal(str(nr.value))
+
+    return None
 
 
 def upsert_company_rate_override(
@@ -2986,6 +3185,7 @@ def upsert_company_rate_override(
     value: Decimal,
     norma_referencia: str | None,
     vigente_desde: date,
+    vigente_hasta: date | None = None,
     commit: bool = True,
 ) -> CompanyRateOverride:
     """Upsert a company-specific rate override."""
@@ -3000,6 +3200,359 @@ def upsert_company_rate_override(
     row.value = value
     row.norma_referencia = norma_referencia
     row.vigente_desde = vigente_desde
+    row.vigente_hasta = vigente_hasta
     _commit_or_flush(db, commit)
     db.refresh(row)
     return row
+
+
+# ── Special Taxes (Estampilla / Impuestos Especiales) ────────────────────────
+
+
+def create_special_tax(
+    db: Session,
+    company_nit: str,
+    code: str,
+    nombre: str,
+    rate: Decimal,
+    base_calc: str,
+    cuenta_gasto: str,
+    cuenta_por_pagar: str,
+    descripcion: str | None = None,
+    base_calc_formula: str | None = None,
+    applies_to_doc_types: list[str] | None = None,
+    es_entidad_publica_only: bool = False,
+    settlement: str = "per_transaction",
+    norma_referencia: str | None = None,
+    vigente_desde: date | None = None,
+    vigente_hasta: date | None = None,
+    activo: bool = True,
+    commit: bool = True,
+) -> SpecialTax:
+    """Create a new special tax configuration for the given company."""
+    row = SpecialTax(
+        company_nit=company_nit,
+        code=code,
+        nombre=nombre,
+        rate=rate,
+        base_calc=base_calc,
+        cuenta_gasto=cuenta_gasto,
+        cuenta_por_pagar=cuenta_por_pagar,
+        descripcion=descripcion,
+        base_calc_formula=base_calc_formula,
+        applies_to_doc_types=applies_to_doc_types or [],
+        es_entidad_publica_only=es_entidad_publica_only,
+        settlement=settlement,
+        norma_referencia=norma_referencia,
+        vigente_desde=vigente_desde,
+        vigente_hasta=vigente_hasta,
+        activo=activo,
+    )
+    db.add(row)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def list_active_special_taxes(
+    db: Session,
+    company_nit: str,
+    doc_type: str | None = None,
+    as_of_date: date | None = None,
+) -> list[SpecialTax]:
+    """Return active special taxes for a company, filtered by doc_type and date."""
+    today = as_of_date or date.today()
+    from sqlalchemy import or_
+
+    q = db.query(SpecialTax).filter(
+        SpecialTax.company_nit == company_nit,
+        SpecialTax.activo.is_(True),
+        or_(SpecialTax.vigente_desde.is_(None), SpecialTax.vigente_desde <= today),
+        or_(SpecialTax.vigente_hasta.is_(None), SpecialTax.vigente_hasta > today),
+    )
+    rows = q.all()
+    if doc_type:
+        rows = [
+            r
+            for r in rows
+            if not r.applies_to_doc_types or doc_type in r.applies_to_doc_types
+        ]
+    return rows
+
+
+def get_special_tax(db: Session, special_tax_id: str) -> SpecialTax | None:
+    """Return a SpecialTax by id, or None."""
+    return db.query(SpecialTax).filter(SpecialTax.id == special_tax_id).first()
+
+
+def list_special_taxes(db: Session, company_nit: str) -> list[SpecialTax]:
+    """Return all special taxes for a company (active and inactive)."""
+    return (
+        db.query(SpecialTax)
+        .filter(SpecialTax.company_nit == company_nit)
+        .order_by(SpecialTax.code)
+        .all()
+    )
+
+
+def update_special_tax(
+    db: Session,
+    special_tax_id: str,
+    commit: bool = True,
+    **fields,
+) -> SpecialTax | None:
+    """Update fields on an existing SpecialTax. Returns None if not found."""
+    row = db.query(SpecialTax).filter(SpecialTax.id == special_tax_id).first()
+    if row is None:
+        return None
+    for key, val in fields.items():
+        setattr(row, key, val)
+    _commit_or_flush(db, commit)
+    db.refresh(row)
+    return row
+
+
+def delete_special_tax(db: Session, special_tax_id: str) -> bool:
+    """Soft-delete by setting activo=False. Returns True if found."""
+    row = db.query(SpecialTax).filter(SpecialTax.id == special_tax_id).first()
+    if row is None:
+        return False
+    row.activo = False
+    db.commit()
+    return True
+
+
+def get_or_create_accumulator(
+    db: Session,
+    special_tax_id,
+    company_nit: str,
+    year: int,
+    month: int,
+    commit: bool = True,
+) -> SpecialTaxAccumulator:
+    """Return the accumulator for the given period, creating it if absent."""
+    row = (
+        db.query(SpecialTaxAccumulator)
+        .filter_by(
+            special_tax_id=special_tax_id,
+            company_nit=company_nit,
+            period_year=year,
+            period_month=month,
+        )
+        .first()
+    )
+    if row is None:
+        row = SpecialTaxAccumulator(
+            special_tax_id=special_tax_id,
+            company_nit=company_nit,
+            period_year=year,
+            period_month=month,
+            accumulated_base=Decimal("0"),
+            accumulated_tax=Decimal("0"),
+            liquidated=False,
+        )
+        db.add(row)
+        _commit_or_flush(db, commit)
+        db.refresh(row)
+    return row
+
+
+def add_to_accumulator(
+    db: Session,
+    special_tax_id,
+    company_nit: str,
+    year: int,
+    month: int,
+    base_amount: Decimal,
+    tax_amount: Decimal,
+) -> SpecialTaxAccumulator:
+    """Add base and tax amounts to the period accumulator."""
+    row = get_or_create_accumulator(
+        db, special_tax_id, company_nit, year, month, commit=False
+    )
+    row.accumulated_base = Decimal(str(row.accumulated_base)) + Decimal(
+        str(base_amount)
+    )
+    row.accumulated_tax = Decimal(str(row.accumulated_tax)) + Decimal(str(tax_amount))
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def liquidate_accumulator(
+    db: Session,
+    special_tax_id,
+    company_nit: str,
+    year: int,
+    month: int,
+) -> SpecialTaxAccumulator | None:
+    """Mark accumulator as liquidated. Returns None if not found or already liquidated."""
+    from datetime import datetime as _dt
+
+    row = (
+        db.query(SpecialTaxAccumulator)
+        .filter_by(
+            special_tax_id=special_tax_id,
+            company_nit=company_nit,
+            period_year=year,
+            period_month=month,
+        )
+        .first()
+    )
+    if row is None or row.liquidated:
+        return row
+    row.liquidated = True
+    row.liquidated_at = _dt.now(tz=timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_accumulators(
+    db: Session,
+    special_tax_id,
+    company_nit: str,
+    only_unliquidated: bool = False,
+) -> list[SpecialTaxAccumulator]:
+    """List all accumulator periods for a special tax."""
+    q = db.query(SpecialTaxAccumulator).filter_by(
+        special_tax_id=special_tax_id, company_nit=company_nit
+    )
+    if only_unliquidated:
+        q = q.filter(SpecialTaxAccumulator.liquidated.is_(False))
+    return q.order_by(
+        SpecialTaxAccumulator.period_year, SpecialTaxAccumulator.period_month
+    ).all()
+
+
+# ─── Soft-delete / Restore ────────────────────────────────────────────────────
+
+
+def soft_delete_transaction_posted(db: Session, transaction_id: str) -> bool:
+    """Marcar una TransactionPosted como eliminada (soft-delete). Retorna True si se encontró."""
+    row = (
+        db.query(TransactionPosted)
+        .filter(TransactionPosted.id == transaction_id)
+        .first()
+    )
+    if row is None:
+        return False
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def restore_transaction_posted(
+    db: Session, transaction_id: str
+) -> Optional[TransactionPosted]:
+    """Restaurar una TransactionPosted eliminada (deleted_at → None). Retorna el registro o None."""
+    row = (
+        db.query(TransactionPosted)
+        .filter(TransactionPosted.id == transaction_id)
+        .first()
+    )
+    if row is None:
+        return None
+    row.deleted_at = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def soft_delete_chat_session(db: Session, session_id: str) -> bool:
+    """Marcar una ChatSession como eliminada (soft-delete). Retorna True si se encontró."""
+    row = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if row is None:
+        return False
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def restore_chat_session(db: Session, session_id: str) -> Optional[ChatSession]:
+    """Restaurar una ChatSession eliminada (deleted_at → None). Retorna el registro o None."""
+    row = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if row is None:
+        return None
+    row.deleted_at = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_chat_sessions(
+    db: Session, company_nit: Optional[str] = None
+) -> list[ChatSession]:
+    """Listar sesiones de chat activas (excluye eliminadas). Filtra por NIT si se indica."""
+    q = db.query(ChatSession).filter(ChatSession.deleted_at.is_(None))
+    if company_nit is not None:
+        q = q.filter(ChatSession.company_nit == company_nit)
+    return q.order_by(ChatSession.updated_at.desc()).all()
+
+
+def soft_delete_cuenta_puc(db: Session, codigo: str) -> bool:
+    """Marcar una CuentaPUC como eliminada (soft-delete). Retorna True si se encontró."""
+    row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
+    if row is None:
+        return False
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def restore_cuenta_puc(db: Session, codigo: str) -> Optional[CuentaPUC]:
+    """Restaurar una CuentaPUC eliminada (deleted_at → None). Retorna el registro o None."""
+    row = db.query(CuentaPUC).filter(CuentaPUC.codigo == codigo).first()
+    if row is None:
+        return None
+    row.deleted_at = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def soft_delete_user_company(db: Session, user_id: str, company_nit: str) -> bool:
+    """Marcar un UserCompany como eliminado (soft-delete). Retorna True si se encontró."""
+    row = (
+        db.query(UserCompany)
+        .filter(
+            UserCompany.user_id == user_id,
+            UserCompany.company_nit == company_nit,
+        )
+        .first()
+    )
+    if row is None:
+        return False
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def restore_user_company(
+    db: Session, user_id: str, company_nit: str
+) -> Optional[UserCompany]:
+    """Restaurar un UserCompany eliminado (deleted_at → None). Retorna el registro o None."""
+    row = (
+        db.query(UserCompany)
+        .filter(
+            UserCompany.user_id == user_id,
+            UserCompany.company_nit == company_nit,
+        )
+        .first()
+    )
+    if row is None:
+        return None
+    row.deleted_at = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_user_companies(
+    db: Session, company_nit: Optional[str] = None
+) -> list[UserCompany]:
+    """Listar asociaciones UserCompany activas (excluye eliminadas). Filtra por NIT si se indica."""
+    q = db.query(UserCompany).filter(UserCompany.deleted_at.is_(None))
+    if company_nit is not None:
+        q = q.filter(UserCompany.company_nit == company_nit)
+    return q.all()

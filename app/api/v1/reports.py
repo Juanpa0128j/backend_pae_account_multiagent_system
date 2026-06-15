@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core import response_cache as _response_cache
 from app.core.limiter import limiter
 from app.agents.graph import invoke_reporting_pipeline
 from app.core.database import SessionLocal
@@ -142,7 +143,7 @@ def _run_report(report_type: str, params: dict, company_nit: Optional[str]) -> d
             normalized_company_nit = normalize_nit(company_nit)
         except ValueError as nit_err:
             raise HTTPException(
-                status_code=422, detail=f"Invalid company_nit: {nit_err}"
+                status_code=422, detail=f"El NIT de la empresa no es válido: {nit_err}"
             )
 
     stored = _try_stored_statement(report_type, params, normalized_company_nit)
@@ -574,7 +575,7 @@ def _resolve_report(
             normalized_company_nit = normalize_nit(company_nit)
         except ValueError as nit_err:
             raise HTTPException(
-                status_code=422, detail=f"Invalid company_nit: {nit_err}"
+                status_code=422, detail=f"El NIT de la empresa no es válido: {nit_err}"
             )
 
         db = SessionLocal()
@@ -586,7 +587,8 @@ def _resolve_report(
             )
             if stmt is None:
                 raise HTTPException(
-                    status_code=404, detail=f"Statement {statement_id} not found"
+                    status_code=404,
+                    detail=f"Estado financiero {statement_id} no encontrado.",
                 )
 
             expected_types = _REPORT_TYPE_ALIASES.get(report_type, {report_type})
@@ -653,9 +655,46 @@ def _build_attachment_headers(
     return {"Content-Disposition": f"attachment; filename={filename}"}
 
 
+class AvailablePeriodsResponse(BaseModel):
+    balance_general: list[str] = []
+    estado_resultados: list[str] = []
+    libro_auxiliar: list[str] = []
+
+
+@router.get("/available-periods", response_model=AvailablePeriodsResponse)
+@limiter.limit("30/minute")
+def get_available_periods(
+    request: Request,
+    company_nit: Optional[str] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> AvailablePeriodsResponse:
+    """Return Via B statement periods that have uploaded data."""
+    if not company_nit:
+        return AvailablePeriodsResponse()
+    normalized = normalize_nit(company_nit)
+    db = SessionLocal()
+    try:
+        from app.services import db_service as _db_svc  # noqa: PLC0415
+        from app.services import via_b_service as _via_b  # noqa: PLC0415
+
+        pathway = _db_svc.get_company_locked_pathway(db, normalized)
+        if pathway != "work_with_existing":
+            return AvailablePeriodsResponse()
+        balance = _via_b.list_periods(db, normalized, "balance_general")
+        estado = _via_b.list_periods(db, normalized, "estado_resultados")
+        libro = _via_b.list_periods(db, normalized, "libro_auxiliar")
+        return AvailablePeriodsResponse(
+            balance_general=balance,
+            estado_resultados=estado,
+            libro_auxiliar=libro,
+        )
+    finally:
+        db.close()
+
+
 @router.get("/balance", response_model=BalanceSheetOutput)
 @limiter.limit("30/minute")
-async def get_balance_report(
+def get_balance_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(
@@ -674,7 +713,7 @@ async def get_balance_report(
 
 @router.get("/pnl", response_model=PnLOutput)
 @limiter.limit("30/minute")
-async def get_pnl_report(
+def get_pnl_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(
@@ -693,7 +732,7 @@ async def get_pnl_report(
 
 @router.get("/cashflow", response_model=CashFlowOutput)
 @limiter.limit("30/minute")
-async def get_cashflow_report(
+def get_cashflow_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(
@@ -720,7 +759,7 @@ async def get_cashflow_report(
 
 @router.get("/libro_diario")
 @limiter.limit("30/minute")
-async def get_libro_diario_report(
+def get_libro_diario_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
@@ -737,7 +776,7 @@ async def get_libro_diario_report(
 
 @router.get("/libro_auxiliar")
 @limiter.limit("30/minute")
-async def get_libro_auxiliar_report(
+def get_libro_auxiliar_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
@@ -755,7 +794,7 @@ async def get_libro_auxiliar_report(
 
 @router.get("/cambios_patrimonio")
 @limiter.limit("30/minute")
-async def get_cambios_patrimonio_report(
+def get_cambios_patrimonio_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
@@ -774,7 +813,7 @@ async def get_cambios_patrimonio_report(
 
 @router.get("/notas_estados_financieros")
 @limiter.limit("30/minute")
-async def get_notas_eeff_report(
+def get_notas_eeff_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
@@ -790,11 +829,14 @@ async def get_notas_eeff_report(
 
 @router.get("/analysis")
 @limiter.limit("30/minute")
-async def get_analysis_report(
+def get_analysis_report(
     request: Request,
     start_date: Optional[date] = Query(None, description="Start date YYYY-MM-DD"),
     end_date: Optional[date] = Query(None, description="End date YYYY-MM-DD"),
     company_nit: Optional[str] = Query(None, description="Optional company NIT filter"),
+    refresh: bool = Query(
+        False, description="Bypass the response cache and force a fresh run"
+    ),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
@@ -802,8 +844,40 @@ async def get_analysis_report(
     detection, 3-month predictions, LLM-narrated executive summary. Previously
     only reachable via the chat `intent=analysis` flow; now exposed as REST
     so the frontend Reportes tab can render it directly.
+
+    This is the only report endpoint that ALWAYS drives an LLM, so it is wrapped
+    in a 180s in-process TTL cache (PERF FIX B1). ``?refresh=true`` bypasses the
+    cache and re-runs the pipeline. See app/core/response_cache.py for the
+    single-worker consistency assumption.
     """
-    return _run_report("analysis", _build_params(start_date, end_date), company_nit)
+    # Cache key = the complete set of inputs that change the analysis result:
+    # normalized company NIT + the resolved period (start/end). report_type is
+    # constant ("analysis") so it's not in the key. Vía A/B pathway is NOT in
+    # the key on purpose: for analysis the stored-statement short-circuit in
+    # _run_report never fires (no entry in _REPORT_TYPE_TO_STATEMENT_TYPE), so
+    # both pathways take the identical live-pipeline path — output does not
+    # diverge by pathway, so there's no risk of Vía-B reading Vía-A data.
+    try:
+        normalized_nit = normalize_optional_nit(company_nit)
+    except ValueError:
+        # Invalid NIT: skip the cache entirely and let _run_report raise the
+        # canonical 422 (preserves the pre-cache error contract byte-for-byte).
+        return _run_report("analysis", _build_params(start_date, end_date), company_nit)
+    cache_key = (
+        "analysis",
+        normalized_nit,
+        start_date.isoformat() if start_date else None,
+        end_date.isoformat() if end_date else None,
+    )
+
+    if not refresh:
+        cached = _response_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    result = _run_report("analysis", _build_params(start_date, end_date), company_nit)
+    _response_cache.set(cache_key, result)
+    return result
 
 
 @router.get("/statements")
@@ -834,7 +908,9 @@ async def get_financial_statements(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     period_start = (
         datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc)
@@ -877,7 +953,8 @@ async def get_financial_statement_by_id(
         )
         if stmt is None:
             raise HTTPException(
-                status_code=404, detail=f"Statement {statement_id} not found"
+                status_code=404,
+                detail=f"Estado financiero {statement_id} no encontrado.",
             )
         if company_nit is not None and stmt.company_nit != normalize_optional_nit(
             company_nit
@@ -928,7 +1005,7 @@ async def download_balance_pdf(
     try:
         pdf_bytes = BalanceSheetExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -962,7 +1039,7 @@ async def download_balance_excel(
     try:
         excel_bytes = BalanceSheetExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -996,7 +1073,7 @@ async def download_pnl_pdf(
     try:
         pdf_bytes = PnLExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1030,7 +1107,7 @@ async def download_pnl_excel(
     try:
         excel_bytes = PnLExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1064,7 +1141,7 @@ async def download_cashflow_pdf(
     try:
         pdf_bytes = CashFlowExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1098,7 +1175,7 @@ async def download_cashflow_excel(
     try:
         excel_bytes = CashFlowExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1132,7 +1209,7 @@ async def download_libro_diario_pdf(
     try:
         pdf_bytes = LibroDiarioExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1166,7 +1243,7 @@ async def download_libro_diario_excel(
     try:
         excel_bytes = LibroDiarioExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1200,7 +1277,7 @@ async def download_libro_auxiliar_pdf(
     try:
         pdf_bytes = LibroAuxiliarExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1234,7 +1311,7 @@ async def download_libro_auxiliar_excel(
     try:
         excel_bytes = LibroAuxiliarExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1266,7 +1343,7 @@ async def download_cambios_patrimonio_pdf(
     try:
         pdf_bytes = CambiosPatrimonioExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1298,7 +1375,7 @@ async def download_cambios_patrimonio_excel(
     try:
         excel_bytes = CambiosPatrimonioExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1330,7 +1407,7 @@ async def download_notas_pdf(
     try:
         pdf_bytes = NotasEstadosFinancierosExporter.to_pdf(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([pdf_bytes]),
@@ -1362,7 +1439,7 @@ async def download_notas_excel(
     try:
         excel_bytes = NotasEstadosFinancierosExporter.to_excel(report, company_name)
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"La exportación falló: {str(e)}")
 
     return StreamingResponse(
         iter([excel_bytes]),
@@ -1402,7 +1479,9 @@ async def get_derivation_status(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     sources: dict[str, list[dict]] = {t: [] for t in _REQUIRED_SOURCE_TYPES}
     rows = list_financial_statements(
@@ -1564,7 +1643,9 @@ async def run_derivation(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     period_start = datetime(
         start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc
@@ -1635,7 +1716,9 @@ async def build_first_level_via_a(
     try:
         normalized_nit = normalize_nit(body.company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     period_start, period_end = _period_bounds_utc(body.period_start, body.period_end)
 
@@ -1693,7 +1776,9 @@ async def run_derivation_via_a(
     try:
         normalized_nit = normalize_nit(body.company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     period_start, period_end = _period_bounds_utc(body.period_start, body.period_end)
 
@@ -1729,7 +1814,9 @@ async def get_derivation_status_via_a(
     try:
         normalized_nit = normalize_nit(company_nit)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid company_nit: {e}")
+        raise HTTPException(
+            status_code=422, detail=f"El NIT de la empresa no es válido: {e}"
+        )
 
     all_rows = list_financial_statements(
         company_nit=normalized_nit,

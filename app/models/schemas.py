@@ -786,6 +786,7 @@ class EffectiveRateResponse(BaseModel):
     descripcion: str
     norma_referencia: str
     vigente_desde: str  # ISO date string
+    vigente_hasta: str | None = None  # ISO date string or None if open-ended
     overridden: bool = False  # True if company has an override
 
     model_config = {"from_attributes": True}

@@ -22,6 +22,7 @@ from app.api.v1 import (
     chat,
     puc as puc_router_mod,
     auth as auth_router_mod,
+    special_taxes as special_taxes_router_mod,
 )
 from app.core.config import settings
 from app.core.limiter import limiter
@@ -69,6 +70,11 @@ async def lifespan(app: FastAPI):
         os.environ["LANGSMITH_ENDPOINT"] = settings.langsmith_endpoint
         logger.info(f"LangSmith tracing enabled (project={settings.langsmith_project})")
     logger.info(f"Starting PAE Backend (env={settings.app_env})")
+    # PERF FIX B1: the analysis response cache is in-process and single-worker
+    # only. Warn loudly if env hints at >1 worker (cache would go inconsistent).
+    from app.core.response_cache import warn_if_multi_worker
+
+    warn_if_multi_worker()
     db_ok = check_db_connection()
     if db_ok:
         logger.info("Database connection verified")
@@ -177,6 +183,11 @@ app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboar
 app.include_router(books.router, prefix="/api/v1/books", tags=["Libros"])
 app.include_router(
     settings_router_mod.router, prefix="/api/v1/settings", tags=["Configuración"]
+)
+app.include_router(
+    special_taxes_router_mod.router,
+    prefix="/api/v1/settings",
+    tags=["Impuestos Especiales"],
 )
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat Financiero"])
 app.include_router(puc_router_mod.router, prefix="/api/v1/puc", tags=["PUC"])

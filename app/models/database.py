@@ -18,6 +18,7 @@ Tables:
 """
 
 import enum
+import uuid
 from datetime import datetime
 from decimal import Decimal
 
@@ -36,10 +37,16 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
+from sqlalchemy.dialects.postgresql import (
+    ARRAY as PG_ARRAY,
+    JSONB as PG_JSONB,
+    UUID as PG_UUID,
+)
 from sqlalchemy.types import JSON
 
 JSONB = JSON().with_variant(PG_JSONB(), "postgresql")
+# ARRAY of strings: uses native pg ARRAY on PostgreSQL, falls back to JSON on SQLite (tests).
+StringArray = JSON().with_variant(PG_ARRAY(String()), "postgresql")
 from sqlalchemy.orm import relationship, mapped_column, Mapped  # noqa: E402
 from sqlalchemy.sql import func  # noqa: E402
 
@@ -363,6 +370,7 @@ class CuentaPUC(Base):
     activa = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     def __repr__(self):
         return f"<CuentaPUC(codigo={self.codigo}, nombre={self.nombre})>"
@@ -546,6 +554,7 @@ class TransactionPosted(Base):
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     # Relationships
     transaction_pending = relationship(
@@ -783,6 +792,7 @@ class ChatSession(Base):
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     messages = relationship(
         "ChatMessageRecord", back_populates="session", cascade="all, delete-orphan"
@@ -1084,6 +1094,11 @@ class NationalRate(Base):
         nullable=False,
         comment="Effective date of this rate",
     )
+    vigente_hasta = Column(
+        Date,
+        nullable=True,
+        comment="End date of this rate (null = open-ended)",
+    )
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -1241,7 +1256,7 @@ class UserCompany(Base):
 
     __tablename__ = "user_company"
 
-    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     company_nit: Mapped[str] = mapped_column(
         String, ForeignKey("company_settings.nit", ondelete="CASCADE"), primary_key=True
     )
@@ -1250,6 +1265,9 @@ class UserCompany(Base):
     )
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
     )
 
     def __repr__(self):
@@ -1313,6 +1331,11 @@ class CompanyRateOverride(Base):
     value = Column(Numeric(8, 6), nullable=False)
     norma_referencia = Column(String(128), nullable=True)
     vigente_desde = Column(Date, nullable=False)
+    vigente_hasta = Column(
+        Date,
+        nullable=True,
+        comment="End date of this override (null = open-ended)",
+    )
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -1323,4 +1346,131 @@ class CompanyRateOverride(Base):
         return (
             f"<CompanyRateOverride(nit={self.company_nit}, "
             f"code={self.rate_code}, value={self.value})>"
+        )
+
+
+# ─── Special Taxes (Estampilla / Impuestos Especiales) ───────────────────────
+
+
+class SpecialTax(Base):
+    """
+    Per-company configurable special withholding tax (estampilla, timbre, etc.).
+
+    Each row defines one special tax that the tributario agent will auto-apply
+    to matching transactions. Supports per-transaction settlement (journal lines
+    added immediately) or periodic settlement (accumulated until liquidated via
+    POST /api/v1/settings/special-taxes/{id}/liquidar).
+    """
+
+    __tablename__ = "special_taxes"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_nit = Column(String(20), nullable=False, index=True)
+    code = Column(String(64), nullable=False, comment="Unique code per company")
+    nombre = Column(String(255), nullable=False)
+    descripcion = Column(Text, nullable=True)
+    rate = Column(
+        Numeric(10, 6),
+        nullable=False,
+        comment="Tax rate as decimal fraction, e.g. 0.005 = 0.5%",
+    )
+    base_calc = Column(
+        String(20),
+        nullable=False,
+        comment="total_pago | base_gravable | custom",
+    )
+    base_calc_formula = Column(
+        Text,
+        nullable=True,
+        comment="Formula string when base_calc='custom', e.g. 'total_pago * 0.5'",
+    )
+    applies_to_doc_types = Column(
+        StringArray,
+        nullable=False,
+        default=list,
+        server_default="{}",
+        comment="Empty array = applies to all doc types",
+    )
+    es_entidad_publica_only = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="If true, only apply when transaction.es_entidad_publica=True",
+    )
+    settlement = Column(
+        String(20),
+        nullable=False,
+        default="per_transaction",
+        server_default="per_transaction",
+        comment="per_transaction | periodic",
+    )
+    cuenta_gasto = Column(
+        String(10), nullable=False, comment="PUC debit account for expense"
+    )
+    cuenta_por_pagar = Column(
+        String(10), nullable=False, comment="PUC credit account for liability"
+    )
+    norma_referencia = Column(String(255), nullable=True)
+    vigente_desde = Column(Date, nullable=True)
+    vigente_hasta = Column(Date, nullable=True)
+    activo = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    accumulators = relationship(
+        "SpecialTaxAccumulator",
+        back_populates="special_tax",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (UniqueConstraint("company_nit", "code"),)
+
+    def __repr__(self):
+        return f"<SpecialTax(company_nit={self.company_nit}, code={self.code}, rate={self.rate})>"
+
+
+class SpecialTaxAccumulator(Base):
+    """
+    Accumulates base and tax amounts for periodic-settlement special taxes.
+
+    One row per (special_tax, year, month). The accountant triggers liquidation
+    via POST /api/v1/settings/special-taxes/{id}/liquidar which creates the
+    journal entry and sets liquidated=True.
+    """
+
+    __tablename__ = "special_tax_accumulators"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    special_tax_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("special_taxes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    company_nit = Column(String(20), nullable=False, index=True)
+    period_year = Column(Integer, nullable=False)
+    period_month = Column(Integer, nullable=False)
+    accumulated_base = Column(Numeric(18, 2), nullable=False, default=Decimal("0"))
+    accumulated_tax = Column(Numeric(18, 2), nullable=False, default=Decimal("0"))
+    liquidated = Column(Boolean, nullable=False, default=False, server_default="false")
+    liquidated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    special_tax = relationship("SpecialTax", back_populates="accumulators")
+
+    __table_args__ = (
+        UniqueConstraint("special_tax_id", "period_year", "period_month"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<SpecialTaxAccumulator(tax={self.special_tax_id}, "
+            f"{self.period_year}-{self.period_month:02d}, "
+            f"base={self.accumulated_base}, liquidated={self.liquidated})>"
         )

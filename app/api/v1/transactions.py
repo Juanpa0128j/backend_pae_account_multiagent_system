@@ -194,7 +194,7 @@ async def create_transaction(
     if parsed_fecha is None:
         raise HTTPException(
             status_code=422,
-            detail=f"Could not parse fecha '{payload.fecha}'. Use YYYY-MM-DD or DD/MM/YYYY.",
+            detail=f"La fecha '{payload.fecha}' no pudo ser interpretada. Use el formato YYYY-MM-DD o DD/MM/YYYY.",
         )
 
     # Create pending transaction
@@ -316,7 +316,7 @@ async def search_transactions(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid status value: {status}",
+                detail=f"El valor de estado no es válido: {status}",
             )
 
     txns = db_service.search_transactions(db, nit, fi, ff, txn_status, limit)
@@ -358,7 +358,7 @@ async def get_transaction(
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
 
     posted = (
         db.query(TransactionPosted)
@@ -449,7 +449,9 @@ def _delete_transaction_cascade(db: Session, txn_id: str) -> Optional[str]:
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {txn_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Transacción {txn_id} no encontrada."
+        )
 
     # Re-processed transactions may have multiple posted rows for a single
     # pending (see get_transaction's order_by created_at.desc()). Delete every
@@ -635,7 +637,7 @@ async def set_transaction_fecha(
     """
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
 
     # Once the transaction has been posted, its fecha is already replicated to
     # JournalEntryLine.fecha and into the derived FinancialStatement periods.
@@ -657,8 +659,8 @@ async def set_transaction_fecha(
         raise HTTPException(
             status_code=422,
             detail=(
-                f"Could not parse fecha '{payload.fecha}'. Use YYYY-MM-DD, "
-                "YYYY-MM, or DD/MM/YYYY."
+                f"La fecha '{payload.fecha}' no pudo ser interpretada. Use el formato YYYY-MM-DD, "
+                "YYYY-MM o DD/MM/YYYY."
             ),
         )
 
@@ -690,7 +692,7 @@ async def update_transaction(
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
 
     if txn.status == TransactionStatus.POSTED:
         raise HTTPException(
@@ -751,7 +753,7 @@ async def update_transaction(
         if parsed is None:
             raise HTTPException(
                 status_code=422,
-                detail=f"Could not parse fecha '{payload.fecha}'. Use YYYY-MM-DD or DD/MM/YYYY.",
+                detail=f"La fecha '{payload.fecha}' no pudo ser interpretada. Use el formato YYYY-MM-DD o DD/MM/YYYY.",
             )
         update_kwargs["fecha"] = parsed
         raw_data["fecha"] = payload.fecha
@@ -811,7 +813,7 @@ async def reprocess_transaction(
     """Delete a posted transaction and recreate it as pending for re-processing."""
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transaction {id} not found")
+        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
 
     if txn.status != TransactionStatus.POSTED:
         raise HTTPException(
@@ -885,10 +887,28 @@ async def delete_transaction(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Delete a single transaction and all its associated records."""
-    company_nit = _delete_transaction_cascade(db, id)
-    _resync_derived_statements(db, company_nit)
-    db.commit()
+    """Soft-delete a single transaction (marks deleted_at on the posted record)."""
+    found = db_service.soft_delete_transaction_posted(db, id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Transacción no encontrada.")
+
+
+@router.post("/{id}/restore", status_code=200)
+@limiter.limit("30/minute")
+async def restore_transaction(
+    request: Request,
+    id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Restore a soft-deleted transaction."""
+    row = db_service.restore_transaction_posted(db, id)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Transacción no encontrada o ya restaurada.",
+        )
+    return {"id": row.id, "status": "restored"}
 
 
 @router.delete("/by-ingest/{ingest_id}", status_code=200)
@@ -899,7 +919,7 @@ async def delete_transactions_by_ingest(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Delete all transactions belonging to a specific ingest document."""
+    """Soft-delete all transactions belonging to a specific ingest document."""
     from app.models.database import TransactionPending
 
     txn_ids = [
@@ -910,19 +930,184 @@ async def delete_transactions_by_ingest(
     ]
     if not txn_ids:
         raise HTTPException(
-            status_code=404, detail=f"No transactions found for ingest {ingest_id}"
+            status_code=404,
+            detail=f"No se encontraron transacciones para el trabajo de ingesta {ingest_id}.",
         )
 
-    affected_nits: set[str] = set()
+    deleted_count = 0
     for txn_id in txn_ids:
-        company_nit = _delete_transaction_cascade(db, txn_id)
-        if company_nit:
-            affected_nits.add(company_nit)
+        if db_service.soft_delete_transaction_posted(db, txn_id):
+            deleted_count += 1
 
-    # Resync each affected company once (not per-transaction) so the derived
-    # statements reflect the post-delete journal state.
-    for company_nit in affected_nits:
-        _resync_derived_statements(db, company_nit)
+    return {"deleted": deleted_count}
+
+
+# ─── Manual nota de ajuste contable ──────────────────────────────────────────
+
+
+class AjusteLineRequest(BaseModel):
+    cuenta_puc: str
+    tipo_movimiento: str  # "debito" | "credito"
+    valor: float
+    descripcion: str = ""
+
+
+class ManualAjusteRequest(BaseModel):
+    company_nit: str
+    fecha: str  # ISO date string, e.g. "2026-06-13"
+    concepto: str
+    lines: List[AjusteLineRequest]
+
+
+class ManualAjusteResponse(BaseModel):
+    transaction_id: str
+    lines_created: int
+
+
+@router.post("/manual-ajuste", status_code=201, response_model=ManualAjusteResponse)
+@limiter.limit("60/minute")
+async def create_manual_ajuste(
+    request: Request,
+    body: ManualAjusteRequest,
+    db: Session = Depends(get_db),
+):
+    """Persist a CPA-prepared nota de ajuste contable directly to journal_entry_lines.
+
+    Validates double-entry balance (Σdébitos == Σcréditos) and requires at least
+    two lines. Skips the LLM pipeline entirely — accounts are trusted as-is.
+    """
+    from decimal import Decimal as D
+    import uuid
+    from datetime import datetime, timezone
+
+    from app.models.database import (
+        JournalEntryLine,
+        TransactionPosted,
+        TransactionPending,
+        TransactionStatus,
+    )
+    from app.services.nit_utils import normalize_nit
+
+    # ── validation ──────────────────────────────────────────────────────────
+    if len(body.lines) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="Una nota de ajuste requiere al menos dos líneas contables.",
+        )
+
+    total_debito = sum(
+        D(str(ln.valor)) for ln in body.lines if ln.tipo_movimiento == "debito"
+    )
+    total_credito = sum(
+        D(str(ln.valor)) for ln in body.lines if ln.tipo_movimiento == "credito"
+    )
+
+    if total_debito != total_credito:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"El asiento no cuadra: Σdébitos={total_debito} ≠ Σcréditos={total_credito}. "
+                "Corrija los valores antes de registrar."
+            ),
+        )
+
+    # ── parse fecha ─────────────────────────────────────────────────────────
+    try:
+        fecha_dt = datetime.fromisoformat(body.fecha).replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Fecha inválida: '{body.fecha}'. Use formato ISO (YYYY-MM-DD).",
+        )
+
+    company_nit_clean = normalize_nit(body.company_nit)
+    ajuste_id = str(uuid.uuid4())
+    pending_id = str(uuid.uuid4())
+
+    # ── synthetic ingest job ─────────────────────────────────────────────────
+    # transactions_pending.ingest_id is NOT NULL (FK → ingest_jobs.id), so a
+    # manual ajuste needs a backing ingest job just like create_manual_transaction.
+    # commit=False keeps it in this request's transaction (flushed, not committed).
+    ingest_job = db_service.create_manual_ingest_job(
+        db, company_nit=company_nit_clean, commit=False
+    )
+
+    # ── create a synthetic TransactionPending stub (required FK) ─────────────
+    pending = TransactionPending(
+        id=pending_id,
+        ingest_id=ingest_job.id,
+        fecha=fecha_dt,
+        company_nit=company_nit_clean,
+        nit_emisor=company_nit_clean,
+        nit_receptor=company_nit_clean,
+        total=float(total_debito),
+        descripcion=body.concepto,
+        status=TransactionStatus.POSTED,
+        raw_data={
+            "doc_type": "nota_ajuste_contable",
+            "concepto": body.concepto,
+            "manual_entry": True,
+        },
+    )
+    db.add(pending)
+
+    # ── create TransactionPosted ─────────────────────────────────────────────
+    # Use first debit account as the primary PUC for the posted record.
+    primary_cuenta = next(
+        (ln.cuenta_puc for ln in body.lines if ln.tipo_movimiento == "debito"),
+        body.lines[0].cuenta_puc,
+    )
+    posted = TransactionPosted(
+        id=ajuste_id,
+        transaction_pending_id=pending_id,
+        company_nit=company_nit_clean,
+        cuenta_puc=primary_cuenta,
+        puc_descripcion=body.concepto,
+        retefuente=D("0"),
+        reteica=D("0"),
+        iva=D("0"),
+        ica=D("0"),
+        provision_renta=D("0"),
+        neto_a_pagar=total_debito,
+        status=TransactionStatus.POSTED,
+        journal_entries_json=[
+            {
+                "cuenta_puc": ln.cuenta_puc,
+                "tipo_movimiento": ln.tipo_movimiento,
+                "valor": ln.valor,
+                "descripcion": ln.descripcion,
+            }
+            for ln in body.lines
+        ],
+    )
+    db.add(posted)
+
+    # ── create JournalEntryLines ─────────────────────────────────────────────
+    for ln in body.lines:
+        debito_val = D(str(ln.valor)) if ln.tipo_movimiento == "debito" else D("0")
+        credito_val = D(str(ln.valor)) if ln.tipo_movimiento == "credito" else D("0")
+        jel = JournalEntryLine(
+            transaction_posted_id=ajuste_id,
+            fecha=fecha_dt,
+            company_nit=company_nit_clean,
+            comprobante=f"NA-{ajuste_id[:8].upper()}",
+            cuenta_puc=ln.cuenta_puc,
+            descripcion=ln.descripcion or body.concepto,
+            debito=debito_val,
+            credito=credito_val,
+        )
+        db.add(jel)
 
     db.commit()
-    return {"deleted": len(txn_ids)}
+
+    logger.info(
+        "manual-ajuste: created transaction %s with %d lines for NIT %s",
+        ajuste_id,
+        len(body.lines),
+        company_nit_clean,
+    )
+
+    return ManualAjusteResponse(
+        transaction_id=ajuste_id,
+        lines_created=len(body.lines),
+    )

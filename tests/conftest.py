@@ -35,6 +35,23 @@ def disable_rate_limits():
     limiter.enabled = original
 
 
+@pytest.fixture(autouse=True)
+def reset_compiled_graph_cache():
+    """Clear the process-wide compiled-graph singleton between tests.
+
+    get_compiled_agent_graph() is @lru_cache'd in production (intended
+    singleton), but that cache leaks across tests: once one test populates it
+    with the real graph, later tests that monkeypatch create_agent_graph get
+    the stale cached graph instead of their patched one. Clearing before each
+    test restores isolation without weakening the prod cache.
+    """
+    from app.agents.graph import get_compiled_agent_graph
+
+    get_compiled_agent_graph.cache_clear()
+    yield
+    get_compiled_agent_graph.cache_clear()
+
+
 def base_state(**overrides) -> dict:
     """
     Return a fully-populated AgentState dict with safe default values.

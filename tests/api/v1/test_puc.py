@@ -188,7 +188,7 @@ def test_get_puc_not_found(client: TestClient):
     """GET /puc/{codigo} returns 404 for nonexistent account."""
     response = client.get("/api/v1/puc/999999")
     assert response.status_code == 404
-    assert "not found" in response.json()["detail"].lower()
+    assert "no fue encontrado" in response.json()["detail"].lower()
 
 
 def test_create_puc_success(client: TestClient, db: Session, puc_payload: dict):
@@ -259,7 +259,7 @@ def test_update_puc_not_found(client: TestClient):
 
     response = client.put("/api/v1/puc/999999", json=update_payload)
     assert response.status_code == 404
-    assert "not found" in response.json()["detail"].lower()
+    assert "no fue encontrado" in response.json()["detail"].lower()
 
 
 def test_update_puc_codigo_immutable(client: TestClient, db: Session):

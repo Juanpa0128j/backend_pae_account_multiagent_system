@@ -132,6 +132,9 @@ def _generate_f110(settings, ledger, extra_patches=None, year: int = 2026):
         "app.services.db_service.get_latest_f2516_reviewed": MagicMock(
             return_value=None
         ),
+        # Anticipo método 2 (Art. 807): prior-year impuesto neto. None by default
+        # → método 2 unavailable, renglón 95 falls back to método 1.
+        "app.services.db_service.get_impuesto_neto_anio": MagicMock(return_value=None),
     }
     if extra_patches:
         patches.update(extra_patches)
@@ -160,6 +163,10 @@ def _generate_f110(settings, ledger, extra_patches=None, year: int = 2026):
         patch(
             "app.services.db_service.get_latest_f2516_reviewed",
             patches["app.services.db_service.get_latest_f2516_reviewed"],
+        ),
+        patch(
+            "app.services.db_service.get_impuesto_neto_anio",
+            patches["app.services.db_service.get_impuesto_neto_anio"],
         ),
     ):
         draft = generate_declaration_draft(
@@ -476,6 +483,83 @@ class TestF110Anticipo:
         assert fields["96"]["value"] == pytest.approx(
             fields["93"]["value"] + fields["95"]["value"], rel=1e-3
         )
+
+    def test_anticipo_metodo1_present_metodo2_absent_without_prior_year(self):
+        """Art. 807: con solo el método 1 disponible, 95 == 95_metodo1 y no hay 95_metodo2."""
+        settings = _make_settings()
+        ledger = _make_ledger()
+        draft = _generate_f110(settings, ledger)  # get_impuesto_neto_anio → None
+        fields = {f["renglon"]: f for f in draft.fields_json}
+        assert "95_metodo1" in fields
+        assert "95_metodo2" not in fields
+        assert fields["95"]["value"] == pytest.approx(fields["95_metodo1"]["value"])
+        # Warning explaining método 2 unavailable
+        msgs = " ".join(w["message"] for w in draft.warnings_json if w["field"] == "95")
+        assert "Método 2" in msgs
+
+    def test_anticipo_takes_greater_of_two_methods(self):
+        """Art. 807 (criterio CPA): cuando el neto del año anterior es MAYOR, el
+        promedio supera al neto del año y el renglón 95 toma el método 2."""
+        settings = _make_settings()
+        # Current-year impuesto neto ≈ 413k (ingresos 2M, costos 500k, clase5 320k).
+        ledger = _make_ledger(
+            ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=20_000
+        )
+        draft = _generate_f110(
+            settings,
+            ledger,
+            extra_patches={
+                "app.services.db_service.sum_retenciones_anio": MagicMock(
+                    return_value=Decimal("0")
+                ),
+                # Prior-year impuesto neto much higher → promedio > neto del año.
+                "app.services.db_service.get_impuesto_neto_anio": MagicMock(
+                    return_value=Decimal("4000000")
+                ),
+            },
+        )
+        fields = {f["renglon"]: f for f in draft.fields_json}
+        assert "95_metodo1" in fields and "95_metodo2" in fields
+        m1 = fields["95_metodo1"]["value"]
+        m2 = fields["95_metodo2"]["value"]
+        assert m2 > m1
+        assert fields["95"]["value"] == pytest.approx(max(m1, m2))
+
+
+# ---------------------------------------------------------------------------
+# Descuentos tributarios — expanded itemization (#10)
+# ---------------------------------------------------------------------------
+
+
+class TestF110DescuentosExpanded:
+    EXPECTED = [
+        "86_exterior",
+        "86_medioambiente",
+        "86_educacion",
+        "86_investigacion",
+        "86_donaciones",
+        "86_donaciones_red",
+        "86_iva_capital",
+        "86_zomac_zese",
+        "86_otros",
+    ]
+
+    def test_expanded_descuento_items_present(self):
+        settings = _make_settings()
+        ledger = _make_ledger()
+        draft = _generate_f110(settings, ledger)
+        fields = {f["renglon"]: f for f in draft.fields_json}
+        for renglon in self.EXPECTED:
+            assert renglon in fields, f"Missing descuento field: {renglon}"
+            assert fields[renglon]["requires_review"] is True
+
+    def test_total_descuentos_is_sum_of_items(self):
+        settings = _make_settings()
+        ledger = _make_ledger()
+        draft = _generate_f110(settings, ledger)
+        fields = {f["renglon"]: f for f in draft.fields_json}
+        items_sum = sum(fields[r]["value"] for r in self.EXPECTED)
+        assert fields["86"]["value"] == pytest.approx(items_sum)
 
 
 # ---------------------------------------------------------------------------

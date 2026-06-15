@@ -736,3 +736,19 @@ class TestSaldoAFavor:
         # total_a_pagar = ICA + avisos - reteica_favor → negative
         assert fields["10"]["value"] < 0
         assert "Saldo a favor" in fields["10"]["label"]
+
+
+def test_draft_field_help_text_renglon_42():
+    """DraftField for renglon 42 gets the correct DIAN help text."""
+    from app.services.tax_declaration_service import DraftField, _HELP_TEXTS
+
+    field = DraftField(
+        renglon="42",
+        label="Ingresos brutos operacionales",
+        value=0.0,
+        source="journal",
+        confidence="high",
+        requires_review=False,
+        help_text=_HELP_TEXTS.get("42"),
+    )
+    assert field.help_text == "Ingresos brutos operacionales del período fiscal"

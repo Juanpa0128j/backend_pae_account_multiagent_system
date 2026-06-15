@@ -1,9 +1,10 @@
-"""add soft-delete deleted_at column to transactions_posted, chat_sessions, cuentas_puc, user_company
+"""add soft-delete deleted_at to chat_sessions and user_company
 
-Idempotent: column and index existence checked before applying.
+These two tables were created after the initial soft-delete migration
+(a1b2c3d4e5f6) ran, so they couldn't be covered there.
 
-Revision ID: a1b2c3d4e5f6
-Revises: 8fb1b0855393
+Revision ID: d9e0f1a2b3c4
+Revises: c2d3e4f5a6b7
 Create Date: 2026-06-14 00:00:00.000000
 """
 
@@ -11,28 +12,12 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "a1b2c3d4e5f6"
-down_revision: Union[str, Sequence[str], None] = "8fb1b0855393"
+revision: str = "d9e0f1a2b3c4"
+down_revision: Union[str, Sequence[str], None] = "c2d3e4f5a6b7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_TABLES = [
-    "transactions_posted",
-    "chat_sessions",
-    "cuentas_puc",
-    "user_company",
-]
-
-
-def _table_exists(bind, table: str) -> bool:
-    return (
-        bind.exec_driver_sql(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema='public' AND table_name=%s",
-            (table,),
-        ).first()
-        is not None
-    )
+_TABLES = ["chat_sessions", "user_company"]
 
 
 def _column_exists(bind, table: str, column: str) -> bool:
@@ -60,9 +45,6 @@ def upgrade() -> None:
     bind = op.get_bind()
 
     for table in _TABLES:
-        if not _table_exists(bind, table):
-            continue
-
         if not _column_exists(bind, table, "deleted_at"):
             op.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TIMESTAMPTZ NULL")
 
@@ -75,9 +57,6 @@ def downgrade() -> None:
     bind = op.get_bind()
 
     for table in reversed(_TABLES):
-        if not _table_exists(bind, table):
-            continue
-
         index_name = f"ix_{table}_deleted_at"
         if _index_exists(bind, index_name):
             op.execute(f"DROP INDEX {index_name}")

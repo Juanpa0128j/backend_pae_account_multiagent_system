@@ -126,6 +126,36 @@ class TestListObligations:
         alerts = [e for e in entries if e.alert]
         assert len(alerts) > 0
 
+    def test_ica_omitted_by_default(self):
+        entries = list_obligations(_NIT, today=date(2026, 1, 1))
+        assert not any(e.form_type.startswith("ica") for e in entries)
+
+    def test_ica_anual_adds_one_estimated_entry(self):
+        base = list_obligations(_NIT, iva_regime="bimestral", today=date(2026, 1, 1))
+        with_ica = list_obligations(
+            _NIT,
+            iva_regime="bimestral",
+            today=date(2026, 1, 1),
+            ica_periodicidad="anual",
+        )
+        assert len(with_ica) == len(base) + 1
+        ica = [e for e in with_ica if e.form_type == "ica_anual"]
+        assert len(ica) == 1
+        assert "estimado" in ica[0].period_label.lower()
+
+    def test_ica_bimestral_adds_six_entries(self):
+        base = list_obligations(_NIT, iva_regime="bimestral", today=date(2026, 1, 1))
+        with_ica = list_obligations(
+            _NIT,
+            iva_regime="bimestral",
+            today=date(2026, 1, 1),
+            ica_periodicidad="bimestral",
+        )
+        ica = [e for e in with_ica if e.form_type == "ica_bimestral"]
+        assert len(ica) == 6
+        assert len(with_ica) == len(base) + 6
+        assert all("estimado" in e.period_label.lower() for e in ica)
+
 
 class TestInputValidation:
     def test_unsupported_year_raises(self):
@@ -135,6 +165,10 @@ class TestInputValidation:
     def test_unsupported_iva_regime_raises(self):
         with pytest.raises(ValueError, match="Unsupported iva_regime"):
             list_obligations(_NIT, iva_regime="mensual")
+
+    def test_unsupported_ica_periodicidad_raises(self):
+        with pytest.raises(ValueError, match="Unsupported ica_periodicidad"):
+            list_obligations(_NIT, ica_periodicidad="mensual")
 
 
 class TestLastDigitWithDV:
