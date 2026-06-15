@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import desc, distinct, extract, func, or_
+from sqlalchemy import case, desc, distinct, extract, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
@@ -704,8 +704,17 @@ def get_balance_sheet(
     auxiliaries land on the correct side of the balance sheet instead of
     deflating their parent class total.
     """
+    # Aggregate debit/credit per cuenta_puc IN SQL (func.sum + group_by) instead
+    # of materializing every journal line and summing in Python. Net result is
+    # mathematically identical: the per-line accumulation only ever rolled up to
+    # one of 6 class totals, and the per-account presentation class is a function
+    # of the account code alone, so summing per account first is equivalent.
     query = (
-        db.query(JournalEntryLine)
+        db.query(
+            JournalEntryLine.cuenta_puc.label("cuenta_puc"),
+            func.sum(JournalEntryLine.debito).label("total_debit"),
+            func.sum(JournalEntryLine.credito).label("total_credit"),
+        )
         .join(
             TransactionPosted,
             JournalEntryLine.transaction_posted_id == TransactionPosted.id,
@@ -717,11 +726,11 @@ def get_balance_sheet(
     if company_nit:
         query = query.filter(JournalEntryLine.company_nit == company_nit)
 
-    lines = query.all()
+    account_rows = query.group_by(JournalEntryLine.cuenta_puc).all()
 
     # Look up each cuenta_puc's natural balance from the catalog so we can
     # reclassify the few PUC accounts that contradict their first-digit class.
-    distinct_codes = {ln.cuenta_puc for ln in lines if ln.cuenta_puc}
+    distinct_codes = {r.cuenta_puc for r in account_rows if r.cuenta_puc}
     naturaleza_by_code: Dict[str, str] = {}
     if distinct_codes:
         # Pull the exact codes plus their 6-digit and 4-digit parents so the
@@ -774,21 +783,31 @@ def get_balance_sheet(
         6: Decimal("0"),
     }
 
-    for line in lines:
-        if not line.cuenta_puc or not line.cuenta_puc[0].isdigit():
+    for row in account_rows:
+        code = row.cuenta_puc
+        if not code or not code[0].isdigit():
             continue
-        raw_clase = int(line.cuenta_puc[0])
+        raw_clase = int(code[0])
         if raw_clase not in totals:
             continue
-        clase = _presentation_class(line.cuenta_puc, raw_clase)
+        # func.sum may surface as float (SQLite) or Decimal (Postgres); coerce to
+        # Decimal via str so accumulation matches the original per-line Decimal
+        # arithmetic exactly on both dialects.
+        debit = (
+            Decimal(str(row.total_debit))
+            if row.total_debit is not None
+            else Decimal("0")
+        )
+        credit = (
+            Decimal(str(row.total_credit))
+            if row.total_credit is not None
+            else Decimal("0")
+        )
+        clase = _presentation_class(code, raw_clase)
         if clase in (1, 5, 6):
-            totals[clase] += (line.debito or Decimal("0")) - (
-                line.credito or Decimal("0")
-            )
+            totals[clase] += debit - credit
         else:
-            totals[clase] += (line.credito or Decimal("0")) - (
-                line.debito or Decimal("0")
-            )
+            totals[clase] += credit - debit
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
     net_profit = totals[4] - totals[5] - totals[6]
@@ -2132,9 +2151,88 @@ def get_monthly_totals_by_class(
         "3": "patrimonio",
         "11": "caja",
     }
-    result = {}
-    for prefix, name in class_map.items():
-        result[name] = get_monthly_trend(db, prefix, months, company_nit=company_nit)
+
+    # Batched aggregation: one grouped query produces every class bucket per
+    # month via conditional SUM/COUNT, replacing the previous 7 sequential
+    # per-prefix queries (one get_monthly_trend call each). Output shape and
+    # numbers are identical to calling get_monthly_trend per prefix.
+    #
+    # Exact N-month rollback — must mirror get_monthly_trend's cutoff exactly.
+    now = datetime.now(timezone.utc)
+    cutoff_year = now.year
+    cutoff_month = now.month - months
+    while cutoff_month <= 0:
+        cutoff_month += 12
+        cutoff_year -= 1
+    cutoff = now.replace(
+        year=cutoff_year,
+        month=cutoff_month,
+        day=1,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+    selects = [
+        extract("year", JournalEntryLine.fecha).label("yr"),
+        extract("month", JournalEntryLine.fecha).label("mo"),
+    ]
+    # Per prefix: summed debit, summed credit, and a presence COUNT so a month
+    # with no matching line for that prefix is OMITTED (matches get_monthly_trend,
+    # which only returns months where the prefix actually has rows).
+    for prefix in class_map:
+        match = JournalEntryLine.cuenta_puc.startswith(prefix)
+        selects.append(
+            func.sum(case((match, JournalEntryLine.debito), else_=0)).label(
+                f"d_{prefix}"
+            )
+        )
+        selects.append(
+            func.sum(case((match, JournalEntryLine.credito), else_=0)).label(
+                f"c_{prefix}"
+            )
+        )
+        selects.append(
+            func.count(case((match, JournalEntryLine.id), else_=None)).label(
+                f"n_{prefix}"
+            )
+        )
+
+    query = (
+        db.query(*selects)
+        .join(
+            TransactionPosted,
+            JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+        )
+        .filter(
+            TransactionPosted.status == TransactionStatus.POSTED,
+            JournalEntryLine.fecha >= cutoff,
+        )
+        .group_by("yr", "mo")
+        .order_by("yr", "mo")
+    )
+    if company_nit:
+        query = query.filter(JournalEntryLine.company_nit == company_nit)
+
+    rows = query.all()
+
+    result: Dict[str, List[Dict[str, Any]]] = {name: [] for name in class_map.values()}
+    for r in rows:
+        month_label = f"{int(r.yr)}-{int(r.mo):02d}"
+        for prefix, name in class_map.items():
+            if getattr(r, f"n_{prefix}") == 0:
+                continue
+            total_debit = float(getattr(r, f"d_{prefix}") or 0)
+            total_credit = float(getattr(r, f"c_{prefix}") or 0)
+            result[name].append(
+                {
+                    "month": month_label,
+                    "total_debit": total_debit,
+                    "total_credit": total_credit,
+                    "net": float(total_debit - total_credit),
+                }
+            )
     return result
 
 
