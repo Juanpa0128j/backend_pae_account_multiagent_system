@@ -655,6 +655,43 @@ def _build_attachment_headers(
     return {"Content-Disposition": f"attachment; filename={filename}"}
 
 
+class AvailablePeriodsResponse(BaseModel):
+    balance_general: list[str] = []
+    estado_resultados: list[str] = []
+    libro_auxiliar: list[str] = []
+
+
+@router.get("/available-periods", response_model=AvailablePeriodsResponse)
+@limiter.limit("30/minute")
+def get_available_periods(
+    request: Request,
+    company_nit: Optional[str] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> AvailablePeriodsResponse:
+    """Return Via B statement periods that have uploaded data."""
+    if not company_nit:
+        return AvailablePeriodsResponse()
+    normalized = normalize_nit(company_nit)
+    db = SessionLocal()
+    try:
+        from app.services import db_service as _db_svc  # noqa: PLC0415
+        from app.services import via_b_service as _via_b  # noqa: PLC0415
+
+        pathway = _db_svc.get_company_locked_pathway(db, normalized)
+        if pathway != "work_with_existing":
+            return AvailablePeriodsResponse()
+        balance = _via_b.list_periods(db, normalized, "balance_general")
+        estado = _via_b.list_periods(db, normalized, "estado_resultados")
+        libro = _via_b.list_periods(db, normalized, "libro_auxiliar")
+        return AvailablePeriodsResponse(
+            balance_general=balance,
+            estado_resultados=estado,
+            libro_auxiliar=libro,
+        )
+    finally:
+        db.close()
+
+
 @router.get("/balance", response_model=BalanceSheetOutput)
 @limiter.limit("30/minute")
 def get_balance_report(
