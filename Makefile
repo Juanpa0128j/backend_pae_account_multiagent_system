@@ -170,6 +170,15 @@ migrate-check-heads:
 		fi; \
 		echo "OK: single migration head."
 
+# Fails when a new migration is spliced *before* an already-released revision
+# (its down_revision points into the base's past, not its head). Those run on a
+# fresh DB but get SKIPPED on existing ones (dev volumes, prod) → schema drift.
+# It's still a single head, so migrate-check-heads does NOT catch it. BASE
+# defaults to origin/main.
+BASE ?= origin/main
+migrate-check-linearity:
+	@uv run python scripts/check_migration_linearity.py $(BASE)
+
 # ── Local Postgres (docker-compose.dev.yml) ───────────────────────────────────
 
 LOCAL_DATABASE_URL ?= postgresql://pae:pae@localhost:5433/pae
