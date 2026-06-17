@@ -72,6 +72,80 @@ jobs:
           LLAMA_CLOUD_API_KEY: "dummy-for-unit-tests"
           HUGGINGFACE_API_KEY: ""
 
+  # ─── Job 1b: Migration upgrade check — catches migrations spliced mid-history ─
+  # The normal "alembic upgrade head" above runs on a FRESH DB, so a migration
+  # whose down_revision points before an already-released revision still runs and
+  # looks fine. But databases already past that point (persisted dev volumes,
+  # Supabase prod) treat it as applied and SKIP it → missing columns/tables →
+  # runtime errors. migrate-check-heads can't catch this (it's a single head).
+  # This job (a) statically rejects spliced migrations and (b) simulates an
+  # existing DB: migrate to the base branch's head first, then apply the PR's
+  # migrations incrementally and smoke-test the schema.
+  migration-upgrade-check:
+    name: Migration Upgrade Check
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci_migrate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_migrate"
+      GEMINI_API_KEY: "dummy-for-unit-tests"
+      OPENAI_API_KEY: "dummy-for-unit-tests"
+      GROQ_API_KEY: ""
+
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync
+
+      # (B) Static linearity gate: every new migration must chain off the base head.
+      - name: Check migration linearity vs base
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          make migrate-check-linearity BASE="origin/${{ github.base_ref }}"
+
+      # (A) Runtime gate: simulate an existing database (dev volume / prod).
+      - name: Migrate to base head, then apply PR migrations incrementally
+        run: |
+          set -euo pipefail
+          PR_SHA=$(git rev-parse HEAD)
+          BASE="${{ github.base_ref }}"
+          git fetch --no-tags origin "$BASE"
+          echo ">>> 1) Fresh DB → base ($BASE) head"
+          git checkout -f "origin/$BASE"
+          uv run alembic upgrade head
+          echo ">>> 2) Back to PR → apply new migrations incrementally"
+          git checkout -f "$PR_SHA"
+          uv run alembic upgrade head
+          echo ">>> 3) Smoke: schema must be usable from a pre-existing DB"
+          uv run python scripts/seed_puc.py
+          uv run python scripts/seed_ci_settings.py
+
   # ─── Job 2: Full simulate pipeline — same-repo PRs only ───────────────────
   # Skipped for fork PRs (LLM secrets are unavailable) and for draft PRs.
   # Runs against an ephemeral Postgres+pgvector service — NEVER prod — so
