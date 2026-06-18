@@ -3056,7 +3056,7 @@ def sum_nomina_retefuente(
         "item->>'deduccion_retefuente' != 'null'",
         "CAST(item->>'deduccion_retefuente' AS TEXT) != '0'",
     ]
-    params: dict = {"nit": company_nit}
+    params: Dict[str, Any] = {"nit": company_nit}
 
     if start_date is not None:
         where_clauses.append("tp.fecha >= :start_date")
