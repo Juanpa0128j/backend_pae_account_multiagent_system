@@ -529,7 +529,11 @@ def _build_f350(
         if aplica_a in {"PJ", "PN"}:
             suffix = f" ({aplica_a})"
         tarifa_default = concept.get("tarifa_default")
-        tarifa_str = f" ({float(tarifa_default) * 100:.1f}%)" if tarifa_default else ""
+        tarifa_str = (
+            f" ({float(tarifa_default) * 100:.1f}%)"
+            if tarifa_default is not None
+            else ""
+        )
         fields.append(
             DraftField(
                 renglon,
