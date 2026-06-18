@@ -232,13 +232,16 @@ def infer_concepto_retencion(
     categoria: str | None = categoria_retencion_from_puc(cuenta_puc)
 
     desc_lower = (descripcion or "").lower()
+    persona = tipo_persona or TIPO_PERSONA_PJ
     if categoria is None:
         if (
             "hidrocarbur" in desc_lower
             or "petróle" in desc_lower
             or "petrole" in desc_lower
         ):
-            return "hidrocarburos"
+            return (
+                "hidrocarburos_pj" if persona == TIPO_PERSONA_PJ else "hidrocarburos_pn"
+            )
         if "carbón" in desc_lower or "carbon" in desc_lower:
             return "carbon"
         if "minera" in desc_lower:
@@ -252,7 +255,6 @@ def infer_concepto_retencion(
         return None
 
     # Map (categoria, tipo_persona) → concept code.
-    persona = tipo_persona or TIPO_PERSONA_PJ
     mapping: dict[tuple[str, str], str] = {
         ("compras", TIPO_PERSONA_PJ): "compras_pj",
         ("compras", TIPO_PERSONA_PN): "compras_pn",
