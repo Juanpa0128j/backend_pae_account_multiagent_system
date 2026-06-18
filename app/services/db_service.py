@@ -3066,8 +3066,7 @@ def sum_nomina_retefuente(
         params["end_date"] = end_date
 
     where_sql = " AND ".join(where_clauses)
-    sql = text(
-        f"""
+    sql = text(f"""
         SELECT COALESCE(
             SUM(CAST(item->>'deduccion_retefuente' AS NUMERIC)),
             0
@@ -3075,8 +3074,7 @@ def sum_nomina_retefuente(
         FROM transactions_pending tp,
              jsonb_array_elements(tp.items) AS item
         WHERE {where_sql}
-        """
-    )
+        """)
     result = db.execute(sql, params).scalar()
     return float(result or 0)
 
