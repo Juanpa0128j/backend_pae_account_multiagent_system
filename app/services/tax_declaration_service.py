@@ -492,15 +492,24 @@ def _build_f350(
         aplica_a = concept["aplica_a"]
         label = concept["label"]
         try:
-            monto = float(
-                db_service.sum_retencion_by_concepto(
+            if categoria == "salarios":
+                # Nómina is skipped by tributario_agent; read directly from items JSONB
+                monto = db_service.sum_nomina_retefuente(
                     db,
-                    concepto_code=code,
                     company_nit=company_nit,
                     start_date=period_start,
                     end_date=period_end,
                 )
-            )
+            else:
+                monto = float(
+                    db_service.sum_retencion_by_concepto(
+                        db,
+                        concepto_code=code,
+                        company_nit=company_nit,
+                        start_date=period_start,
+                        end_date=period_end,
+                    )
+                )
         except Exception as err:  # pragma: no cover — defensive
             warnings.append(
                 DraftWarning(
@@ -589,17 +598,6 @@ def _build_f350(
     # ── 4. Manual / sanciones renglones (kept for accountant review) ────────
     fields.append(
         DraftField(
-            "50",
-            "Retenciones sobre salarios (Art. 383 ET)",
-            0.0,
-            "nomina_no_disponible",
-            "low",
-            True,
-            help_text=_HELP_TEXTS.get("50"),
-        )
-    )
-    fields.append(
-        DraftField(
             "75",
             "Pagos al exterior sujetos a retención",
             0.0,
@@ -623,9 +621,7 @@ def _build_f350(
 
     # ── 5. Total auto-calc ──────────────────────────────────────────────────
     total = sum(
-        f.value
-        for f in fields
-        if f.renglon not in {"50", "75", "97", "_sin_clasificar"}
+        f.value for f in fields if f.renglon not in {"75", "97", "_sin_clasificar"}
     )
     fields.append(
         DraftField(
@@ -639,12 +635,6 @@ def _build_f350(
         )
     )
 
-    warnings.append(
-        DraftWarning(
-            "50",
-            "Retenciones sobre salarios requieren datos de nómina — no disponibles en el sistema.",
-        )
-    )
     warnings.append(
         DraftWarning(
             "75",
