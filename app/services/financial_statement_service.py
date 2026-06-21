@@ -375,6 +375,92 @@ def _build_bg_data_from_journal(
     }
 
 
+def _f(value) -> float:
+    """Best-effort float for debito/credito strings; 0.0 on bad input."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def build_libro_auxiliar_cuentas(
+    period_lines: list[dict],
+    prior_lines: list[dict],
+    name_map: dict[str, str] | None = None,
+) -> list[dict]:
+    """Group journal lines into per-account subsidiary ledgers (cuentas[]).
+
+    A real libro auxiliar is one running balance PER account — unlike an
+    all-accounts aggregate, whose saldo is always 0 because debits == credits.
+
+    For each account:
+      * ``saldo_inicial`` = net (débito − crédito) of every posted line dated
+        before the period (carried forward).
+      * ``movimientos`` = the period's lines with a running ``saldo`` column.
+      * ``saldo_final`` = saldo_inicial + Σdébitos − Σcréditos.
+
+    The running ``saldo`` is debit-positive (deudor +, acreedor −) so the sign
+    tells the reader the account's nature without a separate column.
+    """
+    name_map = name_map or {}
+
+    saldo_inicial: dict[str, float] = {}
+    for line in prior_lines:
+        code = line.get("cuenta_puc")
+        if not code:
+            continue
+        saldo_inicial[code] = (
+            saldo_inicial.get(code, 0.0)
+            + _f(line.get("debito"))
+            - _f(line.get("credito"))
+        )
+
+    movimientos_por_cuenta: dict[str, list[dict]] = {}
+    for line in period_lines:
+        code = line.get("cuenta_puc")
+        if not code:
+            continue
+        movimientos_por_cuenta.setdefault(code, []).append(line)
+
+    cuentas: list[dict] = []
+    for code in sorted(set(saldo_inicial) | set(movimientos_por_cuenta)):
+        si = round(saldo_inicial.get(code, 0.0), 2)
+        saldo = si
+        total_deb = total_cred = 0.0
+        movimientos: list[dict] = []
+        for line in movimientos_por_cuenta.get(code, []):
+            deb = _f(line.get("debito"))
+            cred = _f(line.get("credito"))
+            saldo += deb - cred
+            total_deb += deb
+            total_cred += cred
+            movimientos.append({**line, "saldo": round(saldo, 2)})
+        # Skip accounts with neither an opening balance nor period movement.
+        if si == 0 and not movimientos:
+            continue
+        # Name resolution (covers every case): catalog/ledger map first; for
+        # codes outside the catalog (e.g. an LLM-emitted 4-digit code) fall back
+        # to the movement's own cuenta_nombre.
+        nombre = name_map.get(code) or ""
+        if not nombre:
+            nombre = next(
+                (m.get("cuenta_nombre") for m in movimientos if m.get("cuenta_nombre")),
+                "",
+            )
+        cuentas.append(
+            {
+                "cuenta_puc": code,
+                "nombre": nombre,
+                "saldo_inicial": si,
+                "total_debitos": round(total_deb, 2),
+                "total_creditos": round(total_cred, 2),
+                "saldo_final": round(si + total_deb - total_cred, 2),
+                "movimientos": movimientos,
+            }
+        )
+    return cuentas
+
+
 def build_first_level_from_journal_entries(
     db,
     *,
@@ -529,17 +615,49 @@ def build_first_level_from_journal_entries(
                 start_date=period_start,
                 end_date=period_end,
             )
+            la_lines = (
+                journal_lines_for_la if isinstance(journal_lines_for_la, list) else []
+            )
+            # Lines dated BEFORE the period → opening balances per account.
+            prior_raw = db_service.get_journal_entry_lines(
+                db,
+                company_nit=normalized_nit,
+                start_date=None,
+                end_date=period_start,
+            )
+            ps_str = period_start.date().isoformat()
+            prior_lines = [
+                ln
+                for ln in (prior_raw if isinstance(prior_raw, list) else [])
+                if (ln.get("fecha") or "")[:10] < ps_str
+            ]
+            ledger_list = ledger if isinstance(ledger, list) else []
+            # Authoritative names from the PUC catalog (covers accounts with no
+            # period movement too), then override with the period ledger's
+            # catalog-resolved name. get_general_ledger returns {account, name}.
+            name_map = {
+                c.codigo: c.nombre for c in db_service.get_all_puc(db) if c.codigo
+            }
+            for acct in ledger_list:
+                code = acct.get("account") or acct.get("cuenta_puc")
+                if code and acct.get("name"):
+                    name_map[code] = acct["name"]
+            cuentas = build_libro_auxiliar_cuentas(la_lines, prior_lines, name_map)
+            # Top-level totals are the movement VOLUME (deb == cred for a balanced
+            # all-accounts ledger). Per-account opening/closing balances live in
+            # cuentas[] — that's where a non-zero saldo is actually meaningful.
+            total_debitos = round(sum(_f(ln.get("debito")) for ln in la_lines), 2)
+            total_creditos = round(sum(_f(ln.get("credito")) for ln in la_lines), 2)
             la_data = {
                 "tipo": "libro_auxiliar",
                 "entidad": {"nit": normalized_nit},
                 "periodo_inicio": period_start.date().isoformat(),
                 "periodo_fin": period_end.date().isoformat(),
-                "accounts": ledger if isinstance(ledger, list) else [],
-                "lines": (
-                    journal_lines_for_la
-                    if isinstance(journal_lines_for_la, list)
-                    else []
-                ),
+                "accounts": ledger_list,
+                "lines": la_lines,
+                "cuentas": cuentas,
+                "total_debitos": total_debitos,
+                "total_creditos": total_creditos,
                 "moneda": "COP",
                 "source": "derived_from_journal",
             }
