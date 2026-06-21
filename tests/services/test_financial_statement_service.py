@@ -58,6 +58,110 @@ def test_build_first_level_creates_when_missing():
     assert len(result["created"]) == 4
 
 
+def test_build_first_level_libro_auxiliar_computes_totals():
+    """Derived libro_auxiliar must populate total_debitos/total_creditos/saldo so
+    the report header isn't all zeros while the movements list is full."""
+    from app.services import financial_statement_service as fss
+
+    db = MagicMock()
+    mock_stmt = MagicMock()
+    mock_stmt.id = "stmt-id-1"
+    mock_ingest = MagicMock()
+    mock_ingest.id = "ingest-id-1"
+
+    journal_lines = [
+        {
+            "fecha": "2026-02-10",
+            "cuenta_puc": "511525",
+            "debito": "2100000",
+            "credito": "0",
+        },
+        {
+            "fecha": "2026-02-10",
+            "cuenta_puc": "220505",
+            "debito": "0",
+            "credito": "2100000",
+        },
+    ]
+
+    with (
+        patch.object(fss, "_first_level_type_exists", return_value=False),
+        patch.object(fss, "_create_derivation_ingest_job", return_value=mock_ingest),
+        patch.object(fss.db_service, "get_balance_sheet", return_value={}),
+        patch.object(fss.db_service, "get_pnl", return_value={}),
+        patch.object(fss.db_service, "get_general_ledger", return_value=[]),
+        patch.object(
+            fss.db_service, "get_journal_entry_lines", return_value=journal_lines
+        ),
+        patch.object(
+            fss.db_service, "create_financial_statement", return_value=mock_stmt
+        ) as mock_create,
+    ):
+        fss.build_first_level_from_journal_entries(
+            db,
+            company_nit="800999888",
+            period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            period_end=datetime(2026, 12, 31, tzinfo=timezone.utc),
+        )
+
+    la_calls = [
+        c
+        for c in mock_create.call_args_list
+        if c.kwargs.get("statement_type") == "libro_auxiliar"
+    ]
+    assert len(la_calls) == 1
+    data = la_calls[0].kwargs["data"]
+    # Top-level totals = movement volume (balanced → deb == cred).
+    assert data["total_debitos"] == 2100000.0
+    assert data["total_creditos"] == 2100000.0
+    assert len(data["lines"]) == 2
+    # Per-account subsidiary ledgers carry the meaningful (non-zero) saldos.
+    cuentas = {c["cuenta_puc"]: c for c in data["cuentas"]}
+    assert cuentas["511525"]["saldo_inicial"] == 0.0
+    assert cuentas["511525"]["saldo_final"] == 2100000.0
+    assert cuentas["220505"]["saldo_final"] == -2100000.0
+
+
+def test_libro_auxiliar_cuentas_carries_opening_balance():
+    """saldo_inicial per account = net of lines BEFORE the period; the running
+    saldo continues from there (this is why per-account is NOT always zero)."""
+    from app.services import financial_statement_service as fss
+
+    prior = [
+        {
+            "cuenta_puc": "111005",
+            "fecha": "2026-01-31",
+            "debito": "1000000",
+            "credito": "0",
+        },
+    ]
+    period = [
+        {
+            "cuenta_puc": "111005",
+            "fecha": "2026-02-10",
+            "debito": "500000",
+            "credito": "0",
+        },
+        {
+            "cuenta_puc": "111005",
+            "fecha": "2026-02-20",
+            "debito": "0",
+            "credito": "200000",
+        },
+    ]
+    cuentas = fss.build_libro_auxiliar_cuentas(period, prior, {"111005": "Bancos"})
+    assert len(cuentas) == 1
+    c = cuentas[0]
+    assert c["nombre"] == "Bancos"
+    assert c["saldo_inicial"] == 1000000.0
+    assert c["total_debitos"] == 500000.0
+    assert c["total_creditos"] == 200000.0
+    assert c["saldo_final"] == 1300000.0
+    # Running saldo column on each movement.
+    assert c["movimientos"][0]["saldo"] == 1500000.0
+    assert c["movimientos"][1]["saldo"] == 1300000.0
+
+
 def test_build_first_level_forwards_frequency():
     """The chosen period frequency must be stamped on every created row so the
     annual gate (NIC 7) can later distinguish annual closes from monthly ones."""
