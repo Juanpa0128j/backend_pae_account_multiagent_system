@@ -146,7 +146,7 @@ def _build_raw_data(payload: CreateTransactionPayload) -> dict:
     }
 
 
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 @limiter.limit("30/minute")
 async def create_transaction(
     request: Request,
@@ -220,7 +220,7 @@ async def create_transaction(
     }
 
 
-@router.get("/", response_model=List[TransactionListItem])
+@router.get("", response_model=List[TransactionListItem])
 @limiter.limit("60/minute")
 async def list_transactions(
     request: Request,
@@ -887,10 +887,16 @@ async def delete_transaction(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Soft-delete a single transaction (marks deleted_at on the posted record)."""
-    found = db_service.soft_delete_transaction_posted(db, id)
-    if not found:
-        raise HTTPException(status_code=404, detail="Transacción no encontrada.")
+    """Delete a single transaction (cascade: pending + posted + journal lines).
+
+    The list/detail surface a transaction by its ``TransactionPending`` id, so we
+    resolve and delete via the pending id (mirroring ``PATCH /{id}`` and reprocess)
+    instead of the posted id. Re-syncs journal-derived statements afterwards so
+    reports/derivation stay coherent.
+    """
+    company_nit = _delete_transaction_cascade(db, id)  # raises 404 if not found
+    db.commit()
+    _resync_derived_statements(db, company_nit)
 
 
 @router.post("/{id}/restore", status_code=200)
@@ -919,7 +925,7 @@ async def delete_transactions_by_ingest(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Soft-delete all transactions belonging to a specific ingest document."""
+    """Delete all transactions belonging to a specific ingest document (cascade)."""
     from app.models.database import TransactionPending
 
     txn_ids = [
@@ -934,12 +940,13 @@ async def delete_transactions_by_ingest(
             detail=f"No se encontraron transacciones para el trabajo de ingesta {ingest_id}.",
         )
 
-    deleted_count = 0
+    company_nit = None
     for txn_id in txn_ids:
-        if db_service.soft_delete_transaction_posted(db, txn_id):
-            deleted_count += 1
+        company_nit = _delete_transaction_cascade(db, txn_id) or company_nit
+    db.commit()
+    _resync_derived_statements(db, company_nit)
 
-    return {"deleted": deleted_count}
+    return {"deleted": len(txn_ids)}
 
 
 # ─── Manual nota de ajuste contable ──────────────────────────────────────────
