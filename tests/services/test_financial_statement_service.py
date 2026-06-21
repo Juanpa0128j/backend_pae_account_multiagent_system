@@ -43,6 +43,7 @@ def test_build_first_level_creates_when_missing():
         patch.object(fss.db_service, "get_pnl", return_value={"utilidad_neta": 50}),
         patch.object(fss.db_service, "get_general_ledger", return_value=[]),
         patch.object(fss.db_service, "get_journal_entry_lines", return_value=[]),
+        patch.object(fss.db_service, "get_all_puc", return_value=[]),
         patch.object(
             fss.db_service, "create_financial_statement", return_value=mock_stmt
         ) as mock_create,
@@ -93,6 +94,7 @@ def test_build_first_level_libro_auxiliar_computes_totals():
         patch.object(
             fss.db_service, "get_journal_entry_lines", return_value=journal_lines
         ),
+        patch.object(fss.db_service, "get_all_puc", return_value=[]),
         patch.object(
             fss.db_service, "create_financial_statement", return_value=mock_stmt
         ) as mock_create,
@@ -162,6 +164,37 @@ def test_libro_auxiliar_cuentas_carries_opening_balance():
     assert c["movimientos"][1]["saldo"] == 1300000.0
 
 
+def test_libro_auxiliar_cuentas_resolves_name_in_all_cases():
+    """nombre comes from the catalog/ledger map; for a code missing from the map
+    it falls back to the movement's cuenta_nombre; empty only if neither has it."""
+    from app.services import financial_statement_service as fss
+
+    period = [
+        # In the map → catalog name wins.
+        {
+            "cuenta_puc": "111005",
+            "fecha": "2026-02-01",
+            "debito": "100",
+            "credito": "0",
+            "cuenta_nombre": "nombre de la linea",
+        },
+        # NOT in the map → fall back to the line's cuenta_nombre.
+        {
+            "cuenta_puc": "5105",
+            "fecha": "2026-02-01",
+            "debito": "50",
+            "credito": "0",
+            "cuenta_nombre": "Gastos de Personal",
+        },
+    ]
+    cuentas = {
+        c["cuenta_puc"]: c
+        for c in fss.build_libro_auxiliar_cuentas(period, [], {"111005": "Bancos"})
+    }
+    assert cuentas["111005"]["nombre"] == "Bancos"
+    assert cuentas["5105"]["nombre"] == "Gastos de Personal"
+
+
 def test_build_first_level_forwards_frequency():
     """The chosen period frequency must be stamped on every created row so the
     annual gate (NIC 7) can later distinguish annual closes from monthly ones."""
@@ -180,6 +213,7 @@ def test_build_first_level_forwards_frequency():
         patch.object(fss.db_service, "get_pnl", return_value={}),
         patch.object(fss.db_service, "get_general_ledger", return_value=[]),
         patch.object(fss.db_service, "get_journal_entry_lines", return_value=[]),
+        patch.object(fss.db_service, "get_all_puc", return_value=[]),
         patch.object(
             fss.db_service, "create_financial_statement", return_value=mock_stmt
         ) as mock_create,

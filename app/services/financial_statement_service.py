@@ -438,10 +438,19 @@ def build_libro_auxiliar_cuentas(
         # Skip accounts with neither an opening balance nor period movement.
         if si == 0 and not movimientos:
             continue
+        # Name resolution (covers every case): catalog/ledger map first; for
+        # codes outside the catalog (e.g. an LLM-emitted 4-digit code) fall back
+        # to the movement's own cuenta_nombre.
+        nombre = name_map.get(code) or ""
+        if not nombre:
+            nombre = next(
+                (m.get("cuenta_nombre") for m in movimientos if m.get("cuenta_nombre")),
+                "",
+            )
         cuentas.append(
             {
                 "cuenta_puc": code,
-                "nombre": name_map.get(code, ""),
+                "nombre": nombre,
                 "saldo_inicial": si,
                 "total_debitos": round(total_deb, 2),
                 "total_creditos": round(total_cred, 2),
@@ -623,11 +632,16 @@ def build_first_level_from_journal_entries(
                 if (ln.get("fecha") or "")[:10] < ps_str
             ]
             ledger_list = ledger if isinstance(ledger, list) else []
+            # Authoritative names from the PUC catalog (covers accounts with no
+            # period movement too), then override with the period ledger's
+            # catalog-resolved name. get_general_ledger returns {account, name}.
             name_map = {
-                (acct.get("cuenta") or acct.get("cuenta_puc")): acct.get("nombre") or ""
-                for acct in ledger_list
-                if acct.get("cuenta") or acct.get("cuenta_puc")
+                c.codigo: c.nombre for c in db_service.get_all_puc(db) if c.codigo
             }
+            for acct in ledger_list:
+                code = acct.get("account") or acct.get("cuenta_puc")
+                if code and acct.get("name"):
+                    name_map[code] = acct["name"]
             cuentas = build_libro_auxiliar_cuentas(la_lines, prior_lines, name_map)
             # Top-level totals are the movement VOLUME (deb == cred for a balanced
             # all-accounts ledger). Per-account opening/closing balances live in
