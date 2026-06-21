@@ -351,7 +351,7 @@ class TestF350Draft:
 
     @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_salarios_requires_review(self, mock_ledger, *_):
+    def test_renglon_50_absent_when_no_salarios_concept(self, mock_ledger, *_):
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -362,8 +362,9 @@ class TestF350Draft:
             date(2026, 1, 31),
         )
 
+        # Renglón 50 only appears when a salarios concept is configured and nómina data exists.
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["50"]["requires_review"] is True
+        assert "50" not in fields
 
     @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")

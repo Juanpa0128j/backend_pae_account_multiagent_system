@@ -3035,6 +3035,50 @@ def delete_ajuste_fiscal(db: Session, ajuste_id: str) -> bool:
     return True
 
 
+def sum_nomina_retefuente(
+    db: Session,
+    company_nit: str,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> float:
+    """Sum deduccion_retefuente from nómina items JSONB for F350 renglón 50.
+
+    Queries transactions_pending directly because the tributario agent skips
+    nómina — posted transactions never carry concepto_retencion='salarios_383'.
+    Falls back to 0.0 if no nómina found for the period.
+    """
+    from sqlalchemy import text
+
+    where_clauses = [
+        "tp.company_nit = :nit",
+        "tp.descripcion ILIKE 'Nomina%'",
+        "item->>'deduccion_retefuente' IS NOT NULL",
+        "item->>'deduccion_retefuente' != 'null'",
+        "CAST(item->>'deduccion_retefuente' AS TEXT) != '0'",
+    ]
+    params: Dict[str, Any] = {"nit": company_nit}
+
+    if start_date is not None:
+        where_clauses.append("tp.fecha >= :start_date")
+        params["start_date"] = start_date
+    if end_date is not None:
+        where_clauses.append("tp.fecha <= :end_date")
+        params["end_date"] = end_date
+
+    where_sql = " AND ".join(where_clauses)
+    sql = text(f"""
+        SELECT COALESCE(
+            SUM(CAST(item->>'deduccion_retefuente' AS NUMERIC)),
+            0
+        )
+        FROM transactions_pending tp,
+             jsonb_array_elements(tp.items) AS item
+        WHERE {where_sql}
+        """)
+    result = db.execute(sql, params).scalar()
+    return float(result or 0)
+
+
 # ── NationalRate ─────────────────────────────────────────────────────────────
 
 

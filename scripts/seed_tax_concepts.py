@@ -124,14 +124,24 @@ ROWS = [
     ),
     # ── Hidrocarburos / minerales (Art. 408 ET, Res. 000031/2024) ────────────
     (
-        "hidrocarburos",
-        "Compra de hidrocarburos",
+        "hidrocarburos_pj",
+        "Compra de hidrocarburos — PJ",
         "40",
-        "AMB",
+        "PJ",
         "hidrocarburos",
-        Decimal("0.0050"),
-        Decimal("0"),
-        "Art. 408 ET",
+        Decimal("0.0100"),  # 1%
+        Decimal("10"),  # 10 UVT base mínima
+        "Art. 392 ET, Decreto 261/2023",
+    ),
+    (
+        "hidrocarburos_pn",
+        "Compra de hidrocarburos — PN",
+        "40",
+        "PN",
+        "hidrocarburos",
+        Decimal("0.0300"),  # 3%
+        Decimal("10"),  # 10 UVT base mínima
+        "Art. 392 ET, Decreto 261/2023",
     ),
     (
         "carbon",

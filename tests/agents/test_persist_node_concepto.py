@@ -56,11 +56,23 @@ def test_concepto_143505_compras_pj():
 
 
 def test_concepto_hidrocarburos_from_descripcion():
+    # No tipo_persona defaults to PJ → hidrocarburos_pj (Decreto 261/2023)
     assert (
         infer_concepto_retencion(
             "519595", None, descripcion="Compra de hidrocarburos refinados"
         )
-        == "hidrocarburos"
+        == "hidrocarburos_pj"
+    )
+
+
+def test_concepto_hidrocarburos_pn_from_descripcion():
+    assert (
+        infer_concepto_retencion(
+            "519595",
+            "PN",
+            descripcion="Compra de hidrocarburos refinados",
+        )
+        == "hidrocarburos_pn"
     )
 
 

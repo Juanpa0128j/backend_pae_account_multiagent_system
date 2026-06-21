@@ -278,13 +278,12 @@ def test_f350_legacy_no_db_still_renders_manual_renglones(db):
         company_nit=None,
     )
     f = _fields_by_renglon(fields)
-    # Manual / sanciones renglones always present.
-    assert "50" in f
+    # Manual / sanciones renglones always present (renglón 50 only if nómina data exists).
     assert "75" in f
     assert "97" in f
 
 
-def test_f350_includes_manual_renglones_50_75_97(db):
+def test_f350_includes_manual_renglones_75_97(db):
     _seed_standard_concepts(db)
     fields, _ = _build_f350(
         _ledger_2365_2368(),
@@ -293,7 +292,8 @@ def test_f350_includes_manual_renglones_50_75_97(db):
         company_nit="900",
     )
     f = _fields_by_renglon(fields)
-    assert {"50", "75", "97"} <= set(f)
+    # Renglón 50 only present when nómina data exists; 75 and 97 always present.
+    assert {"75", "97"} <= set(f)
 
 
 def test_f350_label_suffix_pj_pn(db):
