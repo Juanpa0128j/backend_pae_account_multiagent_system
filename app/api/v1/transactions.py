@@ -147,6 +147,9 @@ def _build_raw_data(payload: CreateTransactionPayload) -> dict:
 
 
 @router.post("", status_code=201)
+@router.post(
+    "/", status_code=201, include_in_schema=False
+)  # legacy trailing-slash, no 307
 @limiter.limit("30/minute")
 async def create_transaction(
     request: Request,
@@ -221,6 +224,9 @@ async def create_transaction(
 
 
 @router.get("", response_model=List[TransactionListItem])
+@router.get(
+    "/", response_model=List[TransactionListItem], include_in_schema=False
+)  # legacy trailing-slash, no 307
 @limiter.limit("60/minute")
 async def list_transactions(
     request: Request,
@@ -893,6 +899,10 @@ async def delete_transaction(
     resolve and delete via the pending id (mirroring ``PATCH /{id}`` and reprocess)
     instead of the posted id. Re-syncs journal-derived statements afterwards so
     reports/derivation stay coherent.
+
+    Note: this is a hard delete (cascade) and is NOT reversible via
+    ``POST /{id}/restore`` (that endpoint only restores soft-deleted
+    ``TransactionPosted`` rows).
     """
     company_nit = _delete_transaction_cascade(db, id)  # raises 404 if not found
     db.commit()
