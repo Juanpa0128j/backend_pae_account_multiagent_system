@@ -156,11 +156,12 @@ When enabled:
 | `app/agents/state.py` | `AgentState` TypedDict — 90+ fields shared across all nodes |
 | `app/agents/graph.py` | StateGraph: 10 nodes, conditional edges |
 | `app/agents/supervisor.py` | Entry node — validates file, classifies doc, sets mode/pathway |
-| `app/agents/ingest_agent.py` | Format-aware extraction + Gemini dispatch by doc type |
+| `app/agents/ingest_agent.py` | Format-aware extraction + LLM dispatch by doc type |
 | `app/agents/persist_node.py` | DB persistence for Vía A (transactions) and Vía B (financial statements); auto-derives statements via `_auto_derive_statements` |
 | `app/agents/import_existing_node.py` | Vía B node — skips accounting pipeline |
-| `app/core/config.py` | Pydantic Settings; loads `.env` |
-| `app/core/gemini_client.py` | Gemini 2.5 Flash; one extraction method per document type |
+| `app/core/config.py` | Pydantic Settings; loads `.env` (includes `CLERK_ISSUER`, `CLERK_JWKS_URL`) |
+| `app/core/auth.py` | Clerk JWT verification — RS256 via JWKS; exposes `get_current_user` dependency and `CurrentUser` dataclass |
+| `app/core/gemini_client.py` | Backward-compatibility re-export shim — do not add code here |
 | `app/core/llm_client.py` | Multi-provider LLM client with OpenAI → Gemini → Groq fallback chain |
 | `app/core/vectordb.py` | pgvector wrapper; `search()` and `search_hybrid()` (RRF k=60) |
 | `app/services/rag_service.py` | RAG interface: `search_normativo`, `search_historico`, `add_empresa_doc` |
@@ -175,10 +176,11 @@ When enabled:
 
 ### Tech Stack
 
-- **LLM:** Google Gemini 2.5 Flash (`langchain-google-genai`)
+- **LLM:** Multi-provider fallback — OpenAI GPT-4.1-nano/mini (primary if key set) → Google Gemini 2.5 Flash → Groq (`langchain-openai`, `langchain-google-genai`, `langchain-groq`)
 - **Orchestration:** LangGraph StateGraph
 - **Embeddings:** BAAI/bge-m3 (1024 dims) via HuggingFace Inference API
 - **Reranking:** BAAI/bge-reranker-v2-m3
+- **Auth:** Clerk — RS256 JWT verification via JWKS (`app/core/auth.py`); `CLERK_ISSUER` + `CLERK_JWKS_URL` env vars required
 - **Vector DB:** Supabase PostgreSQL + pgvector (HNSW + GIN for FTS)
 - **ORM/Migrations:** SQLAlchemy 2.0 + Alembic
 
@@ -188,7 +190,7 @@ When enabled:
 - **Error handling:** Fail fast. Set `state["error"]` and return early — do not swallow exceptions.
 - **State mutations:** All nodes receive and return `AgentState`. Never mutate shared objects outside the node.
 - **DB sessions:** Always open with `SessionLocal()`, wrap in try/except/finally, close in `finally`. Prefer a single `db.commit()` per operation — avoid partial transactions.
-- **Gemini calls:** Use `_gemini_with_retry_generic` for all extraction calls; it handles transient network errors.
+- **LLM calls:** Use `get_llm_client()` (`app/core/llm_client.py`) for all LLM invocations; it handles the OpenAI → Gemini → Groq fallback chain automatically. Never import or instantiate providers directly.
 - **NIT validation:** Colombian NITs must be cleaned (strip `.` and spaces) before storing. Reject empty strings.
 - **PUC fallback:** When defaulting to account `519595`, emit an explicit `logger.warning`.
 

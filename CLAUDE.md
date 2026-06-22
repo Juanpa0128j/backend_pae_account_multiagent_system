@@ -159,7 +159,8 @@ Local testing with Inngest Cloud: set `INNGEST_DEV=false`, `INNGEST_IS_PRODUCTIO
 | `app/agents/state.py` | `AgentState` TypedDict — 90+ fields shared across all nodes |
 | `app/agents/graph.py` | StateGraph with 10 nodes and conditional edges |
 | `app/agents/supervisor.py` | Routing logic based on `state["mode"]`: `ingest`, `process`, `reporting` |
-| `app/core/config.py` | Pydantic Settings; loads `.env` (GEMINI_API_KEY, DATABASE_URL, etc.) |
+| `app/core/config.py` | Pydantic Settings; loads `.env` (`CLERK_ISSUER`, `CLERK_JWKS_URL`, `GEMINI_API_KEY`, `DATABASE_URL`, etc.) |
+| `app/core/auth.py` | Clerk JWT verification — RS256 via JWKS; `get_current_user` FastAPI dependency; `CurrentUser.id` is a Clerk user-id string |
 | `app/core/gemini_client.py` | Backward-compatibility re-export shim — all extraction logic lives in `llm_client.py`. Do not add code here. |
 | `app/core/vectordb.py` | pgvector wrapper; `search()` (vector) and `search_hybrid()` (BM25+vector, RRF k=60) |
 | `app/services/rag_service.py` | High-level RAG interface: `search_normativo`, `search_historico`, `add_empresa_doc` |

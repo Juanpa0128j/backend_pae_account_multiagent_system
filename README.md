@@ -363,18 +363,18 @@ uvicorn main:app --reload
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | ✅ | Supabase PostgreSQL connection string (synchronous; e.g. `postgresql://...`) |
-| `SUPABASE_URL` | ✅ | Supabase project URL (e.g. `https://<ref>.supabase.co`) — used for JWT auth verification |
-| `SUPABASE_JWT_SECRET` | ✅ | Supabase JWT secret — found at Supabase Dashboard → Settings → API |
+| `DATABASE_URL` | ✅ | PostgreSQL connection string (synchronous; e.g. `postgresql://...`). Supabase Postgres is used in production; local dev uses the docker-compose container. |
+| `CLERK_ISSUER` | ✅ | Clerk issuer URL (e.g. `https://your-instance.clerk.accounts.dev`) — used to verify RS256 JWTs |
+| `CLERK_JWKS_URL` | ✅ | Clerk JWKS endpoint (e.g. `https://your-instance.clerk.accounts.dev/.well-known/jwks.json`) |
 | `HUGGINGFACE_API_KEY` | ✅ | HuggingFace Inference API key (BGE-M3 embeddings + reranker) |
-| `GEMINI_API_KEY` | ✅ | Google AI API key (primary LLM) |
+| `GEMINI_API_KEY` | ✅ | Google AI API key (Gemini fallback LLM) |
 | `LLAMA_CLOUD_API_KEY` | ✅ | LlamaCloud API key for PDF parsing |
-| `OPENAI_API_KEY` | | OpenAI key — enables GPT-4o-mini as primary LLM (Gemini becomes fallback) |
+| `OPENAI_API_KEY` | | OpenAI key — enables GPT-4.1-nano/mini as primary LLM (Gemini becomes fallback) |
 | `GROQ_API_KEY` | | Groq key — third fallback in LLM chain |
 | `LANGSMITH_API_KEY` | | LangSmith observability (optional) |
 | `LANGSMITH_TRACING` | | Set `true` to enable LangSmith tracing |
 | `APP_ENV` | | `development` (default) or `production` |
-| `SECRET_KEY` | | JWT signing secret for session tokens |
+| `SECRET_KEY` | | Secret key for production boot validation; must be ≥32 chars in `production` |
 | `ALLOWED_ORIGINS` | | Comma-separated CORS origins for production |
 | `WORKFLOW_ENGINE` | | `inline` (default) or `inngest` — selects durable workflow engine |
 | `INNGEST_EVENT_KEY` | | Inngest Cloud event key (`evt-...`) — required when `WORKFLOW_ENGINE=inngest` |
@@ -507,7 +507,7 @@ alembic downgrade -1
 
 ## Deployment
 
-The backend is deployed on **DigitalOcean App Platform**. Supabase continues to host the PostgreSQL database, authentication, and pgvector RAG layer.
+The backend is deployed on **DigitalOcean App Platform**. Supabase continues to host the PostgreSQL database and pgvector RAG layer. Authentication is provided by **Clerk** (RS256 JWT verification via JWKS).
 
 ### DigitalOcean App Platform
 
