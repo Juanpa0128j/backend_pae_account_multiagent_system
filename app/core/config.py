@@ -42,8 +42,8 @@ class Settings(BaseSettings):
     # --- App Config --------------------------------------------------------
     app_env: str = Field("development", alias="APP_ENV")
     secret_key: str = Field("change-me-in-production", alias="SECRET_KEY")
-    supabase_jwt_secret: str = Field("", alias="SUPABASE_JWT_SECRET")
-    supabase_url: str = Field("", alias="SUPABASE_URL")
+    clerk_issuer: str = Field("", alias="CLERK_ISSUER")
+    clerk_jwks_url: str = Field("", alias="CLERK_JWKS_URL")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
 
     # --- FastAPI -----------------------------------------------------------
