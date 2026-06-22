@@ -215,12 +215,12 @@ class TestCooperativeGuard:
         async def fake_wait_for(awaitable, timeout=None):
             return await awaitable
 
-        def fake_get_event_loop():
+        def fake_get_running_loop():
             loop = MagicMock()
             loop.run_in_executor = fake_run_in_executor
             return loop
 
-        monkeypatch.setattr(jobs.asyncio, "get_event_loop", fake_get_event_loop)
+        monkeypatch.setattr(jobs.asyncio, "get_running_loop", fake_get_running_loop)
         monkeypatch.setattr(jobs.asyncio, "wait_for", fake_wait_for)
 
         asyncio.run(jobs._run_process_job_impl("proc-test-123"))

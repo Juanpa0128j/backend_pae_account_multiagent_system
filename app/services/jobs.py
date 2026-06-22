@@ -100,7 +100,7 @@ async def run_process_job(process_id: str, force_persist: bool = False) -> None:
     """
     # Outer deadline = MAX_PROCESS_SECONDS plus a buffer for semaphore wait.
     OUTER_DEADLINE = MAX_PROCESS_SECONDS + 60
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         await asyncio.wait_for(
             loop.run_in_executor(None, PROCESS_PIPELINE_SEMAPHORE.acquire),
@@ -370,7 +370,7 @@ async def _run_process_job_impl(process_id: str, force_persist: bool = False) ->
 
         logger.info(f"Acquired process pipeline slot for: {process_id}")
         # Use dedicated thread pool to avoid blocking the default executor
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         _force_persist = force_persist
         result = await asyncio.wait_for(
             loop.run_in_executor(
