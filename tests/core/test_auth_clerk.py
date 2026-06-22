@@ -181,7 +181,7 @@ def test_unknown_kid_rejected(rsa_keypair, patch_settings, monkeypatch):
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.get_event_loop().run_until_complete(auth_module.get_current_user(creds))
+        asyncio.run(auth_module.get_current_user(creds))
 
     assert exc_info.value.status_code == 401
 
@@ -213,6 +213,6 @@ def test_jwks_unavailable_returns_401(patch_settings, monkeypatch):
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.get_event_loop().run_until_complete(auth_module.get_current_user(creds))
+        asyncio.run(auth_module.get_current_user(creds))
 
     assert exc_info.value.status_code == 401
