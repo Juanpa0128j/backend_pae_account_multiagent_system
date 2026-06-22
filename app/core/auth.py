@@ -2,7 +2,6 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, Security, status
@@ -20,19 +19,12 @@ _JWKS_TTL_SECONDS = 3600
 
 @dataclass
 class CurrentUser:
-    id: UUID
+    id: str
     email: str
 
 
-def _jwks_url() -> str | None:
-    base = (settings.supabase_url or "").rstrip("/")
-    if not base:
-        return None
-    return f"{base}/auth/v1/.well-known/jwks.json"
-
-
 def _fetch_jwks() -> list[dict[str, Any]] | None:
-    url = _jwks_url()
+    url = settings.clerk_jwks_url
     if not url:
         return None
     now = time.time()
@@ -63,27 +55,20 @@ def _find_jwk(keys: list[dict[str, Any]], kid: str | None) -> dict[str, Any] | N
 def _decode_token(token: str) -> dict[str, Any]:
     header = jwt.get_unverified_header(token)
     alg = header.get("alg", "")
+    if not alg.startswith("RS"):
+        raise JWTError(f"Unsupported alg: {alg!r}")
 
-    if alg.startswith("ES") or alg.startswith("RS"):
-        keys = _fetch_jwks()
-        jwk = _find_jwk(keys or [], header.get("kid"))
-        if not jwk:
-            raise JWTError("No matching JWK")
-        return jwt.decode(
-            token,
-            jwk,
-            algorithms=[alg],
-            audience="authenticated",
-        )
+    keys = _fetch_jwks()
+    jwk = _find_jwk(keys or [], header.get("kid"))
+    if not jwk:
+        raise JWTError("No matching JWK")
 
-    secret = settings.supabase_jwt_secret
-    if not secret:
-        raise JWTError("HS256 secret not configured")
     return jwt.decode(
         token,
-        secret,
-        algorithms=["HS256"],
-        audience="authenticated",
+        jwk,
+        algorithms=[alg],
+        issuer=settings.clerk_issuer,
+        options={"verify_aud": False},
     )
 
 
@@ -93,7 +78,7 @@ async def get_current_user(
     token = credentials.credentials
     try:
         payload = _decode_token(token)
-        return CurrentUser(id=UUID(payload["sub"]), email=payload.get("email", ""))
+        return CurrentUser(id=payload["sub"], email=payload.get("email", ""))
     except ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
