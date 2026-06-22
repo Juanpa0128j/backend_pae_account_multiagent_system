@@ -3,9 +3,13 @@ Centralized application settings via Pydantic BaseSettings.
 All env variables are validated and typed here.
 """
 
+import logging
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -131,6 +135,14 @@ class Settings(BaseSettings):
                 "INNGEST_DEV must be false when APP_ENV=production and "
                 "WORKFLOW_ENGINE=inngest. Signature verification is disabled "
                 "when INNGEST_DEV=true."
+            )
+
+        if not self.clerk_issuer or not self.clerk_jwks_url:
+            logger.warning(
+                "Clerk auth misconfigured: CLERK_ISSUER=%r, CLERK_JWKS_URL=%r — "
+                "all authenticated requests will fail with 401.",
+                self.clerk_issuer or "",
+                self.clerk_jwks_url or "",
             )
 
     @property
