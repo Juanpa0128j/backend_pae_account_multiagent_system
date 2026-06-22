@@ -2,7 +2,7 @@
 Feature tests for soft-delete / restore on core entities.
 
 Covers:
-  1. TransactionPosted — soft_delete sets deleted_at; list excludes it; restore brings it back
+  1. TransactionPosted — soft_delete sets deleted_at; list excludes it
   2. ChatSession — same pattern
   3. CuentaPUC — same pattern
   4. UserCompany — same pattern
@@ -118,7 +118,7 @@ def _make_company_settings(db, nit: str, nombre: str = "Empresa Test S.A.S"):
 
 
 def test_soft_delete_transaction_posted(db):
-    """soft_delete_transaction_posted sets deleted_at; list excludes it; restore returns it."""
+    """soft_delete_transaction_posted sets deleted_at; list excludes it."""
     from app.services import db_service
 
     ingest = _make_ingest_job(db)
@@ -157,22 +157,6 @@ def test_soft_delete_transaction_posted(db):
         .first()
     )
     assert active is None, "Soft-deleted record should not appear in active list"
-
-    # Restore
-    restored = db_service.restore_transaction_posted(db, posted_id)
-    assert restored is not None
-    assert restored.deleted_at is None
-
-    # Confirm back in active list
-    active_again = (
-        db.query(TransactionPosted)
-        .filter(
-            TransactionPosted.id == posted_id,
-            TransactionPosted.deleted_at.is_(None),
-        )
-        .first()
-    )
-    assert active_again is not None, "Restored record should appear in active list"
 
 
 # ─── Test 2: ChatSession soft-delete ────────────────────────────────────────

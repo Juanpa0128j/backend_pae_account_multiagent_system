@@ -3486,23 +3486,6 @@ def soft_delete_transaction_posted(db: Session, transaction_id: str) -> bool:
     return True
 
 
-def restore_transaction_posted(
-    db: Session, transaction_id: str
-) -> Optional[TransactionPosted]:
-    """Restaurar una TransactionPosted eliminada (deleted_at → None). Retorna el registro o None."""
-    row = (
-        db.query(TransactionPosted)
-        .filter(TransactionPosted.id == transaction_id)
-        .first()
-    )
-    if row is None:
-        return None
-    row.deleted_at = None
-    db.commit()
-    db.refresh(row)
-    return row
-
-
 def soft_delete_chat_session(db: Session, session_id: str) -> bool:
     """Marcar una ChatSession como eliminada (soft-delete). Retorna True si se encontró."""
     row = db.query(ChatSession).filter(ChatSession.id == session_id).first()

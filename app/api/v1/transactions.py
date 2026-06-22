@@ -900,31 +900,11 @@ async def delete_transaction(
     instead of the posted id. Re-syncs journal-derived statements afterwards so
     reports/derivation stay coherent.
 
-    Note: this is a hard delete (cascade) and is NOT reversible via
-    ``POST /{id}/restore`` (that endpoint only restores soft-deleted
-    ``TransactionPosted`` rows).
+    Note: this is a hard delete (cascade) and cannot be undone.
     """
     company_nit = _delete_transaction_cascade(db, id)  # raises 404 if not found
     db.commit()
     _resync_derived_statements(db, company_nit)
-
-
-@router.post("/{id}/restore", status_code=200)
-@limiter.limit("30/minute")
-async def restore_transaction(
-    request: Request,
-    id: str,
-    db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    """Restore a soft-deleted transaction."""
-    row = db_service.restore_transaction_posted(db, id)
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Transacción no encontrada o ya restaurada.",
-        )
-    return {"id": row.id, "status": "restored"}
 
 
 @router.delete("/by-ingest/{ingest_id}", status_code=200)
