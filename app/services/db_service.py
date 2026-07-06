@@ -805,9 +805,24 @@ def get_balance_sheet(
         )
         clase = _presentation_class(code, raw_clase)
         if clase in (1, 5, 6):
-            totals[clase] += debit - credit
+            saldo = debit - credit
         else:
-            totals[clase] += credit - debit
+            saldo = credit - debit
+        # _presentation_class only reclassifies via the STATIC catalog
+        # naturaleza (e.g. 240802 IVA descontable is always debit-natured).
+        # It misses accounts whose ACTUAL running balance flips sign for this
+        # company (e.g. 130505 cuentas por cobrar landing net-credit because
+        # a cobro was posted before its originating factura) — presenting
+        # that as a negative Activos total is accounting-nonsense. Mirror the
+        # reclass dynamically off the computed sign: a class-1 account with a
+        # net credit balance is an anticipo de cliente (pasivo); a class-2
+        # account with a net debit balance is a recuperable (activo).
+        if clase == 1 and saldo < 0:
+            totals[2] += -saldo
+        elif clase == 2 and saldo < 0:
+            totals[1] += -saldo
+        else:
+            totals[clase] += saldo
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
     net_profit = totals[4] - totals[5] - totals[6]
@@ -1912,19 +1927,39 @@ def get_balance_sheet_for_period(
         6: Decimal("0"),
     }
 
+    # Net per-account first — a sign flip must be judged on the account's
+    # overall balance, not on individual lines (a single line can look
+    # negative mid-account while the running total is still positive).
+    per_account: dict[str, dict] = {}
     for line in lines:
-        if not line.cuenta_puc:
+        if not line.cuenta_puc or not line.cuenta_puc[0].isdigit():
             continue
         clase = int(line.cuenta_puc[0])
-        if clase in totals:
-            if clase in (1, 5, 6):
-                totals[clase] += (line.debito or Decimal("0")) - (
-                    line.credito or Decimal("0")
-                )
-            else:
-                totals[clase] += (line.credito or Decimal("0")) - (
-                    line.debito or Decimal("0")
-                )
+        if clase not in totals:
+            continue
+        entry = per_account.setdefault(
+            line.cuenta_puc,
+            {"clase": clase, "debit": Decimal("0"), "credit": Decimal("0")},
+        )
+        entry["debit"] += line.debito or Decimal("0")
+        entry["credit"] += line.credito or Decimal("0")
+
+    for entry in per_account.values():
+        clase = entry["clase"]
+        if clase in (1, 5, 6):
+            saldo = entry["debit"] - entry["credit"]
+        else:
+            saldo = entry["credit"] - entry["debit"]
+        # Mirror the dynamic reclass in get_balance_sheet: an account whose
+        # ACTUAL balance flips its class's natural side (e.g. cuentas por
+        # cobrar landing net-credit because a cobro posted before its
+        # factura) presents on the opposite side, not as a negative total.
+        if clase == 1 and saldo < 0:
+            totals[2] += -saldo
+        elif clase == 2 and saldo < 0:
+            totals[1] += -saldo
+        else:
+            totals[clase] += saldo
 
     net_profit = totals[4] - totals[5] - totals[6]
     # Tolerancia $1 — consistente con `get_balance_sheet` y Fix G/H.
