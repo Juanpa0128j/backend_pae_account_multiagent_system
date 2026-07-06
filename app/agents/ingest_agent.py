@@ -196,9 +196,16 @@ def _parse_single_file(file_path: str, state: AgentState) -> str:
                 settings.llama_cloud_api_key,
             )
             fallback_kwargs["result_type"] = "text"
-            parser = LlamaParse(**fallback_kwargs)
-            documents = _llama_parse_with_retry(parser, file_path)
-            raw_text = "\n\n".join([doc.text for doc in documents])
+            try:
+                parser = LlamaParse(**fallback_kwargs)
+                documents = _llama_parse_with_retry(parser, file_path)
+                raw_text = "\n\n".join([doc.text for doc in documents])
+            except Exception as _fallback_err:
+                raise ValueError(
+                    f"LlamaParse failed to extract content from "
+                    f"'{Path(file_path).name}' in both markdown and text mode "
+                    f"({_fallback_err})"
+                ) from _fallback_err
 
         if raw_text and raw_text.strip() and _cache_path is not None:
             _cache_dir.mkdir(parents=True, exist_ok=True)

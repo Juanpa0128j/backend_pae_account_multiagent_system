@@ -259,6 +259,39 @@ class TestIngestNodeRoutes:
         assert cache_file.exists()
         assert "text mode output" in cache_file.read_text(encoding="utf-8")
 
+    def test_pdf_fallback_parse_failure_sets_error_instead_of_crashing(
+        self, pdf_file, monkeypatch
+    ):
+        """Regression: LlamaCloud can return a job result missing the requested
+        key (raw KeyError from llama_parse's base.py), and it can do so on the
+        text-mode fallback too, not just the first markdown attempt. The
+        fallback call must be caught and translated to state["error"], not
+        left to crash the pipeline uncaught."""
+        first_parser = MagicMock()
+        first_doc = MagicMock()
+        first_doc.text = ""
+        first_parser.load_data.return_value = [first_doc]
+
+        second_parser = MagicMock()
+        second_parser.load_data.side_effect = KeyError("markdown")
+
+        llama_cls = MagicMock(side_effect=[first_parser, second_parser])
+
+        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        monkeypatch.setattr(
+            ingest_agent,
+            "get_settings",
+            lambda: SimpleNamespace(llama_cloud_api_key="k"),
+        )
+        client = _build_client("extract_transactions", {"ok": True})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(file_path=pdf_file)
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is not None
+        assert "both markdown and text mode" in out["error"]
+
     def test_empty_extracted_text_sets_readable_error(self, xml_file, monkeypatch):
         monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "   ")
         client = _build_client("extract_transactions", {"ok": True})
