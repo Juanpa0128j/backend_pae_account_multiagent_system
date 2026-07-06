@@ -782,6 +782,7 @@ def get_balance_sheet(
         5: Decimal("0"),
         6: Decimal("0"),
     }
+    reclassified_to_pasivos: List[str] = []
 
     for row in account_rows:
         code = row.cuenta_puc
@@ -821,8 +822,18 @@ def get_balance_sheet(
         # visible gap instead of being silently reclassified.
         if clase == 1 and saldo < 0:
             totals[2] += -saldo
+            reclassified_to_pasivos.append(code)
         else:
             totals[clase] += saldo
+
+    if reclassified_to_pasivos:
+        logger.warning(
+            "get_balance_sheet: cuentas clase 1 con saldo acreedor "
+            "reclasificadas a pasivos (anticipo de cliente) — %s "
+            "(company_nit=%s). Posible factura de origen sin contabilizar.",
+            ",".join(sorted(reclassified_to_pasivos)),
+            company_nit,
+        )
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
     net_profit = totals[4] - totals[5] - totals[6]
@@ -1944,7 +1955,8 @@ def get_balance_sheet_for_period(
         entry["debit"] += line.debito or Decimal("0")
         entry["credit"] += line.credito or Decimal("0")
 
-    for entry in per_account.values():
+    reclassified_to_pasivos: List[str] = []
+    for code, entry in per_account.items():
         clase = entry["clase"]
         if clase in (1, 5, 6):
             saldo = entry["debit"] - entry["credit"]
@@ -1956,8 +1968,18 @@ def get_balance_sheet_for_period(
         # anticipo de cliente — pasivo, not a negative Activos total.
         if clase == 1 and saldo < 0:
             totals[2] += -saldo
+            reclassified_to_pasivos.append(code)
         else:
             totals[clase] += saldo
+
+    if reclassified_to_pasivos:
+        logger.warning(
+            "get_balance_sheet_for_period: cuentas clase 1 con saldo acreedor "
+            "reclasificadas a pasivos (anticipo de cliente) — %s "
+            "(company_nit=%s). Posible factura de origen sin contabilizar.",
+            ",".join(sorted(reclassified_to_pasivos)),
+            company_nit,
+        )
 
     net_profit = totals[4] - totals[5] - totals[6]
     # Tolerancia $1 — consistente con `get_balance_sheet` y Fix G/H.
