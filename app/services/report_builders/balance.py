@@ -51,11 +51,25 @@ def build_balance(db, params: dict, svc) -> dict:
     # Aportes EPS pagados en exceso al fondo, 238030 anticipo pensión.
     # Riesgo: si la cuenta tiene saldo deudor por ERROR contable (mal
     # asiento), la reclasificación lo enmascara. Mitigamos con warning.
-    activos_detalle: list[dict] = [
-        _to_cuenta(r, _debit_nature_balance(r))
-        for r in _ledger_by_prefix(ledger, _CLASS_ACTIVOS)
-    ]
+    activos_detalle: list[dict] = []
     pasivos_detalle: list[dict] = []
+    for r in _ledger_by_prefix(ledger, _CLASS_ACTIVOS):
+        saldo_debito = _debit_nature_balance(r)  # debit - credit
+        if saldo_debito < 0:
+            # Mirror case: cuenta clase 1 con saldo ACREEDOR (p.ej. cuentas
+            # por cobrar 130505 cuando un cobro se contabilizó antes que su
+            # factura de origen) es un anticipo de cliente — pasivo, no un
+            # activo negativo.
+            logger.warning(
+                "_build_balance: cuenta clase 1 con saldo acreedor reclasificada "
+                "a pasivos (anticipo) — PUC=%s saldo=%s. Verifique si es "
+                "anticipo de cliente (normal) o error contable.",
+                r.get("account"),
+                saldo_debito,
+            )
+            pasivos_detalle.append(_to_cuenta(r, abs(saldo_debito)))
+        else:
+            activos_detalle.append(_to_cuenta(r, saldo_debito))
     for r in _ledger_by_prefix(ledger, _CLASS_PASIVOS):
         saldo_credito = _credit_nature_balance(r)  # credit - debit
         if saldo_credito < 0:

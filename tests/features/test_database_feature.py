@@ -520,6 +520,53 @@ class TestAccountingBooks:
         # 1_000_000 != 0 + 0 + (-500_000) → is_balanced must be False
         assert balance["is_balanced"] is False
 
+    def test_balance_general_receivable_credit_balance_reclassified_to_liabilities(
+        self, db, sample_puc
+    ):
+        """A class-1 account (cuentas por cobrar) that nets CREDIT — e.g. a
+        cobro posted before its originating factura ever debited the
+        receivable — is an anticipo de cliente. It must land in liabilities,
+        not present as a negative assets total."""
+        job = db_service.create_ingest_job(db, "credit_receivable_test.pdf")
+        txn = db_service.create_transaction_pending(
+            db,
+            ingest_id=job.id,
+            fecha=datetime(2025, 5, 1, tzinfo=timezone.utc),
+            total=Decimal("500000"),
+        )
+        posted = db_service.create_transaction_posted(
+            db,
+            transaction_pending_id=txn.id,
+            cuenta_puc="130505",
+        )
+        entries = [
+            {
+                "fecha": datetime(2025, 5, 1, tzinfo=timezone.utc),
+                "cuenta": "111005",  # class 1 — bancos (debit-nature)
+                "descripcion": "Consignación cobro",
+                "debito": "500000",
+                "credito": "0",
+            },
+            {
+                "fecha": datetime(2025, 5, 1, tzinfo=timezone.utc),
+                "cuenta": "130505",  # class 1 — cuentas por cobrar, credit-only
+                "descripcion": "Cobro sin factura previa",
+                "debito": "0",
+                "credito": "500000",
+            },
+        ]
+        db_service.create_journal_entry_lines(db, posted.id, entries)
+
+        balance = db_service.get_balance_sheet(
+            db,
+            cutoff_date=datetime(2025, 12, 31, tzinfo=timezone.utc),
+        )
+        # 111005 (+500000) and 130505 (-500000) net to zero on the assets
+        # side; the 130505 credit balance must reclassify into liabilities
+        # instead of leaving assets at 0 while masking a -500000/+500000 mix.
+        assert balance["assets"] == 500000.0
+        assert balance["liabilities"] == 500000.0
+
 
 # ─── Test Duplicate Detection ────────────────────────────────────
 

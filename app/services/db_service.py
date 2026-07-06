@@ -782,6 +782,7 @@ def get_balance_sheet(
         5: Decimal("0"),
         6: Decimal("0"),
     }
+    reclassified_to_pasivos: List[str] = []
 
     for row in account_rows:
         code = row.cuenta_puc
@@ -805,9 +806,34 @@ def get_balance_sheet(
         )
         clase = _presentation_class(code, raw_clase)
         if clase in (1, 5, 6):
-            totals[clase] += debit - credit
+            saldo = debit - credit
         else:
-            totals[clase] += credit - debit
+            saldo = credit - debit
+        # _presentation_class only reclassifies via the STATIC catalog
+        # naturaleza (e.g. 240802 IVA descontable is catalogued debit-natured
+        # on purpose). It misses accounts whose ACTUAL running balance flips
+        # sign for this company (e.g. 130505 cuentas por cobrar landing
+        # net-credit because a cobro was posted before its originating
+        # factura) — presenting that as a negative Activos total is
+        # accounting-nonsense. A class-1 account with a net credit balance is
+        # an anticipo de cliente (pasivo). NOT mirrored for class-2 accounts
+        # with a net debit balance — that direction is intentionally the
+        # catalog's job (naturaleza), so an uncatalogued account surfaces as a
+        # visible gap instead of being silently reclassified.
+        if clase == 1 and saldo < 0:
+            totals[2] += -saldo
+            reclassified_to_pasivos.append(code)
+        else:
+            totals[clase] += saldo
+
+    if reclassified_to_pasivos:
+        logger.warning(
+            "get_balance_sheet: cuentas clase 1 con saldo acreedor "
+            "reclasificadas a pasivos (anticipo de cliente) — %s "
+            "(company_nit=%s). Posible factura de origen sin contabilizar.",
+            ",".join(sorted(reclassified_to_pasivos)),
+            company_nit,
+        )
 
     # Retained earnings = Revenue - Expenses - Cost of Sales
     net_profit = totals[4] - totals[5] - totals[6]
@@ -1912,19 +1938,48 @@ def get_balance_sheet_for_period(
         6: Decimal("0"),
     }
 
+    # Net per-account first — a sign flip must be judged on the account's
+    # overall balance, not on individual lines (a single line can look
+    # negative mid-account while the running total is still positive).
+    per_account: dict[str, dict] = {}
     for line in lines:
-        if not line.cuenta_puc:
+        if not line.cuenta_puc or not line.cuenta_puc[0].isdigit():
             continue
         clase = int(line.cuenta_puc[0])
-        if clase in totals:
-            if clase in (1, 5, 6):
-                totals[clase] += (line.debito or Decimal("0")) - (
-                    line.credito or Decimal("0")
-                )
-            else:
-                totals[clase] += (line.credito or Decimal("0")) - (
-                    line.debito or Decimal("0")
-                )
+        if clase not in totals:
+            continue
+        entry = per_account.setdefault(
+            line.cuenta_puc,
+            {"clase": clase, "debit": Decimal("0"), "credit": Decimal("0")},
+        )
+        entry["debit"] += line.debito or Decimal("0")
+        entry["credit"] += line.credito or Decimal("0")
+
+    reclassified_to_pasivos: List[str] = []
+    for code, entry in per_account.items():
+        clase = entry["clase"]
+        if clase in (1, 5, 6):
+            saldo = entry["debit"] - entry["credit"]
+        else:
+            saldo = entry["credit"] - entry["debit"]
+        # Mirror the dynamic reclass in get_balance_sheet: a class-1 account
+        # whose ACTUAL balance flips net-credit (e.g. cuentas por cobrar
+        # landing net-credit because a cobro posted before its factura) is an
+        # anticipo de cliente — pasivo, not a negative Activos total.
+        if clase == 1 and saldo < 0:
+            totals[2] += -saldo
+            reclassified_to_pasivos.append(code)
+        else:
+            totals[clase] += saldo
+
+    if reclassified_to_pasivos:
+        logger.warning(
+            "get_balance_sheet_for_period: cuentas clase 1 con saldo acreedor "
+            "reclasificadas a pasivos (anticipo de cliente) — %s "
+            "(company_nit=%s). Posible factura de origen sin contabilizar.",
+            ",".join(sorted(reclassified_to_pasivos)),
+            company_nit,
+        )
 
     net_profit = totals[4] - totals[5] - totals[6]
     # Tolerancia $1 — consistente con `get_balance_sheet` y Fix G/H.
