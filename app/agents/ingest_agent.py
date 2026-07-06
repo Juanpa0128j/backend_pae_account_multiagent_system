@@ -39,7 +39,17 @@ PARSE_CACHE_TTL_DAYS = 30
 
 
 def _is_transient_parse_error(exc: BaseException) -> bool:
-    """True for LlamaParse failures worth retrying — network/timeout/5xx."""
+    """True for LlamaParse failures worth retrying — network/timeout/5xx.
+
+    KeyError is included because LlamaParse does `result[result_type.value]`
+    on the /result/{result_type} response (llama_parse/base.py). Observed in
+    prod as KeyError('markdown') on a job whose status already reported
+    SUCCESS — consistent with the result artifact not yet being queryable
+    right after the status flip (manual reprocessing of the same file always
+    succeeded). Retrying is safe even if this hypothesis is wrong: a file
+    that permanently lacks the requested result_type still fails after 3
+    attempts into the same state["error"] path, just ~7s slower.
+    """
     if isinstance(
         exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
     ):
@@ -50,6 +60,8 @@ def _is_transient_parse_error(exc: BaseException) -> bool:
     if isinstance(exc, RuntimeError):
         msg = str(exc).lower()
         return any(s in msg for s in ("timeout", "503", "502", "504", "connection"))
+    if isinstance(exc, KeyError):
+        return True
     return False
 
 
@@ -57,13 +69,24 @@ def _llama_parse_with_retry(parser: "LlamaParse", file_path: str) -> list:
     """Invoke LlamaParse.load_data with retry on transient errors only.
 
     Retries up to 3 times with exponential backoff (1s, 2s, 4s) on network /
-    timeout / 5xx. Permanent errors (ValueError, schema mismatches) reraise
-    on first failure.
+    timeout / 5xx / result-not-yet-available. Permanent errors (ValueError,
+    schema mismatches) reraise on first failure.
     """
+
+    def _log_retry(retry_state) -> None:
+        exc = retry_state.outcome.exception()
+        logger.warning(
+            "LlamaParse transient failure on %s (attempt %d): %r — retrying",
+            Path(file_path).name,
+            retry_state.attempt_number,
+            exc,
+        )
+
     for attempt in Retrying(
         retry=retry_if_exception(_is_transient_parse_error),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=8),
+        before_sleep=_log_retry,
         reraise=True,
     ):
         with attempt:
@@ -72,7 +95,10 @@ def _llama_parse_with_retry(parser: "LlamaParse", file_path: str) -> list:
 
 
 def _build_llama_parse_kwargs(mode: str, api_key: str) -> dict:
-    kwargs: dict = {"api_key": api_key, "result_type": "markdown"}
+    # verbose=True makes the client print "Started parsing the file under
+    # job_id X" — captured by our log pipeline, so a job_id is available to
+    # cross-reference against LlamaCloud's dashboard if a parse fails.
+    kwargs: dict = {"api_key": api_key, "result_type": "markdown", "verbose": True}
     if mode == "fast":
         kwargs["fast_mode"] = True
     elif mode == "premium":
