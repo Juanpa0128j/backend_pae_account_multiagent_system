@@ -120,8 +120,13 @@ def test_transient_classifier_rejects_value_error() -> None:
     assert ingest_agent._is_transient_parse_error(ValueError("bad schema")) is False
 
 
-def test_transient_classifier_rejects_key_error() -> None:
-    assert ingest_agent._is_transient_parse_error(KeyError("missing")) is False
+def test_transient_classifier_recognises_key_error() -> None:
+    """LlamaParse raises a raw KeyError when the /result/{result_type}
+    response omits the requested key — observed in prod as a transient
+    LlamaCloud-side race (job status SUCCESS before the result artifact is
+    queryable). Retrying is safe even if a file permanently lacks the
+    result_type: it still fails after 3 attempts, just slower."""
+    assert ingest_agent._is_transient_parse_error(KeyError("markdown")) is True
 
 
 def test_retry_succeeds_after_transient_failures() -> None:
@@ -181,6 +186,28 @@ def test_retry_does_not_retry_runtime_error_without_transient_hint() -> None:
         ingest_agent._llama_parse_with_retry(parser, "/tmp/x.pdf")
 
     assert parser.load_data.call_count == 1
+
+
+def test_retry_succeeds_after_key_error() -> None:
+    # Arrange — fail once with the LlamaCloud result-not-ready KeyError, then succeed
+    parser = MagicMock()
+    attempts = {"n": 0}
+
+    def _flaky(_path):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise KeyError("markdown")
+        return [MagicMock(text="success after key error")]
+
+    parser.load_data.side_effect = _flaky
+
+    # Act
+    with patch("tenacity.nap.time.sleep", lambda _: None):
+        result = ingest_agent._llama_parse_with_retry(parser, "/tmp/x.pdf")
+
+    # Assert
+    assert attempts["n"] == 2
+    assert result[0].text == "success after key error"
 
 
 def test_retry_succeeds_after_504_error() -> None:
