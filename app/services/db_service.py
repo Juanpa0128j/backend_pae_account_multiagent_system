@@ -809,18 +809,18 @@ def get_balance_sheet(
         else:
             saldo = credit - debit
         # _presentation_class only reclassifies via the STATIC catalog
-        # naturaleza (e.g. 240802 IVA descontable is always debit-natured).
-        # It misses accounts whose ACTUAL running balance flips sign for this
-        # company (e.g. 130505 cuentas por cobrar landing net-credit because
-        # a cobro was posted before its originating factura) — presenting
-        # that as a negative Activos total is accounting-nonsense. Mirror the
-        # reclass dynamically off the computed sign: a class-1 account with a
-        # net credit balance is an anticipo de cliente (pasivo); a class-2
-        # account with a net debit balance is a recuperable (activo).
+        # naturaleza (e.g. 240802 IVA descontable is catalogued debit-natured
+        # on purpose). It misses accounts whose ACTUAL running balance flips
+        # sign for this company (e.g. 130505 cuentas por cobrar landing
+        # net-credit because a cobro was posted before its originating
+        # factura) — presenting that as a negative Activos total is
+        # accounting-nonsense. A class-1 account with a net credit balance is
+        # an anticipo de cliente (pasivo). NOT mirrored for class-2 accounts
+        # with a net debit balance — that direction is intentionally the
+        # catalog's job (naturaleza), so an uncatalogued account surfaces as a
+        # visible gap instead of being silently reclassified.
         if clase == 1 and saldo < 0:
             totals[2] += -saldo
-        elif clase == 2 and saldo < 0:
-            totals[1] += -saldo
         else:
             totals[clase] += saldo
 
@@ -1950,14 +1950,12 @@ def get_balance_sheet_for_period(
             saldo = entry["debit"] - entry["credit"]
         else:
             saldo = entry["credit"] - entry["debit"]
-        # Mirror the dynamic reclass in get_balance_sheet: an account whose
-        # ACTUAL balance flips its class's natural side (e.g. cuentas por
-        # cobrar landing net-credit because a cobro posted before its
-        # factura) presents on the opposite side, not as a negative total.
+        # Mirror the dynamic reclass in get_balance_sheet: a class-1 account
+        # whose ACTUAL balance flips net-credit (e.g. cuentas por cobrar
+        # landing net-credit because a cobro posted before its factura) is an
+        # anticipo de cliente — pasivo, not a negative Activos total.
         if clase == 1 and saldo < 0:
             totals[2] += -saldo
-        elif clase == 2 and saldo < 0:
-            totals[1] += -saldo
         else:
             totals[clase] += saldo
 
