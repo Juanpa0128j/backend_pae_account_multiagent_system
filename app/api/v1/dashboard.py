@@ -55,6 +55,9 @@ class DashboardStatsResponse(BaseModel):
     iva_por_pagar: float = 0.0
     total_retenciones: float = 0.0
     transacciones_por_estado: Dict[str, int] = Field(default_factory=dict)
+    # Class-1 PUC accounts whose net-credit balance was presented inside
+    # pasivos as anticipo de cliente (see get_balance_sheet reclass).
+    cuentas_reclasificadas: List[str] = Field(default_factory=list)
     # Vía-aware fields — clients can switch the KPI cards based on `pathway`.
     pathway: Optional[str] = None  # 'build_from_scratch' | 'work_with_existing' | None
     via_b_statements_count: int = 0
@@ -114,6 +117,7 @@ class DashboardFinancialSummaryResponse(BaseModel):
     gastos_periodo: float = 0.0
     transacciones_por_estado: Dict[str, int] = Field(default_factory=dict)
     actividad_reciente: List[Dict[str, Any]] = Field(default_factory=list)
+    cuentas_reclasificadas: List[str] = Field(default_factory=list)
 
 
 @router.get("/stats", response_model=DashboardStatsResponse)
@@ -261,6 +265,7 @@ def get_dashboard_stats(
         iva_por_pagar=_q(iva_por_pagar),
         total_retenciones=_q(retfte + retica),
         transacciones_por_estado=txn_counts,
+        cuentas_reclasificadas=balance.get("reclassified_accounts", []),
         pathway=pathway,
     )
 
@@ -360,6 +365,7 @@ def get_financial_summary(
         gastos_periodo=_q(gastos),
         transacciones_por_estado=txn_counts,
         actividad_reciente=recent,
+        cuentas_reclasificadas=balance.get("reclassified_accounts", []),
     )
 
 

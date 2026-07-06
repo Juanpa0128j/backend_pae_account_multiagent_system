@@ -477,6 +477,8 @@ class TestAccountingBooks:
         assert "is_balanced" in balance
         # The fixture entries balance perfectly (Assets = Liabilities + Equity + Net Profit)
         assert balance["is_balanced"] is True
+        # No class-1 account nets credit here — the reclass list must be empty.
+        assert balance["reclassified_accounts"] == []
 
     def test_balance_general_unbalanced(self, db, sample_puc):
         """is_balanced is False when journal entries do not balance across account classes."""
@@ -566,6 +568,16 @@ class TestAccountingBooks:
         # instead of leaving assets at 0 while masking a -500000/+500000 mix.
         assert balance["assets"] == 500000.0
         assert balance["liabilities"] == 500000.0
+        # The reclassified account must be exposed so reports/dashboard can
+        # explain the anticipo de cliente presentation.
+        assert balance["reclassified_accounts"] == ["130505"]
+
+        period_balance = db_service.get_balance_sheet_for_period(
+            db,
+            start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2025, 12, 31, tzinfo=timezone.utc),
+        )
+        assert period_balance["reclassified_accounts"] == ["130505"]
 
 
 # ─── Test Duplicate Detection ────────────────────────────────────

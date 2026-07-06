@@ -30,6 +30,118 @@ from app.core.llm_client import get_llm_client
 logger = logging.getLogger(__name__)
 
 
+def _check_cobro_sin_factura(state: AgentState, contador_output: dict) -> None:
+    """WARNING — cobro contra cuenta por cobrar sin factura previa.
+
+    When the asientos CREDIT a class-1 receivable account (13xxxx) and the
+    accumulated posted DEBITS for that account+company are insufficient to
+    cover the credit, the account will go net-credit and the balance sheet
+    will present it as anticipo de cliente. Likely the originating factura
+    de venta (referencia_factura) was never uploaded. Never a BLOCKER —
+    persistence must not be blocked.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    from sqlalchemy import func
+
+    from app.agents.audit_utils import append_finding
+    from app.core.database import SessionLocal
+    from app.models.audit import AuditFinding, AuditTarget, Severity
+    from app.models.database import (
+        JournalEntryLine,
+        TransactionPosted,
+        TransactionStatus,
+    )
+
+    asientos = contador_output.get("asientos") or []
+    net_credit_by_account: dict[str, Decimal] = {}
+    for line in asientos:
+        if not isinstance(line, dict):
+            continue
+        code = str(line.get("cuenta_puc") or "").strip()
+        if not code.startswith("13"):
+            continue
+        try:
+            valor = Decimal(str(line.get("valor") or 0))
+        except InvalidOperation:
+            valor = Decimal("0")
+        tipo = (line.get("tipo_movimiento") or "").lower()
+        current = net_credit_by_account.get(code, Decimal("0"))
+        if tipo == "credito":
+            net_credit_by_account[code] = current + valor
+        elif tipo == "debito":
+            net_credit_by_account[code] = current - valor
+    credited = {c: v for c, v in net_credit_by_account.items() if v > 0}
+    if not credited:
+        return
+
+    company_nit = state.get("company_nit")
+    raw_transactions = state.get("raw_transactions") or []
+    base_tx = raw_transactions[0] if raw_transactions else {}
+    referencia = str((base_tx or {}).get("referencia_factura") or "").strip()
+
+    _db = SessionLocal()
+    try:
+        for code, credit in credited.items():
+            query = (
+                _db.query(
+                    func.coalesce(func.sum(JournalEntryLine.debito), 0),
+                    func.coalesce(func.sum(JournalEntryLine.credito), 0),
+                )
+                .join(
+                    TransactionPosted,
+                    JournalEntryLine.transaction_posted_id == TransactionPosted.id,
+                )
+                .filter(
+                    TransactionPosted.status == TransactionStatus.POSTED,
+                    JournalEntryLine.cuenta_puc == code,
+                )
+            )
+            if company_nit:
+                query = query.filter(JournalEntryLine.company_nit == company_nit)
+            posted_debits, posted_credits = query.one()
+            posted_net_debit = Decimal(str(posted_debits or 0)) - Decimal(
+                str(posted_credits or 0)
+            )
+            if posted_net_debit >= credit:
+                continue
+            ref_es = f" (referencia {referencia})" if referencia else ""
+            append_finding(
+                state,
+                AuditFinding(
+                    target=AuditTarget.PRE_PERSIST,
+                    rule_id="AUD-COBRO-SIN-FACTURA",
+                    severity=Severity.WARNING,
+                    fixable=False,
+                    responsible_agent="persist",
+                    technical_message=(
+                        f"Credit of {credit} to receivable account {code} exceeds "
+                        f"its posted net-debit balance {posted_net_debit} "
+                        f"(company_nit={company_nit}); the account will go "
+                        "net-credit and be presented as anticipo de cliente."
+                    ),
+                    user_message_es=(
+                        f"Cobro registrado contra la cuenta {code} sin factura de "
+                        f"venta previa contabilizada{ref_es}. La cuenta quedará "
+                        "con saldo acreedor y se presentará como anticipo de "
+                        "cliente."
+                    ),
+                    suggested_action_es=(
+                        "Suba y procese la factura de venta de origen para que el "
+                        "cobro cruce contra la cuenta por cobrar."
+                    ),
+                    evidence={
+                        "cuenta_puc": code,
+                        "credito_transaccion": str(credit),
+                        "saldo_debito_contabilizado": str(posted_net_debit),
+                        "referencia_factura": referencia or None,
+                    },
+                ),
+            )
+    finally:
+        _db.close()
+
+
 def auditor_node(state: AgentState) -> AgentState:
     """
     Auditor node: performs semantic audit of the contador journal entries.
@@ -147,6 +259,16 @@ def auditor_node(state: AgentState) -> AgentState:
         except Exception as warning_err:
             logger.warning(
                 "auditor: saldo-inicial warning check failed (non-fatal): %s",
+                warning_err,
+            )
+
+        # WARNING — cobro contra 13xxxx sin factura de venta previa (la
+        # cuenta quedaría con saldo acreedor → anticipo de cliente).
+        try:
+            _check_cobro_sin_factura(state, contador_output)
+        except Exception as warning_err:
+            logger.warning(
+                "auditor: cobro-sin-factura warning check failed (non-fatal): %s",
                 warning_err,
             )
 

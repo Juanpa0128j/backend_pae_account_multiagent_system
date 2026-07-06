@@ -53,6 +53,7 @@ def build_balance(db, params: dict, svc) -> dict:
     # asiento), la reclasificación lo enmascara. Mitigamos con warning.
     activos_detalle: list[dict] = []
     pasivos_detalle: list[dict] = []
+    reclasificadas_clase1: list[str] = []
     for r in _ledger_by_prefix(ledger, _CLASS_ACTIVOS):
         saldo_debito = _debit_nature_balance(r)  # debit - credit
         if saldo_debito < 0:
@@ -67,7 +68,12 @@ def build_balance(db, params: dict, svc) -> dict:
                 r.get("account"),
                 saldo_debito,
             )
-            pasivos_detalle.append(_to_cuenta(r, abs(saldo_debito)))
+            reclasificadas_clase1.append(str(r.get("account")))
+            cuenta = _to_cuenta(r, abs(saldo_debito))
+            cuenta["nombre"] = (
+                f"{cuenta['nombre']} (anticipo de cliente — reclasificada)"
+            )
+            pasivos_detalle.append(cuenta)
         else:
             activos_detalle.append(_to_cuenta(r, saldo_debito))
     for r in _ledger_by_prefix(ledger, _CLASS_PASIVOS):
@@ -105,6 +111,13 @@ def build_balance(db, params: dict, svc) -> dict:
         mensaje = (
             f"DESCUADRE: ACTIVOS ({activos:,.0f}) - "
             f"(PASIVOS + PATRIMONIO TOTAL) = {diferencia:,.0f}"
+        )
+
+    if reclasificadas_clase1:
+        mensaje += (
+            f" | Nota: cuenta(s) {', '.join(sorted(reclasificadas_clase1))} "
+            "presentada(s) en pasivos como anticipo de cliente (saldo acreedor). "
+            "Posible factura de origen sin contabilizar."
         )
 
     notas_normativas = _fetch_rag_referencias(

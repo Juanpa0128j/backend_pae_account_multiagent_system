@@ -855,6 +855,7 @@ def get_balance_sheet(
         "net_profit": float(net_profit),
         "total_equity": float(totals[3] + net_profit),
         "is_balanced": is_balanced,
+        "reclassified_accounts": sorted(reclassified_to_pasivos),
     }
 
 
@@ -1995,6 +1996,7 @@ def get_balance_sheet_for_period(
         "net_profit": float(net_profit),
         "total_equity": float(totals[3] + net_profit),
         "is_balanced": is_balanced,
+        "reclassified_accounts": sorted(reclassified_to_pasivos),
     }
 
 
