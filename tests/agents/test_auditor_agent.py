@@ -273,6 +273,133 @@ class TestAuditorNode:
 
 
 # ===========================================================================
+# 1b. Unit: auditor_node — cobro contra cuenta por cobrar sin factura previa
+# ===========================================================================
+
+COBRO_CONTADOR_OUTPUT: dict = {
+    "fecha_registro": "2026-01-20",
+    "tipo_documento": "recibo_caja",
+    "descripcion_general": "Recibo de caja cobro cartera (Fact. FV-2026-0001)",
+    "asientos": [
+        {
+            "cuenta_puc": "111005",
+            "nombre_cuenta": "Bancos moneda nacional",
+            "tipo_movimiento": "debito",
+            "valor": 500_000,
+            "descripcion": "Consignación cobro cartera",
+        },
+        {
+            "cuenta_puc": "130505",
+            "nombre_cuenta": "Clientes nacionales",
+            "tipo_movimiento": "credito",
+            "valor": 500_000,
+            "descripcion": "Cruce cuenta por cobrar",
+        },
+    ],
+    "total_debitos": 500_000,
+    "total_creditos": 500_000,
+}
+
+
+def _mock_db_with_sums(debits: Decimal, credits: Decimal) -> MagicMock:
+    """SessionLocal() stand-in whose sum-query chain returns (debits, credits)."""
+    db = MagicMock()
+    q = MagicMock()
+    db.query.return_value = q
+    q.join.return_value = q
+    q.filter.return_value = q
+    q.one.return_value = (debits, credits)
+    return db
+
+
+class TestAuditorCobroSinFactura:
+    @patch("app.core.database.SessionLocal")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    def test_credit_receivable_without_prior_invoice_emits_warning(
+        self, mock_factory, mock_session
+    ):
+        """Crediting 13xxxx beyond its posted net-debit balance must emit a
+        WARNING (never a BLOCKER) naming the account and referencia_factura."""
+        mock_llm = MagicMock()
+        mock_llm.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
+        mock_factory.return_value = mock_llm
+        mock_session.return_value = _mock_db_with_sums(Decimal("0"), Decimal("0"))
+
+        state = _base_state(
+            contador_output=dict(COBRO_CONTADOR_OUTPUT),
+            raw_transactions=[
+                {**VALID_RAW_TRANSACTIONS[0], "referencia_factura": "FV-2026-0001"}
+            ],
+            company_nit="800999888",
+        )
+        result = auditor_node(state)
+
+        warnings = result.get("pipeline_warnings") or []
+        finding = next(w for w in warnings if w["rule_id"] == "AUD-COBRO-SIN-FACTURA")
+        assert finding["severity"] == "warning"
+        assert "130505" in finding["user_message_es"]
+        assert "FV-2026-0001" in finding["user_message_es"]
+        assert "anticipo de cliente" in finding["user_message_es"]
+        # WARNING must never block persistence.
+        assert not result.get("unfixable_findings")
+
+    @patch("app.core.database.SessionLocal")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    def test_no_warning_when_prior_invoice_covers_credit(
+        self, mock_factory, mock_session
+    ):
+        """A posted factura already debited the receivable — no finding."""
+        mock_llm = MagicMock()
+        mock_llm.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
+        mock_factory.return_value = mock_llm
+        mock_session.return_value = _mock_db_with_sums(Decimal("1000000"), Decimal("0"))
+
+        state = _base_state(
+            contador_output=dict(COBRO_CONTADOR_OUTPUT),
+            raw_transactions=[
+                {**VALID_RAW_TRANSACTIONS[0], "referencia_factura": "FV-2026-0001"}
+            ],
+            company_nit="800999888",
+        )
+        result = auditor_node(state)
+
+        warnings = result.get("pipeline_warnings") or []
+        assert not any(w["rule_id"] == "AUD-COBRO-SIN-FACTURA" for w in warnings)
+
+    @patch("app.core.database.SessionLocal")
+    @patch("app.agents.auditor_agent.get_llm_client")
+    def test_warning_omits_referencia_when_absent(self, mock_factory, mock_session):
+        mock_llm = MagicMock()
+        mock_llm.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
+        mock_factory.return_value = mock_llm
+        mock_session.return_value = _mock_db_with_sums(Decimal("0"), Decimal("0"))
+
+        state = _base_state(
+            contador_output=dict(COBRO_CONTADOR_OUTPUT),
+            company_nit="800999888",
+        )
+        result = auditor_node(state)
+
+        warnings = result.get("pipeline_warnings") or []
+        finding = next(w for w in warnings if w["rule_id"] == "AUD-COBRO-SIN-FACTURA")
+        assert "referencia" not in finding["user_message_es"]
+        assert "130505" in finding["user_message_es"]
+
+    @patch("app.agents.auditor_agent.get_llm_client")
+    def test_no_receivable_credit_no_db_query(self, mock_factory):
+        """VALID_CONTADOR_OUTPUT credits 2205 — the check must stay silent."""
+        mock_llm = MagicMock()
+        mock_llm.extract_auditor_output.return_value = dict(VALID_AUDITOR_OUTPUT)
+        mock_factory.return_value = mock_llm
+
+        state = _base_state(contador_output=dict(VALID_CONTADOR_OUTPUT))
+        result = auditor_node(state)
+
+        warnings = result.get("pipeline_warnings") or []
+        assert not any(w["rule_id"] == "AUD-COBRO-SIN-FACTURA" for w in warnings)
+
+
+# ===========================================================================
 # 2. Unit: contador_node
 # ===========================================================================
 
