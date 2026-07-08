@@ -924,11 +924,10 @@ async def delete_transactions_by_ingest(
         .filter(TransactionPending.ingest_id == ingest_id)
         .all()
     ]
+    # Idempotent: no matching transactions (already deleted, double-click, retry)
+    # is a harmless no-op, not a 404.
     if not txn_ids:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No se encontraron transacciones para el trabajo de ingesta {ingest_id}.",
-        )
+        return {"deleted": 0}
 
     company_nit = None
     for txn_id in txn_ids:
