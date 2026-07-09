@@ -148,7 +148,12 @@ class TestDeleteTransactionsByIngest:
         finally:
             app.dependency_overrides.clear()
 
-    def test_delete_by_ingest_not_found_returns_404(self):
+    def test_delete_by_ingest_no_transactions_is_idempotent(self):
+        """No matching transactions -> 200 {"deleted": 0} (idempotent no-op).
+
+        Deleting an ingest whose transactions are already gone (double-click,
+        retry) must be a harmless no-op, not a 404.
+        """
         from app.core.auth import get_current_user as auth_dep
         from app.core.database import get_db as db_dep
         from app.models.database import TransactionPending
@@ -171,6 +176,7 @@ class TestDeleteTransactionsByIngest:
             response = client.delete(
                 "/api/v1/transactions/by-ingest/nonexistent-ingest"
             )
-            assert response.status_code == 404
+            assert response.status_code == 200
+            assert response.json()["deleted"] == 0
         finally:
             app.dependency_overrides.clear()
