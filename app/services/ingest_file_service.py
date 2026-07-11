@@ -74,10 +74,32 @@ def ensure_local_files(db: Session, job: IngestJob) -> list[str]:
     paths: list[str] = []
     for name in expected:
         target = Path(scratch_path(str(job.id), name))
+        blob = blobs.get(Path(name).name)
+
+        # Check scratch file with size verification if blob exists
         if target.exists():
+            if blob is not None:
+                # Verify scratch matches blob; overwrite on mismatch
+                try:
+                    scratch_size = target.stat().st_size
+                    blob_size = len(blob.content)
+                    if scratch_size != blob_size:
+                        logger.warning(
+                            "Scratch file %s size mismatch (%d vs %d bytes); rehydrating from blob",
+                            name,
+                            scratch_size,
+                            blob_size,
+                        )
+                        target.write_bytes(blob.content)
+                except OSError as e:
+                    logger.warning(
+                        "Failed to stat scratch file %s: %s; rehydrating", name, e
+                    )
+                    target.write_bytes(blob.content)
             paths.append(str(target))
             continue
-        blob = blobs.get(Path(name).name)
+
+        # Scratch doesn't exist; use blob if available
         if blob is not None:
             target.write_bytes(blob.content)
             logger.info(
@@ -88,10 +110,12 @@ def ensure_local_files(db: Session, job: IngestJob) -> list[str]:
             )
             paths.append(str(target))
             continue
+
+        # Legacy path for jobs created before shared storage
         if job.file_path and Path(job.file_path).exists():
-            # Legacy job created before shared storage existed.
             paths.append(job.file_path)
             continue
+
         logger.error(
             "Ingest %s: file %s unrecoverable (no scratch/blob/legacy)", job.id, name
         )

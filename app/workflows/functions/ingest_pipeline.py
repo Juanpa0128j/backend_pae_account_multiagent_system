@@ -52,6 +52,21 @@ async def _ingest_pipeline_handler(ctx: inngest.Context) -> dict:
             try:
                 job = db_service.get_ingest_job(db, ingest_id)
                 if job is not None:
+                    # Guard against duplicate events for terminal jobs
+                    job_status = job.status
+                    if isinstance(job_status, str):
+                        job_status = IngestStatus(job_status)
+                    if job_status in (
+                        IngestStatus.COMPLETED,
+                        IngestStatus.FAILED,
+                        IngestStatus.CANCELLED,
+                    ):
+                        ctx.logger.warning(
+                            "[Ingest %s] duplicate event for terminal job (%s) — skipping",
+                            ingest_id,
+                            job_status.value,
+                        )
+                        return {"ingest_id": ingest_id, "ok": True}
                     try:
                         paths = ingest_file_service.ensure_local_files(db, job)
                     except (

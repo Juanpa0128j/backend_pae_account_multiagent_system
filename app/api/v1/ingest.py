@@ -196,6 +196,17 @@ def _run_ingest_pipeline(
                     lookup_err,
                     exc_info=True,
                 )
+                # Best-effort scratch-only cleanup (DB is failing; skip blob deletion)
+                for path in temp_file_paths:
+                    try:
+                        Path(path).unlink(missing_ok=True)
+                    except OSError as unlink_err:
+                        logger.warning(
+                            "Failed to delete scratch file %s for ingest %s: %s",
+                            path,
+                            ingest_id,
+                            unlink_err,
+                        )
             else:
                 # Lookup succeeded, attempt cleanup
                 keep_file = bool(job and job.status == IngestStatus.PENDING_REVIEW)
@@ -524,13 +535,6 @@ async def upload_file(
             if not file_content:
                 raise HTTPException(
                     status_code=422, detail=f"El archivo {f.filename} está vacío"
-                )
-
-            MAX_FILE_SIZE = 50 * 1024 * 1024
-            if len(file_content) > MAX_FILE_SIZE:
-                raise HTTPException(
-                    status_code=413,
-                    detail="El archivo excede el tamaño máximo de 50MB",
                 )
 
             _ext = Path(f.filename).suffix.lower()
@@ -1040,14 +1044,12 @@ async def cancel_ingest(
 
     db_service.update_ingest_job(db, ingest_id, IngestStatus.CANCELLED)
 
-    # Clean up temp file if present
-    if job.file_path:
-        try:
-            Path(job.file_path).unlink(missing_ok=True)
-        except OSError:
-            logger.warning("Failed to delete temp file %s", job.file_path)
-
-    ingest_file_service.delete_files_for_job(db, ingest_id)
+    # Clean up all scratch files and blob rows
+    local_paths = [
+        ingest_file_service.scratch_path(str(job.id), name)
+        for name in (job.file_names or [job.file_name])
+    ]
+    ingest_file_service.cleanup_job_files(db, job, local_paths)
     db.commit()
 
     refreshed = db_service.get_ingest_job(db, ingest_id)

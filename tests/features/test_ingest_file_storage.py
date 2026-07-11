@@ -249,3 +249,23 @@ class TestTerminalCleanup:
 
         assert db.query(IngestFile).filter_by(ingest_id="ing_done").count() == 0
         assert not scratch.exists()
+
+
+class TestScratchSizeCheck:
+    def test_scratch_size_mismatch_rehydrates_from_blob(
+        self, db, tmp_path, monkeypatch
+    ):
+        """When scratch exists but size doesn't match blob, rehydrate from blob."""
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        job = _make_job(db, "ing_size_check", "corrupt.pdf")
+        blob_content = b"%PDF-1.4 real-content-here-with-many-bytes"
+        _store(db, "ing_size_check", "corrupt.pdf", blob_content)
+
+        # Create scratch with wrong size
+        scratch = Path(ifs.scratch_path("ing_size_check", "corrupt.pdf"))
+        scratch.write_bytes(b"truncated")  # 9 bytes vs 41 bytes in blob
+
+        paths = ifs.ensure_local_files(db, job)
+
+        assert len(paths) == 1
+        assert Path(paths[0]).read_bytes() == blob_content
