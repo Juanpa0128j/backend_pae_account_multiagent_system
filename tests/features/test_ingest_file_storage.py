@@ -1,11 +1,16 @@
 """Feature tests for shared ingest file storage (ingest_files table)."""
 
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models.database import Base, IngestFile, IngestJob, IngestStatus
+from app.services import ingest_file_service as ifs
 
 
 @pytest.fixture()
@@ -53,3 +58,88 @@ class TestIngestFileModel:
         assert loaded.content == b"%PDF-1.4 fake bytes"
         assert loaded.file_name == "factura.pdf"
         assert loaded.created_at is not None
+
+
+def _store(db, ingest_id, name, content=b"%PDF-1.4 x"):
+    ifs.store_files(db, ingest_id, [(name, content)])
+    db.commit()
+
+
+class TestEnsureLocalFiles:
+    def test_rehydrates_from_blob_when_scratch_missing(self, db, tmp_path, monkeypatch):
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        job = _make_job(db, "ing_rehydrate", "factura.pdf")
+        _store(db, "ing_rehydrate", "factura.pdf", b"%PDF-1.4 blob-bytes")
+
+        paths = ifs.ensure_local_files(db, job)
+
+        assert len(paths) == 1
+        assert paths[0].endswith("ing_rehydrate_factura.pdf")
+        assert Path(paths[0]).read_bytes() == b"%PDF-1.4 blob-bytes"
+
+    def test_same_filename_two_jobs_no_cross_contamination(
+        self, db, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        job_a = _make_job(db, "ing_a", "factura.pdf")
+        job_b = _make_job(db, "ing_b", "factura.pdf")
+        _store(db, "ing_a", "factura.pdf", b"%PDF-1.4 AAA")
+        _store(db, "ing_b", "factura.pdf", b"%PDF-1.4 BBB")
+
+        paths_a = ifs.ensure_local_files(db, job_a)
+        paths_b = ifs.ensure_local_files(db, job_b)
+
+        assert Path(paths_a[0]).read_bytes() == b"%PDF-1.4 AAA"
+        assert Path(paths_b[0]).read_bytes() == b"%PDF-1.4 BBB"
+        assert paths_a[0] != paths_b[0]
+
+    def test_legacy_job_without_blobs_falls_back_to_file_path(
+        self, db, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        legacy_file = tmp_path / "legacy.pdf"
+        legacy_file.write_bytes(b"%PDF-1.4 legacy")
+        job = _make_job(db, "ing_legacy", "legacy.pdf")
+        job.file_path = str(legacy_file)
+        db.commit()
+
+        paths = ifs.ensure_local_files(db, job)
+
+        assert paths == [str(legacy_file)]
+
+    def test_nothing_recoverable_raises(self, db, tmp_path, monkeypatch):
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        job = _make_job(db, "ing_lost", "gone.pdf")
+        job.file_path = str(tmp_path / "gone.pdf")  # never written
+        db.commit()
+
+        with pytest.raises(ifs.IngestFilesUnavailableError):
+            ifs.ensure_local_files(db, job)
+
+
+class TestDeleteAndSweep:
+    def test_delete_files_for_job(self, db):
+        _make_job(db, "ing_del", "a.pdf")
+        _store(db, "ing_del", "a.pdf")
+
+        deleted = ifs.delete_files_for_job(db, "ing_del")
+        db.commit()
+
+        assert deleted == 1
+        assert db.query(IngestFile).filter_by(ingest_id="ing_del").count() == 0
+
+    def test_sweep_deletes_only_expired(self, db):
+        _make_job(db, "ing_old", "old.pdf")
+        _make_job(db, "ing_new", "new.pdf")
+        _store(db, "ing_old", "old.pdf")
+        _store(db, "ing_new", "new.pdf")
+        db.query(IngestFile).filter_by(ingest_id="ing_old").update(
+            {"created_at": datetime.now(timezone.utc) - timedelta(days=8)}
+        )
+        db.commit()
+
+        swept = ifs.sweep_expired(db, ttl_days=7)
+
+        assert swept == 1
+        assert db.query(IngestFile).filter_by(ingest_id="ing_new").count() == 1
+        assert db.query(IngestFile).filter_by(ingest_id="ing_old").count() == 0
