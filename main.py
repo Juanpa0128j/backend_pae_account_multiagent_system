@@ -172,13 +172,18 @@ async def db_exception_handler(request: Request, exc: DatabaseException):
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    logger.error(
-        f"Unhandled exception on {request.method} {request.url.path}: {exc}",
-        exc_info=exc,
-    )
+    from sqlalchemy.exc import OperationalError, TimeoutError as SATimeoutError
+
+    if isinstance(exc, (OperationalError, SATimeoutError)):
+        logger.exception("Database error on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Database service unavailable"},
+        )
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error", "error_type": type(exc).__name__},
+        content={"detail": "Internal server error"},
     )
 
 
