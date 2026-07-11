@@ -143,3 +143,45 @@ class TestParseCacheService:
             pcs.get_cached_parse("h" * 64, "fast", session_factory=session_factory)
             == "new"
         )
+
+    def test_fresh_row_survives_sweep(self, db, session_factory):
+        """A non-expired row survives when sweep runs during another store_parse call."""
+        # Pre-store row A (created now, so not expired)
+        db.add(
+            ParseCache(
+                content_sha256="i" * 64,
+                parser_mode="fast",
+                raw_text="fresh_row_text",
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        db.commit()
+
+        # Call store_parse which triggers a sweep
+        pcs.store_parse("j" * 64, "fast", "new_text", session_factory=session_factory)
+
+        # Row A should still exist
+        retrieved = pcs.get_cached_parse(
+            "i" * 64, "fast", session_factory=session_factory
+        )
+        assert retrieved == "fresh_row_text"
+
+    def test_store_parse_tolerates_sweep_failure(self):
+        """store_parse doesn't raise if the sweep query fails."""
+
+        # Create a session factory that always fails on query()
+        def failing_factory():
+            class FailingSession:
+                def query(self, *args, **kwargs):
+                    raise RuntimeError("db failure during sweep")
+
+                def rollback(self):
+                    pass
+
+                def close(self):
+                    pass
+
+            return FailingSession()
+
+        # Should complete without raising
+        pcs.store_parse("k" * 64, "fast", "some_text", session_factory=failing_factory)
