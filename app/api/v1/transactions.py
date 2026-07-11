@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Query, Depends, HTTPException, Body, Request
+from fastapi import APIRouter, Query, Depends, HTTPException, Body, Request
 from decimal import Decimal
 from typing import List, Optional
 
@@ -146,10 +146,7 @@ def _build_raw_data(payload: CreateTransactionPayload) -> dict:
     }
 
 
-@router.post("", status_code=201)
-@router.post(
-    "/", status_code=201, include_in_schema=False
-)  # legacy trailing-slash, no 307
+@router.post("/", status_code=201)
 @limiter.limit("30/minute")
 async def create_transaction(
     request: Request,
@@ -223,10 +220,7 @@ async def create_transaction(
     }
 
 
-@router.get("", response_model=List[TransactionListItem])
-@router.get(
-    "/", response_model=List[TransactionListItem], include_in_schema=False
-)  # legacy trailing-slash, no 307
+@router.get("/", response_model=List[TransactionListItem])
 @limiter.limit("60/minute")
 def list_transactions(
     request: Request,
@@ -893,18 +887,28 @@ async def delete_transaction(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Delete a single transaction (cascade: pending + posted + journal lines).
+    """Soft-delete a single transaction (marks deleted_at on the posted record)."""
+    found = db_service.soft_delete_transaction_posted(db, id)
+    if not found:
+        raise HTTPException(status_code=404, detail="TransacciÃ³n no encontrada.")
 
-    The list/detail surface a transaction by its ``TransactionPending`` id, so we
-    resolve and delete via the pending id (mirroring ``PATCH /{id}`` and reprocess)
-    instead of the posted id. Re-syncs journal-derived statements afterwards so
-    reports/derivation stay coherent.
 
-    Note: this is a hard delete (cascade) and cannot be undone.
-    """
-    company_nit = _delete_transaction_cascade(db, id)  # raises 404 if not found
-    db.commit()
-    _resync_derived_statements(db, company_nit)
+@router.post("/{id}/restore", status_code=200)
+@limiter.limit("30/minute")
+async def restore_transaction(
+    request: Request,
+    id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Restore a soft-deleted transaction."""
+    row = db_service.restore_transaction_posted(db, id)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="TransacciÃ³n no encontrada o ya restaurada.",
+        )
+    return {"id": row.id, "status": "restored"}
 
 
 @router.delete("/by-ingest/{ingest_id}", status_code=200)
@@ -915,7 +919,7 @@ async def delete_transactions_by_ingest(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Delete all transactions belonging to a specific ingest document (cascade)."""
+    """Soft-delete all transactions belonging to a specific ingest document."""
     from app.models.database import TransactionPending
 
     txn_ids = [
@@ -924,18 +928,18 @@ async def delete_transactions_by_ingest(
         .filter(TransactionPending.ingest_id == ingest_id)
         .all()
     ]
-    # Idempotent: no matching transactions (already deleted, double-click, retry)
-    # is a harmless no-op, not a 404.
     if not txn_ids:
-        return {"deleted": 0}
+        raise HTTPException(
+            status_code=404,
+            detail=f"No se encontraron transacciones para el trabajo de ingesta {ingest_id}.",
+        )
 
-    company_nit = None
+    deleted_count = 0
     for txn_id in txn_ids:
-        company_nit = _delete_transaction_cascade(db, txn_id) or company_nit
-    db.commit()
-    _resync_derived_statements(db, company_nit)
+        if db_service.soft_delete_transaction_posted(db, txn_id):
+            deleted_count += 1
 
-    return {"deleted": len(txn_ids)}
+    return {"deleted": deleted_count}
 
 
 # â”€â”€â”€ Manual nota de ajuste contable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
