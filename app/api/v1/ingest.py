@@ -163,24 +163,22 @@ def _run_ingest_pipeline(
         finally:
             db.close()
     finally:
-        keep_file = False
         db = SessionLocal()
         try:
             job = db_service.get_ingest_job(db, ingest_id)
             keep_file = bool(job and job.status == IngestStatus.PENDING_REVIEW)
-        except Exception as status_err:
-            logger.error(
-                "Failed to read ingest %s for cleanup: %s",
-                ingest_id,
-                status_err,
-                exc_info=True,
-            )
+            if not keep_file:
+                if job is not None:
+                    ingest_file_service.cleanup_job_files(db, job, temp_file_paths)
+                else:
+                    # Job row already deleted; unlink scratch files as fallback
+                    for path in temp_file_paths:
+                        Path(path).unlink(missing_ok=True)
+                db.commit()
+        except Exception as cleanup_err:
+            logger.warning("Cleanup failed for ingest %s: %s", ingest_id, cleanup_err)
         finally:
             db.close()
-
-        if not keep_file:
-            for path in temp_file_paths:
-                Path(path).unlink(missing_ok=True)
 
 
 _LOW_CONFIDENCE_THRESHOLD = 0.85
@@ -1007,6 +1005,9 @@ async def cancel_ingest(
             Path(job.file_path).unlink(missing_ok=True)
         except OSError:
             logger.warning("Failed to delete temp file %s", job.file_path)
+
+    ingest_file_service.delete_files_for_job(db, ingest_id)
+    db.commit()
 
     refreshed = db_service.get_ingest_job(db, ingest_id)
     return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))

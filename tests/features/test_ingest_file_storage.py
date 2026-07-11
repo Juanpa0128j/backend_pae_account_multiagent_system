@@ -181,3 +181,20 @@ class TestUploadSizeCap:
 
     def test_accept_file_at_25mb(self):
         ingest_api.enforce_size_cap(b"x" * (25 * 1024 * 1024), "ok.pdf")  # no raise
+
+
+class TestTerminalCleanup:
+    def test_cleanup_job_files_removes_blobs_and_scratch(
+        self, db, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        job = _make_job(db, "ing_done", "done.pdf")
+        _store(db, "ing_done", "done.pdf")
+        scratch = Path(ifs.scratch_path("ing_done", "done.pdf"))
+        scratch.write_bytes(b"scratch")
+
+        ifs.cleanup_job_files(db, job, [str(scratch)])
+        db.commit()
+
+        assert db.query(IngestFile).filter_by(ingest_id="ing_done").count() == 0
+        assert not scratch.exists()

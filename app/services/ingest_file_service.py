@@ -105,6 +105,16 @@ def delete_files_for_job(db: Session, ingest_id: str) -> int:
     )
 
 
+def cleanup_job_files(db: Session, job: IngestJob, local_paths: list[str]) -> None:
+    """Terminal-state cleanup: blob rows + scratch files. Caller commits."""
+    delete_files_for_job(db, str(job.id))
+    for path in local_paths:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to delete scratch file %s", path)
+
+
 def sweep_expired(db: Session, ttl_days: int = FILE_TTL_DAYS) -> int:
     """Delete blobs older than ttl_days (abandoned PENDING_REVIEW jobs). Commits."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
