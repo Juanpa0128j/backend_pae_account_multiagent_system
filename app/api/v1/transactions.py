@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Depends, HTTPException, Body, Request
+﻿from fastapi import APIRouter, Query, Depends, HTTPException, Body, Request
 from decimal import Decimal
 from typing import List, Optional
 
@@ -38,11 +38,11 @@ class TransactionListItem(BaseModel):
 def _libro_auxiliar_lines_as_transactions(
     db: Session, company_nit: str, limit: int, offset: int
 ) -> List[TransactionListItem]:
-    """For Vía B-locked companies, surface libro_auxiliar lines as transactions.
+    """For VÃ­a B-locked companies, surface libro_auxiliar lines as transactions.
 
-    The user has no posted transactions of their own — they uploaded an
+    The user has no posted transactions of their own â€” they uploaded an
     aggregated ledger. Each line in that ledger is a movement we can render
-    in the same shape as Vía A transactions for UI consistency.
+    in the same shape as VÃ­a A transactions for UI consistency.
     """
     stmt = (
         db.query(FinancialStatement)
@@ -80,7 +80,7 @@ def _libro_auxiliar_lines_as_transactions(
             TransactionListItem(
                 id=f"vbla_{stmt.id}_{idx}",
                 fecha=str(line.get("fecha") or ""),
-                concepto=" — ".join(concepto_parts) or "Movimiento libro auxiliar",
+                concepto=" â€” ".join(concepto_parts) or "Movimiento libro auxiliar",
                 total=total,
                 status="posted",
                 nit_emisor=str(line.get("tercero_nit") or ""),
@@ -168,7 +168,7 @@ async def create_transaction(
             detail={
                 "error_category": "business_precondition",
                 "error_code": "MISSING_COMPANY_SETTINGS",
-                "message": f"No se encontró configuración tributaria para la empresa con NIT {company_nit}.",
+                "message": f"No se encontrÃ³ configuraciÃ³n tributaria para la empresa con NIT {company_nit}.",
                 "remediation": "Configure el perfil tributario de su empresa en /settings y vuelva a intentarlo.",
             },
         )
@@ -228,7 +228,7 @@ async def create_transaction(
     "/", response_model=List[TransactionListItem], include_in_schema=False
 )  # legacy trailing-slash, no 307
 @limiter.limit("60/minute")
-async def list_transactions(
+def list_transactions(
     request: Request,
     status: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
@@ -240,16 +240,16 @@ async def list_transactions(
     """
     Returns a list of transactions from the database, optionally filtered by status.
 
-    For Vía B-locked companies (no posted transactions exist), returns
+    For VÃ­a B-locked companies (no posted transactions exist), returns
     libro_auxiliar lines mapped to the same shape so the UI stays consistent.
     """
-    # Normalize the company NIT consistently with /reports/* and /dashboard/* —
+    # Normalize the company NIT consistently with /reports/* and /dashboard/* â€”
     # otherwise a NIT with dots/spaces would silently miss the lock check.
     normalized_company_nit = (
         normalize_optional_nit(company_nit) if company_nit else None
     )
 
-    # Vía B branch: when the company is locked to 'work_with_existing', surface
+    # VÃ­a B branch: when the company is locked to 'work_with_existing', surface
     # libro_auxiliar lines instead of posted transactions.
     if normalized_company_nit:
         try:
@@ -289,7 +289,7 @@ async def list_transactions(
 
 @router.get("/search")
 @limiter.limit("60/minute")
-async def search_transactions(
+def search_transactions(
     request: Request,
     nit: Optional[str] = None,
     fecha_inicio: Optional[str] = None,
@@ -322,7 +322,7 @@ async def search_transactions(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"El valor de estado no es válido: {status}",
+                detail=f"El valor de estado no es vÃ¡lido: {status}",
             )
 
     txns = db_service.search_transactions(db, nit, fi, ff, txn_status, limit)
@@ -342,7 +342,7 @@ async def search_transactions(
 
 @router.get("/{id}")
 @limiter.limit("60/minute")
-async def get_transaction(
+def get_transaction(
     request: Request,
     id: str,
     db: Session = Depends(get_db),
@@ -364,7 +364,7 @@ async def get_transaction(
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
+        raise HTTPException(status_code=404, detail=f"TransacciÃ³n {id} no encontrada.")
 
     posted = (
         db.query(TransactionPosted)
@@ -456,7 +456,7 @@ def _delete_transaction_cascade(db: Session, txn_id: str) -> Optional[str]:
     txn = db.query(TransactionPending).filter(TransactionPending.id == txn_id).first()
     if not txn:
         raise HTTPException(
-            status_code=404, detail=f"Transacción {txn_id} no encontrada."
+            status_code=404, detail=f"TransacciÃ³n {txn_id} no encontrada."
         )
 
     # Re-processed transactions may have multiple posted rows for a single
@@ -488,11 +488,11 @@ def _delete_transaction_cascade(db: Session, txn_id: str) -> Optional[str]:
 def _resync_derived_statements(db: Session, company_nit: Optional[str]) -> None:
     """Refresh-in-place (or clear) journal-derived statements after a delete.
 
-    Vía A derivation is manual (the user picks a period and generates first-level
+    VÃ­a A derivation is manual (the user picks a period and generates first-level
     statements, then derives NIC 7 secondaries). A transaction delete invalidates
     whatever the user already generated, so we refresh ONLY the periods that
-    already have ``derived_from_journal`` rows — keeping their original period
-    bounds and ``frequency`` — instead of inventing new periods.
+    already have ``derived_from_journal`` rows â€” keeping their original period
+    bounds and ``frequency`` â€” instead of inventing new periods.
 
     - If journal entries remain: for each distinct (period_start, period_end)
       among existing first-level rows, delete that period's derived rows
@@ -500,7 +500,7 @@ def _resync_derived_statements(db: Session, company_nit: Optional[str]) -> None:
       first-level with the preserved frequency, and re-derive the NIC 7
       secondaries if that period had them before.
     - If NO journal entries remain: purge every ``derived_from_journal`` row for
-      the NIT so reports go empty instead of showing a stale snapshot. Vía B
+      the NIT so reports go empty instead of showing a stale snapshot. VÃ­a B
       uploads (source_mode ``direct`` / ``derived``) are left untouched.
 
     Non-fatal: logs a warning and never raises. Transaction deletion must
@@ -518,11 +518,11 @@ def _resync_derived_statements(db: Session, company_nit: Optional[str]) -> None:
             .first()
         )
         if remaining is None:
-            # No journal left — purge ALL journal-derived statements so reports go
+            # No journal left â€” purge ALL journal-derived statements so reports go
             # empty: both first-level (derived_from_journal) AND the NIC 7
             # secondaries derived from them (derived). Otherwise stale flujo /
             # cambios / notas would keep showing for periods whose journal is gone.
-            # Vía B uploads (source_mode='direct') are left untouched.
+            # VÃ­a B uploads (source_mode='direct') are left untouched.
             db.query(FinancialStatement).filter(
                 FinancialStatement.entity_nit == company_nit,
                 FinancialStatement.source_mode.in_(("derived_from_journal", "derived")),
@@ -530,7 +530,7 @@ def _resync_derived_statements(db: Session, company_nit: Optional[str]) -> None:
             db.commit()
             return
 
-        # Journal remains — refresh in place only the periods the user already
+        # Journal remains â€” refresh in place only the periods the user already
         # generated, preserving each period's frequency.
         first_level_rows = (
             db.query(
@@ -544,7 +544,7 @@ def _resync_derived_statements(db: Session, company_nit: Optional[str]) -> None:
             )
             .all()
         )
-        # Distinct (period_start, period_end) → frequency (first non-null wins).
+        # Distinct (period_start, period_end) â†’ frequency (first non-null wins).
         periods: dict[tuple, Optional[str]] = {}
         for ps, pe, freq in first_level_rows:
             if ps is None or pe is None:
@@ -643,18 +643,18 @@ async def set_transaction_fecha(
     """
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
+        raise HTTPException(status_code=404, detail=f"TransacciÃ³n {id} no encontrada.")
 
     # Once the transaction has been posted, its fecha is already replicated to
     # JournalEntryLine.fecha and into the derived FinancialStatement periods.
     # Letting the user patch it here without cascading would leave the pending
-    # row out of sync with the posted ledger — reject and require a full
+    # row out of sync with the posted ledger â€” reject and require a full
     # re-process flow instead.
     if txn.status == TransactionStatus.POSTED:
         raise HTTPException(
             status_code=409,
             detail=(
-                "La transacción ya fue contabilizada; su fecha no puede modificarse "
+                "La transacciÃ³n ya fue contabilizada; su fecha no puede modificarse "
                 "directamente sin re-procesar el asiento. Anule el asiento y vuelva a "
                 "procesarlo con la fecha correcta."
             ),
@@ -698,13 +698,13 @@ async def update_transaction(
 
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
+        raise HTTPException(status_code=404, detail=f"TransacciÃ³n {id} no encontrada.")
 
     if txn.status == TransactionStatus.POSTED:
         raise HTTPException(
             status_code=409,
             detail=(
-                "La transacción ya fue contabilizada; su fecha no puede modificarse "
+                "La transacciÃ³n ya fue contabilizada; su fecha no puede modificarse "
                 "directamente sin re-procesar el asiento. Use el endpoint de reprocessamiento."
             ),
         )
@@ -819,7 +819,7 @@ async def reprocess_transaction(
     """Delete a posted transaction and recreate it as pending for re-processing."""
     txn = db.query(TransactionPending).filter(TransactionPending.id == id).first()
     if not txn:
-        raise HTTPException(status_code=404, detail=f"Transacción {id} no encontrada.")
+        raise HTTPException(status_code=404, detail=f"TransacciÃ³n {id} no encontrada.")
 
     if txn.status != TransactionStatus.POSTED:
         raise HTTPException(
@@ -938,7 +938,7 @@ async def delete_transactions_by_ingest(
     return {"deleted": len(txn_ids)}
 
 
-# ─── Manual nota de ajuste contable ──────────────────────────────────────────
+# â”€â”€â”€ Manual nota de ajuste contable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class AjusteLineRequest(BaseModel):
@@ -969,8 +969,8 @@ async def create_manual_ajuste(
 ):
     """Persist a CPA-prepared nota de ajuste contable directly to journal_entry_lines.
 
-    Validates double-entry balance (Σdébitos == Σcréditos) and requires at least
-    two lines. Skips the LLM pipeline entirely — accounts are trusted as-is.
+    Validates double-entry balance (Î£dÃ©bitos == Î£crÃ©ditos) and requires at least
+    two lines. Skips the LLM pipeline entirely â€” accounts are trusted as-is.
     """
     from decimal import Decimal as D
     import uuid
@@ -984,11 +984,11 @@ async def create_manual_ajuste(
     )
     from app.services.nit_utils import normalize_nit
 
-    # ── validation ──────────────────────────────────────────────────────────
+    # â”€â”€ validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if len(body.lines) < 2:
         raise HTTPException(
             status_code=422,
-            detail="Una nota de ajuste requiere al menos dos líneas contables.",
+            detail="Una nota de ajuste requiere al menos dos lÃ­neas contables.",
         )
 
     total_debito = sum(
@@ -1002,33 +1002,33 @@ async def create_manual_ajuste(
         raise HTTPException(
             status_code=422,
             detail=(
-                f"El asiento no cuadra: Σdébitos={total_debito} ≠ Σcréditos={total_credito}. "
+                f"El asiento no cuadra: Î£dÃ©bitos={total_debito} â‰  Î£crÃ©ditos={total_credito}. "
                 "Corrija los valores antes de registrar."
             ),
         )
 
-    # ── parse fecha ─────────────────────────────────────────────────────────
+    # â”€â”€ parse fecha â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     try:
         fecha_dt = datetime.fromisoformat(body.fecha).replace(tzinfo=timezone.utc)
     except ValueError:
         raise HTTPException(
             status_code=422,
-            detail=f"Fecha inválida: '{body.fecha}'. Use formato ISO (YYYY-MM-DD).",
+            detail=f"Fecha invÃ¡lida: '{body.fecha}'. Use formato ISO (YYYY-MM-DD).",
         )
 
     company_nit_clean = normalize_nit(body.company_nit)
     ajuste_id = str(uuid.uuid4())
     pending_id = str(uuid.uuid4())
 
-    # ── synthetic ingest job ─────────────────────────────────────────────────
-    # transactions_pending.ingest_id is NOT NULL (FK → ingest_jobs.id), so a
+    # â”€â”€ synthetic ingest job â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # transactions_pending.ingest_id is NOT NULL (FK â†’ ingest_jobs.id), so a
     # manual ajuste needs a backing ingest job just like create_manual_transaction.
     # commit=False keeps it in this request's transaction (flushed, not committed).
     ingest_job = db_service.create_manual_ingest_job(
         db, company_nit=company_nit_clean, commit=False
     )
 
-    # ── create a synthetic TransactionPending stub (required FK) ─────────────
+    # â”€â”€ create a synthetic TransactionPending stub (required FK) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     pending = TransactionPending(
         id=pending_id,
         ingest_id=ingest_job.id,
@@ -1047,7 +1047,7 @@ async def create_manual_ajuste(
     )
     db.add(pending)
 
-    # ── create TransactionPosted ─────────────────────────────────────────────
+    # â”€â”€ create TransactionPosted â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Use first debit account as the primary PUC for the posted record.
     primary_cuenta = next(
         (ln.cuenta_puc for ln in body.lines if ln.tipo_movimiento == "debito"),
@@ -1078,7 +1078,7 @@ async def create_manual_ajuste(
     )
     db.add(posted)
 
-    # ── create JournalEntryLines ─────────────────────────────────────────────
+    # â”€â”€ create JournalEntryLines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     for ln in body.lines:
         debito_val = D(str(ln.valor)) if ln.tipo_movimiento == "debito" else D("0")
         credito_val = D(str(ln.valor)) if ln.tipo_movimiento == "credito" else D("0")

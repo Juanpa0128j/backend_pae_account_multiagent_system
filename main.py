@@ -170,6 +170,18 @@ async def db_exception_handler(request: Request, exc: DatabaseException):
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error(
+        f"Unhandled exception on {request.method} {request.url.path}: {exc}",
+        exc_info=exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "error_type": type(exc).__name__},
+    )
+
+
 # Include routers
 app.include_router(ingest.router, prefix="/api/v1/ingest", tags=["Ingesta"])
 app.include_router(process.router, prefix="/api/v1/process", tags=["Procesamiento"])
