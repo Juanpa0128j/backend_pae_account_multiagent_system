@@ -5,10 +5,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1 import ingest as ingest_api
 from app.models.database import Base, IngestFile, IngestJob, IngestStatus
 from app.services import ingest_file_service as ifs
 
@@ -143,3 +145,14 @@ class TestDeleteAndSweep:
         assert swept == 1
         assert db.query(IngestFile).filter_by(ingest_id="ing_new").count() == 1
         assert db.query(IngestFile).filter_by(ingest_id="ing_old").count() == 0
+
+
+class TestUploadSizeCap:
+    def test_reject_file_over_25mb(self):
+        with pytest.raises(HTTPException) as exc_info:
+            ingest_api.enforce_size_cap(b"x" * (25 * 1024 * 1024 + 1), "big.pdf")
+        assert exc_info.value.status_code == 422
+        assert "25MB" in exc_info.value.detail
+
+    def test_accept_file_at_25mb(self):
+        ingest_api.enforce_size_cap(b"x" * (25 * 1024 * 1024), "ok.pdf")  # no raise

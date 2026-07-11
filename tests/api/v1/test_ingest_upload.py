@@ -46,8 +46,8 @@ class TestIngestUploadParserMode:
             lambda db, ingest_id: mock_job,
         )
         monkeypatch.setattr(
-            "app.api.v1.ingest.save_temp_file",
-            lambda content, name: "/tmp/fake.pdf",
+            "app.api.v1.ingest.ingest_file_service.store_files",
+            lambda db, ingest_id, files: None,
         )
 
         client = TestClient(app)
@@ -80,8 +80,8 @@ class TestIngestUploadParserMode:
             lambda db, ingest_id: mock_job,
         )
         monkeypatch.setattr(
-            "app.api.v1.ingest.save_temp_file",
-            lambda content, name: "/tmp/fake.pdf",
+            "app.api.v1.ingest.ingest_file_service.store_files",
+            lambda db, ingest_id, files: None,
         )
 
         client = TestClient(app)
@@ -98,8 +98,8 @@ class TestIngestUploadParserMode:
     def test_upload_rejects_invalid_parser_mode(self, monkeypatch):
         """POST with invalid parser_mode should return 422."""
         monkeypatch.setattr(
-            "app.api.v1.ingest.save_temp_file",
-            lambda content, name: "/tmp/fake.pdf",
+            "app.api.v1.ingest.ingest_file_service.store_files",
+            lambda db, ingest_id, files: None,
         )
 
         client = TestClient(app)
@@ -137,19 +137,19 @@ class TestIngestUploadMultiPage:
     def test_upload_endpoint_accepts_multiple_files(self, monkeypatch):
         """POST with multiple files should return 202 and queue a single ingest job."""
         mock_job = self._make_job()
-        saved_paths = []
+        stored_payloads = []
 
-        def _mock_save_temp_file(content, name):
-            path = f"/tmp/fake_{name}"
-            saved_paths.append(path)
-            return path
+        def _mock_store_files(db, ingest_id, files):
+            stored_payloads.extend(files)
 
         def _mock_create_ingest_job(db, file_name, file_path, **kwargs):
             mock_job.file_name = file_name
             mock_job.file_path = file_path
             return mock_job
 
-        monkeypatch.setattr("app.api.v1.ingest.save_temp_file", _mock_save_temp_file)
+        monkeypatch.setattr(
+            "app.api.v1.ingest.ingest_file_service.store_files", _mock_store_files
+        )
         monkeypatch.setattr(
             "app.api.v1.ingest.db_service.create_ingest_job", _mock_create_ingest_job
         )
@@ -169,7 +169,7 @@ class TestIngestUploadMultiPage:
         assert response.status_code == 202
         data = response.json()
         assert data["ingest_id"] == "ing_test_123"
-        assert len(saved_paths) == 2
+        assert len(stored_payloads) == 2
 
 
 class TestIngestUploadFileNames:
@@ -208,8 +208,8 @@ class TestIngestUploadFileNames:
             "app.api.v1.ingest.db_service.create_ingest_job", _mock_create_ingest_job
         )
         monkeypatch.setattr(
-            "app.api.v1.ingest.save_temp_file",
-            lambda content, name: "/tmp/fake.pdf",
+            "app.api.v1.ingest.ingest_file_service.store_files",
+            lambda db, ingest_id, files: None,
         )
 
         client = TestClient(app)
@@ -236,8 +236,8 @@ class TestIngestUploadFileNames:
             "app.api.v1.ingest.db_service.create_ingest_job", _mock_create_ingest_job
         )
         monkeypatch.setattr(
-            "app.api.v1.ingest.save_temp_file",
-            lambda content, name: "/tmp/fake.pdf",
+            "app.api.v1.ingest.ingest_file_service.store_files",
+            lambda db, ingest_id, files: None,
         )
 
         client = TestClient(app)
@@ -302,8 +302,8 @@ class TestIngestUploadMultiFileMode:
             "app.api.v1.ingest.db_service.create_ingest_job", _mock_create_ingest_job
         )
         monkeypatch.setattr(
-            "app.api.v1.ingest.save_temp_file",
-            lambda content, name: "/tmp/fake.pdf",
+            "app.api.v1.ingest.ingest_file_service.store_files",
+            lambda db, ingest_id, files: None,
         )
 
         client = TestClient(app)
@@ -327,8 +327,8 @@ class TestIngestUploadMultiFileMode:
             "app.api.v1.ingest.db_service.create_ingest_job", _mock_create_ingest_job
         )
         monkeypatch.setattr(
-            "app.api.v1.ingest.save_temp_file",
-            lambda content, name: "/tmp/fake.pdf",
+            "app.api.v1.ingest.ingest_file_service.store_files",
+            lambda db, ingest_id, files: None,
         )
 
         client = TestClient(app)

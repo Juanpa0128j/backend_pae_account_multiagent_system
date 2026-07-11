@@ -38,7 +38,7 @@ from app.models.schemas import (
 )
 from app.services.ingest_matcher import find_merge_candidates
 from app.models.trace import PipelineTrace
-from app.services import db_service
+from app.services import db_service, ingest_file_service
 from app.services.error_messages_es import classify_exception
 from app.services.nit_utils import normalize_nit
 from app.workflows.dispatch import dispatch_ingest_start
@@ -47,17 +47,16 @@ from app.core.limiter import limiter
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+MAX_INGEST_FILE_BYTES = 25 * 1024 * 1024
 
-def save_temp_file(file_content: bytes, filename: str) -> str:
-    """Save file to temporary directory."""
-    temp_dir = Path(tempfile.gettempdir()) / "pae_uploads"
-    temp_dir.mkdir(exist_ok=True)
-    temp_path = temp_dir / Path(filename).name
 
-    with open(temp_path, "wb") as f:
-        f.write(file_content)
-
-    return str(temp_path)
+def enforce_size_cap(file_content: bytes, filename: str) -> None:
+    if len(file_content) > MAX_INGEST_FILE_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"El archivo '{filename}' supera el tamaño máximo de 25MB.",
+            headers={"error_code": "FILE_TOO_LARGE"},
+        )
 
 
 def process_ingest_background(
@@ -446,6 +445,11 @@ async def upload_file(
             )
 
     try:
+        try:
+            ingest_file_service.sweep_expired(db)
+        except Exception as sweep_err:  # noqa: BLE001 — sweep must never block uploads
+            logger.warning("ingest_files TTL sweep failed: %s", sweep_err)
+
         normalized_company_nit = None
         if company_nit is not None:
             try:
@@ -476,9 +480,11 @@ async def upload_file(
             ".png": b"\x89PNG",
         }
 
-        temp_file_paths: list[str] = []
+        temp_file_paths: list[str] = []  # filled after job creation with scratch paths
+        file_payloads: list[tuple[str, bytes]] = []
         for f in files:
             file_content = await f.read()
+            enforce_size_cap(file_content, f.filename)
 
             # Validate file is not empty
             if not file_content:
@@ -517,9 +523,7 @@ async def upload_file(
                         detail=f"El contenido del archivo no coincide con su extensión ({_ext}). El archivo puede estar corrupto o protegido con contraseña.",
                     )
 
-            temp_path = save_temp_file(file_content, f.filename)
-            logger.info(f"Saved uploaded file to: {temp_path}")
-            temp_file_paths.append(temp_path)
+            file_payloads.append((f.filename, file_content))
 
         confirmed_doc_type = None
         confirmed_pathway = None
@@ -598,20 +602,27 @@ async def upload_file(
         if fanout_enabled:
             jobs_created: list[IngestJob] = []
             per_file_results: list[dict] = []
-            for f, temp_path in zip(files, temp_file_paths):
+            for f, (file_name, file_content) in zip(files, file_payloads):
                 job = db_service.create_ingest_job(
                     db,
                     f.filename,
-                    temp_path,
+                    None,
                     company_nit=normalized_company_nit,
                     document_type=confirmed_doc_type,
                     pathway=confirmed_pathway,
                     classification_confirmed=True if confirmed_doc_type else None,
                     parser_mode=validated_mode,
+                    commit=False,
                     created_by=str(current_user.id),
                     file_names=[f.filename],
                     multi_file_mode="pages",
                 )
+                temp_path = ingest_file_service.scratch_path(str(job.id), f.filename)
+                job.file_path = temp_path
+                ingest_file_service.store_files(
+                    db, str(job.id), [(file_name, file_content)]
+                )
+                db.commit()
                 jobs_created.append(job)
                 try:
                     await dispatch_ingest_start(
@@ -673,16 +684,24 @@ async def upload_file(
         ingest_job = db_service.create_ingest_job(
             db,
             first_file.filename,
-            temp_file_paths[0],
+            None,
             company_nit=normalized_company_nit,
             document_type=confirmed_doc_type,
             pathway=confirmed_pathway,
             classification_confirmed=True if confirmed_doc_type else None,
             parser_mode=validated_mode,
+            commit=False,
             created_by=str(current_user.id),
             file_names=[f.filename for f in files],
             multi_file_mode=multi_file_mode,
         )
+        temp_file_paths = [
+            ingest_file_service.scratch_path(str(ingest_job.id), file_name)
+            for file_name, _ in file_payloads
+        ]
+        ingest_job.file_path = temp_file_paths[0]
+        ingest_file_service.store_files(db, str(ingest_job.id), file_payloads)
+        db.commit()
         logger.info(f"Created IngestJob: {ingest_job.id}")
 
         # Lock the company to this pathway on first upload (when pathway is known).

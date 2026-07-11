@@ -144,6 +144,7 @@ class TestUploadPathwayEnforcement:
                 patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
                 patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
                 patch("app.api.v1.ingest.process_ingest_background"),
+                patch("app.api.v1.ingest.ingest_file_service.store_files"),
             ):
                 mock_lock.return_value = None
                 mock_job = MagicMock()
@@ -168,6 +169,7 @@ class TestUploadPathwayEnforcement:
                 patch("app.api.v1.ingest.db_service.create_ingest_job") as mock_create,
                 patch("app.api.v1.ingest.db_service.set_company_locked_pathway"),
                 patch("app.api.v1.ingest.process_ingest_background"),
+                patch("app.api.v1.ingest.ingest_file_service.store_files"),
             ):
                 mock_lock.return_value = "work_with_existing"
                 mock_job = MagicMock()
