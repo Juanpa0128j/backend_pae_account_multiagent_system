@@ -147,6 +147,31 @@ class TestDeleteAndSweep:
         assert db.query(IngestFile).filter_by(ingest_id="ing_old").count() == 0
 
 
+class TestResumeRehydration:
+    def test_resume_paths_resolve_with_empty_scratch_dir(
+        self, db, tmp_path, monkeypatch
+    ):
+        """The production bug: instance restarted / different instance,
+        /tmp is empty, job must still resume from DB blobs."""
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        job = _make_job(db, "ing_resume", "extracto.pdf")
+        job.file_names = ["extracto.pdf"]
+        db.commit()
+        _store(db, "ing_resume", "extracto.pdf", b"%PDF-1.4 survived")
+
+        # Scratch dir is empty — nothing was ever written locally here.
+        paths = ifs.ensure_local_files(db, job)
+
+        assert Path(paths[0]).read_bytes() == b"%PDF-1.4 survived"
+
+    def test_unrecoverable_resume_raises_spanish_error(self, db, tmp_path, monkeypatch):
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        job = _make_job(db, "ing_gone2", "gone.pdf")
+        with pytest.raises(ifs.IngestFilesUnavailableError) as exc_info:
+            ifs.ensure_local_files(db, job)
+        assert "vuelva a subirlo" in exc_info.value.detail
+
+
 class TestUploadSizeCap:
     def test_reject_file_over_25mb(self):
         with pytest.raises(HTTPException) as exc_info:

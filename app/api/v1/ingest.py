@@ -1,5 +1,4 @@
 import logging
-import tempfile
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -819,17 +818,18 @@ async def update_ingest_classification(
         )
 
     if payload.confirmed:
-        if not job.file_path:
-            raise HTTPException(
-                status_code=422,
-                detail="El trabajo de ingesta no tiene ruta de archivo para reanudar",
+        # Rehydrate files from shared storage — this instance may not be the
+        # one that received the upload (restart / horizontal scaling).
+        try:
+            all_file_paths = ingest_file_service.ensure_local_files(db, job)
+        except ingest_file_service.IngestFilesUnavailableError as missing_err:
+            db_service.update_ingest_job(
+                db,
+                ingest_id,
+                IngestStatus.FAILED,
+                extraction_errors=[missing_err.detail],
             )
-        # Reconstruct all file paths from stored file_names; fall back to single file_path.
-        temp_dir = Path(tempfile.gettempdir()) / "pae_uploads"
-        if job.file_names and len(job.file_names) > 1:
-            all_file_paths = [str(temp_dir / name) for name in job.file_names]
-        else:
-            all_file_paths = [job.file_path]
+            raise HTTPException(status_code=409, detail=missing_err.detail)
         background_tasks.add_task(
             process_ingest_background,
             all_file_paths,
