@@ -471,6 +471,24 @@ class IngestFile(Base):
         return f"<IngestFile(id={self.id}, ingest_id={self.ingest_id})>"
 
 
+class ParseCache(Base):
+    """Shared cache of LlamaParse output, keyed by content hash + parser mode.
+
+    Content-addressed and job-independent: a hit requires possessing the
+    identical file bytes, so cross-tenant sharing is safe by construction.
+    Best-effort by contract — rows may vanish (TTL) at any time.
+    """
+
+    __tablename__ = "parse_cache"
+
+    content_sha256 = Column(String(64), primary_key=True)
+    parser_mode = Column(String(20), primary_key=True)
+    raw_text = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
 class TransactionPending(Base):
     """Raw transactions extracted from ingested documents."""
 
