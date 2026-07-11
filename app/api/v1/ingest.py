@@ -1,5 +1,4 @@
 import logging
-import tempfile
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -38,7 +37,7 @@ from app.models.schemas import (
 )
 from app.services.ingest_matcher import find_merge_candidates
 from app.models.trace import PipelineTrace
-from app.services import db_service
+from app.services import db_service, ingest_file_service
 from app.services.error_messages_es import classify_exception
 from app.services.nit_utils import normalize_nit
 from app.workflows.dispatch import dispatch_ingest_start
@@ -47,17 +46,16 @@ from app.core.limiter import limiter
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+MAX_INGEST_FILE_BYTES = 25 * 1024 * 1024
 
-def save_temp_file(file_content: bytes, filename: str) -> str:
-    """Save file to temporary directory."""
-    temp_dir = Path(tempfile.gettempdir()) / "pae_uploads"
-    temp_dir.mkdir(exist_ok=True)
-    temp_path = temp_dir / Path(filename).name
 
-    with open(temp_path, "wb") as f:
-        f.write(file_content)
-
-    return str(temp_path)
+def enforce_size_cap(file_content: bytes, filename: str) -> None:
+    if len(file_content) > MAX_INGEST_FILE_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"El archivo '{filename}' supera el tamaño máximo de 25MB.",
+            headers={"error_code": "FILE_TOO_LARGE"},
+        )
 
 
 def process_ingest_background(
@@ -93,6 +91,28 @@ def _run_ingest_pipeline(
         initial["parser_mode"] = parser_mode
     initial["multi_file_mode"] = multi_file_mode
     try:
+        # Rehydrate from shared storage before the first pipeline run too —
+        # this instance may not be the one that received the upload (restart
+        # / horizontal scaling), and scratch files are local-disk-only. This
+        # `return` stays inside this try so the finally-block cleanup below
+        # still runs (Python executes finally even on an early return).
+        db = SessionLocal()
+        try:
+            job = db_service.get_ingest_job(db, ingest_id)
+            if job is not None:
+                try:
+                    temp_file_paths = ingest_file_service.ensure_local_files(db, job)
+                except ingest_file_service.IngestFilesUnavailableError as missing_err:
+                    db_service.update_ingest_job(
+                        db,
+                        ingest_id,
+                        IngestStatus.FAILED,
+                        extraction_errors=[missing_err.detail],
+                    )
+                    return
+        finally:
+            db.close()
+
         result = invoke_ingest_pipeline(
             temp_file_paths[0],
             initial_state=initial,
@@ -165,24 +185,48 @@ def _run_ingest_pipeline(
         finally:
             db.close()
     finally:
-        keep_file = False
         db = SessionLocal()
         try:
-            job = db_service.get_ingest_job(db, ingest_id)
-            keep_file = bool(job and job.status == IngestStatus.PENDING_REVIEW)
-        except Exception as status_err:
-            logger.error(
-                "Failed to read ingest %s for cleanup: %s",
-                ingest_id,
-                status_err,
-                exc_info=True,
-            )
+            try:
+                job = db_service.get_ingest_job(db, ingest_id)
+            except Exception as lookup_err:
+                logger.error(
+                    "Failed to read ingest %s for cleanup: %s",
+                    ingest_id,
+                    lookup_err,
+                    exc_info=True,
+                )
+                # Best-effort scratch-only cleanup (DB is failing; skip blob deletion)
+                for path in temp_file_paths:
+                    try:
+                        Path(path).unlink(missing_ok=True)
+                    except OSError as unlink_err:
+                        logger.warning(
+                            "Failed to delete scratch file %s for ingest %s: %s",
+                            path,
+                            ingest_id,
+                            unlink_err,
+                        )
+            else:
+                # Lookup succeeded, attempt cleanup
+                keep_file = bool(job and job.status == IngestStatus.PENDING_REVIEW)
+                if not keep_file:
+                    try:
+                        if job is not None:
+                            ingest_file_service.cleanup_job_files(
+                                db, job, temp_file_paths
+                            )
+                        else:
+                            # Job row already deleted; unlink scratch files as fallback
+                            for path in temp_file_paths:
+                                Path(path).unlink(missing_ok=True)
+                        db.commit()
+                    except Exception as cleanup_err:
+                        logger.warning(
+                            "Cleanup failed for ingest %s: %s", ingest_id, cleanup_err
+                        )
         finally:
             db.close()
-
-        if not keep_file:
-            for path in temp_file_paths:
-                Path(path).unlink(missing_ok=True)
 
 
 _LOW_CONFIDENCE_THRESHOLD = 0.85
@@ -446,6 +490,11 @@ async def upload_file(
             )
 
     try:
+        try:
+            ingest_file_service.sweep_expired(db)
+        except Exception as sweep_err:  # noqa: BLE001 — sweep must never block uploads
+            logger.warning("ingest_files TTL sweep failed: %s", sweep_err)
+
         normalized_company_nit = None
         if company_nit is not None:
             try:
@@ -476,21 +525,16 @@ async def upload_file(
             ".png": b"\x89PNG",
         }
 
-        temp_file_paths: list[str] = []
+        temp_file_paths: list[str] = []  # filled after job creation with scratch paths
+        file_payloads: list[tuple[str, bytes]] = []
         for f in files:
             file_content = await f.read()
+            enforce_size_cap(file_content, f.filename)
 
             # Validate file is not empty
             if not file_content:
                 raise HTTPException(
                     status_code=422, detail=f"El archivo {f.filename} está vacío"
-                )
-
-            MAX_FILE_SIZE = 50 * 1024 * 1024
-            if len(file_content) > MAX_FILE_SIZE:
-                raise HTTPException(
-                    status_code=413,
-                    detail="El archivo excede el tamaño máximo de 50MB",
                 )
 
             _ext = Path(f.filename).suffix.lower()
@@ -517,9 +561,7 @@ async def upload_file(
                         detail=f"El contenido del archivo no coincide con su extensión ({_ext}). El archivo puede estar corrupto o protegido con contraseña.",
                     )
 
-            temp_path = save_temp_file(file_content, f.filename)
-            logger.info(f"Saved uploaded file to: {temp_path}")
-            temp_file_paths.append(temp_path)
+            file_payloads.append((f.filename, file_content))
 
         confirmed_doc_type = None
         confirmed_pathway = None
@@ -598,20 +640,27 @@ async def upload_file(
         if fanout_enabled:
             jobs_created: list[IngestJob] = []
             per_file_results: list[dict] = []
-            for f, temp_path in zip(files, temp_file_paths):
+            for f, (file_name, file_content) in zip(files, file_payloads):
                 job = db_service.create_ingest_job(
                     db,
                     f.filename,
-                    temp_path,
+                    None,
                     company_nit=normalized_company_nit,
                     document_type=confirmed_doc_type,
                     pathway=confirmed_pathway,
                     classification_confirmed=True if confirmed_doc_type else None,
                     parser_mode=validated_mode,
+                    commit=False,
                     created_by=str(current_user.id),
                     file_names=[f.filename],
                     multi_file_mode="pages",
                 )
+                temp_path = ingest_file_service.scratch_path(str(job.id), f.filename)
+                job.file_path = temp_path
+                ingest_file_service.store_files(
+                    db, str(job.id), [(file_name, file_content)]
+                )
+                db.commit()
                 jobs_created.append(job)
                 try:
                     await dispatch_ingest_start(
@@ -643,6 +692,8 @@ async def upload_file(
                             "No se pudo encolar el documento para procesamiento. Reintenta la subida.",
                         ],
                     )
+                    ingest_file_service.delete_files_for_job(db, str(job.id))
+                    db.commit()
                     per_file_results.append(
                         {
                             "ingest_id": str(job.id),
@@ -673,16 +724,24 @@ async def upload_file(
         ingest_job = db_service.create_ingest_job(
             db,
             first_file.filename,
-            temp_file_paths[0],
+            None,
             company_nit=normalized_company_nit,
             document_type=confirmed_doc_type,
             pathway=confirmed_pathway,
             classification_confirmed=True if confirmed_doc_type else None,
             parser_mode=validated_mode,
+            commit=False,
             created_by=str(current_user.id),
             file_names=[f.filename for f in files],
             multi_file_mode=multi_file_mode,
         )
+        temp_file_paths = [
+            ingest_file_service.scratch_path(str(ingest_job.id), file_name)
+            for file_name, _ in file_payloads
+        ]
+        ingest_job.file_path = temp_file_paths[0]
+        ingest_file_service.store_files(db, str(ingest_job.id), file_payloads)
+        db.commit()
         logger.info(f"Created IngestJob: {ingest_job.id}")
 
         # Lock the company to this pathway on first upload (when pathway is known).
@@ -800,17 +859,20 @@ async def update_ingest_classification(
         )
 
     if payload.confirmed:
-        if not job.file_path:
-            raise HTTPException(
-                status_code=422,
-                detail="El trabajo de ingesta no tiene ruta de archivo para reanudar",
+        # Rehydrate files from shared storage — this instance may not be the
+        # one that received the upload (restart / horizontal scaling).
+        try:
+            all_file_paths = ingest_file_service.ensure_local_files(db, job)
+        except ingest_file_service.IngestFilesUnavailableError as missing_err:
+            db_service.update_ingest_job(
+                db,
+                ingest_id,
+                IngestStatus.FAILED,
+                extraction_errors=[missing_err.detail],
             )
-        # Reconstruct all file paths from stored file_names; fall back to single file_path.
-        temp_dir = Path(tempfile.gettempdir()) / "pae_uploads"
-        if job.file_names and len(job.file_names) > 1:
-            all_file_paths = [str(temp_dir / name) for name in job.file_names]
-        else:
-            all_file_paths = [job.file_path]
+            ingest_file_service.delete_files_for_job(db, ingest_id)
+            db.commit()
+            raise HTTPException(status_code=409, detail=missing_err.detail)
         background_tasks.add_task(
             process_ingest_background,
             all_file_paths,
@@ -982,12 +1044,13 @@ async def cancel_ingest(
 
     db_service.update_ingest_job(db, ingest_id, IngestStatus.CANCELLED)
 
-    # Clean up temp file if present
-    if job.file_path:
-        try:
-            Path(job.file_path).unlink(missing_ok=True)
-        except OSError:
-            logger.warning("Failed to delete temp file %s", job.file_path)
+    # Clean up all scratch files and blob rows
+    local_paths = [
+        ingest_file_service.scratch_path(str(job.id), name)
+        for name in (job.file_names or [job.file_name])
+    ]
+    ingest_file_service.cleanup_job_files(db, job, local_paths)
+    db.commit()
 
     refreshed = db_service.get_ingest_job(db, ingest_id)
     return _build_ingest_detail_response(db, refreshed, base_url=str(request.base_url))
