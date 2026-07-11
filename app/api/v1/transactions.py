@@ -228,7 +228,7 @@ async def create_transaction(
     "/", response_model=List[TransactionListItem], include_in_schema=False
 )  # legacy trailing-slash, no 307
 @limiter.limit("60/minute")
-async def list_transactions(
+def list_transactions(
     request: Request,
     status: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
@@ -289,7 +289,7 @@ async def list_transactions(
 
 @router.get("/search")
 @limiter.limit("60/minute")
-async def search_transactions(
+def search_transactions(
     request: Request,
     nit: Optional[str] = None,
     fecha_inicio: Optional[str] = None,
@@ -342,7 +342,7 @@ async def search_transactions(
 
 @router.get("/{id}")
 @limiter.limit("60/minute")
-async def get_transaction(
+def get_transaction(
     request: Request,
     id: str,
     db: Session = Depends(get_db),

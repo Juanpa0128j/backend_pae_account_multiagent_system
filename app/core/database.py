@@ -28,8 +28,8 @@ engine = create_engine(
     pool_size=pool_size,
     max_overflow=max_overflow,
     pool_recycle=1800,
-    pool_timeout=180,
-    connect_args={"connect_timeout": 60},
+    pool_timeout=30,
+    connect_args={"connect_timeout": 10},
     echo=False,
 )
 

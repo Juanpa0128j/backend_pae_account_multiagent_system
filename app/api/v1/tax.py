@@ -316,7 +316,7 @@ def get_withholdings_report(
 
 @router.get("/ica", response_model=ICADeclaracionOutput)
 @limiter.limit("60/minute")
-async def get_ica_declaration(
+def get_ica_declaration(
     request: Request,
     period_start: Optional[date] = Query(
         None,
@@ -415,7 +415,7 @@ async def get_ica_declaration(
 
 @router.get("/renta-provision", response_model=RentaProvisionOutput)
 @limiter.limit("60/minute")
-async def get_renta_provision(
+def get_renta_provision(
     request: Request,
     period_start: Optional[date] = Query(
         None,
@@ -1023,7 +1023,7 @@ def api_exogena(
 
 @router.get("/reteica-tarifas", response_model=list[ReteicaTarifaResponse])
 @limiter.limit("60/minute")
-async def list_reteica_tarifas_endpoint(
+def list_reteica_tarifas_endpoint(
     request: Request,
     municipio: Optional[str] = Query(
         None, description="Filter by city name (lowercase)"
@@ -1038,7 +1038,7 @@ async def list_reteica_tarifas_endpoint(
 
 @router.put("/reteica-tarifas", response_model=ReteicaTarifaResponse)
 @limiter.limit("30/minute")
-async def upsert_reteica_tarifa_endpoint(
+def upsert_reteica_tarifa_endpoint(
     request: Request,
     body: ReteicaTarifaUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1071,7 +1071,7 @@ async def upsert_reteica_tarifa_endpoint(
 
 @router.delete("/reteica-tarifas/{row_id}", status_code=204)
 @limiter.limit("30/minute")
-async def delete_reteica_tarifa_endpoint(
+def delete_reteica_tarifa_endpoint(
     request: Request,
     row_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1091,7 +1091,7 @@ async def delete_reteica_tarifa_endpoint(
 
 @router.get("/constants", response_model=TaxConstantsResponse)
 @limiter.limit("60/minute")
-async def get_tax_constants(
+def get_tax_constants(
     request: Request,
     year: int = Query(..., ge=2000, le=2100, description="Fiscal year, e.g. 2026"),
     current_user: CurrentUser = Depends(get_current_user),
@@ -1109,7 +1109,7 @@ async def get_tax_constants(
 
 @router.put("/constants/uvt", response_model=dict)
 @limiter.limit("30/minute")
-async def upsert_uvt_value(
+def upsert_uvt_value(
     request: Request,
     body: UvtUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1132,7 +1132,7 @@ async def upsert_uvt_value(
 
 @router.put("/constants/base-minima", response_model=dict)
 @limiter.limit("30/minute")
-async def upsert_base_minima(
+def upsert_base_minima(
     request: Request,
     body: BaseMinimaUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1172,7 +1172,7 @@ async def upsert_base_minima(
     summary="Listar pérdidas fiscales acumuladas",
 )
 @limiter.limit("60/minute")
-async def list_perdidas_acumuladas(
+def list_perdidas_acumuladas(
     request: Request,
     nit: str = Query(..., description="Company NIT"),
     year: Optional[int] = Query(
@@ -1226,7 +1226,7 @@ async def list_perdidas_acumuladas(
     status_code=201,
 )
 @limiter.limit("30/minute")
-async def upsert_perdida_acumulada(
+def upsert_perdida_acumulada(
     request: Request,
     body: PerdidaFiscalUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1266,7 +1266,7 @@ async def upsert_perdida_acumulada(
     summary="Eliminar pérdida fiscal acumulada",
 )
 @limiter.limit("30/minute")
-async def delete_perdida_acumulada(
+def delete_perdida_acumulada(
     request: Request,
     perdida_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1299,7 +1299,7 @@ async def delete_perdida_acumulada(
     summary="Listar tarifas de renta PJ por régimen",
 )
 @limiter.limit("60/minute")
-async def list_tarifas_renta(
+def list_tarifas_renta(
     request: Request,
     year: Optional[int] = Query(
         None,
@@ -1323,7 +1323,7 @@ async def list_tarifas_renta(
     summary="Crear o actualizar tarifa de renta PJ",
 )
 @limiter.limit("30/minute")
-async def upsert_tarifa_renta(
+def upsert_tarifa_renta(
     request: Request,
     body: TarifaRentaUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1364,7 +1364,7 @@ async def upsert_tarifa_renta(
     summary="Eliminar tarifa de renta PJ",
 )
 @limiter.limit("30/minute")
-async def delete_tarifa_renta(
+def delete_tarifa_renta(
     request: Request,
     tarifa_id: int,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1393,7 +1393,7 @@ async def delete_tarifa_renta(
     summary="Listar conceptos de retención F350",
 )
 @limiter.limit("60/minute")
-async def list_tax_concepts_endpoint(
+def list_tax_concepts_endpoint(
     request: Request,
     activo: Optional[bool] = Query(
         None,
@@ -1414,7 +1414,7 @@ async def list_tax_concepts_endpoint(
     summary="Crear o actualizar concepto de retención",
 )
 @limiter.limit("30/minute")
-async def upsert_tax_concept_endpoint(
+def upsert_tax_concept_endpoint(
     request: Request,
     body: TaxConceptUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1464,7 +1464,7 @@ async def upsert_tax_concept_endpoint(
     summary="Soft delete (activo=False) concepto de retención",
 )
 @limiter.limit("30/minute")
-async def delete_tax_concept_endpoint(
+def delete_tax_concept_endpoint(
     request: Request,
     code: str,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1503,7 +1503,7 @@ def _ajuste_to_response(row) -> AjusteFiscalResponse:
     summary="Listar ajustes fiscales para F2516",
 )
 @limiter.limit("60/minute")
-async def list_ajustes_fiscales(
+def list_ajustes_fiscales(
     request: Request,
     company_nit: str = Query(..., description="Company NIT"),
     year: int = Query(..., ge=1990, le=2100),
@@ -1531,7 +1531,7 @@ async def list_ajustes_fiscales(
     summary="Crear o actualizar un ajuste fiscal (F2516)",
 )
 @limiter.limit("30/minute")
-async def upsert_ajuste_fiscal(
+def upsert_ajuste_fiscal(
     request: Request,
     body: AjusteFiscalUpsertRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -1564,7 +1564,7 @@ async def upsert_ajuste_fiscal(
     summary="Eliminar un ajuste fiscal",
 )
 @limiter.limit("30/minute")
-async def delete_ajuste_fiscal(
+def delete_ajuste_fiscal(
     request: Request,
     ajuste_id: str,
     current_user: CurrentUser = Depends(get_current_user),
