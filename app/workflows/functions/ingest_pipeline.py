@@ -63,6 +63,8 @@ async def _ingest_pipeline_handler(ctx: inngest.Context) -> dict:
                             IngestStatus.FAILED,
                             extraction_errors=[missing_err.detail],
                         )
+                        ingest_file_service.delete_files_for_job(db, ingest_id)
+                        db.commit()
                         return {"ingest_id": ingest_id, "error": missing_err.detail}
             finally:
                 db.close()

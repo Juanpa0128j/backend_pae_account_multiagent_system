@@ -183,6 +183,57 @@ class TestUploadSizeCap:
         ingest_api.enforce_size_cap(b"x" * (25 * 1024 * 1024), "ok.pdf")  # no raise
 
 
+class TestFirstRunRehydration:
+    def test_first_pipeline_run_rehydrates_scratch_from_blobs(
+        self, db, tmp_path, monkeypatch
+    ):
+        """The gap this branch fixes: the FIRST pipeline run after upload must
+        not trust dispatch-time scratch paths — this instance may not be the
+        one that wrote them (restart / horizontal scaling). Wipe scratch
+        (nothing ever written locally here) and confirm
+        `_run_ingest_pipeline` rehydrates from the DB blob before the graph
+        sees any path. Does NOT mock `ensure_local_files` or `store_files` —
+        only the graph entrypoint and the DB session routing are stubbed.
+        """
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+
+        job = _make_job(db, "ing_first_run", "factura.pdf")
+        job.file_names = ["factura.pdf"]
+        db.commit()
+        _store(db, "ing_first_run", "factura.pdf", b"%PDF-1.4 first-run-bytes")
+
+        dispatch_path = Path(ifs.scratch_path("ing_first_run", "factura.pdf"))
+        assert not dispatch_path.exists()  # never written on this "instance"
+
+        # Route the module's SessionLocal() calls at the same sqlite engine
+        # the fixture uses, so rehydration sees the blob staged above.
+        test_session_local = sessionmaker(bind=db.get_bind())
+        monkeypatch.setattr(ingest_api, "SessionLocal", test_session_local)
+
+        received: dict = {}
+
+        def _fake_invoke_pipeline(file_path, initial_state=None, file_paths=None):
+            paths = file_paths or [file_path]
+            received["paths"] = paths
+            # Record existence rather than assert here — an assertion raised
+            # inside this stub would be swallowed by _run_ingest_pipeline's
+            # broad except-Exception handler, masking a real regression.
+            received["existed"] = [Path(p).exists() for p in paths]
+            return {"error": None}
+
+        monkeypatch.setattr(ingest_api, "invoke_ingest_pipeline", _fake_invoke_pipeline)
+
+        ingest_api._run_ingest_pipeline(
+            [str(dispatch_path)], "ing_first_run", None, "fast", "pages"
+        )
+
+        assert received.get("paths"), "pipeline stub was never invoked"
+        assert all(received["existed"]), (
+            f"first run received unreadable paths: {received['paths']}"
+        )
+        assert Path(received["paths"][0]).read_bytes() == b"%PDF-1.4 first-run-bytes"
+
+
 class TestTerminalCleanup:
     def test_cleanup_job_files_removes_blobs_and_scratch(
         self, db, tmp_path, monkeypatch

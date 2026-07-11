@@ -91,6 +91,28 @@ def _run_ingest_pipeline(
         initial["parser_mode"] = parser_mode
     initial["multi_file_mode"] = multi_file_mode
     try:
+        # Rehydrate from shared storage before the first pipeline run too —
+        # this instance may not be the one that received the upload (restart
+        # / horizontal scaling), and scratch files are local-disk-only. This
+        # `return` stays inside this try so the finally-block cleanup below
+        # still runs (Python executes finally even on an early return).
+        db = SessionLocal()
+        try:
+            job = db_service.get_ingest_job(db, ingest_id)
+            if job is not None:
+                try:
+                    temp_file_paths = ingest_file_service.ensure_local_files(db, job)
+                except ingest_file_service.IngestFilesUnavailableError as missing_err:
+                    db_service.update_ingest_job(
+                        db,
+                        ingest_id,
+                        IngestStatus.FAILED,
+                        extraction_errors=[missing_err.detail],
+                    )
+                    return
+        finally:
+            db.close()
+
         result = invoke_ingest_pipeline(
             temp_file_paths[0],
             initial_state=initial,
@@ -666,6 +688,8 @@ async def upload_file(
                             "No se pudo encolar el documento para procesamiento. Reintenta la subida.",
                         ],
                     )
+                    ingest_file_service.delete_files_for_job(db, str(job.id))
+                    db.commit()
                     per_file_results.append(
                         {
                             "ingest_id": str(job.id),
@@ -842,6 +866,8 @@ async def update_ingest_classification(
                 IngestStatus.FAILED,
                 extraction_errors=[missing_err.detail],
             )
+            ingest_file_service.delete_files_for_job(db, ingest_id)
+            db.commit()
             raise HTTPException(status_code=409, detail=missing_err.detail)
         background_tasks.add_task(
             process_ingest_background,

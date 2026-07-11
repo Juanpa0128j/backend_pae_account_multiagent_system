@@ -29,6 +29,9 @@ class IngestFilesUnavailableError(Exception):
 
     detail = "El archivo ya no está disponible; vuelva a subirlo."
 
+    def __init__(self):
+        super().__init__(self.detail)
+
 
 def _scratch_dir() -> Path:
     d = Path(tempfile.gettempdir()) / "pae_uploads"
