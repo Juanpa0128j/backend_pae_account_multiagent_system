@@ -1,6 +1,6 @@
 """Feature tests for the DB-backed LlamaParse result cache."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models.database import Base, ParseCache
+from app.services import parse_cache_service as pcs
 
 
 @pytest.fixture()
@@ -61,3 +62,84 @@ class TestParseCacheModel:
         db.commit()
         assert db.get(ParseCache, ("b" * 64, "fast")).raw_text == "F"
         assert db.get(ParseCache, ("b" * 64, "premium")).raw_text == "P"
+
+
+@pytest.fixture()
+def session_factory(db):
+    # Returns the SAME session wrapped so .close() is a no-op — the service
+    # closes sessions; tests must keep inspecting the shared sqlite state.
+    class _Wrapper:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def close(self):
+            self._inner.flush()
+
+    return lambda: _Wrapper(db)
+
+
+class TestParseCacheService:
+    def test_miss_returns_none(self, session_factory):
+        assert (
+            pcs.get_cached_parse("c" * 64, "fast", session_factory=session_factory)
+            is None
+        )
+
+    def test_store_then_hit(self, session_factory):
+        pcs.store_parse("d" * 64, "fast", "# md", session_factory=session_factory)
+        assert (
+            pcs.get_cached_parse("d" * 64, "fast", session_factory=session_factory)
+            == "# md"
+        )
+
+    def test_store_duplicate_key_no_error(self, session_factory):
+        pcs.store_parse("e" * 64, "fast", "first", session_factory=session_factory)
+        pcs.store_parse("e" * 64, "fast", "second", session_factory=session_factory)
+        # First write wins (DO NOTHING semantics); no exception raised.
+        assert (
+            pcs.get_cached_parse("e" * 64, "fast", session_factory=session_factory)
+            == "first"
+        )
+
+    def test_oversized_text_not_stored(self, session_factory):
+        big = "x" * (pcs.MAX_CACHED_TEXT_BYTES + 1)
+        pcs.store_parse("f" * 64, "fast", big, session_factory=session_factory)
+        assert (
+            pcs.get_cached_parse("f" * 64, "fast", session_factory=session_factory)
+            is None
+        )
+
+    def test_db_error_degrades_to_none(self):
+        def broken_factory():
+            raise RuntimeError("db down")
+
+        assert (
+            pcs.get_cached_parse("a" * 64, "fast", session_factory=broken_factory)
+            is None
+        )
+        pcs.store_parse(
+            "a" * 64, "fast", "text", session_factory=broken_factory
+        )  # no raise
+
+    def test_sweep_on_store_deletes_expired(self, db, session_factory):
+        db.add(
+            ParseCache(
+                content_sha256="g" * 64,
+                parser_mode="fast",
+                raw_text="old",
+                created_at=datetime.now(timezone.utc) - timedelta(days=8),
+            )
+        )
+        db.commit()
+        pcs.store_parse("h" * 64, "fast", "new", session_factory=session_factory)
+        assert (
+            pcs.get_cached_parse("g" * 64, "fast", session_factory=session_factory)
+            is None
+        )
+        assert (
+            pcs.get_cached_parse("h" * 64, "fast", session_factory=session_factory)
+            == "new"
+        )
