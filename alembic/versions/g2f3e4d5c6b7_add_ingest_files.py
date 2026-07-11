@@ -28,7 +28,12 @@ def upgrade() -> None:
         ),
         sa.Column("file_name", sa.String(length=255), nullable=False),
         sa.Column("content", sa.LargeBinary(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
     )
     op.create_index("ix_ingest_files_ingest_id", "ingest_files", ["ingest_id"])
     op.create_index("ix_ingest_files_created_at", "ingest_files", ["created_at"])
