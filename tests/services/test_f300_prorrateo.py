@@ -21,7 +21,9 @@ from app.services.tax_constants import (
 from app.services.tax_declaration_service import (
     _build_f300,
     _compute_prorrateo_factor,
+    build_draft_from_catalog,
 )
+from app.services.dian_forms import get_catalog
 
 
 def _settings(**over):
@@ -70,8 +72,11 @@ def _ledger(iva_gen_19=1_900_000.0, iva_gen_5=0.0, iva_desc=380_000.0, ingresos_
     return rows
 
 
-def _fields_by_renglon(fields):
-    return {f.renglon: f for f in fields}
+def _draft(ledger, settings, revenue_by_tipo=None):
+    """Run the F300 builder and project it through the official catalog."""
+    computed, warnings = _build_f300(ledger, settings, revenue_by_tipo=revenue_by_tipo)
+    fields = build_draft_from_catalog(get_catalog("F300"), computed)
+    return {f.renglon: f for f in fields}, warnings
 
 
 # ─── _compute_prorrateo_factor unit tests ──────────────────────────────────
@@ -145,56 +150,52 @@ def test_prorrateo_partial_sin_clasificar_flags_review():
 
 
 def test_build_f300_full_descontable_when_factor_1():
-    fields, _ = _build_f300(
+    f, _ = _draft(
         _ledger(),
         _settings(),
         revenue_by_tipo={TIPO_IVA_GRAVADO_19: 10_000_000},
     )
-    f = _fields_by_renglon(fields)
-    # 67 = 66 * 1.0
-    assert f["67"].value == 380_000.0
-    assert f["67"].requires_review is False
-    assert f["26"].value == 10_000_000.0
+    # Descontable (casilla 72) = 380k × factor 1.0; ingresos gravados grales → 28
+    assert f["72"].value == 380_000.0
+    assert f["72"].requires_review is False
+    assert f["28"].value == 10_000_000.0
 
 
 def test_build_f300_excluido_zeroes_descontable():
-    fields, warnings = _build_f300(
+    f, warnings = _draft(
         _ledger(),
         _settings(),
         revenue_by_tipo={TIPO_IVA_EXCLUIDO: 1_000_000},
     )
-    f = _fields_by_renglon(fields)
-    assert f["67"].value == 0.0
-    assert f["67"].requires_review is True
-    assert f["29"].value == 1_000_000.0
-    assert any(w.field == "67" for w in warnings)
+    assert f["72"].value == 0.0
+    assert f["72"].requires_review is True
+    assert f["39"].value == 1_000_000.0  # excluidas → casilla 39
+    assert any(w.field == "72" for w in warnings)
 
 
 def test_build_f300_mix_60_40_prorrates_descontable():
-    fields, warnings = _build_f300(
+    f, warnings = _draft(
         _ledger(iva_desc=100_000.0),
         _settings(),
         revenue_by_tipo={TIPO_IVA_GRAVADO_19: 600_000, TIPO_IVA_EXCLUIDO: 400_000},
     )
-    f = _fields_by_renglon(fields)
-    assert f["67"].value == pytest.approx(60_000.0)
-    assert f["67"].requires_review is True
-    assert any(w.field == "67" for w in warnings)
+    assert f["72"].value == pytest.approx(60_000.0)
+    assert f["72"].requires_review is True
+    assert any(w.field == "72" for w in warnings)
 
 
 def test_build_f300_exportaciones_keep_full_descontable():
-    fields, _ = _build_f300(
+    f, _ = _draft(
         _ledger(iva_desc=200_000.0),
         _settings(),
         revenue_by_tipo={TIPO_IVA_EXPORTACION: 1_000_000},
     )
-    f = _fields_by_renglon(fields)
-    assert f["67"].value == 200_000.0
-    assert f["30"].value == 1_000_000.0
+    assert f["72"].value == 200_000.0
+    assert f["30"].value == 1_000_000.0  # exportación bienes → casilla 30
 
 
-def test_build_f300_renglon_54_sums_26_to_30():
-    fields, _ = _build_f300(
+def test_build_f300_casilla_41_sums_ingresos():
+    f, _ = _draft(
         _ledger(),
         _settings(),
         revenue_by_tipo={
@@ -205,97 +206,91 @@ def test_build_f300_renglon_54_sums_26_to_30():
             TIPO_IVA_EXPORTACION: 5.0,
         },
     )
-    f = _fields_by_renglon(fields)
-    assert f["54"].value == pytest.approx(185.0)
+    # Total ingresos brutos (casilla 41) suma las casillas de ingresos 27-40.
+    assert f["41"].value == pytest.approx(185.0)
 
 
-def test_build_f300_renglon_43_uses_240807():
-    fields, _ = _build_f300(
+def test_build_f300_casilla_58_uses_240807():
+    f, _ = _draft(
         _ledger(iva_gen_5=50_000.0),
         _settings(),
         revenue_by_tipo={TIPO_IVA_GRAVADO_5: 1_000_000},
     )
-    f = _fields_by_renglon(fields)
-    assert f["43"].value == 50_000.0
+    # IVA generado tarifa 5% → casilla 58
+    assert f["58"].value == 50_000.0
 
 
 def test_build_f300_unclassified_revenue_emits_warning():
-    fields, warnings = _build_f300(
+    f, warnings = _draft(
         _ledger(),
         _settings(),
         revenue_by_tipo={"sin_clasificar": 5_000_000},
     )
-    f = _fields_by_renglon(fields)
     # factor 1.0 fallback: no recorte de descontable.
-    assert f["67"].value == 380_000.0
+    assert f["72"].value == 380_000.0
     assert any("sin clasificar" in w.message.lower() for w in warnings)
 
 
 def test_build_f300_no_revenue_breakdown_legacy_path():
     # Sin breakdown explícito: builder no debe romper, factor=1.
-    fields, _ = _build_f300(_ledger(), _settings(), revenue_by_tipo=None)
-    f = _fields_by_renglon(fields)
-    assert f["67"].value == 380_000.0
-    assert f["54"].value == 0.0
+    f, _ = _draft(_ledger(), _settings(), revenue_by_tipo=None)
+    assert f["72"].value == 380_000.0
+    assert f["41"].value == 0.0
 
 
 def test_build_f300_no_iva_responsable_skips_prorrateo():
-    fields, _ = _build_f300(
+    f, _ = _draft(
         _ledger(),
         _settings(iva_responsable=False),
         revenue_by_tipo={TIPO_IVA_EXCLUIDO: 1_000_000},
     )
-    f = _fields_by_renglon(fields)
-    # No responsable -> descontable bruto = prorateado (no recorte).
-    assert f["67"].value == 380_000.0
-    assert f["67"].requires_review is False
+    # No responsable -> descontable sin recorte en casilla 72.
+    assert f["72"].value == 380_000.0
+    assert f["72"].requires_review is False
 
 
 def test_build_f300_warns_when_ledger_has_revenue_but_no_classification():
     ledger = _ledger(ingresos_4=2_000_000.0)
-    fields, warnings = _build_f300(ledger, _settings(), revenue_by_tipo={})
-    assert any(w.field == "26" for w in warnings)
+    _, warnings = _draft(ledger, _settings(), revenue_by_tipo={})
+    assert any(w.field == "28" for w in warnings)
 
 
-def test_build_f300_iva_neto_uses_19_plus_5():
-    fields, _ = _build_f300(
+def test_build_f300_saldo_a_pagar_uses_19_plus_5():
+    f, _ = _draft(
         _ledger(iva_gen_19=100.0, iva_gen_5=50.0, iva_desc=30.0),
         _settings(),
         revenue_by_tipo={TIPO_IVA_GRAVADO_19: 1_000},
     )
-    f = _fields_by_renglon(fields)
-    # 89 = (100+50) - 30 = 120
-    assert f["89"].value == pytest.approx(120.0)
+    # Casilla 82 (saldo a pagar) = (100+50) - 30 = 120
+    assert f["82"].value == pytest.approx(120.0)
 
 
 def test_build_f300_factor_zero_when_only_excluido_no_review_on_unclassified():
-    fields, warnings = _build_f300(
+    f, warnings = _draft(
         _ledger(iva_desc=500_000.0),
         _settings(),
         revenue_by_tipo={TIPO_IVA_EXCLUIDO: 1_000_000},
     )
-    f = _fields_by_renglon(fields)
-    assert f["67"].value == 0.0
+    assert f["72"].value == 0.0
     # No "sin clasificar" warning porque sin_clasificar=0.
     sin_clasif = [w for w in warnings if "sin clasificar" in w.message.lower()]
     assert sin_clasif == []
 
 
-def test_build_f300_emits_renglones_26_27_28_29_30():
-    fields, _ = _build_f300(
+def test_build_f300_emits_ingreso_casillas():
+    f, _ = _draft(
         _ledger(),
         _settings(),
         revenue_by_tipo={TIPO_IVA_GRAVADO_19: 1.0},
     )
-    renglones = {f.renglon for f in fields}
-    assert {"26", "27", "28", "29", "30"} <= renglones
+    assert {"27", "28", "30", "35", "39"} <= set(f)
 
 
-def test_build_f300_emits_renglones_42_43_54_66_67_89():
-    fields, _ = _build_f300(
+def test_build_f300_emits_liquidacion_casillas():
+    f, _ = _draft(
         _ledger(),
         _settings(),
         revenue_by_tipo={TIPO_IVA_GRAVADO_19: 1.0},
     )
-    renglones = {f.renglon for f in fields}
-    assert {"42", "43", "54", "66", "67", "89"} <= renglones
+    # IVA generado (58/59), total generado (67), descontable (72/81), saldos (82)
+    assert {"58", "59", "67", "72", "81", "82"} <= set(f)

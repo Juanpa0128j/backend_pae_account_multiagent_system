@@ -155,13 +155,14 @@ class TestF300Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["42"]["value"] == pytest.approx(1_900_000.0)
-        assert fields["42"]["requires_review"] is False
+        # IVA generado tarifa general → casilla oficial 59
+        assert fields["59"]["value"] == pytest.approx(1_900_000.0)
+        assert fields["59"]["requires_review"] is False
 
     @patch("app.services.tax_declaration_service.db_service.get_revenue_by_tipo_iva")
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
     def test_prorrateo_operaciones_mixtas(self, mock_ledger, mock_revenue):
-        """Mixed operations (Art. 490 ET) prorate descontable on renglon 67."""
+        """Mixed operations (Art. 490 ET) prorate descontable on casilla 72."""
         settings = _make_settings()
         ledger = [
             {
@@ -194,12 +195,12 @@ class TestF300Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # 66 = descontable bruto, 67 = prorateado con requires_review
-        assert fields["66"]["value"] == pytest.approx(500_000.0)
-        assert fields["67"]["requires_review"] is True
-        assert fields["67"]["value"] == pytest.approx(300_000.0)
+        # Casilla 72 (compras bienes tarifa general) recibe el descontable ya
+        # prorrateado (Art. 490 ET) y queda para revisión.
+        assert fields["72"]["requires_review"] is True
+        assert fields["72"]["value"] == pytest.approx(300_000.0)
         warning_fields = {w["field"] for w in draft.warnings_json}
-        assert "67" in warning_fields
+        assert "72" in warning_fields
 
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
     def test_non_iva_responsable_skips_prorrateo(self, mock_ledger):
@@ -234,12 +235,10 @@ class TestF300Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # Field 66 should NOT be marked requires_review when company is not iva_responsable
-        assert fields["66"]["requires_review"] is False
-        # Field 66_base should not exist
-        assert "66_base" not in fields
-        # IVA descontable should not be prorated
-        assert fields["66"]["value"] == pytest.approx(500_000.0)
+        # Casilla 72 should NOT be marked requires_review when not iva_responsable,
+        # and the IVA descontable is not prorated (full 500k passes through).
+        assert fields["72"]["requires_review"] is False
+        assert fields["72"]["value"] == pytest.approx(500_000.0)
 
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
     def test_saldo_anterior_requires_review(self, mock_ledger):
@@ -262,7 +261,8 @@ class TestF300Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["89"]["value"] == pytest.approx(
+        # Casilla 82 (saldo a pagar del período) = IVA generado - descontable
+        assert fields["82"]["value"] == pytest.approx(
             1_520_000.0
         )  # 1_900_000 - 380_000
 
@@ -346,8 +346,11 @@ class TestF350Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["25"]["value"] == pytest.approx(60_000.0)
-        assert fields["25"]["source"] == "concepto_compras_pj"
+        # Compras PJ retención → casilla oficial 49
+        assert fields["49"]["value"] == pytest.approx(60_000.0)
+        assert fields["49"]["source"] == "concepto_compras_pj"
+        # Base estimada (60000 / 2.5%) → casilla 36
+        assert fields["36"]["value"] == pytest.approx(2_400_000.0)
 
     @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
@@ -362,13 +365,15 @@ class TestF350Draft:
             date(2026, 1, 31),
         )
 
-        # Renglón 50 only appears when a salarios concept is configured and nómina data exists.
+        # Casilla 93 (rentas de trabajo retención) queda en 0 cuando no hay
+        # concepto de salarios ni nómina.
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert "50" not in fields
+        assert fields["93"]["value"] == pytest.approx(0.0)
 
     @_apply_f350_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_reteica_from_cuenta_2368(self, mock_ledger, *_):
+    def test_reteica_excluded_from_f350(self, mock_ledger, *_):
+        """ReteICA es municipal — no debe aparecer en el F350 nacional."""
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -380,8 +385,12 @@ class TestF350Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["76"]["value"] == pytest.approx(9_660.0)
-        assert fields["76"]["source"] == "concepto_reteica"
+        # Ninguna casilla debe contener el valor de ReteICA (9.660) ni la etiqueta.
+        assert not any("ICA" in f["label"] for f in draft.fields_json)
+        # Casilla 76 es "Otros conceptos" de autorretención, NO ReteICA, y = 0.
+        assert fields["76"]["value"] == pytest.approx(0.0)
+        # El total de retenciones renta (130) refleja solo compras (60.000).
+        assert fields["130"]["value"] == pytest.approx(60_000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -426,13 +435,17 @@ class TestF110Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["26"]["value"] == pytest.approx(
-            840_000.0
-        )  # 1105(800k) + 135518(40k)
+        # Total patrimonio bruto (casilla 44) = suma del desglose por clase:
+        # 1105→36 (efectivo 800k) + 135518→38 (CxC 40k) = 840k
+        assert fields["44"]["value"] == pytest.approx(840_000.0)
+        assert fields["36"]["value"] == pytest.approx(800_000.0)
+        assert fields["38"]["value"] == pytest.approx(40_000.0)
 
     @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
-    def test_ica_deducible_from_511505_521505(self, mock_ledger, *_patches):
+    def test_ica_flows_into_gastos_admin(self, mock_ledger, *_patches):
+        """ICA (511505) es deducción vía clase 5 → casilla 63 (gastos de
+        administración), no un descuento aparte."""
         settings = _make_settings()
         mock_ledger.return_value = _make_ledger()
         draft = generate_declaration_draft(
@@ -444,7 +457,8 @@ class TestF110Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["63"]["value"] == pytest.approx(14_490.0)
+        # clase 51 = honorarios 5110 (500k) + ICA 511505 (14.490)
+        assert fields["63"]["value"] == pytest.approx(514_490.0)
 
     @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
@@ -460,8 +474,8 @@ class TestF110Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # renglon "92" = retenciones from DB (patched to 40_000)
-        assert fields["92"]["value"] == pytest.approx(40_000.0)
+        # casilla "106" (Otras retenciones) = retenciones from DB (patched to 40_000)
+        assert fields["106"]["value"] == pytest.approx(40_000.0)
 
     @_apply_f110_patches
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
@@ -477,7 +491,8 @@ class TestF110Draft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["95"]["requires_review"] is True
+        # Anticipo año siguiente → casilla oficial 108
+        assert fields["108"]["requires_review"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +522,8 @@ class TestICADraft:
 
         fields = {f["renglon"]: f for f in draft.fields_json}
         expected = round(1_500_000.0 * 0.00966, 2)
-        assert fields["2"]["value"] == pytest.approx(expected)
+        # Impuesto de industria y comercio → casilla 4
+        assert fields["4"]["value"] == pytest.approx(expected)
 
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
     def test_avisos_tableros_15_percent(self, mock_ledger):
@@ -518,8 +534,9 @@ class TestICADraft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        ica = fields["2"]["value"]
-        assert fields["3"]["value"] == pytest.approx(ica * 0.15, rel=1e-3)
+        # Avisos y tableros (15%) → casilla 5, sobre el ICA de casilla 4
+        ica = fields["4"]["value"]
+        assert fields["5"]["value"] == pytest.approx(ica * 0.15, rel=1e-3)
 
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
     def test_bomberil_requires_review(self, mock_ledger):
@@ -530,7 +547,8 @@ class TestICADraft:
         )
 
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["4"]["requires_review"] is True
+        # Sobretasa bomberil (manual) → casilla 6
+        assert fields["6"]["requires_review"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -703,12 +721,13 @@ class TestSaldoAFavor:
             _mock_db(settings), "900123456", "F300", date(2026, 1, 1), date(2026, 2, 28)
         )
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # 500k - 2000k = -1.5M saldo a favor, must NOT be clamped to 0
-        assert fields["89"]["value"] == pytest.approx(-1_500_000.0)
-        assert "Saldo a favor" in fields["89"]["label"]
-        # Warning emitted
+        # 2000k desc - 500k gen → casilla 83 (saldo a favor del período) = 1.5M
+        assert fields["83"]["value"] == pytest.approx(1_500_000.0)
+        # Casilla 82 (saldo a pagar) queda en 0.
+        assert fields["82"]["value"] == pytest.approx(0.0)
+        # Warning emitted on casilla 83.
         warning_fields = {w["field"] for w in draft.warnings_json}
-        assert "89" in warning_fields
+        assert "83" in warning_fields
 
     @patch("app.services.tax_declaration_service.db_service.get_general_ledger")
     def test_ica_preserves_negative_saldo_a_favor(self, mock_ledger):
@@ -734,9 +753,11 @@ class TestSaldoAFavor:
             _mock_db(settings), "900123456", "ICA", date(2026, 1, 1), date(2026, 3, 31)
         )
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # total_a_pagar = ICA + avisos - reteica_favor → negative
-        assert fields["10"]["value"] < 0
-        assert "Saldo a favor" in fields["10"]["label"]
+        # Casilla 12 (total saldo a pagar) se satura en 0 cuando la ReteICA excede
+        # ICA+avisos; el saldo a favor se avisa por warning (no como negativo).
+        assert fields["12"]["value"] == pytest.approx(0.0)
+        warning_fields = {w["field"] for w in draft.warnings_json}
+        assert "12" in warning_fields
 
 
 def test_draft_field_help_text_renglon_42():

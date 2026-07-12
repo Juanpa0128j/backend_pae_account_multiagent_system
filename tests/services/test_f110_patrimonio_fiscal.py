@@ -100,7 +100,7 @@ def _by_renglon(draft):
 
 
 class TestF110PatrimonioFromF2516:
-    def test_activos_overridden_from_f2516_when_reviewed(self):
+    def test_pasivo_fiscal_from_f2516_casilla_45(self):
         f2516 = MagicMock()
         f2516.fields_json = [
             {"renglon": "199", "value": 5_000_000.0, "label": "Activos fiscales"},
@@ -108,10 +108,11 @@ class TestF110PatrimonioFromF2516:
         ]
         draft = _generate_f110(_make_settings(), _make_ledger(), f2516_mock=f2516)
         fields = _by_renglon(draft)
-        assert fields["26"]["value"] == pytest.approx(5_000_000.0)
-        assert fields["26"]["source"] == "f2516:199"
+        # Pasivo fiscal (F2516:249) → casilla 45
+        assert fields["45"]["value"] == pytest.approx(1_000_000.0)
+        assert fields["45"]["source"] == "f2516:249"
 
-    def test_pasivos_overridden_from_f2516_when_reviewed(self):
+    def test_activos_fiscal_difference_warns_on_casilla_44(self):
         f2516 = MagicMock()
         f2516.fields_json = [
             {"renglon": "199", "value": 5_000_000.0, "label": "Activos"},
@@ -119,10 +120,13 @@ class TestF110PatrimonioFromF2516:
         ]
         draft = _generate_f110(_make_settings(), _make_ledger(), f2516_mock=f2516)
         fields = _by_renglon(draft)
-        assert fields["27"]["value"] == pytest.approx(1_000_000.0)
-        assert fields["27"]["source"] == "f2516:249"
+        # El desglose 36-43 es contable (activos clase 1 = 800k) → casilla 44
+        assert fields["44"]["value"] == pytest.approx(800_000.0)
+        # y se advierte que difiere del activo fiscal del F2516.
+        warn = " ".join(w["message"] for w in draft.warnings_json if w["field"] == "44")
+        assert "F2516" in warn
 
-    def test_patrimonio_liquido_fiscal_calculated_from_f2516(self):
+    def test_patrimonio_liquido_casilla_46(self):
         f2516 = MagicMock()
         f2516.fields_json = [
             {"renglon": "199", "value": 5_000_000.0, "label": "Activos"},
@@ -130,28 +134,26 @@ class TestF110PatrimonioFromF2516:
         ]
         draft = _generate_f110(_make_settings(), _make_ledger(), f2516_mock=f2516)
         fields = _by_renglon(draft)
-        assert "29" in fields
-        assert fields["29"]["value"] == pytest.approx(4_000_000.0)
-        assert fields["29"]["requires_review"] is False
-        assert fields["29"]["source"] == "f2516:290"
+        # Patrimonio líquido (casilla 46) = 44 - 45 = 800k - 1M = -200k
+        assert fields["46"]["value"] == pytest.approx(-200_000.0)
 
 
 class TestF110PatrimonioFallback:
     def test_falls_back_to_clase_1_2_when_no_f2516_reviewed(self):
         draft = _generate_f110(_make_settings(), _make_ledger(), f2516_mock=None)
         fields = _by_renglon(draft)
-        # Activos clase 1 = 800_000; Pasivos clase 2 = 300_000
-        assert fields["26"]["value"] == pytest.approx(800_000.0)
-        assert fields["27"]["value"] == pytest.approx(300_000.0)
-        assert fields["26"]["source"] == "clase_1_puc"
+        # Activos clase 1 = 800_000 (casilla 44); Pasivos clase 2 = 300_000 (casilla 45)
+        assert fields["44"]["value"] == pytest.approx(800_000.0)
+        assert fields["45"]["value"] == pytest.approx(300_000.0)
+        assert fields["45"]["source"] == "clase_2_puc"
 
-    def test_fallback_emits_warning_on_renglon_26(self):
+    def test_fallback_emits_warning_on_casilla_44(self):
         draft = _generate_f110(_make_settings(), _make_ledger(), f2516_mock=None)
         warn_fields = [w["field"] for w in draft.warnings_json]
-        assert "26" in warn_fields
+        assert "44" in warn_fields
 
-    def test_patrimonio_29_requires_review_when_fallback(self):
+    def test_patrimonio_liquido_46_fallback(self):
         draft = _generate_f110(_make_settings(), _make_ledger(), f2516_mock=None)
         fields = _by_renglon(draft)
-        assert fields["29"]["requires_review"] is True
-        assert fields["29"]["value"] == pytest.approx(500_000.0)
+        # 800k activos - 300k pasivos = 500k
+        assert fields["46"]["value"] == pytest.approx(500_000.0)

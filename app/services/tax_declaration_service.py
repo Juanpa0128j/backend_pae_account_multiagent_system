@@ -36,6 +36,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.services import db_service
+from app.services.dian_forms import FormCatalog, get_catalog, has_catalog
+from app.services.dian_forms.f350_2026 import CONCEPT_CASILLAS as _F350_CONCEPT_CASILLAS
 from app.models.database import CompanySettings, TaxDeclarationDraft
 from app.services.tax_constants import (
     TIPO_IVA_EXCLUIDO,
@@ -66,6 +68,8 @@ class DraftField:
     confidence: str  # "high" | "medium" | "low"
     requires_review: bool
     help_text: str | None = None
+    seccion: str = ""
+    es_subtotal: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -76,6 +80,8 @@ class DraftField:
             "confidence": self.confidence,
             "requires_review": self.requires_review,
             "help_text": self.help_text,
+            "seccion": self.seccion,
+            "es_subtotal": self.es_subtotal,
         }
 
 
@@ -86,6 +92,99 @@ class DraftWarning:
 
     def to_dict(self) -> Dict[str, Any]:
         return {"field": self.field, "message": self.message}
+
+
+@dataclass
+class Computed:
+    """A value the builder computed for one official casilla."""
+
+    value: float
+    source: str
+    confidence: str = "high"
+    requires_review: bool = False
+
+
+def build_draft_from_catalog(
+    catalog: "FormCatalog", computed: Dict[str, Computed]
+) -> List[DraftField]:
+    """Project computed values onto the full official casilla catalog.
+
+    Every official casilla becomes a ``DraftField`` (in form order):
+      * subtotal casillas are evaluated from their instructivo formula;
+      * casillas the builder computed use the real value/source/confidence;
+      * ``manual`` casillas (data the system cannot see) default to 0 and are
+        flagged ``requires_review``;
+      * remaining ``computed`` casillas with no ledger movement default to 0
+        with source ``sin_movimiento`` (a real zero, not a gap — not flagged).
+
+    This makes the resulting draft mirror the real form casilla-by-casilla.
+    """
+    values: Dict[str, float] = {}
+    fields: List[DraftField] = []
+    for c in catalog.casillas:
+        if c.tipo == "header":
+            continue
+        if c.tipo == "subtotal" and c.formula is not None:
+            val = round(c.formula(lambda n: values.get(n, 0.0)), 2)
+            values[c.numero] = val
+            fields.append(
+                DraftField(
+                    c.numero,
+                    c.label,
+                    val,
+                    "calculado",
+                    "high",
+                    c.requires_review,
+                    help_text=c.help_text,
+                    seccion=c.seccion,
+                    es_subtotal=True,
+                )
+            )
+            continue
+        comp = computed.get(c.numero)
+        if comp is not None:
+            values[c.numero] = comp.value
+            fields.append(
+                DraftField(
+                    c.numero,
+                    c.label,
+                    round(comp.value, 2),
+                    comp.source,
+                    comp.confidence,
+                    comp.requires_review,
+                    help_text=c.help_text,
+                    seccion=c.seccion,
+                )
+            )
+        elif c.tipo == "manual":
+            values[c.numero] = 0.0
+            fields.append(
+                DraftField(
+                    c.numero,
+                    c.label,
+                    0.0,
+                    "diligenciar_manual",
+                    "low",
+                    True,
+                    help_text=c.help_text,
+                    seccion=c.seccion,
+                )
+            )
+        else:
+            values[c.numero] = 0.0
+            fields.append(
+                DraftField(
+                    c.numero,
+                    c.label,
+                    0.0,
+                    "sin_movimiento",
+                    "medium",
+                    False,
+                    help_text=c.help_text,
+                    seccion=c.seccion,
+                )
+            )
+    return fields
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +272,7 @@ def _build_f300(
     ledger: List[Dict[str, Any]],
     settings: CompanySettings,
     revenue_by_tipo: Optional[Dict[str, float]] = None,
-) -> tuple[List[DraftField], List[DraftWarning]]:
+) -> tuple[Dict[str, Computed], List[DraftWarning]]:
     """
     F300 IVA draft — filled from PUC accounts:
       240805 (IVA generado 19%), 240802 (IVA descontable)
@@ -183,7 +282,7 @@ def _build_f300(
     IVA descontable on common costs must be prorated by the gravado fraction.
     The prorated value is flagged requires_review=True for accountant confirmation.
     """
-    fields: List[DraftField] = []
+    computed: Dict[str, Computed] = {}
     warnings: List[DraftWarning] = []
 
     # IVA generado: scan all 2408xx subaccounts (240802=descontable, 240805=19% generado,
@@ -221,7 +320,7 @@ def _build_f300(
     # Preserve sign: positive = IVA a pagar, negative = saldo a favor del período
     iva_neto = (iva_generado_19 + iva_generado_5) - iva_descontable_prorateable
 
-    # ── Renglones 26-30: discriminación de ingresos por tipo IVA ───────────
+    # ── Ingresos por tipo IVA → casillas oficiales ─────────────────────────
     total_ingresos_clasificados = (
         bucket_totals["gravado_19"]
         + bucket_totals["gravado_5"]
@@ -229,132 +328,74 @@ def _build_f300(
         + bucket_totals["excluido"]
         + bucket_totals["exportacion"]
     )
-    fields.append(
-        DraftField(
-            "26",
-            "Operaciones gravadas tarifa general 19%",
-            bucket_totals["gravado_19"],
-            "tipo_iva=gravado_19",
-            "high" if bucket_totals["gravado_19"] > 0 else "medium",
-            False,
-            help_text=_HELP_TEXTS.get("26"),
-        )
+    # Ingresos (casilla oficial): 28 gravadas tarifa general, 27 gravadas 5%,
+    # 35 exentas, 39 excluidas, 30 exportación bienes, 40 no gravadas.
+    computed["28"] = Computed(
+        round(bucket_totals["gravado_19"], 2),
+        "tipo_iva=gravado_19",
+        "high" if bucket_totals["gravado_19"] > 0 else "medium",
     )
-    fields.append(
-        DraftField(
-            "27",
-            "Operaciones gravadas tarifa diferencial 5%",
-            bucket_totals["gravado_5"],
-            "tipo_iva=gravado_5",
-            "high" if bucket_totals["gravado_5"] > 0 else "medium",
-            False,
-            help_text=_HELP_TEXTS.get("27"),
-        )
+    computed["27"] = Computed(
+        round(bucket_totals["gravado_5"], 2),
+        "tipo_iva=gravado_5",
+        "high" if bucket_totals["gravado_5"] > 0 else "medium",
     )
-    fields.append(
-        DraftField(
-            "28",
-            "Operaciones exentas (Art. 477/478 ET)",
-            bucket_totals["exento"],
-            "tipo_iva=exento",
-            "high" if bucket_totals["exento"] > 0 else "medium",
-            False,
-            help_text=_HELP_TEXTS.get("28"),
-        )
+    computed["35"] = Computed(
+        round(bucket_totals["exento"], 2),
+        "tipo_iva=exento",
+        "high" if bucket_totals["exento"] > 0 else "medium",
     )
-    fields.append(
-        DraftField(
-            "29",
-            "Operaciones excluidas (Art. 424 ET)",
-            bucket_totals["excluido"],
-            "tipo_iva=excluido",
-            "high" if bucket_totals["excluido"] > 0 else "medium",
-            False,
-            help_text=_HELP_TEXTS.get("29"),
-        )
+    computed["39"] = Computed(
+        round(bucket_totals["excluido"], 2),
+        "tipo_iva=excluido",
+        "high" if bucket_totals["excluido"] > 0 else "medium",
     )
-    fields.append(
-        DraftField(
-            "30",
-            "Exportaciones (Art. 481 ET)",
-            bucket_totals["exportacion"],
-            "tipo_iva=exportacion",
-            "high" if bucket_totals["exportacion"] > 0 else "medium",
-            False,
-            help_text=_HELP_TEXTS.get("30"),
-        )
+    computed["30"] = Computed(
+        round(bucket_totals["exportacion"], 2),
+        "tipo_iva=exportacion",
+        "high" if bucket_totals["exportacion"] > 0 else "medium",
+    )
+    computed["40"] = Computed(
+        round(bucket_totals["no_gravado"], 2),
+        "tipo_iva=no_gravado",
+        "high" if bucket_totals["no_gravado"] > 0 else "medium",
     )
 
-    fields.append(
-        DraftField(
-            "42",
-            "IVA generado tarifa general 19%",
-            round(iva_generado_19, 2),
-            "cuenta_240805",
-            "high",
-            False,
-            help_text=_HELP_TEXTS.get("42"),
-        )
+    # Impuesto generado (casilla oficial): 59 tarifa general, 58 tarifa 5%.
+    computed["59"] = Computed(round(iva_generado_19, 2), "cuenta_240805", "high")
+    computed["58"] = Computed(
+        round(iva_generado_5, 2),
+        "cuenta_240807",
+        "high" if iva_generado_5 > 0 else "medium",
     )
-    fields.append(
-        DraftField(
-            "43",
-            "IVA generado tarifa diferencial 5%",
-            round(iva_generado_5, 2),
-            "cuenta_240807",
-            "high" if iva_generado_5 > 0 else "medium",
-            False,
-            help_text=_HELP_TEXTS.get("43"),
-        )
+
+    # Impuesto descontable: el sistema tiene el total 240802 (ya prorrateado
+    # Art. 490 ET) sin desglose por tarifa/tipo → se ubica en la casilla 72
+    # (compras de bienes a la tarifa general, el bucket más común) y se marca
+    # para revisión del contador cuando hay operaciones mixtas.
+    computed["72"] = Computed(
+        round(iva_descontable_prorateable, 2),
+        f"cuenta_240802 (factor prorrateo {factor_prorrateo:.4%})",
+        "high",
+        operaciones_mixtas,
     )
-    fields.append(
-        DraftField(
-            "54",
-            "Total ingresos del período (renglones 26+27+28+29+30)",
-            round(total_ingresos_clasificados, 2),
-            "calculado",
-            "high",
-            False,
-            help_text=_HELP_TEXTS.get("54"),
-        )
-    )
-    fields.append(
-        DraftField(
-            "66",
-            "IVA descontable bruto (compras y servicios)",
-            round(iva_descontable, 2),
-            "cuenta_240802",
-            "high",
-            False,
-            help_text=_HELP_TEXTS.get("66"),
-        )
-    )
-    fields.append(
-        DraftField(
-            "67",
-            (f"IVA descontable prorateado Art. 490 ET (factor {factor_prorrateo:.4%})"),
-            round(iva_descontable_prorateable, 2),
-            "calculado",
-            "high",
-            operaciones_mixtas,
-            help_text=_HELP_TEXTS.get("67"),
-        )
-    )
+
     if operaciones_mixtas:
         warnings.append(
             DraftWarning(
-                "67",
+                "72",
                 f"Prorrateo IVA (Art. 490 ET): gravadas+exportaciones+exentas "
                 f"${(bucket_totals['gravado_19'] + bucket_totals['gravado_5'] + bucket_totals['exento'] + bucket_totals['exportacion']):,.2f} "
                 f"de ${total_ingresos_clasificados:,.2f} clasificados. "
                 f"Factor aplicado: {factor_prorrateo:.4%}. "
-                "Confirme desglose por tipo_iva con el contador.",
+                "El IVA descontable (casilla 72) va sin desglose por tarifa — "
+                "confirme la distribución en casillas 68-79 con el contador.",
             )
         )
     if bucket_totals["sin_clasificar"] > 0:
         warnings.append(
             DraftWarning(
-                "67",
+                "72",
                 f"Ingresos sin clasificar por tipo_iva: ${bucket_totals['sin_clasificar']:,.2f}. "
                 "Revise transacciones con tipo_iva NULL antes de presentar.",
             )
@@ -366,57 +407,19 @@ def _build_f300(
     ):
         warnings.append(
             DraftWarning(
-                "26",
+                "28",
                 "Ingresos en libro mayor sin clasificación tipo_iva. "
-                "F300 renglones 26-30 quedan en cero — requiere clasificación manual.",
+                "F300 casillas 27-40 quedan en cero — requiere clasificación manual.",
             )
         )
-    fields.append(
-        DraftField(
-            "84",
-            "Saldo a favor período anterior",
-            0.0,
-            "declaracion_anterior",
-            "low",
-            True,
-            help_text=_HELP_TEXTS.get("84"),
-        )
-    )
-    label_89 = (
-        "Total IVA a pagar (calculado)"
-        if iva_neto >= 0
-        else "Saldo a favor del período (calculado)"
-    )
-    fields.append(
-        DraftField(
-            "89",
-            label_89,
-            round(iva_neto, 2),
-            "calculado",
-            "high",
-            False,
-            help_text=_HELP_TEXTS.get("89"),
-        )
-    )
     if iva_neto < 0:
         warnings.append(
             DraftWarning(
-                "89",
+                "83",
                 f"Saldo a favor de ${abs(iva_neto):,.2f} — IVA descontable excede al generado. "
                 "Verifique si aplica devolución o imputación al siguiente período.",
             )
         )
-    fields.append(
-        DraftField(
-            "97",
-            "Sanciones (si aplica)",
-            0.0,
-            "input_manual",
-            "low",
-            True,
-            help_text=_HELP_TEXTS.get("97"),
-        )
-    )
 
     warnings.append(
         DraftWarning(
@@ -426,7 +429,7 @@ def _build_f300(
     )
     warnings.append(
         DraftWarning(
-            "97",
+            "87",
             "Sanciones requieren análisis del contador — verifique extemporaneidad o inexactitud.",
         )
     )
@@ -439,7 +442,7 @@ def _build_f300(
             )
         )
 
-    return fields, warnings
+    return computed, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -455,21 +458,36 @@ def _build_f350(
     company_nit: Optional[str] = None,
     period_start: Optional[datetime] = None,
     period_end: Optional[datetime] = None,
-) -> tuple[List[DraftField], List[DraftWarning]]:
-    """F350 Retefuente draft — Res. DIAN 000031/2024 discriminated.
+) -> tuple[Dict[str, Computed], List[DraftWarning]]:
+    """F350 Retefuente draft — mapped to official DIAN casillas.
 
-    Produces one renglón per active tax_concepts row with monto > 0. The
-    cuenta-2365 total still appears as a sanity sub-total. ReteICA stays on
-    its dedicated renglón. Renglón 50 (salarios Art. 383 ET) needs nómina
-    data we do not have here, so it is left as manual review.
+    Each active tax_concepts row with monto > 0 is routed to its official
+    retención casilla via ``CONCEPT_CASILLAS`` ((categoria, aplica_a) -> (base,
+    retención)). Colliding concepts accumulate. When ``tarifa_default`` is known
+    the base casilla is back-estimated (monto / tarifa). Concepts without a
+    mapping fall into "Otros pagos" (54 PJ / 108 PN).
+
+    ReteICA is intentionally NOT emitted — it is municipal and lives only on the
+    ICA declaration, never on the national F350 (audit fix).
     """
-    fields: List[DraftField] = []
+    computed: Dict[str, Computed] = {}
     warnings: List[DraftWarning] = []
 
     retefuente_total = _exact_credit(ledger, "2365")
-    reteica_practicada = _exact_credit(ledger, "2368")
 
-    # ── 1. Concepto-discriminated renglones ─────────────────────────────────
+    def _add(casilla: str, monto: float, source: str, review: bool = False) -> None:
+        prev = computed.get(casilla)
+        if prev is None:
+            computed[casilla] = Computed(round(monto, 2), source, "high", review)
+        else:
+            computed[casilla] = Computed(
+                round(prev.value + monto, 2),
+                prev.source,
+                "high",
+                prev.requires_review or review,
+            )
+
+    # ── Concepto-discriminated casillas ─────────────────────────────────────
     concepto_rows: List[Dict[str, Any]] = []
     if db is not None:
         try:
@@ -482,15 +500,14 @@ def _build_f350(
                 )
             )
 
-    emitted_renglones: set[str] = set()
-    emitted_codes: set[str] = set()
     total_discriminated = 0.0
     for concept in concepto_rows:
         code = concept["code"]
         categoria = concept["categoria"]
-        renglon = concept["renglon_350"]
         aplica_a = concept["aplica_a"]
-        label = concept["label"]
+        # ReteICA is municipal — never on F350.
+        if categoria == "ica":
+            continue
         try:
             if categoria == "salarios":
                 # Nómina is skipped by tributario_agent; read directly from items JSONB
@@ -512,42 +529,35 @@ def _build_f350(
                 )
         except Exception as err:  # pragma: no cover — defensive
             warnings.append(
-                DraftWarning(
-                    renglon,
-                    f"Error sumando retención para {code}: {err}",
-                )
+                DraftWarning("130", f"Error sumando retención para {code}: {err}")
             )
             continue
 
         if monto <= 0:
             continue
 
-        if categoria not in {"salarios", "ica"}:
+        if categoria != "salarios":
             total_discriminated += monto
 
-        suffix = ""
-        if aplica_a in {"PJ", "PN"}:
-            suffix = f" ({aplica_a})"
-        tarifa_default = concept.get("tarifa_default")
-        tarifa_str = (
-            f" ({float(tarifa_default) * 100:.1f}%)"
-            if tarifa_default is not None
-            else ""
-        )
-        fields.append(
-            DraftField(
-                renglon,
-                f"{label}{suffix}{tarifa_str}",
-                round(monto, 2),
-                f"concepto_{code}",
-                "high",
-                False,
-            )
-        )
-        emitted_renglones.add(renglon)
-        emitted_codes.add(code)
+        mapping = _F350_CONCEPT_CASILLAS.get((categoria, aplica_a))
+        if mapping is None:
+            # Unmapped concept → "Otros pagos sujetos a retención".
+            ret_casilla = "108" if aplica_a == "PN" else "54"
+            base_casilla = "92" if aplica_a == "PN" else "41"
+        else:
+            base_casilla, ret_casilla = mapping
 
-    # ── 2. Unclassified retenciones warning ─────────────────────────────────
+        _add(ret_casilla, monto, f"concepto_{code}")
+        # Back-estimate the base from the tarifa when available.
+        tarifa_default = concept.get("tarifa_default")
+        try:
+            tarifa = float(tarifa_default) if tarifa_default is not None else 0.0
+        except (TypeError, ValueError):
+            tarifa = 0.0
+        if tarifa > 0:
+            _add(base_casilla, monto / tarifa, f"base estimada {tarifa:.2%}", True)
+
+    # ── Unclassified retenciones → "Otros pagos" (PJ) + warning ─────────────
     if db is not None:
         try:
             unclassified = db_service.count_unclassified_retenciones(
@@ -560,95 +570,28 @@ def _build_f350(
             unclassified = 0
         gap = round(retefuente_total - total_discriminated, 2)
         if unclassified > 0 or gap > 0.01:
-            fields.append(
-                DraftField(
-                    "_sin_clasificar",
-                    "Retenciones sin clasificar por concepto",
-                    max(gap, 0.0),
-                    "transactions_posted",
-                    "low",
-                    True,
-                    help_text=_HELP_TEXTS.get("_sin_clasificar"),
-                )
-            )
+            if gap > 0.01:
+                _add("54", gap, "sin_clasificar", True)
             warnings.append(
                 DraftWarning(
-                    "_sin_clasificar",
+                    "54",
                     (
                         f"{unclassified} transacción(es) con retefuente sin "
-                        "concepto_retencion. Clasifíquelas para que se reflejen "
-                        "en su renglón F350 correcto."
+                        "concepto_retencion (${:,.2f}). Clasifíquelas para ubicarlas "
+                        "en su casilla F350 correcta.".format(max(gap, 0.0))
                     ),
                 )
             )
 
-    # ── 3. ReteICA fallback renglón if no concepto reteica emitted ──────────
-    ica_concept_emitted = any(
-        c.get("categoria") == "ica" and c["code"] in emitted_codes
-        for c in concepto_rows
-    )
-    if reteica_practicada > 0 and not ica_concept_emitted:
-        # Default renglón "76" used by Res. 000031/2024.
-        fields.append(
-            DraftField(
-                "76",
-                "Retenciones ICA practicadas",
-                round(reteica_practicada, 2),
-                "cuenta_2368",
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("76"),
-            )
-        )
-
-    # ── 4. Manual / sanciones renglones (kept for accountant review) ────────
-    fields.append(
-        DraftField(
-            "75",
-            "Pagos al exterior sujetos a retención",
-            0.0,
-            "input_manual",
-            "low",
-            True,
-            help_text=_HELP_TEXTS.get("75"),
-        )
-    )
-    fields.append(
-        DraftField(
-            "97",
-            "Sanciones (si aplica)",
-            0.0,
-            "input_manual",
-            "low",
-            True,
-            help_text=_HELP_TEXTS.get("97"),
-        )
-    )
-
-    # ── 5. Total auto-calc ──────────────────────────────────────────────────
-    total = sum(
-        f.value for f in fields if f.renglon not in {"75", "97", "_sin_clasificar"}
-    )
-    fields.append(
-        DraftField(
-            "_total_retenciones",
-            "Total retenciones practicadas (auto)",
-            round(total, 2),
-            "auto_calc",
-            "high",
-            False,
-            help_text=_HELP_TEXTS.get("_total_retenciones"),
-        )
-    )
-
     warnings.append(
         DraftWarning(
-            "75",
-            "Pagos al exterior: verifique convenios de doble tributación aplicables.",
+            "129",
+            "Pagos al exterior (casillas 55-58/109-112): verifique convenios de "
+            "doble tributación aplicables.",
         )
     )
 
-    return fields, warnings
+    return computed, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +606,7 @@ def _build_f110(
     db: Optional[Any] = None,
     year: Optional[int] = None,
     company_nit: Optional[str] = None,
-) -> tuple[List[DraftField], List[DraftWarning]]:
+) -> tuple[Dict[str, Computed], List[DraftWarning]]:
     """
     F110 Renta PJ draft — full DIAN renglones with auto-calculation.
 
@@ -690,17 +633,18 @@ def _build_f110(
       96  Saldo final = 93 + 95
       97  Sanciones (manual)
     """
-    fields: List[DraftField] = []
+    computed: Dict[str, Computed] = {}
     warnings: List[DraftWarning] = []
 
-    # ── Balance sheet fields — patrimonio fiscal desde F2516 si está revisado ─
+    # ── Patrimonio — desglose por clase PUC (casillas 36-45) ─────────────────
+    # El formato pide el patrimonio por tipo de activo; se desglosa desde el
+    # libro mayor contable. Si hay F2516 revisado, el pasivo fiscal (249) se usa
+    # directamente y el total de activos fiscal (199) se contrasta como aviso.
     activos_contables = _sum_debits(ledger, "1")
-    pasivos_contables = _sum_credits(ledger, "2")
-    activos = activos_contables
-    pasivos = pasivos_contables
-    activos_source = "clase_1_puc"
+    pasivos = _sum_credits(ledger, "2")
     pasivos_source = "clase_2_puc"
-    patrimonio_source_from_f2516 = False
+    f2516_activos_fiscal: Optional[float] = None
+    f2516_rlo: Optional[float] = None
 
     if db is not None and year is not None and company_nit is not None:
         f2516_reviewed = db_service.get_latest_f2516_reviewed(db, company_nit, year)
@@ -710,185 +654,111 @@ def _build_f110(
             }
             try:
                 if "199" in f2516_fields:
-                    activos = float(f2516_fields["199"]["value"])
-                    activos_source = "f2516:199"
-                    patrimonio_source_from_f2516 = True
+                    f2516_activos_fiscal = float(f2516_fields["199"]["value"])
                 if "249" in f2516_fields:
                     pasivos = float(f2516_fields["249"]["value"])
                     pasivos_source = "f2516:249"
-                    patrimonio_source_from_f2516 = True
+                if "4" in f2516_fields:
+                    f2516_rlo = float(f2516_fields["4"]["value"])
             except (KeyError, TypeError, ValueError):
                 pass
 
-    if not patrimonio_source_from_f2516:
+    computed["36"] = Computed(round(_sum_debits(ledger, "11"), 2), "clase_11_puc")
+    computed["37"] = Computed(round(_sum_debits(ledger, "12"), 2), "clase_12_puc")
+    computed["38"] = Computed(round(_sum_debits(ledger, "13"), 2), "clase_13_puc")
+    computed["39"] = Computed(round(_sum_debits(ledger, "14"), 2), "clase_14_puc")
+    computed["40"] = Computed(round(_sum_debits(ledger, "16"), 2), "clase_16_puc")
+    computed["42"] = Computed(round(_sum_debits(ledger, "15"), 2), "clase_15_puc")
+    computed["43"] = Computed(
+        round(
+            _sum_debits(ledger, "17")
+            + _sum_debits(ledger, "18")
+            + _sum_debits(ledger, "19"),
+            2,
+        ),
+        "clase_17-19_puc",
+    )
+    computed["45"] = Computed(round(pasivos, 2), pasivos_source)
+
+    if (
+        f2516_activos_fiscal is not None
+        and abs(f2516_activos_fiscal - activos_contables) > 1.0
+    ):
         warnings.append(
             DraftWarning(
-                "26",
-                "Total activos tomado del libro mayor contable (sin F2516 revisado). "
+                "44",
+                f"Activos fiscales en F2516 (${f2516_activos_fiscal:,.2f}) difieren del "
+                f"total contable (${activos_contables:,.2f}). El desglose 36-43 es contable; "
+                "ajuste por diferencias fiscales (Art. 261 ET) antes de presentar.",
+            )
+        )
+    else:
+        warnings.append(
+            DraftWarning(
+                "44",
+                "Patrimonio desglosado desde el libro mayor contable. "
                 "Requiere ajustes fiscales (Art. 261 ET) antes de presentar.",
             )
         )
 
-    fields.extend(
-        [
-            DraftField(
-                "26",
-                "Total activos",
-                round(activos, 2),
-                activos_source,
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("26"),
-            ),
-            DraftField(
-                "27",
-                "Total pasivos",
-                round(pasivos, 2),
-                pasivos_source,
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("27"),
-            ),
-            DraftField(
-                "29",
-                "Patrimonio líquido fiscal (26 - 27)",
-                round(activos - pasivos, 2),
-                "calculated" if not patrimonio_source_from_f2516 else "f2516:290",
-                "high" if patrimonio_source_from_f2516 else "medium",
-                not patrimonio_source_from_f2516,
-                help_text=_HELP_TEXTS.get("29"),
-            ),
-        ]
-    )
-
-    # ── Renta bruta, costos, gastos ─────────────────────────────────────────
+    # ── Ingresos, costos, gastos → casillas componentes ─────────────────────
     renta_bruta = _sum_credits(ledger, "4")
     costos = _sum_debits(ledger, "6")
     gastos_deducibles = _sum_debits(ledger, "5")
-
-    fields.extend(
-        [
-            DraftField(
-                "40",
-                "Renta bruta (ingresos clase 4)",
-                round(renta_bruta, 2),
-                "clase_4_puc",
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("40"),
-            ),
-            DraftField(
-                "52",
-                "Costos (clase 6)",
-                round(costos, 2),
-                "clase_6_puc",
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("52"),
-            ),
-            DraftField(
-                "60",
-                "Gastos deducibles (clase 5)",
-                round(gastos_deducibles, 2),
-                "clase_5_puc",
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("60"),
-            ),
-        ]
+    gastos_admin = _sum_debits(ledger, "51")
+    gastos_ventas = _sum_debits(ledger, "52")
+    gastos_financieros = _sum_debits(ledger, "53")
+    gastos_otros = round(
+        gastos_deducibles - gastos_admin - gastos_ventas - gastos_financieros, 2
     )
 
-    # ── Renta líquida ordinaria — may come from F2516 ───────────────────────
-    rlo_journal = renta_bruta - costos - gastos_deducibles
-    rlo_source = "journal"
-    rlo_requires_review = True
-    renta_liquida_ordinaria = rlo_journal
+    computed["47"] = Computed(round(_sum_credits(ledger, "41"), 2), "clase_41_puc")
+    computed["57"] = Computed(round(_sum_credits(ledger, "42"), 2), "clase_42_puc")
+    computed["62"] = Computed(round(costos, 2), "clase_6_puc")
+    computed["63"] = Computed(round(gastos_admin, 2), "clase_51_puc")
+    computed["64"] = Computed(round(gastos_ventas, 2), "clase_52_puc")
+    computed["65"] = Computed(round(gastos_financieros, 2), "clase_53_puc")
+    computed["66"] = Computed(max(0.0, gastos_otros), "clase_5_resto")
 
-    if db is not None and year is not None and company_nit is not None:
-        f2516 = db_service.get_latest_f2516_reviewed(db, company_nit, year)
-        if f2516 is not None:
-            # Extract renta líquida conciliada from F2516 fields_json (renglon "4")
-            for fld in f2516.fields_json or []:
-                if fld.get("renglon") == "4":
-                    try:
-                        renta_liquida_ordinaria = float(fld["value"])
-                        rlo_source = "f2516"
-                        rlo_requires_review = False
-                    except (KeyError, TypeError, ValueError):
-                        pass
-                    break
+    # ── Renta líquida ordinaria / compensaciones ────────────────────────────
+    # La casilla 72 (RLO) y la 79 (renta líquida gravable) las calcula el
+    # catálogo desde las componentes; aquí derivamos el valor para el impuesto
+    # y lo contrastamos contra el F2516 conciliado.
+    rlo_journal = round(renta_bruta - costos - gastos_deducibles, 2)
 
-    fields.append(
-        DraftField(
-            "f110_renta_liquida_ordinaria",
-            "Renta líquida ordinaria",
-            round(renta_liquida_ordinaria, 2),
-            rlo_source,
-            "high" if rlo_source == "f2516" else "medium",
-            rlo_requires_review,
-            help_text=_HELP_TEXTS.get("f110_renta_liquida_ordinaria"),
-        )
-    )
-
-    if renta_liquida_ordinaria < 0:
+    if rlo_journal < 0:
         warnings.append(
             DraftWarning(
-                "f110_renta_liquida_ordinaria",
-                f"Pérdida fiscal del período estimada de ${abs(renta_liquida_ordinaria):,.2f}. "
-                "Art. 147 ET: pérdidas compensables en los 12 años siguientes.",
+                "72",
+                f"Pérdida fiscal del período estimada de ${abs(rlo_journal):,.2f}. "
+                "Art. 147 ET: pérdidas compensables en los años siguientes.",
+            )
+        )
+    if f2516_rlo is not None and abs(f2516_rlo - rlo_journal) > 1.0:
+        warnings.append(
+            DraftWarning(
+                "72",
+                f"Renta líquida conciliada en F2516: ${f2516_rlo:,.2f} (el borrador "
+                f"muestra ${max(rlo_journal, 0.0):,.2f} desde el libro mayor). "
+                "Use el valor fiscal conciliado.",
             )
         )
 
-    # ── Pérdidas fiscales por compensar ─────────────────────────────────────
+    # Pérdidas por compensar → casilla 74 (Compensaciones)
     perdidas_sum = 0.0
-    perdidas_requires_review = False
     if db is not None and year is not None and company_nit is not None:
         perdidas_dec = db_service.sum_perdidas_disponibles(db, company_nit, year)
         perdidas_sum = float(perdidas_dec)
-        perdidas_requires_review = perdidas_sum > 0
-
-    fields.append(
-        DraftField(
-            "f110_perdidas_compensar",
-            "Pérdidas fiscales por compensar (Art. 147 ET)",
-            round(perdidas_sum, 2),
-            "perdidas_fiscales_acumuladas" if perdidas_sum > 0 else "journal",
-            "high" if perdidas_sum > 0 else "medium",
-            perdidas_requires_review,
-            help_text=_HELP_TEXTS.get("f110_perdidas_compensar"),
-        )
+    computed["74"] = Computed(
+        round(perdidas_sum, 2),
+        "perdidas_fiscales_acumuladas" if perdidas_sum > 0 else "journal",
+        "high" if perdidas_sum > 0 else "medium",
+        perdidas_sum > 0,
     )
 
-    # ── Rentas exentas (manual) ──────────────────────────────────────────────
-    fields.append(
-        DraftField(
-            "f110_rentas_exentas",
-            "Rentas exentas",
-            0.0,
-            "input_manual",
-            "low",
-            True,
-            help_text=_HELP_TEXTS.get("f110_rentas_exentas"),
-        )
-    )
-
-    # ── Renta líquida gravable ───────────────────────────────────────────────
-    renta_liquida_gravable = max(
-        0.0,
-        renta_liquida_ordinaria - perdidas_sum,  # rentas_exentas start at 0
-    )
-
-    fields.append(
-        DraftField(
-            "72",
-            "Renta líquida gravable",
-            round(renta_liquida_gravable, 2),
-            "calculado",
-            "medium",
-            True,
-            help_text=_HELP_TEXTS.get("72"),
-        )
-    )
+    # Renta líquida gravable (base del impuesto) — coincide con la casilla 79
+    # que calcula el catálogo: max(0, (72 - 74)).
+    renta_liquida_gravable = max(0.0, max(0.0, rlo_journal) - perdidas_sum)
 
     # ── Impuesto básico ──────────────────────────────────────────────────────
     # Lookup regulatory tarifa first; fall back to company_settings.tasa_renta
@@ -923,102 +793,21 @@ def _build_f110(
 
     impuesto_basico = round(renta_liquida_gravable * tasa_efectiva, 2)
 
-    fields.append(
-        DraftField(
-            "80",
-            f"Impuesto básico de renta (tasa {tasa_efectiva:.0%}) — {base_legal_label}",
-            impuesto_basico,
-            "calculado" if tarifa_info is None else f"tarifas_renta:{base_legal_label}",
-            "medium",
-            True,
-            help_text=_HELP_TEXTS.get("80"),
-        )
+    # Impuesto sobre la renta líquida gravable → casilla 84.
+    computed["84"] = Computed(
+        impuesto_basico,
+        f"tarifa {tasa_efectiva:.0%} — {base_legal_label}",
+        "high",
+        True,
     )
 
-    # ── Descuentos tributarios (itemized) ───────────────────────────────────
-    # ICA NOT a descuento — Ley 2277/2022 Art. 19 converted it to deducción 100%
-    # (Art. 115 ET). Already flows via class 5 PUC 511505/521505 into gastos.
-    ica_pagado = _exact_debit(ledger, "511505") + _exact_debit(ledger, "521505")
-
-    # Expose as renglon "63" for informational purposes (ICA flows as deducción via clase 5)
-    fields.append(
-        DraftField(
-            "63",
-            "ICA deducible (511505+521505) — ya incluido en gastos clase 5",
-            round(ica_pagado, 2),
-            "cuentas_511505_521505",
-            "high",
-            False,
-            help_text=_HELP_TEXTS.get("63"),
-        )
-    )
-
-    # Descuentos tributarios itemizados (Estatuto Tributario). El CPA anota que
-    # "los descuentos son bastantes": se exponen los principales renglones
-    # estatutarios como campos manuales (requieren revisión del contador) y el
-    # total (renglón 86) se calcula como la SUMA de ellos, de modo que cualquier
-    # valor que el contador capture fluya al impuesto neto. ICA NO es descuento
-    # (Ley 2277/2022 Art. 19 lo convirtió en deducción 100% — Art. 115 ET — y ya
-    # fluye por la clase 5 a gastos; ver renglón 63).
-    _DESCUENTO_ITEMS: list[tuple[str, str]] = [
-        ("86_exterior", "Descuento impuestos pagados en el exterior (Art. 254)"),
-        ("86_medioambiente", "Descuento inversiones medio ambiente (Art. 255)"),
-        ("86_educacion", "Descuento inversión educación / innovación (Art. 256)"),
-        ("86_investigacion", "Descuento inversión ciencia/tecnología (Art. 256-1)"),
-        ("86_donaciones", "Descuento donaciones ESAL / Art. 257"),
-        (
-            "86_donaciones_red",
-            "Descuento donaciones red nacional bibliotecas (Art. 257-2)",
-        ),
-        ("86_iva_capital", "Descuento IVA bienes de capital (Art. 258-1)"),
-        ("86_zomac_zese", "Descuento ZOMAC / ZESE / obras por impuestos"),
-        ("86_otros", "Otros descuentos tributarios"),
-    ]
-    fields.extend(
-        DraftField(
-            renglon,
-            label,
-            0.0,
-            "input_manual",
-            "low",
-            True,
-            help_text=_HELP_TEXTS.get(renglon),
-        )
-        for renglon, label in _DESCUENTO_ITEMS
-    )
-
-    # Total = suma de los renglones itemizados (todos 0.0 por defecto → 0.0).
-    total_descuentos = round(
-        sum(f.value for f in fields if f.renglon in {r for r, _ in _DESCUENTO_ITEMS}),
-        2,
-    )
-    fields.append(
-        DraftField(
-            "86",
-            "Total descuentos tributarios (Σ renglones 86_*)",
-            total_descuentos,
-            "calculado",
-            "medium",
-            True,
-            help_text=_HELP_TEXTS.get("86"),
-        )
-    )
-
-    # ── Impuesto neto ────────────────────────────────────────────────────────
+    # Descuentos tributarios → casilla 93 (manual). El impuesto neto (casilla 94)
+    # lo calcula el catálogo (91 + 92 - 93). ICA NO es descuento — es deducción
+    # 100% (Ley 2277/2022 Art. 19 / Art. 115 ET) y ya fluye por la clase 5.
+    total_descuentos = 0.0
     impuesto_neto = max(0.0, impuesto_basico - total_descuentos)
-    fields.append(
-        DraftField(
-            "88",
-            "Impuesto neto de renta",
-            round(impuesto_neto, 2),
-            "calculado",
-            "medium",
-            True,
-            help_text=_HELP_TEXTS.get("88"),
-        )
-    )
 
-    # ── Retenciones del año ──────────────────────────────────────────────────
+    # ── Retenciones del año → casilla 106 (Otras retenciones) ────────────────
     retenciones_anio = 0.0
     if db is not None and year is not None and company_nit is not None:
         retenciones_dec = db_service.sum_retenciones_anio(db, company_nit, year)
@@ -1029,36 +818,17 @@ def _build_f110(
             ledger, "135515"
         )
 
-    fields.append(
-        DraftField(
-            "92",
-            "Retenciones en la fuente a favor del año",
-            round(retenciones_anio, 2),
-            "cuentas_135518_135515",
-            "high",
-            False,
-            help_text=_HELP_TEXTS.get("92"),
-        )
+    computed["106"] = Computed(
+        round(retenciones_anio, 2), "cuentas_135518_135515", "high"
     )
 
-    # ── Saldo a pagar / a favor ──────────────────────────────────────────────
+    # ── Saldo a pagar / a favor (solo para advertencia; casillas 111/113/114
+    # las calcula el catálogo) ────────────────────────────────────────────────
     saldo = impuesto_neto - retenciones_anio
-    fields.append(
-        DraftField(
-            "93",
-            "Saldo a pagar" if saldo >= 0 else "Saldo a favor",
-            round(saldo, 2),
-            "calculado",
-            "medium",
-            True,
-            help_text=_HELP_TEXTS.get("93"),
-        )
-    )
-
     if saldo < 0:
         warnings.append(
             DraftWarning(
-                "93",
+                "114",
                 f"Saldo a favor de ${abs(saldo):,.2f} — retenciones exceden el impuesto neto. "
                 "Verifique si aplica devolución o compensación (Art. 815 ET).",
             )
@@ -1094,72 +864,41 @@ def _build_f110(
     anticipo_metodo1 = max(
         0.0, impuesto_neto * ANTICIPO_PORCENTAJE - retenciones_anio_anterior
     )
-    fields.append(
-        DraftField(
-            "95_metodo1",
-            "Anticipo método 1 (impuesto neto del año × 75%)",
-            round(anticipo_metodo1, 2),
-            "calculado",
-            "medium",
-            False,
-            help_text=_HELP_TEXTS.get("95_metodo1"),
-        )
-    )
-
     # Método 2 — base = promedio del impuesto neto del año y del año anterior.
     # Solo disponible si existe declaración de renta del año anterior.
-    anticipo_metodo2: float | None = None
+    anticipo_metodo2: Optional[float] = None
     if impuesto_neto_anterior is not None:
         promedio_neto = (impuesto_neto + impuesto_neto_anterior) / 2
         anticipo_metodo2 = max(
             0.0, promedio_neto * ANTICIPO_PORCENTAJE - retenciones_anio_anterior
         )
-        fields.append(
-            DraftField(
-                "95_metodo2",
-                "Anticipo método 2 (promedio 2 años × 75%)",
-                round(anticipo_metodo2, 2),
-                "calculado",
-                "medium",
-                False,
-                help_text=_HELP_TEXTS.get("95_metodo2"),
-            )
-        )
 
-    # Renglón final = la MAYOR de las dos (criterio CPA); método 1 si no hay año previo.
+    # Anticipo (Art. 807) = la MAYOR de las dos bases → casilla 108.
     anticipo = (
         max(anticipo_metodo1, anticipo_metodo2)
         if anticipo_metodo2 is not None
         else anticipo_metodo1
     )
-    fields.append(
-        DraftField(
-            "95",
-            "Anticipo año siguiente (Art. 807 ET) — mayor de los dos métodos",
-            round(anticipo, 2),
-            "calculado",
-            "medium",
-            True,
-            help_text=_HELP_TEXTS.get("95"),
-        )
+    computed["108"] = Computed(
+        round(anticipo, 2), "art_807_mayor_de_dos_metodos", "high", True
     )
 
     if retenciones_anterior_warning:
-        warnings.append(DraftWarning("95", retenciones_anterior_warning))
+        warnings.append(DraftWarning("108", retenciones_anterior_warning))
     if anticipo_metodo2 is None:
         warnings.append(
             DraftWarning(
-                "95",
+                "108",
                 "Método 2 (promedio de los dos últimos años, Art. 807) no disponible: "
-                "falta la declaración de renta del año anterior. Se usó el método 1. "
-                "Verifique además el porcentaje de anticipo (25%/50%/75% según los años "
-                "como declarante).",
+                "falta la declaración de renta del año anterior. Se usó el método 1 "
+                f"(${anticipo_metodo1:,.2f}). Verifique el porcentaje de anticipo "
+                "(25%/50%/75% según los años como declarante).",
             )
         )
     else:
         warnings.append(
             DraftWarning(
-                "95",
+                "108",
                 f"Art. 807 permite optar por la base mayor o menor; se tomó la MAYOR "
                 f"(${anticipo:,.2f}). Método 1=${anticipo_metodo1:,.2f}, "
                 f"Método 2=${anticipo_metodo2:,.2f}. Confirme con el contador la base "
@@ -1167,49 +906,13 @@ def _build_f110(
             )
         )
 
-    # ── Saldo final ──────────────────────────────────────────────────────────
-    saldo_final = saldo + anticipo
-    fields.append(
-        DraftField(
-            "96",
-            "Saldo final (a pagar + anticipo)",
-            round(saldo_final, 2),
-            "calculado",
-            "medium",
-            True,
-            help_text=_HELP_TEXTS.get("96"),
-        )
-    )
-
-    # ── Sanciones ────────────────────────────────────────────────────────────
-    fields.append(
-        DraftField(
-            "97",
-            "Sanciones (si aplica)",
-            0.0,
-            "input_manual",
-            "low",
-            True,
-            help_text=_HELP_TEXTS.get("97"),
-        )
-    )
-
     # ── Standard warnings ────────────────────────────────────────────────────
     warnings.extend(
         [
             DraftWarning(
-                "f110_renta_liquida_ordinaria",
-                "Renta líquida ordinaria es estimación contable — la depuración fiscal puede diferir "
-                "(diferencias temporarias, deducciones especiales). "
-                + (
-                    "Valor tomado de F2516 revisado."
-                    if rlo_source == "f2516"
-                    else "Sin F2516 revisado: valor calculado desde el libro mayor."
-                ),
-            ),
-            DraftWarning(
-                "86",
-                "Descuentos tributarios requieren verificación explícita del contador antes de presentar.",
+                "93",
+                "Descuentos tributarios requieren verificación explícita del contador "
+                "antes de presentar (casilla 93).",
             ),
             DraftWarning(
                 "general",
@@ -1219,7 +922,7 @@ def _build_f110(
         ]
     )
 
-    return fields, warnings
+    return computed, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -1230,13 +933,13 @@ def _build_f110(
 def _build_ica(
     ledger: List[Dict[str, Any]],
     settings: CompanySettings,
-) -> tuple[List[DraftField], List[DraftWarning]]:
+) -> tuple[Dict[str, Computed], List[DraftWarning]]:
     """
-    ICA Municipal draft.
+    ICA Municipal draft (casillas del formato genérico municipal).
     Ingresos brutos: clase 4. Tarifa: CompanySettings.tasa_ica.
     ReteICA a favor: cuenta 2368 (débitos = retenciones recibidas de clientes).
     """
-    fields: List[DraftField] = []
+    computed: Dict[str, Computed] = {}
     warnings: List[DraftWarning] = []
 
     ingresos_brutos = _sum_credits(ledger, "4")
@@ -1244,85 +947,19 @@ def _build_ica(
     ica_a_pagar = round(ingresos_brutos * tasa_ica, 2)
     avisos_tableros = round(ica_a_pagar * 0.15, 2)
     reteica_favor = _exact_debit(ledger, "2368")
-    # Preserve sign: negative = saldo a favor (reteica excedió ICA+avisos)
+
+    computed["1"] = Computed(round(ingresos_brutos, 2), "clase_4_puc", "high")
+    computed["4"] = Computed(ica_a_pagar, f"calculado (tarifa {tasa_ica:.4%})", "high")
+    computed["5"] = Computed(avisos_tableros, "calculado (15% ICA)", "high")
+    computed["8"] = Computed(round(reteica_favor, 2), "cuenta_2368", "high")
+
+    # Estimate the final balance only to raise a saldo-a-favor warning; the
+    # actual casilla 12 is computed by the catalog formula.
     total_a_pagar = ica_a_pagar + avisos_tableros - reteica_favor
-
-    fields.extend(
-        [
-            DraftField(
-                "1",
-                "Ingresos brutos del período",
-                round(ingresos_brutos, 2),
-                "clase_4_puc",
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("1"),
-            ),
-            DraftField(
-                "2",
-                f"ICA a pagar (tasa {tasa_ica:.4%})",
-                ica_a_pagar,
-                "calculado",
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("2"),
-            ),
-            DraftField(
-                "3",
-                "Avisos y tableros (15% ICA)",
-                avisos_tableros,
-                "calculado",
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("3"),
-            ),
-            DraftField(
-                "4",
-                "Sobretasa bomberil",
-                0.0,
-                "municipio_especifico",
-                "low",
-                True,
-                help_text=_HELP_TEXTS.get("4"),
-            ),
-            DraftField(
-                "5",
-                "ReteICA a favor (cuenta 2368)",
-                round(reteica_favor, 2),
-                "cuenta_2368",
-                "high",
-                False,
-                help_text=_HELP_TEXTS.get("5"),
-            ),
-            DraftField(
-                "6",
-                "Anticipo período anterior",
-                0.0,
-                "requiere_historico",
-                "low",
-                True,
-                help_text=_HELP_TEXTS.get("6"),
-            ),
-            DraftField(
-                "10",
-                (
-                    "Total ICA a pagar (estimado)"
-                    if total_a_pagar >= 0
-                    else "Saldo a favor (reteica excede ICA+avisos)"
-                ),
-                round(total_a_pagar, 2),
-                "calculado",
-                "medium",
-                True,
-                help_text=_HELP_TEXTS.get("10"),
-            ),
-        ]
-    )
-
     if total_a_pagar < 0:
         warnings.append(
             DraftWarning(
-                "10",
+                "12",
                 f"Saldo a favor de ${abs(total_a_pagar):,.2f} — ReteICA recibida excede ICA+avisos. "
                 "Verifique si aplica devolución municipal o imputación al siguiente período.",
             )
@@ -1331,12 +968,12 @@ def _build_ica(
     warnings.extend(
         [
             DraftWarning(
-                "4",
+                "6",
                 f"Sobretasa bomberil varía por municipio ({settings.ciudad or 'no configurado'}) — verifique tarifa vigente.",
             ),
             DraftWarning(
-                "6",
-                "Anticipo período anterior requiere la declaración del período anterior.",
+                "9",
+                "Anticipo del año anterior requiere la declaración del período anterior.",
             ),
             DraftWarning(
                 "general",
@@ -1345,7 +982,7 @@ def _build_ica(
         ]
     )
 
-    return fields, warnings
+    return computed, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -1932,12 +1569,17 @@ def generate_declaration_draft(
     )
 
     builder = _BUILDERS[form_type]
+    # Catalog-backed forms: the builder returns a {casilla_oficial -> Computed}
+    # map and the official catalog projects it into the full form (all casillas,
+    # subtotals via formula, manual boxes flagged). This makes the draft mirror
+    # the real DIAN form casilla-by-casilla.
+    computed: Optional[Dict[str, Computed]] = None
     if form_type == "F110":
-        draft_fields, draft_warnings = _build_f110(
+        computed, draft_warnings = _build_f110(
             ledger, settings, db=db, year=period_end.year, company_nit=company_nit
         )
     elif form_type == "F350":
-        draft_fields, draft_warnings = _build_f350(
+        computed, draft_warnings = _build_f350(
             ledger,
             settings,
             db=db,
@@ -1960,15 +1602,21 @@ def generate_declaration_draft(
             revenue_by_tipo = {}
         if not isinstance(revenue_by_tipo, dict):
             revenue_by_tipo = {}
-        draft_fields, draft_warnings = _build_f300(
+        computed, draft_warnings = _build_f300(
             ledger, settings, revenue_by_tipo=revenue_by_tipo
         )
+    elif form_type == "ICA":
+        computed, draft_warnings = _build_ica(ledger, settings)
     elif form_type == "F2516":
         draft_fields, draft_warnings = _build_f2516(
             ledger, settings, db=db, year=period_end.year, company_nit=company_nit
         )
     else:
         draft_fields, draft_warnings = builder(ledger, settings)
+
+    if computed is not None and has_catalog(form_type):
+        catalog = get_catalog(form_type, year=period_end.year)
+        draft_fields = build_draft_from_catalog(catalog, computed)
 
     if form_type == "F110" and f2516_skipped_below_threshold:
         draft_warnings.append(
