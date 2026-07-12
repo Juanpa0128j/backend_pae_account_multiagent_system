@@ -40,10 +40,53 @@ async def _ingest_pipeline_handler(ctx: inngest.Context) -> dict:
         async def _run() -> dict:
             # Import inside the step to avoid circular import at module load time.
             from app.api.v1.ingest import _run_ingest_pipeline
+            from app.core.database import SessionLocal
+            from app.models.database import IngestStatus
+            from app.services import db_service, ingest_file_service
+
+            # This instance may not be the one that received the upload
+            # (restart / horizontal scaling) — rehydrate from shared storage
+            # rather than trusting the dispatch-time scratch paths.
+            paths = temp_file_paths
+            db = SessionLocal()
+            try:
+                job = db_service.get_ingest_job(db, ingest_id)
+                if job is not None:
+                    # Guard against duplicate events for terminal jobs
+                    job_status = job.status
+                    if isinstance(job_status, str):
+                        job_status = IngestStatus(job_status)
+                    if job_status in (
+                        IngestStatus.COMPLETED,
+                        IngestStatus.FAILED,
+                        IngestStatus.CANCELLED,
+                    ):
+                        ctx.logger.warning(
+                            "[Ingest %s] duplicate event for terminal job (%s) — skipping",
+                            ingest_id,
+                            job_status.value,
+                        )
+                        return {"ingest_id": ingest_id, "ok": True}
+                    try:
+                        paths = ingest_file_service.ensure_local_files(db, job)
+                    except (
+                        ingest_file_service.IngestFilesUnavailableError
+                    ) as missing_err:
+                        db_service.update_ingest_job(
+                            db,
+                            ingest_id,
+                            IngestStatus.FAILED,
+                            extraction_errors=[missing_err.detail],
+                        )
+                        ingest_file_service.delete_files_for_job(db, ingest_id)
+                        db.commit()
+                        return {"ingest_id": ingest_id, "error": missing_err.detail}
+            finally:
+                db.close()
 
             await asyncio.to_thread(
                 _run_ingest_pipeline,
-                temp_file_paths,
+                paths,
                 ingest_id,
                 company_nit,
                 parser_mode,

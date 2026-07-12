@@ -36,6 +36,7 @@ from sqlalchemy import (
     Index,
     PrimaryKeyConstraint,
     UniqueConstraint,
+    LargeBinary,
 )
 from sqlalchemy.dialects.postgresql import (
     ARRAY as PG_ARRAY,
@@ -440,6 +441,52 @@ class IngestJob(Base):
 
     def __repr__(self):
         return f"<IngestJob(id={self.id}, status={self.status})>"
+
+
+class IngestFile(Base):
+    """Uploaded file bytes for an ingest job.
+
+    Files must survive container restarts and multi-instance routing between
+    upload and classification-confirm (PENDING_REVIEW pause), so they live in
+    the shared DB, not on local disk. Rows are deleted when the job reaches a
+    terminal state; a 7-day TTL sweep covers abandoned jobs.
+    """
+
+    __tablename__ = "ingest_files"
+
+    id = Column(String(50), primary_key=True)
+    ingest_id = Column(
+        String(50),
+        ForeignKey("ingest_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    file_name = Column(String(255), nullable=False)
+    content = Column(LargeBinary, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self):
+        return f"<IngestFile(id={self.id}, ingest_id={self.ingest_id})>"
+
+
+class ParseCache(Base):
+    """Shared cache of LlamaParse output, keyed by content hash + parser mode.
+
+    Content-addressed and job-independent: a hit requires possessing the
+    identical file bytes, so cross-tenant sharing is safe by construction.
+    Best-effort by contract — rows may vanish (TTL) at any time.
+    """
+
+    __tablename__ = "parse_cache"
+
+    content_sha256 = Column(String(64), primary_key=True)
+    parser_mode = Column(String(20), primary_key=True)
+    raw_text = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
 
 
 class TransactionPending(Base):

@@ -52,9 +52,6 @@ async def test_fanout_documents_mode_inngest_creates_n_jobs(fake_files) -> None:
         patch.object(
             ingest_mod.db_service, "get_company_locked_pathway", return_value=None
         ),
-        patch.object(
-            ingest_mod, "save_temp_file", side_effect=lambda c, n: f"/tmp/{n}"
-        ),
     ):
         # Build mocked UploadFile-like objects
         files = []
@@ -114,9 +111,6 @@ async def test_pages_mode_does_not_fanout(fake_files) -> None:
         patch.object(
             ingest_mod.db_service, "get_company_locked_pathway", return_value=None
         ),
-        patch.object(
-            ingest_mod, "save_temp_file", side_effect=lambda c, n: f"/tmp/{n}"
-        ),
     ):
         files = []
         for name, buf in fake_files:
@@ -173,9 +167,6 @@ async def test_inline_engine_does_not_fanout_even_in_documents_mode(fake_files) 
         patch.object(ingest_mod.db_service, "set_company_locked_pathway"),
         patch.object(
             ingest_mod.db_service, "get_company_locked_pathway", return_value=None
-        ),
-        patch.object(
-            ingest_mod, "save_temp_file", side_effect=lambda c, n: f"/tmp/{n}"
         ),
     ):
         files = []
@@ -253,9 +244,6 @@ async def test_fanout_partial_dispatch_failure_marks_only_failed_job(
         patch.object(ingest_mod.db_service, "set_company_locked_pathway"),
         patch.object(
             ingest_mod.db_service, "get_company_locked_pathway", return_value=None
-        ),
-        patch.object(
-            ingest_mod, "save_temp_file", side_effect=lambda c, n: f"/tmp/{n}"
         ),
     ):
         files = []

@@ -13,7 +13,6 @@ Document-specific enhancements:
   and referencia_factura to enable intelligent downstream accounting classification.
 """
 
-import time
 import uuid
 from pathlib import Path
 
@@ -27,6 +26,7 @@ from app.core.config import get_settings
 from app.core.llm_client import get_llm_client
 from app.core.logger import get_logger
 from app.services.document_mappers import build_structured_transactions
+from app.services.parse_cache_service import get_cached_parse, store_parse
 
 try:
     from llama_parse import LlamaParse  # type: ignore[import-untyped]
@@ -34,8 +34,6 @@ except ImportError:
     LlamaParse = None  # type: ignore[assignment,misc]
 
 logger = get_logger("app.agents.ingest")
-
-PARSE_CACHE_TTL_DAYS = 30
 
 
 def _is_transient_parse_error(exc: BaseException) -> bool:
@@ -120,30 +118,6 @@ def _build_llama_parse_kwargs(mode: str, api_key: str) -> dict:
     return kwargs
 
 
-def _prune_parse_cache(cache_dir: Path, ttl_days: int = PARSE_CACHE_TTL_DAYS) -> int:
-    """Delete `.parse_cache` entries older than `ttl_days`. Returns count deleted.
-
-    Best-effort: any OSError per-file is logged and skipped. The cache is an
-    optimization, so a failed prune must never break ingest.
-    """
-    if not cache_dir.exists():
-        return 0
-    cutoff = time.time() - ttl_days * 86400
-    deleted = 0
-    for entry in cache_dir.iterdir():
-        try:
-            if entry.is_file() and entry.stat().st_mtime < cutoff:
-                entry.unlink()
-                deleted += 1
-        except OSError as err:
-            logger.warning("parse cache prune failed for %s: %s", entry, err)
-    if deleted:
-        logger.info(
-            "parse cache: pruned %d entries older than %d days", deleted, ttl_days
-        )
-    return deleted
-
-
 def _parse_single_file(file_path: str, state: AgentState) -> str:
     """Parse a single file and return raw text. Mutates state for Excel parsed_content."""
     ext = Path(file_path).suffix.lower()
@@ -176,7 +150,6 @@ def _parse_single_file(file_path: str, state: AgentState) -> str:
         import hashlib
 
         settings = get_settings()
-        _cache_dir = Path(file_path).parent / ".parse_cache"
         try:
             _file_bytes = Path(file_path).read_bytes()
             _content_hash = hashlib.sha256(_file_bytes).hexdigest()
@@ -185,17 +158,16 @@ def _parse_single_file(file_path: str, state: AgentState) -> str:
         # Cache key includes parser_mode so switching fast↔premium↔gpt4o forces
         # a fresh parse instead of silently returning the previous mode's output.
         _cache_mode = state.get("parser_mode") or "fast"
-        _cache_path = (
-            _cache_dir / f"{_content_hash}.{_cache_mode}.md" if _content_hash else None
-        )
-        if _cache_path and _cache_path.exists():
-            logger.info(
-                "Ingest: Using cached parse for %s (hash=%s..., mode=%s)",
-                Path(file_path).name,
-                _content_hash[:12],
-                _cache_mode,
-            )
-            return _cache_path.read_text(encoding="utf-8")
+        if _content_hash:
+            _cached = get_cached_parse(_content_hash, _cache_mode)
+            if _cached is not None:
+                logger.info(
+                    "Ingest: Using cached parse for %s (hash=%s..., mode=%s)",
+                    Path(file_path).name,
+                    _content_hash[:12],
+                    _cache_mode,
+                )
+                return _cached
 
         try:
             parser = LlamaParse(
@@ -233,10 +205,8 @@ def _parse_single_file(file_path: str, state: AgentState) -> str:
                     f"({_fallback_err})"
                 ) from _fallback_err
 
-        if raw_text and raw_text.strip() and _cache_path is not None:
-            _cache_dir.mkdir(parents=True, exist_ok=True)
-            _prune_parse_cache(_cache_dir)
-            _cache_path.write_text(raw_text, encoding="utf-8")
+        if raw_text and raw_text.strip() and _content_hash:
+            store_parse(_content_hash, _cache_mode, raw_text)
 
         return raw_text
     else:

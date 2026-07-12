@@ -228,7 +228,7 @@ async def create_transaction(
     "/", response_model=List[TransactionListItem], include_in_schema=False
 )  # legacy trailing-slash, no 307
 @limiter.limit("60/minute")
-async def list_transactions(
+def list_transactions(
     request: Request,
     status: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
@@ -289,7 +289,7 @@ async def list_transactions(
 
 @router.get("/search")
 @limiter.limit("60/minute")
-async def search_transactions(
+def search_transactions(
     request: Request,
     nit: Optional[str] = None,
     fecha_inicio: Optional[str] = None,
@@ -342,7 +342,7 @@ async def search_transactions(
 
 @router.get("/{id}")
 @limiter.limit("60/minute")
-async def get_transaction(
+def get_transaction(
     request: Request,
     id: str,
     db: Session = Depends(get_db),
@@ -924,11 +924,10 @@ async def delete_transactions_by_ingest(
         .filter(TransactionPending.ingest_id == ingest_id)
         .all()
     ]
+    # Idempotent: no matching transactions (already deleted, double-click, retry)
+    # is a harmless no-op, not a 404.
     if not txn_ids:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No se encontraron transacciones para el trabajo de ingesta {ingest_id}.",
-        )
+        return {"deleted": 0}
 
     company_nit = None
     for txn_id in txn_ids:

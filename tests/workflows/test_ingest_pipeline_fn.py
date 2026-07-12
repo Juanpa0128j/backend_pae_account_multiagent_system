@@ -106,3 +106,43 @@ async def test_handler_default_multi_file_mode_pages() -> None:
         "fast",
         "pages",
     )
+
+
+@pytest.mark.asyncio
+async def test_handler_skips_terminal_job() -> None:
+    # Arrange: job already in terminal state
+    from app.models.database import IngestStatus
+
+    step = SimpleNamespace(run=AsyncMock(side_effect=_step_run_side_effect))
+    mock_job = MagicMock()
+    mock_job.status = IngestStatus.COMPLETED
+    ctx = SimpleNamespace(
+        event=SimpleNamespace(
+            data={
+                "ingest_id": "ing-terminal",
+                "temp_file_paths": ["/tmp/done.pdf"],
+                "company_nit": "900123",
+                "parser_mode": "fast",
+                "multi_file_mode": "pages",
+            },
+        ),
+        logger=MagicMock(),
+        step=step,
+    )
+
+    # Act: mock db_service to return terminal job
+    with (
+        patch("app.core.database.SessionLocal") as mock_session_local,
+        patch("app.api.v1.ingest._run_ingest_pipeline") as mock_run,
+    ):
+        mock_db = MagicMock()
+        mock_session_local.return_value = mock_db
+        with patch("app.services.db_service.get_ingest_job", return_value=mock_job):
+            result = await mod._ingest_pipeline_handler(ctx)
+
+    # Assert: pipeline not invoked, returns success no-op
+    assert result == {"ingest_id": "ing-terminal", "ok": True}
+    mock_run.assert_not_called()
+    ctx.logger.warning.assert_called_once()
+    args = ctx.logger.warning.call_args[0]
+    assert "duplicate event for terminal job" in args[0].lower()

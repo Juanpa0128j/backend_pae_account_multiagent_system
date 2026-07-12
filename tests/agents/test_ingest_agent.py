@@ -124,6 +124,14 @@ class TestGeminiRetryHelper:
 
 
 class TestIngestNodeRoutes:
+    @pytest.fixture(autouse=True)
+    def _parse_cache_noop(self, monkeypatch):
+        # DB-backed parse cache is best-effort; default every test to a clean
+        # miss/no-op so tests don't depend on real DB state across runs.
+        # Tests exercising cache hit/miss behavior override this in their body.
+        monkeypatch.setattr(ingest_agent, "get_cached_parse", lambda h, m: None)
+        monkeypatch.setattr(ingest_agent, "store_parse", lambda h, m, t: None)
+
     def test_skips_when_upstream_error_exists(self, pdf_file):
         state = base_state(file_path=pdf_file, error="upstream")
         out = ingest_agent.ingest_node(state)
@@ -197,13 +205,18 @@ class TestIngestNodeRoutes:
     def test_pdf_cache_hit_skips_llamaparse(self, pdf_file, monkeypatch):
         import hashlib
 
-        cache_dir = Path(pdf_file).parent / ".parse_cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
         # Cache is keyed by content hash, not filename, so two uploads of
         # different files with the same name don't collide.
         content_hash = hashlib.sha256(Path(pdf_file).read_bytes()).hexdigest()
-        cache_file = cache_dir / f"{content_hash}.fast.md"
-        cache_file.write_text("cached parsed text for ingest", encoding="utf-8")
+        monkeypatch.setattr(
+            ingest_agent,
+            "get_cached_parse",
+            lambda h, m: (
+                "cached parsed text for ingest"
+                if (h, m) == (content_hash, "fast")
+                else None
+            ),
+        )
 
         llama_cls = MagicMock()
         monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
@@ -243,6 +256,13 @@ class TestIngestNodeRoutes:
             "get_settings",
             lambda: SimpleNamespace(llama_cloud_api_key="k"),
         )
+        monkeypatch.setattr(ingest_agent, "get_cached_parse", lambda h, m: None)
+        stored = {}
+        monkeypatch.setattr(
+            ingest_agent,
+            "store_parse",
+            lambda h, m, t: stored.update({(h, m): t}),
+        )
         client = _build_client("extract_transactions", {"ok": True})
         monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
@@ -255,9 +275,10 @@ class TestIngestNodeRoutes:
         import hashlib
 
         content_hash = hashlib.sha256(Path(pdf_file).read_bytes()).hexdigest()
-        cache_file = Path(pdf_file).parent / ".parse_cache" / f"{content_hash}.fast.md"
-        assert cache_file.exists()
-        assert "text mode output" in cache_file.read_text(encoding="utf-8")
+        assert (
+            stored[(content_hash, "fast")]
+            == "text mode output long enough for ingestion"
+        )
 
     def test_pdf_fallback_parse_failure_sets_error_instead_of_crashing(
         self, pdf_file, monkeypatch
