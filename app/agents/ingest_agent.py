@@ -3,7 +3,7 @@ Ingesta (Ingest) worker node for the agent graph.
 
 Supports multiple document formats (PDF, XLSX, and images JPG/PNG) and routes
 interpretation to the appropriate LLM extraction method based on document
-classification. Images are parsed via LlamaParse identical to PDFs.
+classification. Images are parsed via LlamaCloud identical to PDFs.
 
 On retry (when correction_feedback is present), the agent re-sends the
 raw text to the LLM along with the schema errors so the model can self-correct.
@@ -29,24 +29,53 @@ from app.services.document_mappers import build_structured_transactions
 from app.services.parse_cache_service import get_cached_parse, store_parse
 
 try:
-    from llama_parse import LlamaParse  # type: ignore[import-untyped]
+    from llama_cloud.client import LlamaCloud  # type: ignore[import-untyped]
 except ImportError:
-    LlamaParse = None  # type: ignore[assignment,misc]
+    LlamaCloud = None  # type: ignore[assignment,misc]
 
 logger = get_logger("app.agents.ingest")
 
+_MODE_TO_TIER: dict[str, str] = {
+    "fast": "fast",
+    "standard": "cost_effective",
+    "agentic": "agentic",
+    "agentic_plus": "agentic_plus",
+}
+
+# Pinned per llama_cloud.resources.parsing.ParsingResource.parse's `version`
+# param docs (installed SDK 2.11.0): Literal["2026-01-08", "2025-12-31",
+# "2025-12-18", "2025-12-11", "latest"]. "latest" tracks the current stable
+# tier configuration per the SDK's own example usage.
+PARSE_API_VERSION = "latest"
+
+
+def _build_parse_options(mode: str) -> dict:
+    tier = _MODE_TO_TIER.get(mode)
+    if tier is None:
+        logger.warning(
+            "Unknown parser mode '%s' — falling back to cost_effective tier", mode
+        )
+        tier = "cost_effective"
+    return {
+        "tier": tier,
+        "version": PARSE_API_VERSION,
+        "expand": ["markdown_full", "text_full"],
+    }
+
+
+def _extract_text(result) -> str:
+    markdown = getattr(result, "markdown", None) or ""
+    if markdown.strip():
+        return markdown
+    return getattr(result, "text", None) or ""
+
 
 def _is_transient_parse_error(exc: BaseException) -> bool:
-    """True for LlamaParse failures worth retrying — network/timeout/5xx.
+    """True for LlamaCloud parse failures worth retrying — network/timeout/5xx.
 
-    KeyError is included because LlamaParse does `result[result_type.value]`
-    on the /result/{result_type} response (llama_parse/base.py). Observed in
-    prod as KeyError('markdown') on a job whose status already reported
-    SUCCESS — consistent with the result artifact not yet being queryable
-    right after the status flip (manual reprocessing of the same file always
-    succeeded). Retrying is safe even if this hypothesis is wrong: a file
-    that permanently lacks the requested result_type still fails after 3
-    attempts into the same state["error"] path, just ~7s slower.
+    v2 raises typed httpx errors; no more KeyError/RuntimeError string
+    sniffing (that was a v1-only failure class from result-not-yet-queryable
+    races in the old llama-parse client's low-level polling).
     """
     if isinstance(
         exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
@@ -54,30 +83,17 @@ def _is_transient_parse_error(exc: BaseException) -> bool:
         return True
     if isinstance(exc, httpx.HTTPStatusError):
         return 500 <= exc.response.status_code < 600
-    # LlamaParse sometimes wraps errors as RuntimeError with status code in str
-    if isinstance(exc, RuntimeError):
-        msg = str(exc).lower()
-        return any(s in msg for s in ("timeout", "503", "502", "504", "connection"))
-    if isinstance(exc, KeyError):
-        return True
     return False
 
 
-def _llama_parse_with_retry(parser: "LlamaParse", file_path: str) -> list:
-    """Invoke LlamaParse.load_data with retry on transient errors only.
-
-    Retries up to 3 times with exponential backoff (1s, 2s, 4s) on network /
-    timeout / 5xx / result-not-yet-available. Permanent errors (ValueError,
-    schema mismatches) reraise on first failure.
-    """
+def _parse_with_retry(fn):
+    """Run a zero-arg parse callable with retry on transient errors only."""
 
     def _log_retry(retry_state) -> None:
-        exc = retry_state.outcome.exception()
         logger.warning(
-            "LlamaParse transient failure on %s (attempt %d): %r — retrying",
-            Path(file_path).name,
+            "LlamaParse transient failure (attempt %d): %r — retrying",
             retry_state.attempt_number,
-            exc,
+            retry_state.outcome.exception(),
         )
 
     for attempt in Retrying(
@@ -88,34 +104,8 @@ def _llama_parse_with_retry(parser: "LlamaParse", file_path: str) -> list:
         reraise=True,
     ):
         with attempt:
-            return parser.load_data(file_path)
+            return fn()
     raise RuntimeError("unreachable")  # for type-checker
-
-
-def _build_llama_parse_kwargs(mode: str, api_key: str) -> dict:
-    # verbose=True makes the client print "Started parsing the file under
-    # job_id X" — captured by our log pipeline, so a job_id is available to
-    # cross-reference against LlamaCloud's dashboard if a parse fails.
-    kwargs: dict = {"api_key": api_key, "result_type": "markdown", "verbose": True}
-    if mode == "fast":
-        kwargs["fast_mode"] = True
-    elif mode == "premium":
-        kwargs["premium_mode"] = True
-    elif mode == "gpt4o":
-        kwargs["gpt4o_mode"] = True
-    elif mode == "agentic":
-        # LlamaCloud Agentic preset: per-page agent parsing with a vision LLM.
-        # Best for low-quality scans / images where OCR + reasoning are needed.
-        kwargs["parse_mode"] = "parse_page_with_agent"
-        kwargs["adaptive_long_table"] = True
-        kwargs["outlined_table_extraction"] = True
-    elif mode == "agentic_plus":
-        # Heaviest mode: agent operates over the whole doc, slower but reasons
-        # across pages. Use for complex multi-page financial statements.
-        kwargs["parse_mode"] = "parse_document_with_agent"
-        kwargs["adaptive_long_table"] = True
-        kwargs["outlined_table_extraction"] = True
-    return kwargs
 
 
 def _parse_single_file(file_path: str, state: AgentState) -> str:
@@ -141,10 +131,10 @@ def _parse_single_file(file_path: str, state: AgentState) -> str:
             file_path,
             format_label,
         )
-        if LlamaParse is None:
+        if LlamaCloud is None:
             raise RuntimeError(
-                "LlamaParse client is not available. "
-                "Install llama-parse and configure LLAMA_CLOUD_API_KEY."
+                "LlamaCloud client is not available. "
+                "Install llama-cloud and configure LLAMA_CLOUD_API_KEY."
             )
 
         import hashlib
@@ -155,58 +145,35 @@ def _parse_single_file(file_path: str, state: AgentState) -> str:
             _content_hash = hashlib.sha256(_file_bytes).hexdigest()
         except OSError:
             _content_hash = None
-        # Cache key includes parser_mode so switching fast↔premium↔gpt4o forces
-        # a fresh parse instead of silently returning the previous mode's output.
-        _cache_mode = state.get("parser_mode") or "fast"
+
+        _tier_mode = state.get("parser_mode") or "fast"
+        _options = _build_parse_options(_tier_mode)
         if _content_hash:
-            _cached = get_cached_parse(_content_hash, _cache_mode)
+            _cached = get_cached_parse(_content_hash, _options["tier"])
             if _cached is not None:
                 logger.info(
-                    "Ingest: Using cached parse for %s (hash=%s..., mode=%s)",
+                    "Ingest: Using cached parse for %s (hash=%s..., tier=%s)",
                     Path(file_path).name,
                     _content_hash[:12],
-                    _cache_mode,
+                    _options["tier"],
                 )
                 return _cached
 
-        try:
-            parser = LlamaParse(
-                **_build_llama_parse_kwargs(
-                    state.get("parser_mode", "fast"),
-                    settings.llama_cloud_api_key,
-                )
+        client = LlamaCloud(api_key=settings.llama_cloud_api_key)
+        with open(file_path, "rb") as fh:
+            result = _parse_with_retry(
+                lambda: client.parsing.parse(upload_file=fh, **_options)
             )
-            documents = _llama_parse_with_retry(parser, file_path)
-            raw_text = "\n\n".join([doc.text for doc in documents])
-        except Exception as _parse_err:
-            logger.warning(
-                "LlamaParse markdown mode failed (%s) — retrying with result_type='text'",
-                _parse_err,
-            )
-            raw_text = ""
+        raw_text = _extract_text(result)
 
         if not raw_text.strip():
-            logger.warning(
-                "LlamaParse markdown returned empty text — retrying with result_type='text'"
+            raise ValueError(
+                f"LlamaParse returned no content for '{Path(file_path).name}' "
+                "in either markdown or text form"
             )
-            fallback_kwargs = _build_llama_parse_kwargs(
-                state.get("parser_mode", "fast"),
-                settings.llama_cloud_api_key,
-            )
-            fallback_kwargs["result_type"] = "text"
-            try:
-                parser = LlamaParse(**fallback_kwargs)
-                documents = _llama_parse_with_retry(parser, file_path)
-                raw_text = "\n\n".join([doc.text for doc in documents])
-            except Exception as _fallback_err:
-                raise ValueError(
-                    f"LlamaParse failed to extract content from "
-                    f"'{Path(file_path).name}' in both markdown and text mode "
-                    f"({_fallback_err})"
-                ) from _fallback_err
 
-        if raw_text and raw_text.strip() and _content_hash:
-            store_parse(_content_hash, _cache_mode, raw_text)
+        if _content_hash:
+            store_parse(_content_hash, _options["tier"], raw_text)
 
         return raw_text
     else:
@@ -387,7 +354,7 @@ def ingest_node(state: AgentState) -> AgentState:
 
     Supports multiple formats (PDF, XLSX, XML, JPG, JPEG, PNG) and routes interpretation
     to the appropriate LLM method based on document classification from the supervisor.
-    Images are parsed via LlamaParse exactly like PDFs.
+    Images are parsed via LlamaCloud exactly like PDFs.
     """
     # If supervisor already flagged an error, skip processing
     if state.get("error"):

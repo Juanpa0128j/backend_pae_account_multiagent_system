@@ -1,11 +1,11 @@
-"""Tests for LlamaParse transient retry helper."""
+"""Tests for the v2 LlamaCloud parse options builder, extractor, and retry helper."""
 
 from __future__ import annotations
 
 import sys
 import types
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -43,194 +43,87 @@ _fake_config.settings = SimpleNamespace(
 sys.modules.setdefault("app.core.config", _fake_config)
 
 from app.agents import ingest_agent  # noqa: E402
+from app.agents.ingest_agent import (  # noqa: E402
+    _MODE_TO_TIER,
+    _build_parse_options,
+    _extract_text,
+    _is_transient_parse_error,
+    _parse_with_retry,
+)
 
 
-def test_transient_classifier_recognises_httpx_timeout() -> None:
-    assert (
-        ingest_agent._is_transient_parse_error(httpx.TimeoutException("slow")) is True
-    )
+class TestModeToTier:
+    def test_canonical_mapping(self):
+        assert _MODE_TO_TIER == {
+            "fast": "fast",
+            "standard": "cost_effective",
+            "agentic": "agentic",
+            "agentic_plus": "agentic_plus",
+        }
+
+    def test_unknown_mode_falls_through_with_warning(self, caplog):
+        # ingest_agent's logger disables propagation (avoids duplicate root
+        # handler lines), so attach caplog's handler directly to capture it.
+        ingest_agent.logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level("WARNING", logger="app.agents.ingest"):
+                opts = _build_parse_options("premium")  # legacy string, post-migration
+        finally:
+            ingest_agent.logger.removeHandler(caplog.handler)
+        assert opts["tier"] == "cost_effective"
+        assert any("unknown parser mode" in r.message.lower() for r in caplog.records)
+
+    def test_options_shape(self):
+        opts = _build_parse_options("standard")
+        assert opts["tier"] == "cost_effective"
+        assert opts["version"]  # pinned, non-empty
+        assert "markdown_full" in opts["expand"] and "text_full" in opts["expand"]
 
 
-def test_transient_classifier_recognises_httpx_network_error() -> None:
-    assert (
-        ingest_agent._is_transient_parse_error(httpx.NetworkError("network failed"))
-        is True
-    )
+class TestExtractText:
+    def test_prefers_markdown(self):
+        class R:
+            markdown = "# md"
+            text = "plain"
+
+        assert _extract_text(R()) == "# md"
+
+    def test_falls_back_to_text_when_markdown_empty(self):
+        class R:
+            markdown = "   "
+            text = "plain"
+
+        assert _extract_text(R()) == "plain"
+
+    def test_empty_both_returns_empty(self):
+        class R:
+            markdown = ""
+            text = None
+
+        assert _extract_text(R()) == ""
 
 
-def test_transient_classifier_recognises_httpx_remote_protocol_error() -> None:
-    assert (
-        ingest_agent._is_transient_parse_error(
-            httpx.RemoteProtocolError("protocol error")
-        )
-        is True
-    )
+class TestRetry:
+    def test_retries_transient_then_succeeds(self):
+        calls = {"n": 0}
 
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise httpx.ConnectTimeout("boom")
+            return "ok"
 
-def test_transient_classifier_recognises_503_http_status_error() -> None:
-    """Recognize 5xx HTTP status errors as transient."""
-    response = MagicMock()
-    response.status_code = 503
-    exc = httpx.HTTPStatusError("Service Unavailable", request=None, response=response)
-    assert ingest_agent._is_transient_parse_error(exc) is True
+        assert _parse_with_retry(flaky) == "ok"
+        assert calls["n"] == 3
 
+    def test_no_retry_on_4xx(self):
+        resp = httpx.Response(422, request=httpx.Request("POST", "http://x"))
 
-def test_transient_classifier_recognises_502_http_status_error() -> None:
-    """Recognize 502 Bad Gateway as transient."""
-    response = MagicMock()
-    response.status_code = 502
-    exc = httpx.HTTPStatusError("Bad Gateway", request=None, response=response)
-    assert ingest_agent._is_transient_parse_error(exc) is True
+        def bad():
+            raise httpx.HTTPStatusError("422", request=resp.request, response=resp)
 
+        with pytest.raises(httpx.HTTPStatusError):
+            _parse_with_retry(bad)
 
-def test_transient_classifier_rejects_404_http_status_error() -> None:
-    """Reject 4xx errors as non-transient."""
-    response = MagicMock()
-    response.status_code = 404
-    exc = httpx.HTTPStatusError("Not Found", request=None, response=response)
-    assert ingest_agent._is_transient_parse_error(exc) is False
-
-
-def test_transient_classifier_recognises_503_runtime_error() -> None:
-    assert (
-        ingest_agent._is_transient_parse_error(
-            RuntimeError("LlamaParse returned 503 service unavailable")
-        )
-        is True
-    )
-
-
-def test_transient_classifier_recognises_timeout_runtime_error() -> None:
-    assert (
-        ingest_agent._is_transient_parse_error(
-            RuntimeError("Request timeout after 30s")
-        )
-        is True
-    )
-
-
-def test_transient_classifier_recognises_connection_runtime_error() -> None:
-    assert (
-        ingest_agent._is_transient_parse_error(RuntimeError("Connection refused"))
-        is True
-    )
-
-
-def test_transient_classifier_rejects_value_error() -> None:
-    assert ingest_agent._is_transient_parse_error(ValueError("bad schema")) is False
-
-
-def test_transient_classifier_recognises_key_error() -> None:
-    """LlamaParse raises a raw KeyError when the /result/{result_type}
-    response omits the requested key — observed in prod as a transient
-    LlamaCloud-side race (job status SUCCESS before the result artifact is
-    queryable). Retrying is safe even if a file permanently lacks the
-    result_type: it still fails after 3 attempts, just slower."""
-    assert ingest_agent._is_transient_parse_error(KeyError("markdown")) is True
-
-
-def test_retry_succeeds_after_transient_failures() -> None:
-    # Arrange — fail twice with timeout, succeed third
-    parser = MagicMock()
-    attempts = {"n": 0}
-
-    def _flaky(_path):
-        attempts["n"] += 1
-        if attempts["n"] < 3:
-            raise httpx.TimeoutException("transient")
-        return [MagicMock(text="parsed content")]
-
-    parser.load_data.side_effect = _flaky
-
-    # Act
-    with patch("tenacity.nap.time.sleep", lambda _: None):
-        result = ingest_agent._llama_parse_with_retry(parser, "/tmp/x.pdf")
-
-    # Assert
-    assert attempts["n"] == 3
-    assert result[0].text == "parsed content"
-
-
-def test_retry_gives_up_after_three_transient_failures() -> None:
-    # Arrange
-    parser = MagicMock()
-    parser.load_data.side_effect = httpx.TimeoutException("always-fails")
-
-    # Act / Assert
-    with patch("tenacity.nap.time.sleep", lambda _: None):
-        with pytest.raises(httpx.TimeoutException):
-            ingest_agent._llama_parse_with_retry(parser, "/tmp/x.pdf")
-
-    assert parser.load_data.call_count == 3
-
-
-def test_retry_does_not_retry_permanent_error() -> None:
-    # Arrange — schema/value error, non-retryable
-    parser = MagicMock()
-    parser.load_data.side_effect = ValueError("bad doc")
-
-    # Act / Assert
-    with pytest.raises(ValueError):
-        ingest_agent._llama_parse_with_retry(parser, "/tmp/x.pdf")
-
-    assert parser.load_data.call_count == 1  # no retry
-
-
-def test_retry_does_not_retry_runtime_error_without_transient_hint() -> None:
-    # Arrange — RuntimeError without transient keywords
-    parser = MagicMock()
-    parser.load_data.side_effect = RuntimeError("unrelated error")
-
-    # Act / Assert
-    with pytest.raises(RuntimeError):
-        ingest_agent._llama_parse_with_retry(parser, "/tmp/x.pdf")
-
-    assert parser.load_data.call_count == 1
-
-
-def test_retry_succeeds_after_key_error() -> None:
-    # Arrange — fail once with the LlamaCloud result-not-ready KeyError, then succeed
-    parser = MagicMock()
-    attempts = {"n": 0}
-
-    def _flaky(_path):
-        attempts["n"] += 1
-        if attempts["n"] == 1:
-            raise KeyError("markdown")
-        return [MagicMock(text="success after key error")]
-
-    parser.load_data.side_effect = _flaky
-
-    # Act
-    with patch("tenacity.nap.time.sleep", lambda _: None):
-        result = ingest_agent._llama_parse_with_retry(parser, "/tmp/x.pdf")
-
-    # Assert
-    assert attempts["n"] == 2
-    assert result[0].text == "success after key error"
-
-
-def test_retry_succeeds_after_504_error() -> None:
-    # Arrange — fail once with 504, then succeed
-    parser = MagicMock()
-    attempts = {"n": 0}
-
-    def _flaky(_path):
-        attempts["n"] += 1
-        if attempts["n"] == 1:
-            response = MagicMock()
-            response.status_code = 504
-            raise httpx.HTTPStatusError(
-                "Gateway Timeout", request=None, response=response
-            )
-        return [MagicMock(text="success after 504")]
-
-    parser.load_data.side_effect = _flaky
-
-    # Act
-    with patch("tenacity.nap.time.sleep", lambda _: None):
-        result = ingest_agent._llama_parse_with_retry(parser, "/tmp/x.pdf")
-
-    # Assert
-    assert attempts["n"] == 2
-    assert result[0].text == "success after 504"
+    def test_keyerror_is_not_transient(self):
+        assert _is_transient_parse_error(KeyError("markdown")) is False

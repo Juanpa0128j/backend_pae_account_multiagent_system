@@ -87,6 +87,16 @@ def _build_client(method_name: str, return_value):
     return client
 
 
+def _build_llama_cloud_client(result=None, side_effect=None):
+    """Build a `LlamaCloud`-shaped class whose `.parsing.parse(...)` call
+    returns `result` (a fake `ParsingGetResponse` with .markdown/.text) or
+    raises `side_effect`."""
+    parse_mock = MagicMock(return_value=result, side_effect=side_effect)
+    instance = MagicMock()
+    instance.parsing.parse = parse_mock
+    return MagicMock(return_value=instance)
+
+
 class TestGeminiRetryHelper:
     def test_retries_transient_then_succeeds(self):
         calls = {"n": 0}
@@ -193,7 +203,7 @@ class TestIngestNodeRoutes:
         assert out["raw_text"] == "xml text for tests"
 
     def test_pdf_without_llamaparse_sets_error(self, pdf_file, monkeypatch):
-        monkeypatch.setattr(ingest_agent, "LlamaParse", None)
+        monkeypatch.setattr(ingest_agent, "LlamaCloud", None)
 
         state = base_state(file_path=pdf_file)
         out = ingest_agent.ingest_node(state)
@@ -205,21 +215,22 @@ class TestIngestNodeRoutes:
     def test_pdf_cache_hit_skips_llamaparse(self, pdf_file, monkeypatch):
         import hashlib
 
-        # Cache is keyed by content hash, not filename, so two uploads of
-        # different files with the same name don't collide.
+        # Cache is keyed by content hash + resolved tier, not filename or
+        # mode string, so two uploads of different files with the same name
+        # don't collide.
         content_hash = hashlib.sha256(Path(pdf_file).read_bytes()).hexdigest()
         monkeypatch.setattr(
             ingest_agent,
             "get_cached_parse",
-            lambda h, m: (
+            lambda h, tier: (
                 "cached parsed text for ingest"
-                if (h, m) == (content_hash, "fast")
+                if (h, tier) == (content_hash, "fast")
                 else None
             ),
         )
 
         llama_cls = MagicMock()
-        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        monkeypatch.setattr(ingest_agent, "LlamaCloud", llama_cls)
         monkeypatch.setattr(
             ingest_agent,
             "get_settings",
@@ -238,30 +249,23 @@ class TestIngestNodeRoutes:
     def test_pdf_markdown_empty_falls_back_to_text_and_caches(
         self, pdf_file, monkeypatch
     ):
-        first_parser = MagicMock()
-        first_doc = MagicMock()
-        first_doc.text = ""
-        first_parser.load_data.return_value = [first_doc]
+        result = MagicMock()
+        result.markdown = ""
+        result.text = "text mode output long enough for ingestion"
 
-        second_parser = MagicMock()
-        second_doc = MagicMock()
-        second_doc.text = "text mode output long enough for ingestion"
-        second_parser.load_data.return_value = [second_doc]
-
-        llama_cls = MagicMock(side_effect=[first_parser, second_parser])
-
-        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        llama_cloud_cls = _build_llama_cloud_client(result)
+        monkeypatch.setattr(ingest_agent, "LlamaCloud", llama_cloud_cls)
         monkeypatch.setattr(
             ingest_agent,
             "get_settings",
             lambda: SimpleNamespace(llama_cloud_api_key="k"),
         )
-        monkeypatch.setattr(ingest_agent, "get_cached_parse", lambda h, m: None)
+        monkeypatch.setattr(ingest_agent, "get_cached_parse", lambda h, tier: None)
         stored = {}
         monkeypatch.setattr(
             ingest_agent,
             "store_parse",
-            lambda h, m, t: stored.update({(h, m): t}),
+            lambda h, tier, t: stored.update({(h, tier): t}),
         )
         client = _build_client("extract_transactions", {"ok": True})
         monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
@@ -270,7 +274,6 @@ class TestIngestNodeRoutes:
         out = ingest_agent.ingest_node(state)
 
         assert out["error"] is None
-        assert llama_cls.call_count == 2
 
         import hashlib
 
@@ -280,30 +283,20 @@ class TestIngestNodeRoutes:
             == "text mode output long enough for ingestion"
         )
 
-    def test_pdf_fallback_parse_failure_sets_error_instead_of_crashing(
+    def test_pdf_parse_failure_sets_error_instead_of_crashing(
         self, pdf_file, monkeypatch
     ):
-        """Regression: LlamaCloud can return a job result missing the requested
-        key (raw KeyError from llama_parse's base.py), and it can do so on the
-        text-mode fallback too, not just the first markdown attempt. The
-        fallback call must be caught and translated to state["error"], not
-        left to crash the pipeline uncaught."""
-        first_parser = MagicMock()
-        first_doc = MagicMock()
-        first_doc.text = ""
-        first_parser.load_data.return_value = [first_doc]
-
-        second_parser = MagicMock()
-        second_parser.load_data.side_effect = KeyError("markdown")
-
-        llama_cls = MagicMock(side_effect=[first_parser, second_parser])
-
-        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        """A parse call that raises must be caught by ingest_node's per-file
+        try/except and translated to state["error"], not left to crash the
+        pipeline uncaught."""
+        llama_cloud_cls = _build_llama_cloud_client(side_effect=ValueError("boom"))
+        monkeypatch.setattr(ingest_agent, "LlamaCloud", llama_cloud_cls)
         monkeypatch.setattr(
             ingest_agent,
             "get_settings",
             lambda: SimpleNamespace(llama_cloud_api_key="k"),
         )
+        monkeypatch.setattr(ingest_agent, "get_cached_parse", lambda h, tier: None)
         client = _build_client("extract_transactions", {"ok": True})
         monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
@@ -311,7 +304,7 @@ class TestIngestNodeRoutes:
         out = ingest_agent.ingest_node(state)
 
         assert out["error"] is not None
-        assert "both markdown and text mode" in out["error"]
+        assert "boom" in out["error"]
 
     def test_empty_extracted_text_sets_readable_error(self, xml_file, monkeypatch):
         monkeypatch.setattr("app.services.xml_parser.parse_xml", lambda _: "   ")
@@ -370,7 +363,7 @@ class TestIngestNodeRoutes:
         self, pdf_file, monkeypatch
     ):
         llama_cls = MagicMock()
-        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        monkeypatch.setattr(ingest_agent, "LlamaCloud", llama_cls)
 
         client = _build_client("extract_factura_venta", {"ok": True})
         monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
@@ -426,19 +419,19 @@ class TestIngestNodeRoutes:
         assert out["result"]["status"] == "error"
         assert "gemini exploded" in out["error"]
 
-    def test_llamaparse_fast_mode_uses_fast_flag(self, pdf_file, monkeypatch):
-        parser_instance = MagicMock()
-        doc = MagicMock()
-        doc.text = "fake parsed text"
-        parser_instance.load_data.return_value = [doc]
+    def test_llamaparse_fast_mode_resolves_fast_tier(self, pdf_file, monkeypatch):
+        result = MagicMock()
+        result.markdown = "fake parsed text"
+        result.text = ""
 
-        llama_cls = MagicMock(return_value=parser_instance)
-        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        llama_cloud_cls = _build_llama_cloud_client(result)
+        monkeypatch.setattr(ingest_agent, "LlamaCloud", llama_cloud_cls)
         monkeypatch.setattr(
             ingest_agent,
             "get_settings",
             lambda: SimpleNamespace(llama_cloud_api_key="k"),
         )
+        monkeypatch.setattr(ingest_agent, "get_cached_parse", lambda h, tier: None)
         client = _build_client("extract_transactions", {"ok": True})
         monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
@@ -446,68 +439,25 @@ class TestIngestNodeRoutes:
         out = ingest_agent.ingest_node(state)
 
         assert out["error"] is None
-        assert llama_cls.call_count == 1
-        assert llama_cls.call_args.kwargs.get("fast_mode") is True
+        parse_call = llama_cloud_cls.return_value.parsing.parse
+        parse_call.assert_called_once()
+        assert parse_call.call_args.kwargs["tier"] == "fast"
 
-    def test_llamaparse_premium_mode_uses_premium_flag(self, pdf_file, monkeypatch):
-        parser_instance = MagicMock()
-        doc = MagicMock()
-        doc.text = "fake parsed text"
-        parser_instance.load_data.return_value = [doc]
+    def test_llamaparse_standard_mode_resolves_cost_effective_tier(
+        self, pdf_file, monkeypatch
+    ):
+        result = MagicMock()
+        result.markdown = "fake parsed text"
+        result.text = ""
 
-        llama_cls = MagicMock(return_value=parser_instance)
-        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
+        llama_cloud_cls = _build_llama_cloud_client(result)
+        monkeypatch.setattr(ingest_agent, "LlamaCloud", llama_cloud_cls)
         monkeypatch.setattr(
             ingest_agent,
             "get_settings",
             lambda: SimpleNamespace(llama_cloud_api_key="k"),
         )
-        client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
-
-        state = base_state(file_path=pdf_file, parser_mode="premium")
-        out = ingest_agent.ingest_node(state)
-
-        assert out["error"] is None
-        assert llama_cls.call_count == 1
-        assert llama_cls.call_args.kwargs.get("premium_mode") is True
-
-    def test_llamaparse_gpt4o_mode_uses_gpt4o_flag(self, pdf_file, monkeypatch):
-        parser_instance = MagicMock()
-        doc = MagicMock()
-        doc.text = "fake parsed text"
-        parser_instance.load_data.return_value = [doc]
-
-        llama_cls = MagicMock(return_value=parser_instance)
-        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
-        monkeypatch.setattr(
-            ingest_agent,
-            "get_settings",
-            lambda: SimpleNamespace(llama_cloud_api_key="k"),
-        )
-        client = _build_client("extract_transactions", {"ok": True})
-        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
-
-        state = base_state(file_path=pdf_file, parser_mode="gpt4o")
-        out = ingest_agent.ingest_node(state)
-
-        assert out["error"] is None
-        assert llama_cls.call_count == 1
-        assert llama_cls.call_args.kwargs.get("gpt4o_mode") is True
-
-    def test_llamaparse_standard_mode_uses_no_extra_flags(self, pdf_file, monkeypatch):
-        parser_instance = MagicMock()
-        doc = MagicMock()
-        doc.text = "fake parsed text"
-        parser_instance.load_data.return_value = [doc]
-
-        llama_cls = MagicMock(return_value=parser_instance)
-        monkeypatch.setattr(ingest_agent, "LlamaParse", llama_cls)
-        monkeypatch.setattr(
-            ingest_agent,
-            "get_settings",
-            lambda: SimpleNamespace(llama_cloud_api_key="k"),
-        )
+        monkeypatch.setattr(ingest_agent, "get_cached_parse", lambda h, tier: None)
         client = _build_client("extract_transactions", {"ok": True})
         monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
 
@@ -515,11 +465,59 @@ class TestIngestNodeRoutes:
         out = ingest_agent.ingest_node(state)
 
         assert out["error"] is None
-        assert llama_cls.call_count == 1
-        kwargs = llama_cls.call_args.kwargs
-        assert "fast_mode" not in kwargs
-        assert "premium_mode" not in kwargs
-        assert "gpt4o_mode" not in kwargs
+        parse_call = llama_cloud_cls.return_value.parsing.parse
+        parse_call.assert_called_once()
+        assert parse_call.call_args.kwargs["tier"] == "cost_effective"
+
+    def test_llamaparse_agentic_mode_resolves_agentic_tier(self, pdf_file, monkeypatch):
+        result = MagicMock()
+        result.markdown = "fake parsed text"
+        result.text = ""
+
+        llama_cloud_cls = _build_llama_cloud_client(result)
+        monkeypatch.setattr(ingest_agent, "LlamaCloud", llama_cloud_cls)
+        monkeypatch.setattr(
+            ingest_agent,
+            "get_settings",
+            lambda: SimpleNamespace(llama_cloud_api_key="k"),
+        )
+        monkeypatch.setattr(ingest_agent, "get_cached_parse", lambda h, tier: None)
+        client = _build_client("extract_transactions", {"ok": True})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(file_path=pdf_file, parser_mode="agentic")
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        parse_call = llama_cloud_cls.return_value.parsing.parse
+        parse_call.assert_called_once()
+        assert parse_call.call_args.kwargs["tier"] == "agentic"
+
+    def test_llamaparse_agentic_plus_mode_resolves_agentic_plus_tier(
+        self, pdf_file, monkeypatch
+    ):
+        result = MagicMock()
+        result.markdown = "fake parsed text"
+        result.text = ""
+
+        llama_cloud_cls = _build_llama_cloud_client(result)
+        monkeypatch.setattr(ingest_agent, "LlamaCloud", llama_cloud_cls)
+        monkeypatch.setattr(
+            ingest_agent,
+            "get_settings",
+            lambda: SimpleNamespace(llama_cloud_api_key="k"),
+        )
+        monkeypatch.setattr(ingest_agent, "get_cached_parse", lambda h, tier: None)
+        client = _build_client("extract_transactions", {"ok": True})
+        monkeypatch.setattr(ingest_agent, "get_llm_client", lambda: client)
+
+        state = base_state(file_path=pdf_file, parser_mode="agentic_plus")
+        out = ingest_agent.ingest_node(state)
+
+        assert out["error"] is None
+        parse_call = llama_cloud_cls.return_value.parsing.parse
+        parse_call.assert_called_once()
+        assert parse_call.call_args.kwargs["tier"] == "agentic_plus"
 
 
 class TestIngestNodeMultiPage:
