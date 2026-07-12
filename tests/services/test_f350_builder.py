@@ -18,7 +18,8 @@ from app.models.database import (
     TransactionStatus,
 )
 from app.services import db_service
-from app.services.tax_declaration_service import _build_f350
+from app.services.tax_declaration_service import _build_f350, build_draft_from_catalog
+from app.services.dian_forms import get_catalog
 
 
 @pytest.fixture
@@ -138,217 +139,209 @@ def _ledger_2365_2368(retefuente=0.0, reteica=0.0):
     ]
 
 
-def _fields_by_renglon(fields):
-    return {f.renglon: f for f in fields}
+def _draft(**kw):
+    """Run _build_f350 and project through the official F350 catalog."""
+    computed, warnings = _build_f350(**kw)
+    fields = build_draft_from_catalog(get_catalog("F350"), computed)
+    return {f.renglon: f for f in fields}, warnings
 
 
-# ─── Concepto-driven renglones ──────────────────────────────────────────────
+# Official retención casillas per (categoria, aplica_a):
+#   compras PJ → 49, compras PN → 102, honorarios PJ → 42, salarios PN → 93.
+#   Unmapped concepts (hidrocarburos, pes) → "Otros pagos" 54 (PJ/AMB) / 108 (PN).
 
 
-def test_f350_compras_pj_emits_renglon_25(db):
+# ─── Concepto-driven casillas ──────────────────────────────────────────────
+
+
+def test_f350_compras_pj_maps_to_casilla_49(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "compras_pj", "100")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=100.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=100.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert "25" in f
-    assert f["25"].value == 100.0
-    assert "(PJ)" in f["25"].label
+    assert f["49"].value == 100.0
 
 
-def test_f350_mix_pj_pn_emits_two_renglones(db):
+def test_f350_mix_pj_pn_maps_to_49_and_102(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "compras_pj", "100")
     _post_retencion(db, "t2", "compras_pn", "60")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=160.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=160.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert f["25"].value == 100.0
-    assert f["27"].value == 60.0
+    assert f["49"].value == 100.0  # compras PJ
+    assert f["102"].value == 60.0  # compras PN
 
 
-def test_f350_hidrocarburos_renglon_40_not_25(db):
+def test_f350_hidrocarburos_routed_to_otros_54(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "hidrocarburos", "200")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=200.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=200.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert f["40"].value == 200.0
-    assert "25" not in f  # compras_pj has zero monto
+    assert f["54"].value == 200.0  # otros pagos (concepto sin casilla propia)
+    assert f["49"].value == 0.0  # compras_pj sin movimiento
 
 
-def test_f350_pes_renglon_65(db):
+def test_f350_pes_routed_to_otros_54(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "pes_svcs_dig", "300")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=300.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=300.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert f["65"].value == 300.0
+    assert f["54"].value == 300.0
 
 
-def test_f350_reteica_uses_2368_via_concepto(db):
+def test_f350_reteica_excluded(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "reteica", "50", cuenta_credito="236805")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(reteica=50.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(reteica=50.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert f["76"].value == 50.0
+    # ReteICA es municipal → excluida del F350; total renta = 0.
+    assert f["130"].value == 0.0
 
 
 def test_f350_unclassified_emits_warning(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", None, "75")
-    fields, warnings = _build_f350(
-        _ledger_2365_2368(retefuente=75.0),
-        _settings(),
+    f, warnings = _draft(
+        ledger=_ledger_2365_2368(retefuente=75.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert "_sin_clasificar" in f
-    assert any(w.field == "_sin_clasificar" for w in warnings)
+    # El gap sin clasificar va a "Otros pagos" (54) y emite advertencia.
+    assert f["54"].value == pytest.approx(75.0)
+    assert any(w.field == "54" for w in warnings)
 
 
-def test_f350_total_renglon_sums_concepto_renglones(db):
+def test_f350_total_130_sums_concepto_casillas(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "compras_pj", "100")
     _post_retencion(db, "t2", "honorarios_pj", "200")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=300.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=300.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert f["_total_retenciones"].value == pytest.approx(300.0)
+    # 130 (total retenciones renta) = compras PJ (49) + honorarios PJ (42)
+    assert f["130"].value == pytest.approx(300.0)
 
 
 def test_f350_zero_amount_concept_skipped(db):
     _seed_standard_concepts(db)
-    fields, _ = _build_f350(
-        _ledger_2365_2368(),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert "25" not in f
-    assert "40" not in f
+    assert f["49"].value == 0.0
+    assert f["54"].value == 0.0
 
 
 def test_f350_inactive_concept_skipped(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "compras_pj", "100")
     db_service.soft_delete_tax_concept(db, "compras_pj")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=100.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=100.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert "25" not in f
+    assert f["49"].value == 0.0
 
 
-def test_f350_legacy_no_db_still_renders_manual_renglones(db):
-    fields, warnings = _build_f350(
-        _ledger_2365_2368(retefuente=100.0),
-        _settings(),
+def test_f350_legacy_no_db_renders_full_catalog(db):
+    f, warnings = _draft(
+        ledger=_ledger_2365_2368(retefuente=100.0),
+        settings=_settings(),
         db=None,
         company_nit=None,
     )
-    f = _fields_by_renglon(fields)
-    # Manual / sanciones renglones always present (renglón 50 only if nómina data exists).
-    assert "75" in f
-    assert "97" in f
+    # Sanciones (137) y "menos retenciones en exceso" (129) son manuales y
+    # siempre aparecen en el catálogo.
+    assert f["137"].requires_review is True
+    assert "129" in f
 
 
-def test_f350_includes_manual_renglones_75_97(db):
+def test_f350_sanciones_casilla_137_manual(db):
     _seed_standard_concepts(db)
-    fields, _ = _build_f350(
-        _ledger_2365_2368(),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    # Renglón 50 only present when nómina data exists; 75 and 97 always present.
-    assert {"75", "97"} <= set(f)
+    assert f["137"].requires_review is True
 
 
-def test_f350_label_suffix_pj_pn(db):
+def test_f350_pj_pn_land_in_distinct_casillas(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "compras_pj", "100")
     _post_retencion(db, "t2", "compras_pn", "60")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=160.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=160.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert "(PJ)" in f["25"].label
-    assert "(PN)" in f["27"].label
+    assert f["49"].value == 100.0 and f["102"].value == 60.0
 
 
-def test_f350_amb_concept_no_pj_pn_suffix(db):
+def test_f350_base_estimated_from_tarifa(db):
     _seed_standard_concepts(db)
-    _post_retencion(db, "t1", "hidrocarburos", "200")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=200.0),
-        _settings(),
+    _post_retencion(db, "t1", "compras_pj", "100")
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=100.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
     )
-    f = _fields_by_renglon(fields)
-    assert "(PJ)" not in f["40"].label
-    assert "(PN)" not in f["40"].label
+    # Base estimada = 100 / 2.5% = 4000 → casilla 36 (compras PJ base)
+    assert f["36"].value == pytest.approx(4000.0)
 
 
 def test_f350_period_filter_excludes_outside_dates(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "compras_pj", "100")
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=100.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=100.0),
+        settings=_settings(),
         db=db,
         company_nit="900",
         period_start=datetime(2099, 1, 1, tzinfo=timezone.utc),
         period_end=datetime(2099, 12, 31, tzinfo=timezone.utc),
     )
-    f = _fields_by_renglon(fields)
-    assert "25" not in f
+    assert f["49"].value == 0.0
 
 
 def test_f350_company_filter_isolates_tenants(db):
     _seed_standard_concepts(db)
     _post_retencion(db, "t1", "compras_pj", "100")
-    # Query a different tenant — must return zero.
-    fields, _ = _build_f350(
-        _ledger_2365_2368(retefuente=100.0),
-        _settings(),
+    f, _ = _draft(
+        ledger=_ledger_2365_2368(retefuente=100.0),
+        settings=_settings(),
         db=db,
         company_nit="OTHER_NIT",
     )
-    f = _fields_by_renglon(fields)
-    assert "25" not in f
+    assert f["49"].value == 0.0

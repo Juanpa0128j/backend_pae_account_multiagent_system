@@ -181,80 +181,80 @@ def _generate_f110(settings, ledger, extra_patches=None, year: int = 2026):
 
 
 class TestF110BasicRenglones:
-    def test_renta_bruta_from_clase_4(self):
+    def test_ingresos_ordinarios_casilla_47(self):
         settings = _make_settings()
         ledger = _make_ledger(ingresos=2_000_000)
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["40"]["value"] == pytest.approx(2_000_000.0)
-        assert fields["40"]["source"] == "clase_4_puc"
+        # Ingresos brutos de actividades ordinarias (clase 41) → casilla 47
+        assert fields["47"]["value"] == pytest.approx(2_000_000.0)
+        assert fields["47"]["source"] == "clase_41_puc"
+        # Total ingresos brutos (subtotal) → casilla 58
+        assert fields["58"]["value"] == pytest.approx(2_000_000.0)
 
-    def test_costos_from_clase_6(self):
+    def test_costos_casilla_62(self):
         settings = _make_settings()
         ledger = _make_ledger(costos=500_000)
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["52"]["value"] == pytest.approx(500_000.0)
+        assert fields["62"]["value"] == pytest.approx(500_000.0)
 
-    def test_gastos_from_clase_5(self):
-        # ica_511505=0 to isolate gastos from 511505 contributions
+    def test_gastos_admin_casilla_63(self):
+        # gastos 5110 (clase 51) + ICA 511505 (clase 51) → casilla 63
         settings = _make_settings()
         ledger = _make_ledger(gastos=300_000, ica_511505=0)
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["60"]["value"] == pytest.approx(300_000.0)
+        assert fields["63"]["value"] == pytest.approx(300_000.0)
 
-    def test_renta_liquida_ordinaria_computed(self):
-        # ica_511505=0 so class-5 sum = gastos only
-        # RLO = 2_000_000 - 500_000 - 300_000 = 1_200_000
+    def test_renta_liquida_ordinaria_casilla_72(self):
+        # RLO (casilla 72) = ingresos netos - costos y gastos = 2M - 500k - 300k
         settings = _make_settings()
         ledger = _make_ledger(
             ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=0
         )
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["f110_renta_liquida_ordinaria"]["value"] == pytest.approx(
-            1_200_000.0
-        )
-        assert fields["f110_renta_liquida_ordinaria"]["source"] == "journal"
+        assert fields["72"]["value"] == pytest.approx(1_200_000.0)
+        assert fields["72"]["source"] == "calculado"
 
     def test_renta_liquida_gravable_clamped_at_zero_when_loss(self):
-        # Ingresos < costos+gastos → RLO negative → clamped at 0
+        # Ingresos < costos+gastos → RLG (casilla 79) clamped at 0
         settings = _make_settings()
         ledger = _make_ledger(
             ingresos=100_000, costos=300_000, gastos=200_000, ica_511505=0
         )
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["72"]["value"] == pytest.approx(0.0)
+        assert fields["79"]["value"] == pytest.approx(0.0)
 
-    def test_impuesto_basico_uses_tasa_renta(self):
-        # RLG = 1_200_000, tasa = 35% → 420_000
-        # ica_511505=0 → descuento_ica = 0 → impuesto_neto = impuesto_basico
+    def test_impuesto_casilla_84_uses_tasa_renta(self):
+        # RLG = 1_200_000, tasa = 35% → 420_000 → casilla 84
         settings = _make_settings(tasa_renta=Decimal("0.35"))
         ledger = _make_ledger(
             ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=0
         )
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["80"]["value"] == pytest.approx(420_000.0)
+        assert fields["84"]["value"] == pytest.approx(420_000.0)
 
-    def test_ica_deducible_field_present(self):
+    def test_ica_folds_into_gastos_admin(self):
+        # ICA (511505) es deducción vía clase 5 → suma en casilla 63, no casilla propia
         settings = _make_settings()
-        ledger = _make_ledger(ica_511505=20_000)
+        ledger = _make_ledger(gastos=300_000, ica_511505=20_000)
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["63"]["value"] == pytest.approx(20_000.0)
+        assert fields["63"]["value"] == pytest.approx(320_000.0)
 
-    def test_activos_from_clase_1(self):
+    def test_patrimonio_bruto_casilla_44(self):
         settings = _make_settings()
         ledger = _make_ledger()
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # 135518(40k) + 1105(800k) = 840_000
-        assert fields["26"]["value"] == pytest.approx(840_000.0)
+        # 1105(800k)→36 + 135518(40k)→38 = 840_000 en casilla 44
+        assert fields["44"]["value"] == pytest.approx(840_000.0)
 
-    def test_retenciones_from_db(self):
+    def test_retenciones_casilla_106(self):
         settings = _make_settings()
         ledger = _make_ledger(retenciones=0)
         draft = _generate_f110(
@@ -267,7 +267,7 @@ class TestF110BasicRenglones:
             },
         )
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["92"]["value"] == pytest.approx(50_000.0)
+        assert fields["106"]["value"] == pytest.approx(50_000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +276,7 @@ class TestF110BasicRenglones:
 
 
 class TestF110WithF2516:
-    def test_rlo_from_f2516_when_reviewed(self):
+    def test_f2516_rlo_surfaced_as_warning(self):
         settings = _make_settings()
         ledger = _make_ledger(ingresos=2_000_000, costos=500_000, gastos=300_000)
 
@@ -298,28 +298,29 @@ class TestF110WithF2516:
                 ),
             },
         )
-        fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["f110_renta_liquida_ordinaria"]["value"] == pytest.approx(
-            999_000.0
-        )
-        assert fields["f110_renta_liquida_ordinaria"]["source"] == "f2516"
-        assert fields["f110_renta_liquida_ordinaria"]["requires_review"] is False
+        # La casilla 72 sigue siendo contable; el valor conciliado F2516 se
+        # expone como advertencia para que el contador lo use.
+        msgs = " ".join(w["message"] for w in draft.warnings_json if w["field"] == "72")
+        assert "F2516" in msgs
 
-    def test_rlo_from_journal_when_no_f2516(self):
+    def test_rlo_calculated_when_no_f2516(self):
         settings = _make_settings()
-        ledger = _make_ledger(ingresos=2_000_000, costos=500_000, gastos=300_000)
+        ledger = _make_ledger(
+            ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=0
+        )
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["f110_renta_liquida_ordinaria"]["source"] == "journal"
+        assert fields["72"]["source"] == "calculado"
+        assert fields["72"]["value"] == pytest.approx(1_200_000.0)
 
 
 # ---------------------------------------------------------------------------
-# Pérdidas fiscales
+# Pérdidas fiscales → casilla 74 (Compensaciones)
 # ---------------------------------------------------------------------------
 
 
 class TestF110WithPerdidas:
-    def test_perdidas_field_shows_sum(self):
+    def test_perdidas_in_casilla_74(self):
         settings = _make_settings()
         ledger = _make_ledger(ingresos=2_000_000, costos=500_000, gastos=300_000)
         draft = _generate_f110(
@@ -332,13 +333,11 @@ class TestF110WithPerdidas:
             },
         )
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["f110_perdidas_compensar"]["value"] == pytest.approx(400_000.0)
-        assert fields["f110_perdidas_compensar"]["requires_review"] is True
+        assert fields["74"]["value"] == pytest.approx(400_000.0)
+        assert fields["74"]["requires_review"] is True
 
     def test_renta_liquida_gravable_reduced_by_perdidas(self):
-        # ica_511505=0 → class-5 debits = gastos only = 300_000
-        # RLO = 2_000_000 - 500_000 - 300_000 = 1_200_000
-        # perdidas = 400_000 → RLG = max(0, 1_200_000 - 400_000) = 800_000
+        # RLO (72) = 1_200_000 ; perdidas (74) = 400_000 → RLG (79) = 800_000
         settings = _make_settings()
         ledger = _make_ledger(
             ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=0
@@ -353,86 +352,50 @@ class TestF110WithPerdidas:
             },
         )
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["72"]["value"] == pytest.approx(800_000.0)
+        assert fields["79"]["value"] == pytest.approx(800_000.0)
 
     def test_no_perdidas_when_none_available(self):
         settings = _make_settings()
         ledger = _make_ledger()
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["f110_perdidas_compensar"]["value"] == pytest.approx(0.0)
-        assert fields["f110_perdidas_compensar"]["requires_review"] is False
+        assert fields["74"]["value"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
-# Descuentos tributarios
+# Descuentos tributarios → casilla 93 (single, manual)
 # ---------------------------------------------------------------------------
 
 
 class TestF110Descuentos:
-    def test_ica_not_a_descuento_86_ica_absent(self):
-        """Ley 2277/2022 Art. 19: ICA is now 100% deducción, not descuento.
-        86_ica must NOT appear in F110 output since AG 2023."""
-        settings = _make_settings()
-        ledger = _make_ledger(ica_511505=20_000)
-        draft = _generate_f110(settings, ledger)
-        fields = {f["renglon"]: f for f in draft.fields_json}
-        assert "86_ica" not in fields, (
-            "86_ica debe estar ausente: Ley 2277/2022 Art. 19 convirtió ICA a "
-            "deducción 100% (Art. 115 ET), no descuento tributario"
-        )
-
-    def test_ica_flows_as_deduccion_via_renglon_63(self):
-        """ICA still visible via renglon 63 as informational deducción line."""
-        settings = _make_settings()
-        ledger = _make_ledger(ica_511505=20_000)
-        draft = _generate_f110(settings, ledger)
-        fields = {f["renglon"]: f for f in draft.fields_json}
-        assert "63" in fields
-        assert fields["63"]["value"] == pytest.approx(20_000.0)
-        assert fields["63"]["source"] == "cuentas_511505_521505"
-
-    def test_descuentos_itemized_fields_present(self):
+    def test_descuentos_single_casilla_93_manual(self):
         settings = _make_settings()
         ledger = _make_ledger()
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        for renglon in [
-            "86_donaciones",
-            "86_iva_capital",
-            "86_educacion",
-            "86_otros",
-        ]:
-            assert renglon in fields, f"Missing descuento field: {renglon}"
+        assert "93" in fields
+        assert fields["93"]["requires_review"] is True
+        # Sin descuentos capturados → 0 por defecto.
+        assert fields["93"]["value"] == pytest.approx(0.0)
 
-    def test_descuentos_manual_fields_require_review(self):
-        settings = _make_settings()
-        ledger = _make_ledger()
-        draft = _generate_f110(settings, ledger)
-        fields = {f["renglon"]: f for f in draft.fields_json}
-        for renglon in ["86_donaciones", "86_iva_capital", "86_educacion", "86_otros"]:
-            assert fields[renglon]["requires_review"] is True
-
-    def test_total_descuentos_86_is_zero_without_other_descuentos(self):
-        """Without 86_ica, total descuentos starts at 0 (others manual/zero)."""
+    def test_ica_not_a_descuento(self):
+        """Ley 2277/2022 Art. 19: ICA es deducción 100% (fluye por clase 5),
+        no descuento — el descuento (casilla 93) queda en 0."""
         settings = _make_settings()
         ledger = _make_ledger(ica_511505=20_000)
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        # ICA is no longer a descuento per Ley 2277/2022 Art. 19
-        assert fields["86"]["value"] == pytest.approx(0.0)
+        assert fields["93"]["value"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
-# Anticipo año siguiente
+# Anticipo año siguiente → casilla 108
 # ---------------------------------------------------------------------------
 
 
 class TestF110Anticipo:
     def test_anticipo_calculated_from_impuesto_neto(self):
-        # RLG = 1_200_000, tasa = 35% → impuesto_basico = 420_000
-        # No ICA descuento (Ley 2277/2022 Art. 19) → impuesto_neto = 420_000
-        # retenciones_año_anterior = 0 → anticipo = 420_000 × 0.75 = 315_000
+        # impuesto neto (casilla 94) × 0.75 → casilla 108 (retenciones ant. = 0)
         settings = _make_settings()
         ledger = _make_ledger(
             ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=20_000
@@ -447,8 +410,8 @@ class TestF110Anticipo:
             },
         )
         fields = {f["renglon"]: f for f in draft.fields_json}
-        impuesto_neto = fields["88"]["value"]
-        anticipo = fields["95"]["value"]
+        impuesto_neto = fields["94"]["value"]
+        anticipo = fields["108"]["value"]
         assert anticipo == pytest.approx(impuesto_neto * 0.75, rel=1e-3)
 
     def test_anticipo_requires_review(self):
@@ -456,13 +419,11 @@ class TestF110Anticipo:
         ledger = _make_ledger()
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["95"]["requires_review"] is True
+        assert fields["108"]["requires_review"] is True
 
     def test_anticipo_clamped_at_zero_when_negative(self):
-        # If retenciones_año_anterior >> impuesto_neto × 0.75, anticipo = 0
         settings = _make_settings()
         ledger = _make_ledger(ingresos=100_000, costos=0, gastos=0)
-        # Large prior-year retenciones
         draft = _generate_f110(
             settings,
             ledger,
@@ -473,35 +434,34 @@ class TestF110Anticipo:
             },
         )
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["95"]["value"] >= 0.0
+        assert fields["108"]["value"] >= 0.0
 
-    def test_saldo_final_is_saldo_plus_anticipo(self):
+    def test_total_saldo_a_pagar_casilla_113(self):
         settings = _make_settings()
         ledger = _make_ledger()
         draft = _generate_f110(settings, ledger)
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert fields["96"]["value"] == pytest.approx(
-            fields["93"]["value"] + fields["95"]["value"], rel=1e-3
+        # 113 = max(0, 99 + 108 - 107) con los demás términos en 0
+        expected = max(
+            0.0,
+            fields["99"]["value"] + fields["108"]["value"] - fields["107"]["value"],
         )
+        assert fields["113"]["value"] == pytest.approx(expected, rel=1e-3)
 
-    def test_anticipo_metodo1_present_metodo2_absent_without_prior_year(self):
-        """Art. 807: con solo el método 1 disponible, 95 == 95_metodo1 y no hay 95_metodo2."""
+    def test_anticipo_metodo2_absent_without_prior_year(self):
+        """Sin declaración del año anterior, se usa el método 1 y se advierte."""
         settings = _make_settings()
         ledger = _make_ledger()
         draft = _generate_f110(settings, ledger)  # get_impuesto_neto_anio → None
-        fields = {f["renglon"]: f for f in draft.fields_json}
-        assert "95_metodo1" in fields
-        assert "95_metodo2" not in fields
-        assert fields["95"]["value"] == pytest.approx(fields["95_metodo1"]["value"])
-        # Warning explaining método 2 unavailable
-        msgs = " ".join(w["message"] for w in draft.warnings_json if w["field"] == "95")
+        msgs = " ".join(
+            w["message"] for w in draft.warnings_json if w["field"] == "108"
+        )
         assert "Método 2" in msgs
 
     def test_anticipo_takes_greater_of_two_methods(self):
-        """Art. 807 (criterio CPA): cuando el neto del año anterior es MAYOR, el
-        promedio supera al neto del año y el renglón 95 toma el método 2."""
+        """Art. 807 (criterio CPA): con neto del año anterior mayor, el promedio
+        supera al método 1 y la casilla 108 toma el mayor."""
         settings = _make_settings()
-        # Current-year impuesto neto ≈ 413k (ingresos 2M, costos 500k, clase5 320k).
         ledger = _make_ledger(
             ingresos=2_000_000, costos=500_000, gastos=300_000, ica_511505=20_000
         )
@@ -512,54 +472,17 @@ class TestF110Anticipo:
                 "app.services.db_service.sum_retenciones_anio": MagicMock(
                     return_value=Decimal("0")
                 ),
-                # Prior-year impuesto neto much higher → promedio > neto del año.
                 "app.services.db_service.get_impuesto_neto_anio": MagicMock(
                     return_value=Decimal("4000000")
                 ),
             },
         )
         fields = {f["renglon"]: f for f in draft.fields_json}
-        assert "95_metodo1" in fields and "95_metodo2" in fields
-        m1 = fields["95_metodo1"]["value"]
-        m2 = fields["95_metodo2"]["value"]
-        assert m2 > m1
-        assert fields["95"]["value"] == pytest.approx(max(m1, m2))
-
-
-# ---------------------------------------------------------------------------
-# Descuentos tributarios — expanded itemization (#10)
-# ---------------------------------------------------------------------------
-
-
-class TestF110DescuentosExpanded:
-    EXPECTED = [
-        "86_exterior",
-        "86_medioambiente",
-        "86_educacion",
-        "86_investigacion",
-        "86_donaciones",
-        "86_donaciones_red",
-        "86_iva_capital",
-        "86_zomac_zese",
-        "86_otros",
-    ]
-
-    def test_expanded_descuento_items_present(self):
-        settings = _make_settings()
-        ledger = _make_ledger()
-        draft = _generate_f110(settings, ledger)
-        fields = {f["renglon"]: f for f in draft.fields_json}
-        for renglon in self.EXPECTED:
-            assert renglon in fields, f"Missing descuento field: {renglon}"
-            assert fields[renglon]["requires_review"] is True
-
-    def test_total_descuentos_is_sum_of_items(self):
-        settings = _make_settings()
-        ledger = _make_ledger()
-        draft = _generate_f110(settings, ledger)
-        fields = {f["renglon"]: f for f in draft.fields_json}
-        items_sum = sum(fields[r]["value"] for r in self.EXPECTED)
-        assert fields["86"]["value"] == pytest.approx(items_sum)
+        neto = fields["94"]["value"]
+        metodo1 = neto * 0.75
+        metodo2 = ((neto + 4_000_000) / 2) * 0.75
+        assert metodo2 > metodo1
+        assert fields["108"]["value"] == pytest.approx(max(metodo1, metodo2), rel=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -573,11 +496,10 @@ class TestF110Warnings:
         ledger = _make_ledger(ingresos=100_000, costos=300_000, gastos=200_000)
         draft = _generate_f110(settings, ledger)
         warning_fields = [w["field"] for w in draft.warnings_json]
-        assert "f110_renta_liquida_ordinaria" in warning_fields
+        assert "72" in warning_fields
 
     def test_saldo_a_favor_warning_when_retenciones_exceed_impuesto(self):
         settings = _make_settings()
-        # Low income → low impuesto, but high retenciones
         ledger = _make_ledger(ingresos=200_000, costos=0, gastos=0, retenciones=0)
         draft = _generate_f110(
             settings,
@@ -589,7 +511,7 @@ class TestF110Warnings:
             },
         )
         warning_fields = [w["field"] for w in draft.warnings_json]
-        assert "93" in warning_fields
+        assert "114" in warning_fields
 
     def test_general_f2516_warning_always_present(self):
         settings = _make_settings()
@@ -670,8 +592,8 @@ class TestF110WithTarifaRenta:
 
         # RLG = 2_000_000 - 500_000 - 300_000 = 1_200_000
         # impuesto_basico = 1_200_000 × 0.20 = 240_000
-        assert fields["80"]["value"] == pytest.approx(240_000.0, rel=1e-3)
-        assert "Art. 19 ET" in fields["80"]["label"]
+        assert fields["84"]["value"] == pytest.approx(240_000.0, rel=1e-3)
+        assert "Art. 19 ET" in fields["84"]["source"]
 
     def test_financiero_2026_sobretasa_emergencia(self):
         """Sector financiero 2026: 35% base + 20% sobretasa (Decreto 0150) = 55%."""
@@ -693,8 +615,8 @@ class TestF110WithTarifaRenta:
         fields = {f["renglon"]: f for f in draft.fields_json}
 
         # RLG = 2M - 500k - 300k = 1_200_000, impuesto_basico = 1_200_000 × 0.55 = 660_000
-        assert fields["80"]["value"] == pytest.approx(660_000.0, rel=1e-3)
-        assert "Decreto 0150" in fields["80"]["label"]
+        assert fields["84"]["value"] == pytest.approx(660_000.0, rel=1e-3)
+        assert "Decreto 0150" in fields["84"]["source"]
 
     def test_hidroelectrico_38_percent(self):
         """Hidroeléctricas: 35% + 3% sobretasa = 38%."""
@@ -716,8 +638,8 @@ class TestF110WithTarifaRenta:
         fields = {f["renglon"]: f for f in draft.fields_json}
 
         # RLG = 2M - 500k - 300k = 1_200_000, impuesto_basico = 1_200_000 × 0.38 = 456_000
-        assert fields["80"]["value"] == pytest.approx(456_000.0, rel=1e-3)
-        assert "Art. 240 par. 5 ET" in fields["80"]["label"]
+        assert fields["84"]["value"] == pytest.approx(456_000.0, rel=1e-3)
+        assert "Art. 240 par. 5 ET" in fields["84"]["source"]
 
     def test_fallback_to_tasa_renta_when_no_tarifa(self):
         """When get_tarifa_renta returns None, falls back to settings.tasa_renta (0.35)."""
@@ -733,4 +655,4 @@ class TestF110WithTarifaRenta:
         fields = {f["renglon"]: f for f in draft.fields_json}
 
         # RLG = 2M - 500k - 300k = 1_200_000, fallback 35% → 420_000
-        assert fields["80"]["value"] == pytest.approx(420_000.0, rel=1e-3)
+        assert fields["84"]["value"] == pytest.approx(420_000.0, rel=1e-3)
