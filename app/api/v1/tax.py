@@ -1055,7 +1055,7 @@ def api_exogena(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    invalid_count = sum(1 for r in rows if not r.get("submission_ready", True))
+    invalid_count = sum(1 for r in rows if r.get("errores_validacion"))
     return {
         "formato": formato,
         "company_nit": company_nit,

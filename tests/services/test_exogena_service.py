@@ -184,8 +184,8 @@ class TestFormato1001:
         db.execute.return_value.fetchall.return_value = [fake_row]
 
         rows = generate_formato_1001(db, "900123456", 2025)
-        assert rows[0]["submission_ready"] is False
-        assert len(rows[0]["validation_errors"]) > 0
+        assert rows[0]["listo_para_envio"] == "No"
+        assert len(rows[0]["errores_validacion"]) > 0
 
     @patch("app.services.exogena_service.sql_text")
     def test_concepto_compras_6xxx(self, mock_sql_text):

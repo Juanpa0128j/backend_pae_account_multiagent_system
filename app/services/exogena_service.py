@@ -262,8 +262,8 @@ def generate_formato_1001(
                 "concepto_dian": concepto,
                 "total_pagos": 0,
                 "total_retefuente": 0,
-                "submission_ready": tercero_norm["submission_ready"],
-                "validation_errors": tercero_norm["errors"],
+                "listo_para_envio": "Sí" if tercero_norm["submission_ready"] else "No",
+                "errores_validacion": tercero_norm["errors"],
             }
         aggregated[key]["total_pagos"] += int(round(float(row.total_pagos)))
         aggregated[key]["total_retefuente"] += int(round(float(row.total_retefuente)))
@@ -340,8 +340,8 @@ def generate_formato_2276(
                 "pagador_nit": tercero_norm["nit"],
                 "pagador_nombre": tercero_norm["nombre"],
                 "total_ingresos": int(round(float(row.total_ingresos))),
-                "submission_ready": tercero_norm["submission_ready"],
-                "validation_errors": tercero_norm["errors"],
+                "listo_para_envio": "Sí" if tercero_norm["submission_ready"] else "No",
+                "errores_validacion": tercero_norm["errors"],
             }
         )
     return result
@@ -423,8 +423,8 @@ def generate_formato_1007(
                 **{k: v for k, v in ident.items() if not k.startswith("_")},
                 "ingresos_brutos": 0,
                 "devoluciones_rebajas_descuentos": 0,
-                "submission_ready": ident["_submission_ready"],
-                "validation_errors": ident["_errors"],
+                "listo_para_envio": "Sí" if ident["_submission_ready"] else "No",
+                "errores_validacion": ident["_errors"],
             }
         aggregated[key]["ingresos_brutos"] += int(round(float(row.total_credito)))
         aggregated[key]["devoluciones_rebajas_descuentos"] += int(
@@ -457,8 +457,8 @@ def generate_formato_1008(
                 "concepto": concepto,
                 **{k: v for k, v in ident.items() if not k.startswith("_")},
                 "saldo_cuentas_por_cobrar": 0,
-                "submission_ready": ident["_submission_ready"],
-                "validation_errors": ident["_errors"],
+                "listo_para_envio": "Sí" if ident["_submission_ready"] else "No",
+                "errores_validacion": ident["_errors"],
             }
         # CxC son de naturaleza débito: saldo = débitos - créditos.
         aggregated[key]["saldo_cuentas_por_cobrar"] += int(
@@ -491,8 +491,8 @@ def generate_formato_1009(
                 "concepto": concepto,
                 **{k: v for k, v in ident.items() if not k.startswith("_")},
                 "saldo_cuentas_por_pagar": 0,
-                "submission_ready": ident["_submission_ready"],
-                "validation_errors": ident["_errors"],
+                "listo_para_envio": "Sí" if ident["_submission_ready"] else "No",
+                "errores_validacion": ident["_errors"],
             }
         # CxP son de naturaleza crédito: saldo = créditos - débitos.
         aggregated[key]["saldo_cuentas_por_pagar"] += int(
