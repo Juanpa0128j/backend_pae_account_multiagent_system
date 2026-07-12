@@ -54,32 +54,34 @@ from app.models.database import (
 from app.services import db_service
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Dobles de prueba  (sin llamadas reales a LLM ni a LlamaParse)
+# Dobles de prueba  (sin llamadas reales a LLM ni al parser)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class _FakeDocument:
-    def __init__(self, text: str) -> None:
+class _FakeParseResult:
+    def __init__(self, markdown: str, text: str = "") -> None:
+        self.markdown = markdown
         self.text = text
 
 
-class FakeLlamaParse:
-    """Stub de LlamaCloud/LlamaParse que devuelve texto fijo sin red."""
+class _FakeParsing:
+    def parse(self, **_kw) -> _FakeParseResult:
+        return _FakeParseResult(
+            "FACTURA DE VENTA\n"
+            "Fecha: 2026-03-14\n"
+            "NIT Emisor: 900111222\n"
+            "NIT Receptor: 800333444\n"
+            "Concepto: Servicios de contabilidad E2E todos agentes\n"
+            "Total: 2500000\n"
+        )
 
-    def __init__(self, api_key=None, result_type="markdown", verbose=False):
-        pass
 
-    def load_data(self, file_path: str) -> list[_FakeDocument]:
-        return [
-            _FakeDocument(
-                "FACTURA DE VENTA\n"
-                "Fecha: 2026-03-14\n"
-                "NIT Emisor: 900111222\n"
-                "NIT Receptor: 800333444\n"
-                "Concepto: Servicios de contabilidad E2E todos agentes\n"
-                "Total: 2500000\n"
-            )
-        ]
+class FakeParseClient:
+    """Stub de LlamaCloud que devuelve texto fijo sin red."""
+
+    def __init__(self, api_key=None):
+        self.api_key = api_key
+        self.parsing = _FakeParsing()
 
 
 class FakeLLMClient:
@@ -378,7 +380,7 @@ def _was_routed_to(agent_log: list[dict], next_agent: str) -> bool:
 
 def _invoke_ingest(pdf_path: str) -> dict[str, Any]:
     with (
-        patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
+        patch("app.agents.ingest_agent.LlamaCloud", FakeParseClient, create=True),
         patch("app.agents.ingest_agent.get_llm_client", return_value=FakeLLMClient()),
     ):
         return invoke_ingest_pipeline(pdf_path)

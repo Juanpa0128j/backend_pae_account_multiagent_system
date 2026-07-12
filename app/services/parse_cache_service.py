@@ -1,4 +1,4 @@
-"""DB-backed cache of LlamaParse output.
+"""DB-backed cache of parsing output.
 
 Replaces the local-disk .parse_cache (ephemeral, per-instance) so a paid
 parse survives restarts and is shared across instances. Content-addressed:

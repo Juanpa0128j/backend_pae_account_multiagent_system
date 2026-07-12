@@ -422,7 +422,7 @@ class IngestJob(Base):
         String(20),
         nullable=False,
         default="fast",
-        comment="LlamaParse extraction mode: fast|standard|premium|gpt4o",
+        comment="LlamaCloud parsing tier: fast|standard|agentic|agentic_plus",
     )
 
     raw_preview = Column(

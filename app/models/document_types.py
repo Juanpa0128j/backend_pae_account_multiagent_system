@@ -11,7 +11,7 @@ from enum import Enum
 
 
 class ParserMode(str, Enum):
-    """LlamaParse extraction quality modes."""
+    """LlamaCloud parsing tiers."""
 
     FAST = "fast"
     STANDARD = "standard"
