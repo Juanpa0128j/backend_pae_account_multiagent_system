@@ -2,7 +2,7 @@
 Genera PDFs de prueba para Via A con datos que garantizan partida doble.
 
 Usa canvas directo de ReportLab con texto embebido en el PDF para que
-LlamaParse pueda extraer el contenido correctamente.
+LlamaCloud pueda extraer el contenido correctamente.
 
 Documentos por periodo:
   1. Factura de Compra con IVA 19%

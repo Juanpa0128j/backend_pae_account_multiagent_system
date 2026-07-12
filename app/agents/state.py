@@ -97,7 +97,9 @@ class AgentState(TypedDict):
     # Document classification fields (ingestion pipeline)
     document_classification: Optional[dict]  # DocumentClassification serialized
     pathway: Optional[str]  # "build_from_scratch" | "work_with_existing"
-    parser_mode: Optional[str]  # LlamaParse mode: fast | standard | premium | gpt4o
+    parser_mode: Optional[
+        str
+    ]  # LlamaCloud tier: fast | standard | agentic | agentic_plus
     parsed_content: Optional[list]  # Structured tabular data from Excel sheets
     company_nit: Optional[
         str

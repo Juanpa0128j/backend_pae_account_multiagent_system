@@ -2,7 +2,7 @@
 """
 Integration test script for the ingestion pipeline.
 
-Tests real documents through LlamaParse → classification → extraction → schema validation.
+Tests real documents through LlamaCloud → classification → extraction → schema validation.
 Results are saved to scripts/ingest_test_results.json for review.
 
 Usage:
@@ -58,7 +58,7 @@ def info(msg):
     print(f"{CYAN}  {msg}{RESET}")
 
 
-# ─── LlamaParse extraction with caching ──────────────────────────────────────
+# ─── LlamaCloud extraction with caching ──────────────────────────────────────
 
 
 def get_cache_path(file_path: Path, cache_dir: Path) -> Path:
@@ -71,7 +71,7 @@ def extract_text_llamaparse(
     file_path: Path, cache_dir: Path, no_cache: bool = False
 ) -> str:
     """
-    Parse a document with LlamaParse (supports PDF, JPG, PNG).
+    Parse a document with LlamaCloud v2 (supports PDF, JPG, PNG).
     Caches the markdown output to avoid repeated API calls.
     """
     cache_path = get_cache_path(file_path, cache_dir)
@@ -85,32 +85,33 @@ def extract_text_llamaparse(
         raise ValueError("LLAMA_CLOUD_API_KEY not set")
 
     try:
-        from llama_parse import LlamaParse
+        from llama_cloud.client import LlamaCloud
     except ImportError:
-        raise RuntimeError("llama-parse not installed. Run: uv add llama-parse")
+        raise RuntimeError("llama-cloud not installed. Run: uv add llama-cloud")
 
-    info(f"  [llamaparse] Parsing {file_path.name}...")
-    is_image = file_path.suffix.lower() in (".jpg", ".jpeg", ".png")
-    # fast_mode is PDF-only; images use default mode (already fast - single page OCR)
-    parser = LlamaParse(api_key=api_key, result_type="markdown", fast_mode=not is_image)
-    documents = parser.load_data(str(file_path))
-    text = "\n\n".join(doc.text for doc in documents)
+    info(f"  [llamacloud] Parsing {file_path.name}...")
+    client = LlamaCloud(api_key=api_key)
+    options = {
+        "tier": "fast",
+        "version": "latest",
+        "expand": ["markdown_full", "text_full"],
+    }
+    with open(file_path, "rb") as fh:
+        result = client.parsing.parse(upload_file=fh, **options)
 
-    # LlamaParse can silently return empty text on some scanned PDFs — retry with plain text mode
-    if not text.strip():
-        info(
-            "  [llamaparse] markdown returned empty — retrying with result_type='text'"
-        )
-        parser = LlamaParse(api_key=api_key, result_type="text", fast_mode=not is_image)
-        documents = parser.load_data(str(file_path))
-        text = "\n\n".join(doc.text for doc in documents)
+    markdown = getattr(result, "markdown", None) or ""
+    text = getattr(result, "text", None) or ""
+    raw_text = markdown if markdown.strip() else text
+
+    if not raw_text.strip():
+        raise ValueError(f"LlamaCloud returned no content for '{file_path.name}'")
 
     # Save to cache
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(text, encoding="utf-8")
+    cache_path.write_text(raw_text, encoding="utf-8")
     info(f"  [cache] Saved to {cache_path.name}")
 
-    return text
+    return raw_text
 
 
 def extract_text_excel(file_path: Path) -> str:

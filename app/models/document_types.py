@@ -11,12 +11,10 @@ from enum import Enum
 
 
 class ParserMode(str, Enum):
-    """LlamaParse extraction quality modes."""
+    """LlamaCloud parsing tiers."""
 
     FAST = "fast"
     STANDARD = "standard"
-    PREMIUM = "premium"
-    GPT4O = "gpt4o"
     AGENTIC = "agentic"
     AGENTIC_PLUS = "agentic_plus"
 

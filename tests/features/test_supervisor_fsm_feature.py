@@ -21,7 +21,7 @@ from app.models.llm_schemas import TaxJustification
 # ---------------------------------------------------------------------------
 # Mock targets — must match the import location in each module
 # ---------------------------------------------------------------------------
-MOCK_LLAMA_PARSE = "app.agents.ingest_agent.LlamaParse"
+MOCK_LLAMA_PARSE = "app.agents.ingest_agent.LlamaCloud"
 MOCK_GEMINI = "app.agents.ingest_agent.get_llm_client"
 MOCK_SESSION = "app.agents.persist_node.SessionLocal"
 MOCK_DB_SVC = "app.agents.persist_node.db_service"
@@ -139,11 +139,12 @@ def _setup_auditor_mock(mock_auditor_gemini_fn):
 
 
 def _mock_llama(text: str = SAMPLE_TEXT):
-    doc = MagicMock()
-    doc.text = text
-    parser = MagicMock()
-    parser.load_data.return_value = [doc]
-    return MagicMock(return_value=parser)
+    result = MagicMock()
+    result.markdown = text
+    result.text = text
+    client = MagicMock()
+    client.parsing.parse.return_value = result
+    return MagicMock(return_value=client)
 
 
 def _mock_llm(data: dict):

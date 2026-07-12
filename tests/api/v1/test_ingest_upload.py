@@ -31,8 +31,8 @@ class TestIngestUploadParserMode:
         return job
 
     def test_upload_accepts_parser_mode(self, monkeypatch):
-        """POST with parser_mode=premium should return 202 and detail should show premium."""
-        mock_job = self._make_job(parser_mode="premium")
+        """POST with parser_mode=agentic should return 202 and detail should show agentic."""
+        mock_job = self._make_job(parser_mode="agentic")
 
         def mock_create_ingest_job(db, file_name, file_path, **kwargs):
             mock_job.parser_mode = kwargs.get("parser_mode", "fast")
@@ -54,7 +54,7 @@ class TestIngestUploadParserMode:
         response = client.post(
             "/api/v1/ingest/upload",
             files=[("files", ("test.pdf", b"%PDF1.4 fake content", "application/pdf"))],
-            data={"parser_mode": "premium"},
+            data={"parser_mode": "agentic"},
         )
         assert response.status_code == 202
         data = response.json()
@@ -62,7 +62,7 @@ class TestIngestUploadParserMode:
 
         detail = client.get("/api/v1/ingest/ing_test_123")
         assert detail.status_code == 200
-        assert detail.json()["parser_mode"] == "premium"
+        assert detail.json()["parser_mode"] == "agentic"
 
     def test_upload_defaults_to_fast_mode(self, monkeypatch):
         """POST without parser_mode should default to fast in detail response."""

@@ -54,26 +54,15 @@ class DemoContext:
     raw_transactions: list[dict[str, Any]]
 
 
-class _FakeParsedDocument:
-    def __init__(self, text: str):
+class _FakeParseResult:
+    def __init__(self, markdown: str, text: str = ""):
+        self.markdown = markdown
         self.text = text
 
 
-class FakeLlamaParse:
-    """Deterministic LlamaParse replacement for demo runs."""
-
-    def __init__(
-        self,
-        api_key: str | None = None,
-        result_type: str = "markdown",
-        verbose: bool = False,
-    ):
-        self.api_key = api_key
-        self.result_type = result_type
-        self.verbose = verbose
-
-    def load_data(self, file_path: str) -> list[_FakeParsedDocument]:
-        text = (
+class _FakeParsing:
+    def parse(self, **_kw) -> _FakeParseResult:
+        markdown = (
             "FACTURA DE VENTA\\n"
             "Fecha: 2026-03-07\\n"
             "NIT Emisor: 900123456\\n"
@@ -81,7 +70,15 @@ class FakeLlamaParse:
             "Concepto: Servicios profesionales\\n"
             "Total: 1250000\\n"
         )
-        return [_FakeParsedDocument(text)]
+        return _FakeParseResult(markdown)
+
+
+class FakeParseClient:
+    """Deterministic LlamaCloud replacement for demo runs."""
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key
+        self.parsing = _FakeParsing()
 
 
 class FakeGeminiClient:
@@ -289,8 +286,7 @@ def _ensure_demo_puc_accounts() -> None:
 
 def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
     with (
-        patch("app.agents.ingest_agent.LlamaCloud", FakeLlamaParse, create=True),
-        patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
+        patch("app.agents.ingest_agent.LlamaCloud", FakeParseClient, create=True),
         patch(
             "app.agents.ingest_agent.get_gemini_client", return_value=FakeGeminiClient()
         ),

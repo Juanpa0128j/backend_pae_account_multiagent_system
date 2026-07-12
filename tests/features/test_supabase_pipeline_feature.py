@@ -42,24 +42,14 @@ class SupabaseE2EContext:
     raw_transactions: list[dict[str, Any]]
 
 
-class _FakeParsedDocument:
-    def __init__(self, text: str):
-        self.text = text
+class _FakeParseResult:
+    def __init__(self, markdown: str):
+        self.markdown = markdown
+        self.text = markdown
 
 
-class FakeLlamaParse:
-    def __init__(
-        self,
-        api_key: str | None = None,
-        result_type: str = "markdown",
-        verbose: bool = False,
-    ):
-        self.api_key = api_key
-        self.result_type = result_type
-        self.verbose = verbose
-
-    def load_data(self, file_path: str) -> list[_FakeParsedDocument]:
-        _ = file_path
+class _FakeParsing:
+    def parse(self, **_kw) -> _FakeParseResult:
         text = (
             "FACTURA DE VENTA\n"
             "Fecha: 2026-03-07\n"
@@ -68,7 +58,15 @@ class FakeLlamaParse:
             "Concepto: Servicios profesionales\n"
             "Total: 1250000\n"
         )
-        return [_FakeParsedDocument(text)]
+        return _FakeParseResult(text)
+
+
+class FakeParseClient:
+    """v2-shaped fake matching the `LlamaCloud` client surface."""
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key
+        self.parsing = _FakeParsing()
 
 
 class FakeLLMClient:
@@ -278,7 +276,7 @@ def _ensure_minimum_puc() -> None:
 
 def _run_ingest_pipeline(pdf_path: str) -> dict[str, Any]:
     with (
-        patch("app.agents.ingest_agent.LlamaParse", FakeLlamaParse, create=True),
+        patch("app.agents.ingest_agent.LlamaCloud", FakeParseClient, create=True),
         patch("app.agents.ingest_agent.get_llm_client", return_value=FakeLLMClient()),
     ):
         return invoke_ingest_pipeline(pdf_path)
