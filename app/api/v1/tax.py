@@ -503,6 +503,8 @@ from app.services.exogena_service import (  # noqa: E402
     generate_formato_1001,
     generate_formato_2276,
 )
+from app.services.dian_forms.pdf_renderer import render_declaration  # noqa: E402
+from app.models.database import CompanySettings  # noqa: E402
 
 
 class GenerateDraftRequest(BaseModel):
@@ -651,6 +653,46 @@ def api_get_draft(
         "created_at": draft.created_at.isoformat() if draft.created_at else None,
         "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
     }
+
+
+@router.get(
+    "/declarations/{draft_id}/pdf",
+    summary="Download a declaration draft as an official-format facsimile PDF",
+)
+@limiter.limit("30/minute")
+def api_download_draft_pdf(
+    request: Request,
+    draft_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    """Render the draft as a facsimile of the official DIAN form (borrador).
+
+    Not a filing document — the DIAN accepts only MUISCA data entry / prevalidador
+    XML. The PDF mirrors the official casillas for the accountant to transcribe.
+    """
+    draft = get_draft(db, draft_id)
+    if not draft:
+        raise HTTPException(
+            status_code=404, detail=f"Borrador {draft_id} no encontrado."
+        )
+
+    settings = (
+        db.query(CompanySettings)
+        .filter(CompanySettings.nit == draft.company_nit)
+        .first()
+    )
+    company_name = getattr(settings, "nombre", None) or draft.company_nit
+
+    pdf_bytes = render_declaration(draft, company_name=company_name)
+    filename = (
+        f"{draft.form_type}_{draft.period_start}_{draft.company_nit}_borrador.pdf"
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.patch(
