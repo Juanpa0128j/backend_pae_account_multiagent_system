@@ -1000,6 +1000,31 @@ _DISCLAIMER = (
 _TASA_IMPUESTO_DIFERIDO = 0.35  # Ley 2277/2022 Art. 240 ET
 
 
+def _f2516_seccion(renglon: str) -> str:
+    """Map an F2516 renglón to its official worksheet section (H2/H3/H4)."""
+    if renglon == "4":
+        return "Resumen fiscal"
+    try:
+        n = int(renglon)
+    except (TypeError, ValueError):
+        return "General"
+    if 100 <= n <= 199:
+        return "ESF — Activos"
+    if 200 <= n <= 299:
+        return "ESF — Pasivos y patrimonio"
+    if 300 <= n <= 399:
+        return "ERI — Ingresos"
+    if 400 <= n <= 499:
+        return "ERI — Costos"
+    if 500 <= n <= 599:
+        return "ERI — Gastos"
+    if 600 <= n <= 699:
+        return "ERI — Renta líquida fiscal"
+    if 700 <= n <= 799:
+        return "Conciliación e impuesto diferido"
+    return "General"
+
+
 def _build_f2516(
     ledger: List[Dict[str, Any]],
     _settings: CompanySettings,
@@ -1460,6 +1485,10 @@ def _build_f2516(
             "Marque el draft como 'reviewed' para habilitar la generación de F110.",
         )
     )
+    # Group the F2516 renglones into the official worksheet sections so the
+    # on-screen view and PDF facsimile render them like the prevalidador hojas.
+    for f in fields:
+        f.seccion = _f2516_seccion(f.renglon)
     return fields, warnings
 
 

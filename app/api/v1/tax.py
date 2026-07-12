@@ -501,6 +501,9 @@ from app.services.tax_calendar_service import (  # noqa: E402
 from app.services.certificate_service import generate_f220_certificates  # noqa: E402
 from app.services.exogena_service import (  # noqa: E402
     generate_formato_1001,
+    generate_formato_1007,
+    generate_formato_1008,
+    generate_formato_1009,
     generate_formato_2276,
 )
 from app.services.dian_forms.pdf_renderer import render_declaration  # noqa: E402
@@ -1006,6 +1009,9 @@ def api_generate_f220(
 
 _EXOGENA_GENERATORS = {
     "1001": generate_formato_1001,
+    "1007": generate_formato_1007,
+    "1008": generate_formato_1008,
+    "1009": generate_formato_1009,
     "2276": generate_formato_2276,
 }
 

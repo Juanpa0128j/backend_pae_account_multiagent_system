@@ -93,6 +93,79 @@ def validate_and_normalize_tercero(
     }
 
 
+# DIAN NIT verification-digit weights (right-to-left), Art. 555-1 ET.
+_DV_WEIGHTS = [3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71]
+
+
+def nit_dv(nit: str) -> str:
+    """Compute the DIAN check digit (dígito de verificación) for a NIT.
+
+    Returns '' when the NIT is empty/invalid so callers can leave the column blank.
+    """
+    digits = normalize_nit_dian(nit)
+    if not digits:
+        return ""
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        if i >= len(_DV_WEIGHTS):
+            break
+        total += int(ch) * _DV_WEIGHTS[i]
+    resto = total % 11
+    return str(resto if resto <= 1 else 11 - resto)
+
+
+def _tercero_identity(nit: str, nombre: Optional[str]) -> Dict[str, Any]:
+    """Official identity columns shared by 1007/1008/1009 (and 1001).
+
+    We hold only NIT + razón social, so the apellidos/nombres split, dirección
+    and municipio stay blank for the accountant to complete; tipo_documento is a
+    length heuristic (31=NIT / 13=cédula) and país defaults to 169 (Colombia).
+    """
+    t = validate_and_normalize_tercero(nit, nombre)
+    nit_norm = t["nit"]
+    # Colombian NITs start with 8 or 9; otherwise treat as cédula (13). The
+    # accountant confirms — flagged for review via _errors when ambiguous.
+    is_nit = nit_norm[:1] in ("8", "9")
+    return {
+        "tipo_documento": "31" if is_nit else "13",
+        "numero_identificacion": nit_norm,
+        "dv": nit_dv(nit_norm) if is_nit else "",
+        "primer_apellido": "",
+        "segundo_apellido": "",
+        "primer_nombre": "",
+        "otros_nombres": "",
+        "razon_social": t["nombre"],
+        "direccion": "",
+        "codigo_dpto": "",
+        "codigo_mcp": "",
+        "pais_residencia": "169",
+        "_submission_ready": t["submission_ready"],
+        "_errors": t["errors"],
+    }
+
+
+def _classify_1007(cuenta_puc: str) -> str:
+    """Ingresos: 41 → 4001 (act. ordinarias), demás clase 4 → 4002 (otros)."""
+    return "4001" if cuenta_puc.startswith("41") else "4002"
+
+
+def _classify_1008(cuenta_puc: str) -> str:
+    """CxC: 1305 → 1315 (clientes); demás clase 13 → 1317 (otras)."""
+    return "1315" if cuenta_puc.startswith("1305") else "1317"
+
+
+def _classify_1009(cuenta_puc: str) -> str:
+    """CxP: 2205→2201 (proveedores), 21→2203 (financieras), 24→2204 (impuestos),
+    demás → 2206."""
+    if cuenta_puc.startswith("2205"):
+        return "2201"
+    if cuenta_puc.startswith("21"):
+        return "2203"
+    if cuenta_puc.startswith("24"):
+        return "2204"
+    return "2206"
+
+
 # ---------------------------------------------------------------------------
 # Formato 1001 — Pagos o abonos en cuenta y retenciones practicadas
 # ---------------------------------------------------------------------------
@@ -272,3 +345,151 @@ def generate_formato_2276(
             }
         )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared by 1007/1008/1009
+# ---------------------------------------------------------------------------
+
+
+def _require_company(db: Session, company_nit: str) -> None:
+    if not db.query(CompanySettings).filter(CompanySettings.nit == company_nit).first():
+        raise ValueError(f"CompanySettings not found for NIT: {company_nit}")
+
+
+def _tercero_movimientos(
+    db: Session, company_nit: str, year: int, prefix_regex: str, cumulative: bool
+) -> List[Any]:
+    """Sum debit/credit per (tercero, cuenta_puc) for the accounts matching
+    ``prefix_regex``. ``cumulative`` True → balance up to 31-dic (saldos: <= year);
+    False → movements of the year (flujos: = year)."""
+    year_filter = (
+        "EXTRACT(YEAR FROM j.fecha) <= :year"
+        if cumulative
+        else "EXTRACT(YEAR FROM j.fecha) = :year"
+    )
+    query = sql_text(f"""
+        SELECT
+            j.tercero_nit,
+            COALESCE(t.razon_social, NULL) AS tercero_nombre,
+            j.cuenta_puc,
+            COALESCE(SUM(j.debito), 0) AS total_debito,
+            COALESCE(SUM(j.credito), 0) AS total_credito
+        FROM journal_entry_lines j
+        LEFT JOIN terceros t ON j.tercero_nit = t.nit
+        WHERE j.company_nit = :company_nit
+          AND {year_filter}
+          AND j.cuenta_puc ~ '{prefix_regex}'
+          AND j.tercero_nit IS NOT NULL
+          AND j.tercero_nit != ''
+        GROUP BY j.tercero_nit, t.razon_social, j.cuenta_puc
+        ORDER BY j.tercero_nit, j.cuenta_puc
+        """)
+    return db.execute(query, {"company_nit": company_nit, "year": year}).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Formato 1007 — Ingresos recibidos
+# ---------------------------------------------------------------------------
+
+
+def generate_formato_1007(
+    db: Session, company_nit: str, year: int
+) -> List[Dict[str, Any]]:
+    """Ingresos recibidos (clase 4) por tercero y concepto (4001/4002).
+
+    Columns follow the official layout: concepto, identity, país, ingresos
+    brutos and devoluciones/rebajas/descuentos.
+    """
+    _require_company(db, company_nit)
+    rows = _tercero_movimientos(db, company_nit, year, "^4", cumulative=False)
+
+    aggregated: Dict[tuple, Dict[str, Any]] = {}
+    for row in rows:
+        concepto = _classify_1007(row.cuenta_puc)
+        key = (row.tercero_nit, concepto)
+        if key not in aggregated:
+            ident = _tercero_identity(row.tercero_nit, row.tercero_nombre)
+            aggregated[key] = {
+                "formato": "1007",
+                "concepto": concepto,
+                **{k: v for k, v in ident.items() if not k.startswith("_")},
+                "ingresos_brutos": 0,
+                "devoluciones_rebajas_descuentos": 0,
+                "submission_ready": ident["_submission_ready"],
+                "validation_errors": ident["_errors"],
+            }
+        aggregated[key]["ingresos_brutos"] += int(round(float(row.total_credito)))
+        aggregated[key]["devoluciones_rebajas_descuentos"] += int(
+            round(float(row.total_debito))
+        )
+
+    return [r for r in aggregated.values() if r["ingresos_brutos"] > 0]
+
+
+# ---------------------------------------------------------------------------
+# Formato 1008 — Saldo de cuentas por cobrar a 31-12
+# ---------------------------------------------------------------------------
+
+
+def generate_formato_1008(
+    db: Session, company_nit: str, year: int
+) -> List[Dict[str, Any]]:
+    """Saldo de cuentas por cobrar (clase 13) a 31-dic por deudor y concepto."""
+    _require_company(db, company_nit)
+    rows = _tercero_movimientos(db, company_nit, year, "^13", cumulative=True)
+
+    aggregated: Dict[tuple, Dict[str, Any]] = {}
+    for row in rows:
+        concepto = _classify_1008(row.cuenta_puc)
+        key = (row.tercero_nit, concepto)
+        if key not in aggregated:
+            ident = _tercero_identity(row.tercero_nit, row.tercero_nombre)
+            aggregated[key] = {
+                "formato": "1008",
+                "concepto": concepto,
+                **{k: v for k, v in ident.items() if not k.startswith("_")},
+                "saldo_cuentas_por_cobrar": 0,
+                "submission_ready": ident["_submission_ready"],
+                "validation_errors": ident["_errors"],
+            }
+        # CxC son de naturaleza débito: saldo = débitos - créditos.
+        aggregated[key]["saldo_cuentas_por_cobrar"] += int(
+            round(float(row.total_debito) - float(row.total_credito))
+        )
+
+    return [r for r in aggregated.values() if r["saldo_cuentas_por_cobrar"] != 0]
+
+
+# ---------------------------------------------------------------------------
+# Formato 1009 — Saldo de cuentas por pagar a 31-12
+# ---------------------------------------------------------------------------
+
+
+def generate_formato_1009(
+    db: Session, company_nit: str, year: int
+) -> List[Dict[str, Any]]:
+    """Saldo de cuentas por pagar (clases 21/22/23) a 31-dic por acreedor."""
+    _require_company(db, company_nit)
+    rows = _tercero_movimientos(db, company_nit, year, "^2[123]", cumulative=True)
+
+    aggregated: Dict[tuple, Dict[str, Any]] = {}
+    for row in rows:
+        concepto = _classify_1009(row.cuenta_puc)
+        key = (row.tercero_nit, concepto)
+        if key not in aggregated:
+            ident = _tercero_identity(row.tercero_nit, row.tercero_nombre)
+            aggregated[key] = {
+                "formato": "1009",
+                "concepto": concepto,
+                **{k: v for k, v in ident.items() if not k.startswith("_")},
+                "saldo_cuentas_por_pagar": 0,
+                "submission_ready": ident["_submission_ready"],
+                "validation_errors": ident["_errors"],
+            }
+        # CxP son de naturaleza crédito: saldo = créditos - débitos.
+        aggregated[key]["saldo_cuentas_por_pagar"] += int(
+            round(float(row.total_credito) - float(row.total_debito))
+        )
+
+    return [r for r in aggregated.values() if r["saldo_cuentas_por_pagar"] != 0]

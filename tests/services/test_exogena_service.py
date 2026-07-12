@@ -17,7 +17,11 @@ import pytest
 
 from app.services.exogena_service import (
     generate_formato_1001,
+    generate_formato_1007,
+    generate_formato_1008,
+    generate_formato_1009,
     generate_formato_2276,
+    nit_dv,
     normalize_nit_dian,
     normalize_nombre_dian,
     validate_and_normalize_tercero,
@@ -358,3 +362,120 @@ class TestFormato1001Aggregation:
         assert len(rows) == 2
         conceptos = {r["concepto_dian"] for r in rows}
         assert conceptos == {"5001", "5002"}
+
+
+# ---------------------------------------------------------------------------
+# DIAN check digit
+# ---------------------------------------------------------------------------
+
+
+class TestNitDv:
+    def test_known_nit(self):
+        # 900.123.456 → DV 8 (algoritmo Art. 555-1 ET)
+        assert nit_dv("900123456") == "8"
+
+    def test_empty_returns_blank(self):
+        assert nit_dv("") == ""
+
+    def test_strips_formatting(self):
+        assert nit_dv("900.123.456") == "8"
+
+
+# ---------------------------------------------------------------------------
+# Formato 1007 — Ingresos recibidos
+# ---------------------------------------------------------------------------
+
+
+class TestFormato1007:
+    @patch("app.services.exogena_service.sql_text")
+    def test_ingresos_by_concepto(self, _mock_sql):
+        db = _mock_db(_make_settings())
+        db.execute.return_value.fetchall.return_value = [
+            _make_db_row(
+                tercero_nit="800111222",
+                tercero_nombre="CLIENTE SAS",
+                cuenta_puc="413505",
+                total_debito=0,
+                total_credito=3_000_000,
+            ),
+            _make_db_row(
+                tercero_nit="800111222",
+                tercero_nombre="CLIENTE SAS",
+                cuenta_puc="421005",
+                total_debito=0,
+                total_credito=500_000,
+            ),
+        ]
+        rows = generate_formato_1007(db, "900123456", 2025)
+        by_concepto = {r["concepto"]: r for r in rows}
+        assert by_concepto["4001"]["ingresos_brutos"] == 3_000_000  # 41 → ordinarias
+        assert by_concepto["4002"]["ingresos_brutos"] == 500_000  # 42 → otros
+        assert by_concepto["4001"]["formato"] == "1007"
+        assert by_concepto["4001"]["razon_social"] == "CLIENTE SAS"
+        assert by_concepto["4001"]["dv"] == "7"  # DV(800111222)
+
+
+# ---------------------------------------------------------------------------
+# Formato 1008 — CxC a 31-dic
+# ---------------------------------------------------------------------------
+
+
+class TestFormato1008:
+    @patch("app.services.exogena_service.sql_text")
+    def test_saldo_cuentas_por_cobrar(self, _mock_sql):
+        db = _mock_db(_make_settings())
+        db.execute.return_value.fetchall.return_value = [
+            _make_db_row(
+                tercero_nit="800111222",
+                tercero_nombre="CLIENTE SAS",
+                cuenta_puc="130505",
+                total_debito=5_000_000,
+                total_credito=3_000_000,
+            )
+        ]
+        rows = generate_formato_1008(db, "900123456", 2025)
+        assert len(rows) == 1
+        assert rows[0]["formato"] == "1008"
+        assert rows[0]["concepto"] == "1315"  # 1305 → clientes
+        # CxC débito-normal: 5M - 3M = 2M
+        assert rows[0]["saldo_cuentas_por_cobrar"] == 2_000_000
+
+    @patch("app.services.exogena_service.sql_text")
+    def test_zero_saldo_excluded(self, _mock_sql):
+        db = _mock_db(_make_settings())
+        db.execute.return_value.fetchall.return_value = [
+            _make_db_row(
+                tercero_nit="800111222",
+                tercero_nombre="CLIENTE SAS",
+                cuenta_puc="130505",
+                total_debito=1_000_000,
+                total_credito=1_000_000,
+            )
+        ]
+        assert generate_formato_1008(db, "900123456", 2025) == []
+
+
+# ---------------------------------------------------------------------------
+# Formato 1009 — CxP a 31-dic
+# ---------------------------------------------------------------------------
+
+
+class TestFormato1009:
+    @patch("app.services.exogena_service.sql_text")
+    def test_saldo_cuentas_por_pagar(self, _mock_sql):
+        db = _mock_db(_make_settings())
+        db.execute.return_value.fetchall.return_value = [
+            _make_db_row(
+                tercero_nit="800111222",
+                tercero_nombre="PROVEEDOR SAS",
+                cuenta_puc="220505",
+                total_debito=1_000_000,
+                total_credito=6_000_000,
+            )
+        ]
+        rows = generate_formato_1009(db, "900123456", 2025)
+        assert len(rows) == 1
+        assert rows[0]["formato"] == "1009"
+        assert rows[0]["concepto"] == "2201"  # 2205 → proveedores
+        # CxP crédito-normal: 6M - 1M = 5M
+        assert rows[0]["saldo_cuentas_por_pagar"] == 5_000_000
