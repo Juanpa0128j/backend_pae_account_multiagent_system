@@ -608,30 +608,32 @@ def _build_f110(
     company_nit: Optional[str] = None,
 ) -> tuple[Dict[str, Computed], List[DraftWarning]]:
     """
-    F110 Renta PJ draft — full DIAN renglones with auto-calculation.
+    F110 Renta PJ draft — llena las casillas oficiales del formulario 110.
 
-    Renglones produced (DIAN F110 2026):
-      26  Total activos
-      27  Total pasivos
-      40  Renta bruta (clase 4 créditos)
-      52  Costos (clase 6 débitos)
-      60  Gastos deducibles (clase 5 débitos)
-      63  ICA deducible (511505+521505) — ya incluido en gastos clase 5; Ley 2277/2022 Art. 19
-      f110_renta_liquida_ordinaria  Renta líquida ordinaria = 40-52-60
-      f110_perdidas_compensar       Pérdidas fiscales por compensar (Art. 147)
-      f110_rentas_exentas           Rentas exentas (manual)
-      72  Renta líquida gravable = max(0, RLO - pérdidas - exentas)
-      80  Impuesto básico = 72 × tasa_renta
-      86_*  Descuentos tributarios itemizados (Art. 254/255/256/256-1/257/257-2/258-1/ZOMAC/otros)
-      86  Total descuentos tributarios = Σ renglones 86_*
-      88  Impuesto neto = max(0, 80-86)
-      92  Retenciones del año (135515+135518)
-      93  Saldo a pagar / saldo a favor = 88 - 92
-      95_metodo1  Anticipo método 1 = max(0, 88×0.75 - retenciones_año_anterior)
-      95_metodo2  Anticipo método 2 = max(0, promedio(88_año, 88_año-1)×0.75 - retenciones_año_anterior)
-      95  Anticipo año siguiente (Art. 807 ET) = mayor(método 1, método 2)
-      96  Saldo final = 93 + 95
-      97  Sanciones (manual)
+    El builder emite un dict {casilla_oficial: Computed}; los subtotales los
+    calcula el catálogo (dian_forms/f110_2024). Casillas alimentadas aquí:
+
+    Patrimonio (desglose por clase PUC):
+      36 Efectivo (11) · 37 Inversiones (12) · 38 CxC (13) · 39 Inventarios (14)
+      40 Intangibles (16) · 42 PPE (15) · 43 Otros activos (17-19) · 45 Pasivos (2)
+      (44 patrimonio bruto y 46 patrimonio líquido = subtotales del catálogo)
+    Ingresos / costos / gastos:
+      47 Ingresos actividades ordinarias (41) · 57 Otros ingresos (42)
+      62 Costos (6) · 63 Gastos admón (51) · 64 Gastos ventas (52)
+      65 Gastos financieros (53) · 66 Otros gastos (resto clase 5)
+      (58 total ingresos, 61 netos, 67 total costos+gastos = subtotales)
+    Renta:
+      74 Compensaciones (pérdidas Art. 147) · 84 Impuesto s/ renta líquida gravable
+      (72 RLO, 79 renta líquida gravable, 91/94/96/99 = subtotales)
+    Retenciones y anticipo:
+      106 Otras retenciones (135515/135518) · 108 Anticipo año siguiente (Art. 807,
+      mayor de los dos métodos)
+      (107 total retenciones, 111/113/114 saldos = subtotales)
+    Manuales (los completa el contador): 77 renta exenta · 93 descuentos
+      tributarios · 100-104/109-110 · 112 sanciones.
+
+    ICA (511505/521505) NO tiene casilla propia: es deducción 100% y fluye por
+    la clase 5 a gastos (Ley 2277/2022 Art. 19 / Art. 115 ET).
     """
     computed: Dict[str, Computed] = {}
     warnings: List[DraftWarning] = []

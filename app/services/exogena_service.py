@@ -357,12 +357,19 @@ def _require_company(db: Session, company_nit: str) -> None:
         raise ValueError(f"CompanySettings not found for NIT: {company_nit}")
 
 
+# PUC prefix patterns interpolated into the ~ regex operator. Allowlisted so the
+# f-string interpolation can never carry untrusted input into SQL.
+_ALLOWED_PREFIX_REGEX = {"^4", "^13", "^2[123]"}
+
+
 def _tercero_movimientos(
     db: Session, company_nit: str, year: int, prefix_regex: str, cumulative: bool
 ) -> List[Any]:
     """Sum debit/credit per (tercero, cuenta_puc) for the accounts matching
     ``prefix_regex``. ``cumulative`` True → balance up to 31-dic (saldos: <= year);
     False → movements of the year (flujos: = year)."""
+    if prefix_regex not in _ALLOWED_PREFIX_REGEX:
+        raise ValueError(f"prefix_regex no permitido: {prefix_regex!r}")
     year_filter = (
         "EXTRACT(YEAR FROM j.fecha) <= :year"
         if cumulative

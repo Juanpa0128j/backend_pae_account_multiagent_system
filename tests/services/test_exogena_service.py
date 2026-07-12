@@ -386,6 +386,14 @@ class TestNitDv:
 # ---------------------------------------------------------------------------
 
 
+class TestPrefixRegexGuard:
+    def test_rejects_unlisted_prefix(self):
+        from app.services.exogena_service import _tercero_movimientos
+
+        with pytest.raises(ValueError, match="prefix_regex no permitido"):
+            _tercero_movimientos(MagicMock(), "900123456", 2025, "^99", False)
+
+
 class TestFormato1007:
     @patch("app.services.exogena_service.sql_text")
     def test_ingresos_by_concepto(self, _mock_sql):
