@@ -778,14 +778,14 @@ class TestParserModeAndCancelledStatus:
             id="test_parser_001",
             file_name="parser_test.pdf",
             status=IngestStatus.PENDING_PROCESSING,
-            parser_mode=ParserMode.PREMIUM,
+            parser_mode=ParserMode.AGENTIC,
         )
         db.add(job)
         db.flush()
 
         found = db.query(IngestJob).filter(IngestJob.id == "test_parser_001").first()
         assert found is not None
-        assert found.parser_mode == "premium"
+        assert found.parser_mode == "agentic"
 
     def test_ingest_job_defaults_to_fast(self, db):
         job = IngestJob(
